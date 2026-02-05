@@ -41,7 +41,7 @@ class GEDMetric(Metric):
         super().__init__(config)
         self._vj_ged = None
 
-    def _get_vj_ged(self):
+    def _get_vj_ged(self):  # type: ignore
         """Lazy load cfgutils similarity function."""
         if self._vj_ged is None:
             try:

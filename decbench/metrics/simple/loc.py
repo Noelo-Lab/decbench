@@ -166,7 +166,9 @@ class CyclomaticComplexityMetric(Metric):
         code = decompiled.decompiled_code
 
         # Count decision points
-        decision_keywords = ["if", "else if", "while", "for", "case", "&&", "||", "?"]
+        decision_keywords = [
+            "if", "else if", "while", "for", "case", "&&", "||", "?"
+        ]
         decisions = 0
         for kw in decision_keywords:
             decisions += code.count(f" {kw} ") + code.count(f" {kw}(")

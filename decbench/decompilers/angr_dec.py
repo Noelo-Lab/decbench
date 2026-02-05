@@ -41,8 +41,14 @@ class AngrDecompiler(Decompiler):
             self.structurer = config.structurer
             self.use_deoptimizers = config.use_deoptimizers
         else:
-            self.structurer = config.extra_options.get("structurer", "phoenix") if config else "phoenix"
-            self.use_deoptimizers = config.extra_options.get("use_deoptimizers", False) if config else False
+            self.structurer = (
+                config.extra_options.get("structurer", "phoenix")
+                if config else "phoenix"
+            )
+            self.use_deoptimizers = (
+                config.extra_options.get("use_deoptimizers", False)
+                if config else False
+            )
 
     def is_available(self) -> bool:
         """Check if angr is available."""
@@ -60,7 +66,7 @@ class AngrDecompiler(Decompiler):
                 return None
         return self._angr.__version__
 
-    def _get_project(self, binary_path: Path):
+    def _get_project(self, binary_path: Path):  # type: ignore
         """Get or create an angr project for the binary."""
         if self._project is None or str(self._project.filename) != str(binary_path):
             self._project = self._angr.Project(
@@ -159,8 +165,8 @@ class AngrDecompiler(Decompiler):
 
     def _decompile_function(
         self,
-        project,
-        cfg,
+        project,  # type: ignore
+        cfg,  # type: ignore
         func_name: str,
         func_addr: int,
     ) -> FunctionDecompilation | None:
@@ -176,9 +182,6 @@ class AngrDecompiler(Decompiler):
             dec = project.analyses.Decompiler(
                 func,
                 cfg=cfg,
-                options=[
-                    (self._angr.analyses.decompiler.decompilation_options.REMOVE_DEAD_MEMDEFS, True),
-                ],
             )
 
             if dec.codegen is None:
@@ -223,7 +226,9 @@ class AngrDecompiler(Decompiler):
         return {
             "gotos": code.count("goto "),
             "bools": code.count(" && ") + code.count(" || "),
-            "func_calls": code.count("(") - code.count("if (") - code.count("while ("),
+            "func_calls": (
+                code.count("(") - code.count("if (") - code.count("while (")
+            ),
         }
 
     def cleanup(self) -> None:

@@ -28,7 +28,7 @@ from decbench.models.scoreboard import Scoreboard, DecompilerScore
 class TestProjectModels:
     """Tests for project-related models."""
 
-    def test_project_config_creation(self):
+    def test_project_config_creation(self) -> None:
         """Test creating a project configuration."""
         config = ProjectConfig(
             name="test_project",
@@ -39,14 +39,14 @@ class TestProjectModels:
         assert config.version == "1.0"
         assert config.remote_type == RemoteType.LOCAL
 
-    def test_compilation_config_defaults(self):
+    def test_compilation_config_defaults(self) -> None:
         """Test compilation config default values."""
         config = CompilationConfig()
         assert OptimizationLevel.O2 in config.optimization_levels
         assert "-g" in config.base_flags
         assert config.emit_preprocessed is True
 
-    def test_project_from_toml(self):
+    def test_project_from_toml(self) -> None:
         """Test loading project from TOML."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
             f.write('''
@@ -64,7 +64,7 @@ optimization_levels = ["O2"]
             assert project.name == "test"
             assert project.config.version == "1.0"
 
-    def test_project_to_toml(self):
+    def test_project_to_toml(self) -> None:
         """Test saving project to TOML."""
         project = Project(
             config=ProjectConfig(name="test", source_dir="src"),
@@ -85,7 +85,7 @@ optimization_levels = ["O2"]
 class TestDecompilationModels:
     """Tests for decompilation-related models."""
 
-    def test_function_decompilation(self):
+    def test_function_decompilation(self) -> None:
         """Test FunctionDecompilation model."""
         func = FunctionDecompilation(
             name="main",
@@ -99,7 +99,7 @@ class TestDecompilationModels:
         assert func.has_gotos is False
         assert func.goto_count == 0
 
-    def test_function_with_gotos(self):
+    def test_function_with_gotos(self) -> None:
         """Test function with gotos."""
         func = FunctionDecompilation(
             name="test",
@@ -110,7 +110,7 @@ class TestDecompilationModels:
         assert func.has_gotos is True
         assert func.goto_count == 1
 
-    def test_decompilation_result(self):
+    def test_decompilation_result(self) -> None:
         """Test DecompilationResult model."""
         result = DecompilationResult(
             binary_path=Path("/test/binary.o"),
@@ -134,7 +134,7 @@ class TestDecompilationModels:
 class TestMetricModels:
     """Tests for metric-related models."""
 
-    def test_metric_value(self):
+    def test_metric_value(self) -> None:
         """Test MetricValue model."""
         value = MetricValue(value=0.0, metadata={"test": True})
         assert value.is_perfect is True
@@ -142,7 +142,7 @@ class TestMetricModels:
         value2 = MetricValue(value=5.0)
         assert value2.is_perfect is False
 
-    def test_metric_result_aggregates(self):
+    def test_metric_result_aggregates(self) -> None:
         """Test MetricResult aggregate computation."""
         result = MetricResult(
             metric_name="test",
@@ -160,7 +160,7 @@ class TestMetricModels:
         assert result.perfect_count == 2
         assert result.perfect_percentage == pytest.approx(66.67, rel=0.01)
 
-    def test_category_score(self):
+    def test_category_score(self) -> None:
         """Test CategoryScore model."""
         score = CategoryScore(
             category=MetricCategory.FAITHFUL,
@@ -178,7 +178,7 @@ class TestMetricModels:
 class TestScoreboardModels:
     """Tests for scoreboard-related models."""
 
-    def test_scoreboard_creation(self):
+    def test_scoreboard_creation(self) -> None:
         """Test Scoreboard creation."""
         scoreboard = Scoreboard(
             name="Test Scoreboard",
@@ -189,7 +189,7 @@ class TestScoreboardModels:
         assert scoreboard.name == "Test Scoreboard"
         assert len(scoreboard.decompilers) == 2
 
-    def test_decompiler_score(self):
+    def test_decompiler_score(self) -> None:
         """Test DecompilerScore model."""
         dec_score = DecompilerScore(
             name="test_dec",
@@ -205,7 +205,7 @@ class TestScoreboardModels:
 
         assert dec_score.overall_score == 75.0
 
-    def test_scoreboard_to_display_dict(self):
+    def test_scoreboard_to_display_dict(self) -> None:
         """Test scoreboard display conversion."""
         scoreboard = Scoreboard(
             name="Test",

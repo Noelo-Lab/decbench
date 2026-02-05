@@ -59,7 +59,10 @@ class AggregatedResults:
 
 
 def aggregate_results(
-    evaluation_results: dict[str, dict[OptimizationLevel, dict[str, dict[str, dict[str, MetricResult]]]]],
+    evaluation_results: dict[
+        str,
+        dict[OptimizationLevel, dict[str, dict[str, dict[str, MetricResult]]]],
+    ],
 ) -> AggregatedResults:
     """Aggregate evaluation results across all projects and binaries.
 
@@ -146,7 +149,10 @@ def aggregate_results(
             aggregated.by_decompiler[dec_name][metric_name] = agg
 
     aggregated.total_binaries = binary_count
-    aggregated.total_functions = function_count // max(len(decompilers_seen), 1)  # Avoid double-counting
+    # Avoid double-counting
+    aggregated.total_functions = (
+        function_count // max(len(decompilers_seen), 1)
+    )
     aggregated.decompilers = sorted(decompilers_seen)
     aggregated.metrics = sorted(metrics_seen)
 

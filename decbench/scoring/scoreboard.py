@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from decbench.models.metrics import MetricCategory
 from decbench.models.scoreboard import (
@@ -12,9 +11,6 @@ from decbench.models.scoreboard import (
     Scoreboard,
 )
 from decbench.scoring.aggregator import AggregatedResults, compute_category_score
-
-if TYPE_CHECKING:
-    pass
 
 
 def build_scoreboard(
@@ -179,7 +175,9 @@ def render_scoreboard_markdown(scoreboard: Scoreboard) -> str:
         for i, (dec_name, score) in enumerate(breakdown.rankings, 1):
             cat_score = breakdown.scores[dec_name]
             display = cat_score.headline_display or f"{score:.2f}"
-            lines.append(f"| {i} | {dec_name} | {display} |")
+            lines.append(
+                f"| {i} | {dec_name} | {display} |"
+            )
 
         lines.append("")
 

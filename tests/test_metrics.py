@@ -11,11 +11,11 @@ from decbench.models.decompilation import FunctionDecompilation
 class TestMetricRegistry:
     """Tests for the metric registry."""
 
-    def setup_method(self):
+    def setup_method(self) -> None:
         """Clear registry before each test."""
         MetricRegistry.clear()
 
-    def test_register_metric(self):
+    def test_register_metric(self) -> None:
         """Test registering a metric."""
         @register_metric("test_metric")
         class TestMetric(Metric):
@@ -27,7 +27,7 @@ class TestMetricRegistry:
 
         assert "test_metric" in MetricRegistry.list_registered()
 
-    def test_get_metric(self):
+    def test_get_metric(self) -> None:
         """Test getting a registered metric."""
         @register_metric("get_test")
         class GetTestMetric(Metric):
@@ -40,12 +40,12 @@ class TestMetricRegistry:
         metric = MetricRegistry.get("get_test")
         assert metric.name == "get_test"
 
-    def test_get_unknown_metric(self):
+    def test_get_unknown_metric(self) -> None:
         """Test getting an unregistered metric."""
         with pytest.raises(KeyError):
             MetricRegistry.get("nonexistent")
 
-    def test_get_by_category(self):
+    def test_get_by_category(self) -> None:
         """Test getting metrics by category."""
         @register_metric("faithful1")
         class Faithful1(Metric):
@@ -71,7 +71,7 @@ class TestMetricRegistry:
 class TestBuiltinMetrics:
     """Tests for built-in metrics."""
 
-    def test_loc_metric(self):
+    def test_loc_metric(self) -> None:
         """Test lines of code metric."""
         # Import to register
         from decbench.metrics.simple.loc import LOCMetric
@@ -88,7 +88,7 @@ class TestBuiltinMetrics:
         # 3 non-empty lines
         assert result.value == 3.0
 
-    def test_goto_metric(self):
+    def test_goto_metric(self) -> None:
         """Test goto count metric."""
         from decbench.metrics.simple.loc import GotoMetric
 
@@ -112,7 +112,7 @@ class TestBuiltinMetrics:
         result2 = metric.compute_for_function(func_with_goto)
         assert result2.value == 1.0
 
-    def test_bool_ops_metric(self):
+    def test_bool_ops_metric(self) -> None:
         """Test boolean operations metric."""
         from decbench.metrics.simple.loc import BooleanOperationsMetric
 
@@ -132,13 +132,13 @@ class TestBuiltinMetrics:
 class TestMetricConfig:
     """Tests for metric configuration."""
 
-    def test_default_config(self):
+    def test_default_config(self) -> None:
         """Test default metric configuration."""
         config = MetricConfig()
         assert config.function_timeout_seconds == 60.0
         assert config.use_cache is True
 
-    def test_custom_config(self):
+    def test_custom_config(self) -> None:
         """Test custom metric configuration."""
         config = MetricConfig(
             function_timeout_seconds=30.0,

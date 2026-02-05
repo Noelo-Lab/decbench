@@ -128,7 +128,9 @@ class ByteMatchMetric(Metric):
             },
         )
 
-    def _compile_function(self, decompiled: FunctionDecompilation) -> bytes | None:
+    def _compile_function(
+        self, decompiled: FunctionDecompilation
+    ) -> bytes | None:
         """Compile decompiled code and extract function bytes."""
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
@@ -198,7 +200,7 @@ class ByteMatchMetric(Metric):
 
                         # Extract bytes
                         data = text_section.data()
-                        return data[offset:offset + size]
+                        return data[offset : offset + size]
 
         except Exception:
             pass
@@ -232,11 +234,12 @@ class ByteMatchMetric(Metric):
                         for section in elf.iter_sections():
                             if (
                                 section["sh_addr"] <= address
-                                and address < section["sh_addr"] + section["sh_size"]
+                                and address <
+                                section["sh_addr"] + section["sh_size"]
                             ):
                                 offset = address - section["sh_addr"]
                                 data = section.data()
-                                return data[offset:offset + size]
+                                return data[offset : offset + size]
 
         except Exception:
             pass

@@ -34,7 +34,9 @@ class CompilationConfig(BaseModel):
         description="Optimization levels to compile with",
     )
     base_flags: list[str] = Field(
-        default=["-g", "-fno-inline", "-fno-builtin", "-save-temps=obj"],
+        default=[
+            "-g", "-fno-inline", "-fno-builtin", "-save-temps=obj"
+        ],
         description="Base compiler flags applied to all compilations",
     )
     extra_flags: list[str] = Field(
@@ -114,7 +116,7 @@ class ProjectConfig(BaseModel):
 
     @field_validator("local_path", mode="before")
     @classmethod
-    def convert_path(cls, v):
+    def convert_path(cls, v) -> Path | None:
         if v is not None and not isinstance(v, Path):
             return Path(v)
         return v

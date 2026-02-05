@@ -35,7 +35,7 @@ class GCCCompiler(Compiler):
             "-fno-builtin",  # Don't use builtin optimizations
         ]
 
-    def _find_gcc(self) -> str:
+    def _find_gcc(self) -> str | None:
         """Find GCC in PATH."""
         # Try versioned GCC first
         for version in ["13", "12", "11", "10", "9", ""]:
@@ -136,7 +136,11 @@ class GCCCompiler(Compiler):
             return CompileResult(
                 source_path=source_path,
                 object_path=object_path if object_path.exists() else None,
-                preprocessed_path=preprocessed_path if preprocessed_path and preprocessed_path.exists() else None,
+                preprocessed_path=(
+                    preprocessed_path
+                    if preprocessed_path and preprocessed_path.exists()
+                    else None
+                ),
                 success=object_path.exists(),
             )
 

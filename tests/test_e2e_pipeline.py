@@ -64,13 +64,13 @@ def check_dependencies():
 class TestExampleProjectCompilation:
     """Test that the example project compiles correctly."""
 
-    def test_example_project_exists(self):
+    def test_example_project_exists(self) -> None:
         """Test that example project files exist."""
         assert EXAMPLE_PROJECT_DIR.exists()
         assert (EXAMPLE_PROJECT_DIR / "example.c").exists()
         assert (EXAMPLE_PROJECT_DIR / "Makefile").exists()
 
-    def test_compile_example_project(self):
+    def test_compile_example_project(self) -> None:
         """Test compiling the example project."""
         # Clean first
         subprocess.run(["make", "clean"], cwd=EXAMPLE_PROJECT_DIR, check=False)
@@ -89,7 +89,7 @@ class TestExampleProjectCompilation:
         assert (EXAMPLE_PROJECT_DIR / "example.o").exists()
         assert (EXAMPLE_PROJECT_DIR / "example.i").exists()
 
-    def test_object_file_is_valid(self):
+    def test_object_file_is_valid(self) -> None:
         """Test that the object file is a valid ELF/Mach-O binary."""
         obj_file = EXAMPLE_PROJECT_DIR / "example.o"
 
@@ -103,19 +103,22 @@ class TestExampleProjectCompilation:
             text=True,
         )
 
-        assert "object" in result.stdout.lower() or "relocatable" in result.stdout.lower()
+        assert (
+            "object" in result.stdout.lower()
+            or "relocatable" in result.stdout.lower()
+        )
 
 
 @pytest.mark.skipif(not HAVE_ANGR, reason="angr not installed")
 class TestAngrDecompilation:
     """Test angr decompilation."""
 
-    def setup_method(self):
+    def setup_method(self) -> None:
         """Ensure example project is compiled."""
         if not (EXAMPLE_PROJECT_DIR / "example").exists():
             subprocess.run(["make"], cwd=EXAMPLE_PROJECT_DIR, check=True)
 
-    def test_angr_can_load_binary(self):
+    def test_angr_can_load_binary(self) -> None:
         """Test that angr can load the binary."""
         import angr
 
@@ -125,7 +128,7 @@ class TestAngrDecompilation:
         assert project is not None
         assert project.filename == str(binary_file)
 
-    def test_angr_discovers_functions(self):
+    def test_angr_discovers_functions(self) -> None:
         """Test that angr can discover functions."""
         import angr
 
@@ -143,7 +146,7 @@ class TestAngrDecompilation:
 
         assert len(found) > 0, f"Expected to find some of {expected}, got {func_names}"
 
-    def test_angr_can_decompile(self):
+    def test_angr_can_decompile(self) -> None:
         """Test that angr can decompile functions."""
         import angr
 
@@ -174,12 +177,12 @@ class TestAngrDecompilation:
 class TestSourceCFGExtraction:
     """Test CFG extraction from source code."""
 
-    def setup_method(self):
+    def setup_method(self) -> None:
         """Ensure example project is compiled."""
         if not (EXAMPLE_PROJECT_DIR / "example.i").exists():
             subprocess.run(["make"], cwd=EXAMPLE_PROJECT_DIR, check=True)
 
-    def test_pyjoern_can_parse_source(self):
+    def test_pyjoern_can_parse_source(self) -> None:
         """Test that pyjoern can parse the source file."""
         from pyjoern import parse_source
 
@@ -189,7 +192,7 @@ class TestSourceCFGExtraction:
         assert parsed is not None
         assert isinstance(parsed, dict)
 
-    def test_pyjoern_extracts_functions(self):
+    def test_pyjoern_extracts_functions(self) -> None:
         """Test that pyjoern extracts functions."""
         from pyjoern import parse_source
 
@@ -204,7 +207,7 @@ class TestSourceCFGExtraction:
 
         assert len(found) > 0, f"Expected functions {expected}, got {func_names}"
 
-    def test_pyjoern_extracts_cfgs(self):
+    def test_pyjoern_extracts_cfgs(self) -> None:
         """Test that pyjoern extracts CFGs."""
         from pyjoern import parse_source
 
@@ -227,12 +230,12 @@ class TestSourceCFGExtraction:
 class TestFaithfulnessMetrics:
     """Test the faithfulness (GED) metrics end-to-end."""
 
-    def setup_method(self):
+    def setup_method(self) -> None:
         """Ensure example project is compiled."""
         if not (EXAMPLE_PROJECT_DIR / "example.o").exists():
             subprocess.run(["make"], cwd=EXAMPLE_PROJECT_DIR, check=True)
 
-    def test_ged_computation(self):
+    def test_ged_computation(self) -> None:
         """Test computing GED between source and decompiled CFGs."""
         import angr
         from pyjoern import parse_source
@@ -304,24 +307,21 @@ class TestFaithfulnessMetrics:
         else:
             pytest.skip("No functions could be compared")
 
-    def test_full_pipeline_integration(self):
+    def test_full_pipeline_integration(self) -> None:
         """Test the full DecBench pipeline integration."""
         # This test uses the DecBench classes directly
 
         # Import DecBench components
         sys.path.insert(0, str(PROJECT_ROOT))
 
-        from decbench.models.project import Project, ProjectConfig, CompilationConfig
         from decbench.models.decompilation import (
             DecompilationResult,
             DecompilerMetadata,
             FunctionDecompilation,
         )
-        from decbench.metrics.faithful.ged import GEDMetric
         from decbench.utils.cfg import extract_cfgs_from_source
 
         import angr
-        from pyjoern import parse_source
 
         obj_file = EXAMPLE_PROJECT_DIR / "example.o"
         source_file = EXAMPLE_PROJECT_DIR / "example.c"
@@ -401,7 +401,7 @@ class TestFaithfulnessWithRealGED:
     This is the actual faithfulness metric.
     """
 
-    def test_real_ged_pipeline(self):
+    def test_real_ged_pipeline(self) -> None:
         """
         Full end-to-end test:
         1. Parse source with pyjoern -> get source CFGs
@@ -430,8 +430,10 @@ class TestFaithfulnessWithRealGED:
         for func_name, func in source_parsed.items():
             if func.cfg is not None and func.cfg.number_of_nodes() > 0:
                 source_cfgs[func_name] = func.cfg
-                print(f"  {func_name}: {func.cfg.number_of_nodes()} nodes, "
-                      f"{func.cfg.number_of_edges()} edges")
+                print(
+                    f"  {func_name}: {func.cfg.number_of_nodes()} nodes, "
+                    f"{func.cfg.number_of_edges()} edges"
+                )
 
         assert len(source_cfgs) > 0, "No source CFGs extracted"
 
@@ -475,8 +477,10 @@ class TestFaithfulnessWithRealGED:
                 for func_name, func in dec_parsed.items():
                     if func.cfg is not None and func.cfg.number_of_nodes() > 0:
                         decompiled_cfgs[func_name] = func.cfg
-                        print(f"  {func_name}: {func.cfg.number_of_nodes()} nodes, "
-                              f"{func.cfg.number_of_edges()} edges")
+                        print(
+                            f"  {func_name}: {func.cfg.number_of_nodes()} nodes, "
+                            f"{func.cfg.number_of_edges()} edges"
+                        )
         except Exception as e:
             print(f"  Warning: Could not parse decompiled code: {e}")
         finally:

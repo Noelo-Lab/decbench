@@ -190,7 +190,9 @@ def _save_evaluation_results(
                 data[f"{key}.mean"] = result.mean
                 data[f"{key}.median"] = result.median
                 data[f"{key}.perfect_count"] = result.perfect_count
-                data[f"{key}.perfect_percentage"] = result.perfect_percentage
+                data[f"{key}.perfect_percentage"] = (
+                    result.perfect_percentage
+                )
 
                 # Store per-function results
                 for func_name, value in result.function_results.items():
@@ -202,13 +204,18 @@ def _save_evaluation_results(
 
 def evaluate_projects(
     projects: list[Project],
-    decompilations: dict[str, dict[OptimizationLevel, dict[str, dict[str, DecompilationResult]]]],
+    decompilations: dict[
+        str,
+        dict[OptimizationLevel, dict[str, dict[str, DecompilationResult]]],
+    ],
     output_dir: Path,
     optimization_levels: list[OptimizationLevel] | None = None,
     metrics: list[str] | None = None,
     parallel: bool = True,
     workers: int | None = None,
-) -> dict[str, dict[OptimizationLevel, dict[str, dict[str, dict[str, MetricResult]]]]]:
+) -> dict[
+    str, dict[OptimizationLevel, dict[str, dict[str, dict[str, MetricResult]]]]
+]:
     """Evaluate multiple projects.
 
     Args:

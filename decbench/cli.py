@@ -11,7 +11,7 @@ from decbench.models.project import OptimizationLevel, Project
 
 @click.group()
 @click.version_option()
-def main():
+def main() -> None:
     """DecBench - Decompiler Benchmarking Suite."""
     pass
 
@@ -76,7 +76,7 @@ def run(
     skip_compile,
     skip_decompile,
     skip_evaluate,
-):
+) -> None:
     """Run the full benchmark pipeline on project(s).
 
     PROJECTS: Paths to project TOML configuration files.
@@ -157,7 +157,7 @@ def run(
     multiple=True,
     help="Decompilers to use",
 )
-def evaluate(binary, source, output, decompiler):
+def evaluate(binary, source, output, decompiler) -> None:
     """Evaluate a single binary with available decompilers."""
     from rich.console import Console
 
@@ -196,7 +196,7 @@ def evaluate(binary, source, output, decompiler):
 
 
 @main.command()
-def list_decompilers():
+def list_decompilers() -> None:
     """List available decompilers."""
     from rich.console import Console
     from rich.table import Table
@@ -227,7 +227,7 @@ def list_decompilers():
 
 
 @main.command()
-def list_metrics():
+def list_metrics() -> None:
     """List available metrics."""
     from rich.console import Console
     from rich.table import Table
@@ -264,7 +264,7 @@ def list_metrics():
     default="text",
     help="Output format",
 )
-def show(scoreboard_path, format):
+def show(scoreboard_path, format) -> None:
     """Display a saved scoreboard."""
     from rich.console import Console
 
@@ -295,7 +295,7 @@ def show(scoreboard_path, format):
     default=".",
     help="Output directory for project file",
 )
-def init_project(name, output):
+def init_project(name, output) -> None:
     """Initialize a new project configuration file."""
     from rich.console import Console
 

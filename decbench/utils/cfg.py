@@ -103,7 +103,7 @@ def extract_cfgs_from_decompilation(
     return cfgs
 
 
-def cfg_to_dict(cfg: DiGraph) -> dict:
+def cfg_to_dict(cfg: DiGraph) -> dict:  # type: ignore
     """Convert a CFG to a serializable dictionary.
 
     Args:
@@ -120,7 +120,7 @@ def cfg_to_dict(cfg: DiGraph) -> dict:
     }
 
 
-def compute_cfg_stats(cfg: DiGraph) -> dict:
+def compute_cfg_stats(cfg: DiGraph) -> dict:  # type: ignore
     """Compute statistics about a CFG.
 
     Args:

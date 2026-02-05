@@ -164,9 +164,9 @@ def compile_project(
             if result.preprocessed_path:
                 if optimization not in project.preprocessed_sources:
                     project.preprocessed_sources[optimization] = {}
-                project.preprocessed_sources[optimization][result.source_path.stem] = (
-                    result.preprocessed_path
-                )
+                project.preprocessed_sources[optimization][
+                    result.source_path.stem
+                ] = result.preprocessed_path
 
     return results
 
