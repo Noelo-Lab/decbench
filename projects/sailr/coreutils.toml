@@ -1,0 +1,31 @@
+# DecBench Project Configuration: GNU Coreutils
+# This is a sample project from the SAILR evaluation set
+
+name = "coreutils"
+version = "v9.1"
+
+# Source configuration
+source_remote = "git://git.sv.gnu.org/coreutils.git"
+remote_type = "git"
+
+# Build directories
+package_dir = "coreutils"
+source_dir = "src"
+
+# Build commands
+post_download_cmds = ["./bootstrap"]
+pre_make_cmds = ["./configure --quiet --disable-gcc-warnings"]
+make_cmd = "make"
+
+# Optional patch for gnulib compatibility
+# apply_patch = "patches/coreutils_gnulib.diff"
+
+[compilation]
+# Optimization levels to compile
+optimization_levels = ["O0", "O2"]
+
+# Base compiler flags
+base_flags = ["-g", "-fno-inline", "-fno-builtin", "-save-temps=obj"]
+
+# Compiler to use
+c_compiler = "gcc"

@@ -1,0 +1,26 @@
+# DecBench Example Project Configuration
+# Used for end-to-end testing of the pipeline
+
+name = "example_project"
+version = "1.0.0"
+
+# Local project (no download needed)
+source_remote = ""
+remote_type = "local"
+local_path = "tests/example_project"
+
+# Build configuration
+package_dir = "example_project"
+source_dir = "."
+
+# No special build commands needed
+post_download_cmds = []
+pre_make_cmds = []
+make_cmd = "make"
+post_make_cmds = []
+
+[compilation]
+optimization_levels = ["O2"]
+base_flags = ["-g", "-fno-inline", "-fno-builtin", "-save-temps=obj"]
+emit_preprocessed = true
+c_compiler = "cc"

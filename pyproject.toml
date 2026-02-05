@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "decbench"
+version = "0.1.0"
+description = "Benchmarking suite for evaluating decompiler performance"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "DecBench Team"}
+]
+keywords = ["decompiler", "benchmark", "reverse-engineering", "binary-analysis"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Disassemblers",
+]
+
+dependencies = [
+    "pydantic>=2.0",
+    "toml>=0.10",
+    "tqdm>=4.0",
+    "networkx>=3.0",
+    "pyelftools>=0.29",
+    "cfgutils>=1.10.2",
+    "pyjoern>=1.2.18",
+    "click>=8.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "ruff>=0.1",
+    "mypy>=1.0",
+]
+angr = [
+    "angr>=9.2",
+]
+
+[project.scripts]
+decbench = "decbench.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/decbench/decbench"
+Repository = "https://github.com/decbench/decbench"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --cov=decbench"

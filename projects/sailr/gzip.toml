@@ -1,0 +1,19 @@
+# DecBench Project Configuration: GNU Gzip
+
+name = "gzip"
+version = "v1.12"
+
+source_remote = "https://git.savannah.gnu.org/git/gzip.git"
+remote_type = "git"
+
+package_dir = "gzip"
+source_dir = ""
+
+post_download_cmds = ["./bootstrap"]
+pre_make_cmds = ["./configure --quiet"]
+make_cmd = "make"
+
+[compilation]
+optimization_levels = ["O2"]
+base_flags = ["-g", "-fno-inline", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"
