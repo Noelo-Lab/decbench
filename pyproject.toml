@@ -35,6 +35,7 @@ dependencies = [
     "pyjoern>=1.2.18",
     "click>=8.0",
     "rich>=13.0",
+    "angr"
 ]
 
 [project.optional-dependencies]
@@ -44,9 +45,6 @@ dev = [
     "black>=23.0",
     "ruff>=0.1",
     "mypy>=1.0",
-]
-angr = [
-    "angr>=9.2",
 ]
 
 [project.scripts]

@@ -145,3 +145,4 @@ dmypy.json
 workspace/
 testing/
 /results/
+/results*
