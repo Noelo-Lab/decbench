@@ -1,12 +1,12 @@
-"""Graph Edit Distance metric for CFG similarity."""
+"""Graph Edit Distance metric for structural correctness."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from decbench.metrics.base import Metric, MetricConfig
 from decbench.metrics.registry import register_metric
-from decbench.models.metrics import AggregationType, MetricCategory, MetricValue
+from decbench.models.metrics import AggregationType, MetricValue
 
 if TYPE_CHECKING:
     from networkx import DiGraph
@@ -18,21 +18,18 @@ if TYPE_CHECKING:
 class GEDMetric(Metric):
     """Graph Edit Distance metric.
 
-    Computes the edit distance between source and decompiled CFGs
-    using the cfgutils library.
-
+    Computes the edit distance between source and decompiled CFGs.
     A GED of 0 indicates a perfect structural match.
     """
 
     name = "ged"
-    display_name = "Graph Edit Distance"
+    display_name = "Structural Correctness (GED)"
     description = "CFG edit distance between source and decompiled code"
-    category = MetricCategory.FAITHFUL
 
     weight = 1.0
     lower_is_better = True
     perfect_value = 0.0
-    default_aggregation = AggregationType.PERCENT  # % with GED == 0
+    default_aggregation = AggregationType.PERCENT
 
     requires_source_cfg = True
     requires_decompiled_cfg = True
@@ -42,7 +39,6 @@ class GEDMetric(Metric):
         self._vj_ged = None
 
     def _get_vj_ged(self):  # type: ignore
-        """Lazy load cfgutils similarity function."""
         if self._vj_ged is None:
             try:
                 from cfgutils.similarity import vj_ged
@@ -59,18 +55,8 @@ class GEDMetric(Metric):
         decompiled: FunctionDecompilation,
         source_cfg: DiGraph | None = None,
         decompiled_cfg: DiGraph | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> MetricValue:
-        """Compute GED for a single function.
-
-        Args:
-            decompiled: The decompiled function
-            source_cfg: CFG from source code
-            decompiled_cfg: CFG from decompiled code
-
-        Returns:
-            MetricValue with the GED value
-        """
         if source_cfg is None or decompiled_cfg is None:
             return MetricValue(
                 value=float("inf"),
@@ -80,10 +66,8 @@ class GEDMetric(Metric):
         vj_ged = self._get_vj_ged()
 
         try:
-            # Compute GED
             ged_value = vj_ged(source_cfg, decompiled_cfg)
 
-            # Compute graph sizes for context
             source_size = source_cfg.number_of_nodes() + source_cfg.number_of_edges()
             decomp_size = decompiled_cfg.number_of_nodes() + decompiled_cfg.number_of_edges()
 
@@ -105,57 +89,3 @@ class GEDMetric(Metric):
                 value=float("inf"),
                 metadata={"error": str(e)},
             )
-
-
-@register_metric("ged_normalized")
-class NormalizedGEDMetric(GEDMetric):
-    """Normalized Graph Edit Distance metric.
-
-    GED normalized by the maximum possible graph size,
-    giving a value between 0 and 1.
-    """
-
-    name = "ged_normalized"
-    display_name = "Normalized GED"
-    description = "GED normalized by graph size"
-    category = MetricCategory.FAITHFUL
-
-    weight = 0.5
-    lower_is_better = True
-    perfect_value = 0.0
-    default_aggregation = AggregationType.MEAN
-
-    def compute_for_function(
-        self,
-        decompiled: FunctionDecompilation,
-        source_cfg: DiGraph | None = None,
-        decompiled_cfg: DiGraph | None = None,
-        **kwargs,
-    ) -> MetricValue:
-        """Compute normalized GED."""
-        # Get raw GED first
-        raw_result = super().compute_for_function(
-            decompiled, source_cfg, decompiled_cfg, **kwargs
-        )
-
-        if raw_result.value == float("inf"):
-            return raw_result
-
-        # Normalize by max graph size
-        source_size = raw_result.metadata.get("source_size", 0)
-        decomp_size = raw_result.metadata.get("decompiled_size", 0)
-        max_size = max(source_size, decomp_size)
-
-        if max_size == 0:
-            normalized = 0.0
-        else:
-            normalized = raw_result.value / max_size
-
-        return MetricValue(
-            value=normalized,
-            raw_value=raw_result.value,
-            metadata={
-                **raw_result.metadata,
-                "max_size": max_size,
-            },
-        )

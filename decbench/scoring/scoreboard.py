@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from decbench.models.metrics import MetricCategory
 from decbench.models.scoreboard import (
-    CategoryBreakdown,
     DecompilerScore,
+    MetricScore,
     Scoreboard,
 )
-from decbench.scoring.aggregator import AggregatedResults, compute_category_score
+from decbench.scoring.aggregator import AggregatedResults
 
 
 def build_scoreboard(
@@ -20,18 +19,7 @@ def build_scoreboard(
     decompilers: list[str] | None = None,
     name: str = "DecBench Scoreboard",
 ) -> Scoreboard:
-    """Build a scoreboard from aggregated results.
-
-    Args:
-        aggregated: Aggregated evaluation results
-        projects: List of project names included
-        optimization_levels: Optimization levels included
-        decompilers: Decompilers to include (None for all)
-        name: Name for the scoreboard
-
-    Returns:
-        Complete Scoreboard ready for display
-    """
+    """Build a scoreboard from aggregated results."""
     if decompilers is None:
         decompilers = aggregated.decompilers
 
@@ -41,45 +29,64 @@ def build_scoreboard(
         projects_evaluated=projects or [],
         optimization_levels=optimization_levels or [],
         decompilers=decompilers,
+        metrics=aggregated.metrics,
         total_functions=aggregated.total_functions,
         total_binaries=aggregated.total_binaries,
     )
 
-    # Build category breakdowns
-    for category in MetricCategory:
-        breakdown = CategoryBreakdown(category=category)
-
-        for dec_name in decompilers:
-            if dec_name not in aggregated.by_decompiler:
-                continue
-
-            cat_score = compute_category_score(aggregated, dec_name, category)
-            breakdown.scores[dec_name] = cat_score
-
-        # Compute rankings
-        breakdown.compute_rankings()
-
-        scoreboard.category_breakdowns[category] = breakdown
-
-    # Build decompiler scores
+    # Build per-decompiler scores
     for dec_name in decompilers:
+        if dec_name not in aggregated.by_decompiler:
+            continue
+
+        dec_metrics = aggregated.by_decompiler[dec_name]
+
         dec_score = DecompilerScore(
             name=dec_name,
             total_functions_evaluated=aggregated.total_functions,
             total_binaries_evaluated=aggregated.total_binaries,
         )
 
-        # Add category scores
-        for category in MetricCategory:
-            if category in scoreboard.category_breakdowns:
-                breakdown = scoreboard.category_breakdowns[category]
-                if dec_name in breakdown.scores:
-                    dec_score.category_scores[category] = breakdown.scores[dec_name]
+        # Per-metric scores
+        for metric_name, agg_metric in dec_metrics.items():
+            ms = MetricScore(
+                metric_name=metric_name,
+                decompiler_name=dec_name,
+                perfect_count=agg_metric.perfect_count,
+                total_count=agg_metric.total_count,
+                perfect_percentage=agg_metric.perfect_percentage,
+                mean=agg_metric.mean,
+                median=agg_metric.median,
+            )
+            dec_score.metric_scores[metric_name] = ms
 
-        # Compute overall score
-        dec_score.compute_overall_score(scoreboard.category_weights)
+        # Compute Overall: functions that are perfect on ALL metrics
+        per_func = aggregated.per_function.get(dec_name, {})
+        all_metric_names = aggregated.metrics
+
+        overall_perfect = 0
+        overall_total = len(per_func)
+
+        for func_key, metric_perfects in per_func.items():
+            all_perfect = all(
+                metric_perfects.get(m, False) for m in all_metric_names
+            )
+            if all_perfect:
+                overall_perfect += 1
+
+        dec_score.overall_perfect_count = overall_perfect
+        dec_score.overall_total_count = overall_total
+        dec_score.overall_perfect_percentage = (
+            (overall_perfect / overall_total * 100) if overall_total > 0 else 0.0
+        )
 
         scoreboard.decompiler_scores[dec_name] = dec_score
+
+    # Assign ranks per metric
+    for metric_name in aggregated.metrics:
+        rankings = scoreboard.get_metric_rankings(metric_name)
+        for rank, (dec_name, _) in enumerate(rankings, 1):
+            scoreboard.decompiler_scores[dec_name].metric_scores[metric_name].rank = rank
 
     # Assign overall ranks
     overall_rankings = scoreboard.get_overall_rankings()
@@ -90,67 +97,11 @@ def build_scoreboard(
 
 
 def render_scoreboard_text(scoreboard: Scoreboard) -> str:
-    """Render scoreboard as formatted text for terminal display.
-
-    Args:
-        scoreboard: The scoreboard to render
-
-    Returns:
-        Formatted text string
-    """
-    lines = []
-    width = 60
-
-    lines.append("=" * width)
-    lines.append(f"  {scoreboard.name}")
-    lines.append(f"  Generated: {scoreboard.generated_at.strftime('%Y-%m-%d %H:%M')}")
-    lines.append(f"  Functions: {scoreboard.total_functions:,}")
-    lines.append(f"  Binaries: {scoreboard.total_binaries:,}")
-    lines.append("=" * width)
-    lines.append("")
-
-    # Render each category
-    for category in MetricCategory:
-        if category not in scoreboard.category_breakdowns:
-            continue
-
-        breakdown = scoreboard.category_breakdowns[category]
-
-        lines.append(f"{category.value.upper()}:")
-        lines.append("-" * 40)
-
-        for i, (dec_name, score) in enumerate(breakdown.rankings):
-            cat_score = breakdown.scores[dec_name]
-            display = cat_score.headline_display or f"{score:.2f}"
-
-            rank_marker = "→" if i == 0 else " "
-            lines.append(f"  {rank_marker} {dec_name:20} {display:>15}")
-
-        lines.append("")
-
-    # Overall rankings
-    lines.append("OVERALL:")
-    lines.append("-" * 40)
-
-    for i, (dec_name, score) in enumerate(scoreboard.get_overall_rankings()):
-        rank_marker = "→" if i == 0 else " "
-        lines.append(f"  {rank_marker} {dec_name:20} {score:>15.2f}")
-
-    lines.append("")
-    lines.append("=" * width)
-
-    return "\n".join(lines)
+    return scoreboard.render_text()
 
 
 def render_scoreboard_markdown(scoreboard: Scoreboard) -> str:
-    """Render scoreboard as Markdown for documentation.
-
-    Args:
-        scoreboard: The scoreboard to render
-
-    Returns:
-        Markdown string
-    """
+    """Render scoreboard as Markdown."""
     lines = []
 
     lines.append(f"# {scoreboard.name}")
@@ -160,35 +111,24 @@ def render_scoreboard_markdown(scoreboard: Scoreboard) -> str:
     lines.append(f"**Binaries evaluated:** {scoreboard.total_binaries:,}")
     lines.append("")
 
-    # Category tables
-    for category in MetricCategory:
-        if category not in scoreboard.category_breakdowns:
-            continue
-
-        breakdown = scoreboard.category_breakdowns[category]
-
-        lines.append(f"## {category.value.title()}")
+    for metric_name in scoreboard.metrics:
+        lines.append(f"## {metric_name}")
         lines.append("")
-        lines.append("| Rank | Decompiler | Score |")
-        lines.append("|------|------------|-------|")
+        lines.append("| Rank | Decompiler | Perfect % |")
+        lines.append("|------|------------|-----------|")
 
-        for i, (dec_name, score) in enumerate(breakdown.rankings, 1):
-            cat_score = breakdown.scores[dec_name]
-            display = cat_score.headline_display or f"{score:.2f}"
-            lines.append(
-                f"| {i} | {dec_name} | {display} |"
-            )
-
+        rankings = scoreboard.get_metric_rankings(metric_name)
+        for i, (dec_name, pct) in enumerate(rankings, 1):
+            lines.append(f"| {i} | {dec_name} | {pct:.1f}% |")
         lines.append("")
 
-    # Overall
-    lines.append("## Overall Rankings")
+    lines.append("## Overall (Perfect on All Metrics)")
     lines.append("")
-    lines.append("| Rank | Decompiler | Score |")
-    lines.append("|------|------------|-------|")
+    lines.append("| Rank | Decompiler | Perfect % |")
+    lines.append("|------|------------|-----------|")
 
-    for i, (dec_name, score) in enumerate(scoreboard.get_overall_rankings(), 1):
-        lines.append(f"| {i} | {dec_name} | {score:.2f} |")
+    for i, (dec_name, pct) in enumerate(scoreboard.get_overall_rankings(), 1):
+        lines.append(f"| {i} | {dec_name} | {pct:.1f}% |")
 
     lines.append("")
 

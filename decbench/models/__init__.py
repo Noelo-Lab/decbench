@@ -9,31 +9,25 @@ from decbench.models.decompilation import (
 from decbench.models.metrics import (
     MetricResult,
     MetricValue,
-    CategoryScore,
     FunctionMetrics,
 )
 from decbench.models.scoreboard import (
     Scoreboard,
     DecompilerScore,
-    CategoryBreakdown,
+    MetricScore,
 )
 
 __all__ = [
-    # Project models
     "Project",
     "ProjectConfig",
     "CompilationConfig",
-    # Decompilation models
     "DecompilationResult",
     "FunctionDecompilation",
     "DecompilerMetadata",
-    # Metric models
     "MetricResult",
     "MetricValue",
-    "CategoryScore",
     "FunctionMetrics",
-    # Scoreboard models
     "Scoreboard",
     "DecompilerScore",
-    "CategoryBreakdown",
+    "MetricScore",
 ]

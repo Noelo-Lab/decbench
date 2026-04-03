@@ -17,19 +17,15 @@ from decbench.models.decompilation import (
     FunctionDecompilation,
 )
 from decbench.models.metrics import (
-    MetricCategory,
     MetricValue,
     MetricResult,
-    CategoryScore,
 )
-from decbench.models.scoreboard import Scoreboard, DecompilerScore
+from decbench.models.scoreboard import Scoreboard, DecompilerScore, MetricScore
 
 
 class TestProjectModels:
-    """Tests for project-related models."""
 
     def test_project_config_creation(self) -> None:
-        """Test creating a project configuration."""
         config = ProjectConfig(
             name="test_project",
             version="1.0",
@@ -40,14 +36,12 @@ class TestProjectModels:
         assert config.remote_type == RemoteType.LOCAL
 
     def test_compilation_config_defaults(self) -> None:
-        """Test compilation config default values."""
         config = CompilationConfig()
         assert OptimizationLevel.O2 in config.optimization_levels
         assert "-g" in config.base_flags
         assert config.emit_preprocessed is True
 
     def test_project_from_toml(self) -> None:
-        """Test loading project from TOML."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
             f.write('''
 name = "test"
@@ -65,7 +59,6 @@ optimization_levels = ["O2"]
             assert project.config.version == "1.0"
 
     def test_project_to_toml(self) -> None:
-        """Test saving project to TOML."""
         project = Project(
             config=ProjectConfig(name="test", source_dir="src"),
             compilation=CompilationConfig(),
@@ -77,16 +70,13 @@ optimization_levels = ["O2"]
 
             assert path.exists()
 
-            # Load it back
             loaded = Project.from_toml(path)
             assert loaded.name == project.name
 
 
 class TestDecompilationModels:
-    """Tests for decompilation-related models."""
 
     def test_function_decompilation(self) -> None:
-        """Test FunctionDecompilation model."""
         func = FunctionDecompilation(
             name="main",
             address=0x1000,
@@ -100,7 +90,6 @@ class TestDecompilationModels:
         assert func.goto_count == 0
 
     def test_function_with_gotos(self) -> None:
-        """Test function with gotos."""
         func = FunctionDecompilation(
             name="test",
             address=0x2000,
@@ -111,7 +100,6 @@ class TestDecompilationModels:
         assert func.goto_count == 1
 
     def test_decompilation_result(self) -> None:
-        """Test DecompilationResult model."""
         result = DecompilationResult(
             binary_path=Path("/test/binary.o"),
             binary_name="binary",
@@ -132,10 +120,8 @@ class TestDecompilationModels:
 
 
 class TestMetricModels:
-    """Tests for metric-related models."""
 
     def test_metric_value(self) -> None:
-        """Test MetricValue model."""
         value = MetricValue(value=0.0, metadata={"test": True})
         assert value.is_perfect is True
 
@@ -143,7 +129,6 @@ class TestMetricModels:
         assert value2.is_perfect is False
 
     def test_metric_result_aggregates(self) -> None:
-        """Test MetricResult aggregate computation."""
         result = MetricResult(
             metric_name="test",
             decompiler_name="dec",
@@ -160,60 +145,100 @@ class TestMetricModels:
         assert result.perfect_count == 2
         assert result.perfect_percentage == pytest.approx(66.67, rel=0.01)
 
-    def test_category_score(self) -> None:
-        """Test CategoryScore model."""
-        score = CategoryScore(
-            category=MetricCategory.FAITHFUL,
-            decompiler_name="test",
-            metric_scores={"ged": 80.0, "ged_norm": 0.9},
-            metric_weights={"ged": 1.0, "ged_norm": 0.5},
-        )
-        score.compute_weighted_score()
-
-        # Weighted: (80 * 1.0 + 0.9 * 0.5) / (1.0 + 0.5)
-        expected = (80.0 + 0.45) / 1.5
-        assert score.weighted_score == pytest.approx(expected)
-
 
 class TestScoreboardModels:
-    """Tests for scoreboard-related models."""
 
     def test_scoreboard_creation(self) -> None:
-        """Test Scoreboard creation."""
         scoreboard = Scoreboard(
             name="Test Scoreboard",
             projects_evaluated=["project1"],
             decompilers=["dec1", "dec2"],
+            metrics=["ged", "type_match", "byte_match"],
             total_functions=100,
         )
         assert scoreboard.name == "Test Scoreboard"
         assert len(scoreboard.decompilers) == 2
+        assert len(scoreboard.metrics) == 3
 
     def test_decompiler_score(self) -> None:
-        """Test DecompilerScore model."""
         dec_score = DecompilerScore(
             name="test_dec",
-            category_scores={
-                MetricCategory.FAITHFUL: CategoryScore(
-                    category=MetricCategory.FAITHFUL,
+            metric_scores={
+                "ged": MetricScore(
+                    metric_name="ged",
                     decompiler_name="test_dec",
-                    weighted_score=75.0,
+                    perfect_count=50,
+                    total_count=100,
+                    perfect_percentage=50.0,
+                ),
+            },
+            overall_perfect_count=30,
+            overall_total_count=100,
+            overall_perfect_percentage=30.0,
+        )
+        assert dec_score.overall_perfect_percentage == 30.0
+        assert dec_score.metric_scores["ged"].perfect_percentage == 50.0
+
+    def test_scoreboard_rankings(self) -> None:
+        scoreboard = Scoreboard(
+            name="Test",
+            metrics=["ged"],
+            decompilers=["d1", "d2"],
+            decompiler_scores={
+                "d1": DecompilerScore(
+                    name="d1",
+                    metric_scores={
+                        "ged": MetricScore(
+                            metric_name="ged",
+                            decompiler_name="d1",
+                            perfect_percentage=80.0,
+                        ),
+                    },
+                    overall_perfect_percentage=70.0,
+                ),
+                "d2": DecompilerScore(
+                    name="d2",
+                    metric_scores={
+                        "ged": MetricScore(
+                            metric_name="ged",
+                            decompiler_name="d2",
+                            perfect_percentage=60.0,
+                        ),
+                    },
+                    overall_perfect_percentage=50.0,
                 ),
             },
         )
-        dec_score.compute_overall_score()
 
-        assert dec_score.overall_score == 75.0
+        ged_rankings = scoreboard.get_metric_rankings("ged")
+        assert ged_rankings[0] == ("d1", 80.0)
+        assert ged_rankings[1] == ("d2", 60.0)
 
-    def test_scoreboard_to_display_dict(self) -> None:
-        """Test scoreboard display conversion."""
+        overall_rankings = scoreboard.get_overall_rankings()
+        assert overall_rankings[0] == ("d1", 70.0)
+
+    def test_scoreboard_render_text(self) -> None:
         scoreboard = Scoreboard(
-            name="Test",
-            projects_evaluated=["p1"],
-            decompilers=["d1"],
+            name="Test Scoreboard",
+            metrics=["ged"],
+            decompilers=["dec1"],
             total_functions=50,
+            decompiler_scores={
+                "dec1": DecompilerScore(
+                    name="dec1",
+                    metric_scores={
+                        "ged": MetricScore(
+                            metric_name="ged",
+                            decompiler_name="dec1",
+                            perfect_percentage=75.0,
+                        ),
+                    },
+                    overall_perfect_percentage=60.0,
+                ),
+            },
         )
 
-        display = scoreboard.to_display_dict()
-        assert display["name"] == "Test"
-        assert display["total_functions"] == 50
+        text = scoreboard.render_text()
+        assert "Test Scoreboard" in text
+        assert "GED" in text
+        assert "dec1" in text

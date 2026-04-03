@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from decbench.metrics.registry import MetricRegistry
-from decbench.models.metrics import MetricCategory, MetricResult
+
+logger = logging.getLogger(__name__)
+from decbench.models.metrics import MetricResult
 from decbench.models.project import OptimizationLevel, Project
 from decbench.utils.cfg import extract_cfgs_from_source, extract_cfgs_from_decompilation
 
@@ -24,18 +27,7 @@ def evaluate_decompilation(
     metrics: list[str] | None = None,
     parallel: bool = False,
 ) -> dict[str, MetricResult]:
-    """Evaluate a single decompilation result.
-
-    Args:
-        decompilation: Decompilation to evaluate
-        source_cfgs: Source CFGs keyed by function name
-        metrics: List of metric names to compute
-        parallel: Whether to compute metrics in parallel
-
-    Returns:
-        MetricResult keyed by metric name
-    """
-    # Get metrics to compute
+    """Evaluate a single decompilation result."""
     if metrics is None:
         metrics = MetricRegistry.list_registered()
 
@@ -49,13 +41,16 @@ def evaluate_decompilation(
     if needs_decomp_cfg:
         decompiled_cfgs = extract_cfgs_from_decompilation(decompilation)
 
-    # Compute each metric
     for metric_name in metrics:
         try:
             metric = MetricRegistry.get(metric_name)
 
-            # Skip if missing required CFGs
             if metric.requires_source_cfg and source_cfgs is None:
+                logger.warning(
+                    "Skipping metric '%s' for %s: source CFGs not available",
+                    metric_name,
+                    decompilation.binary_name,
+                )
                 continue
 
             result = metric.compute_for_binary(
@@ -66,7 +61,6 @@ def evaluate_decompilation(
             results[metric_name] = result
 
         except Exception as e:
-            # Create error result
             results[metric_name] = MetricResult(
                 metric_name=metric_name,
                 decompiler_name=decompilation.decompiler.decompiler_name,
@@ -86,25 +80,10 @@ def evaluate_project(
     parallel: bool = True,
     workers: int | None = None,
 ) -> dict[str, dict[str, dict[str, MetricResult]]]:
-    """Evaluate all decompilations for a project.
-
-    Args:
-        project: Project being evaluated
-        decompilations: Decompilation results (binary -> decompiler -> result)
-        output_dir: Directory for output files
-        optimization: Optimization level
-        metrics: Metrics to compute
-        parallel: Run in parallel
-        workers: Worker count
-
-    Returns:
-        Results: binary -> decompiler -> metric -> result
-    """
-    # Convert optimization level
+    """Evaluate all decompilations for a project."""
     if isinstance(optimization, str):
         optimization = OptimizationLevel(optimization)
 
-    # Create output directory
     eval_output_dir = output_dir / optimization.value / project.name / "evaluated"
     eval_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -113,14 +92,24 @@ def evaluate_project(
     # Get source CFGs for each binary
     source_cfgs_by_binary: dict[str, dict[str, DiGraph]] = {}
 
+    logger.debug("preprocessed_sources keys: %s", list(project.preprocessed_sources.keys()))
     if optimization in project.preprocessed_sources:
-        for name, i_path in project.preprocessed_sources[optimization].items():
+        sources = project.preprocessed_sources[optimization]
+        logger.debug("Found %d preprocessed sources for %s", len(sources), optimization)
+        for name, i_path in sources.items():
             try:
-                source_cfgs_by_binary[name] = extract_cfgs_from_source(i_path)
-            except Exception:
+                cfgs = extract_cfgs_from_source(i_path)
+                source_cfgs_by_binary[name] = cfgs
+                if not cfgs:
+                    logger.warning("Source CFG extraction returned empty for %s (%s)", name, i_path)
+                else:
+                    logger.debug("Extracted %d CFGs from %s", len(cfgs), name)
+            except Exception as e:
+                logger.warning("Source CFG extraction failed for %s: %s", name, e)
                 source_cfgs_by_binary[name] = {}
+    else:
+        logger.warning("No preprocessed sources for %s/%s", project.name, optimization)
 
-    # Evaluate each binary/decompiler combination
     if parallel:
         workers = workers or cpu_count()
 
@@ -136,7 +125,7 @@ def evaluate_project(
                         decompilation,
                         source_cfgs,
                         metrics,
-                        False,  # No nested parallelism
+                        False,
                     )
                     futures[future] = (binary_name, dec_name)
 
@@ -147,7 +136,7 @@ def evaluate_project(
                     if binary_name not in results:
                         results[binary_name] = {}
                     results[binary_name][dec_name] = metric_results
-                except Exception as e:
+                except Exception:
                     if binary_name not in results:
                         results[binary_name] = {}
                     results[binary_name][dec_name] = {}
@@ -163,7 +152,6 @@ def evaluate_project(
                     metrics,
                 )
 
-    # Save results to TOML
     _save_evaluation_results(results, eval_output_dir)
 
     return results
@@ -179,22 +167,18 @@ def _save_evaluation_results(
     for binary_name, dec_results in results.items():
         output_file = output_dir / f"{binary_name}.toml"
 
-        data = {"binary": binary_name}
+        data: dict[str, Any] = {"binary": binary_name}
 
         for dec_name, metric_results in dec_results.items():
             for metric_name, result in metric_results.items():
                 key = f"{dec_name}.{metric_name}"
 
-                # Store aggregates
                 data[f"{key}.total"] = result.total
                 data[f"{key}.mean"] = result.mean
                 data[f"{key}.median"] = result.median
                 data[f"{key}.perfect_count"] = result.perfect_count
-                data[f"{key}.perfect_percentage"] = (
-                    result.perfect_percentage
-                )
+                data[f"{key}.perfect_percentage"] = result.perfect_percentage
 
-                # Store per-function results
                 for func_name, value in result.function_results.items():
                     data[f"{key}.functions.{func_name}"] = value.value
 
@@ -216,20 +200,7 @@ def evaluate_projects(
 ) -> dict[
     str, dict[OptimizationLevel, dict[str, dict[str, dict[str, MetricResult]]]]
 ]:
-    """Evaluate multiple projects.
-
-    Args:
-        projects: List of projects
-        decompilations: All decompilation results
-        output_dir: Output directory
-        optimization_levels: Levels to evaluate
-        metrics: Metrics to compute
-        parallel: Run in parallel
-        workers: Worker count
-
-    Returns:
-        Nested dict: project -> opt -> binary -> decompiler -> metric -> result
-    """
+    """Evaluate multiple projects."""
     if optimization_levels is None:
         optimization_levels = [OptimizationLevel.O2]
 

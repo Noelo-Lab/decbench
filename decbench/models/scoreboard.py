@@ -8,45 +8,21 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from decbench.models.metrics import CategoryScore, MetricCategory
 
+class MetricScore(BaseModel):
+    """Score for a single metric for one decompiler."""
 
-class CategoryBreakdown(BaseModel):
-    """Detailed breakdown for a single category."""
+    metric_name: str = Field(..., description="Name of the metric")
+    decompiler_name: str = Field(..., description="Decompiler name")
 
-    category: MetricCategory = Field(..., description="The category")
+    perfect_count: int = Field(default=0, description="Functions with perfect score")
+    total_count: int = Field(default=0, description="Total functions evaluated")
+    perfect_percentage: float = Field(default=0.0, description="Percentage with perfect score")
 
-    # Per-decompiler scores
-    scores: dict[str, CategoryScore] = Field(
-        default_factory=dict,
-        description="Category scores keyed by decompiler name",
-    )
+    mean: float = Field(default=0.0, description="Mean metric value")
+    median: float = Field(default=0.0, description="Median metric value")
 
-    # Rankings
-    rankings: list[tuple[str, float]] = Field(
-        default_factory=list,
-        description="Decompilers ranked by score [(name, score), ...]",
-    )
-
-    # Category-specific display
-    headline_format: str = Field(
-        default="{value:.1f}%",
-        description="Format string for headline display",
-    )
-
-    def compute_rankings(self) -> None:
-        """Compute rankings from scores."""
-        # Sort by weighted score (higher is better for final scores)
-        ranked = sorted(
-            self.scores.items(),
-            key=lambda x: x[1].weighted_score,
-            reverse=True,
-        )
-        self.rankings = [(name, score.weighted_score) for name, score in ranked]
-
-        # Assign ranks
-        for i, (name, _) in enumerate(self.rankings):
-            self.scores[name].rank = i + 1
+    rank: int | None = Field(default=None, description="Rank among decompilers")
 
 
 class DecompilerScore(BaseModel):
@@ -55,223 +31,110 @@ class DecompilerScore(BaseModel):
     name: str = Field(..., description="Decompiler name")
     version: str | None = Field(default=None, description="Decompiler version")
 
-    # Category scores
-    category_scores: dict[MetricCategory, CategoryScore] = Field(
+    metric_scores: dict[str, MetricScore] = Field(
         default_factory=dict,
-        description="Scores for each category",
+        description="Scores for each metric",
     )
 
-    # Overall score
-    overall_score: float = Field(
-        default=0.0,
-        description="Combined overall score",
-    )
-    overall_rank: int | None = Field(
-        default=None,
-        description="Overall rank among decompilers",
-    )
-
-    # Summary statistics
-    total_functions_evaluated: int = Field(
+    overall_perfect_count: int = Field(
         default=0,
-        description="Total functions evaluated",
+        description="Functions perfect on ALL metrics",
     )
-    total_binaries_evaluated: int = Field(
-        default=0,
-        description="Total binaries evaluated",
-    )
-
-    # Metadata
-    evaluation_time_seconds: float = Field(
+    overall_total_count: int = Field(default=0, description="Total functions evaluated")
+    overall_perfect_percentage: float = Field(
         default=0.0,
-        description="Total evaluation time",
+        description="Percentage of functions perfect on all metrics",
     )
+    overall_rank: int | None = Field(default=None, description="Overall rank")
 
-    def compute_overall_score(
-        self,
-        category_weights: dict[MetricCategory, float] | None = None,
-    ) -> None:
-        """Compute overall score from category scores."""
-        if category_weights is None:
-            # Equal weights by default
-            category_weights = {cat: 1.0 for cat in MetricCategory}
-
-        total_weight = sum(
-            category_weights.get(cat, 0.0)
-            for cat in self.category_scores
-        )
-
-        if total_weight == 0:
-            self.overall_score = 0.0
-            return
-
-        weighted_sum = sum(
-            self.category_scores[cat].weighted_score * category_weights.get(cat, 0.0)
-            for cat in self.category_scores
-        )
-        self.overall_score = weighted_sum / total_weight
+    total_functions_evaluated: int = Field(default=0)
+    total_binaries_evaluated: int = Field(default=0)
+    evaluation_time_seconds: float = Field(default=0.0)
 
 
 class Scoreboard(BaseModel):
     """Complete scoreboard with all results."""
 
-    # Identity
-    name: str = Field(
-        default="DecBench Scoreboard",
-        description="Name of this scoreboard",
-    )
-    description: str = Field(
-        default="",
-        description="Description of the benchmark",
-    )
-    version: str = Field(
-        default="1.0",
-        description="Scoreboard format version",
-    )
+    name: str = Field(default="DecBench Scoreboard")
+    description: str = Field(default="")
+    version: str = Field(default="2.0")
 
-    # Timestamp
-    generated_at: datetime = Field(
-        default_factory=datetime.now,
-        description="When the scoreboard was generated",
-    )
+    generated_at: datetime = Field(default_factory=datetime.now)
 
-    # Configuration
-    projects_evaluated: list[str] = Field(
-        default_factory=list,
-        description="List of project names included",
-    )
-    optimization_levels: list[str] = Field(
-        default_factory=list,
-        description="Optimization levels included",
-    )
-    decompilers: list[str] = Field(
-        default_factory=list,
-        description="Decompilers evaluated",
-    )
+    projects_evaluated: list[str] = Field(default_factory=list)
+    optimization_levels: list[str] = Field(default_factory=list)
+    decompilers: list[str] = Field(default_factory=list)
+    metrics: list[str] = Field(default_factory=list)
 
-    # Category configurations
-    category_weights: dict[MetricCategory, float] = Field(
-        default_factory=lambda: {cat: 1.0 for cat in MetricCategory},
-        description="Weights for each category in overall score",
-    )
+    decompiler_scores: dict[str, DecompilerScore] = Field(default_factory=dict)
 
-    # Results
-    decompiler_scores: dict[str, DecompilerScore] = Field(
-        default_factory=dict,
-        description="Complete scores keyed by decompiler name",
-    )
-    category_breakdowns: dict[MetricCategory, CategoryBreakdown] = Field(
-        default_factory=dict,
-        description="Detailed breakdown for each category",
-    )
+    total_functions: int = Field(default=0)
+    total_binaries: int = Field(default=0)
 
-    # Summary statistics
-    total_functions: int = Field(
-        default=0,
-        description="Total unique functions evaluated",
-    )
-    total_binaries: int = Field(
-        default=0,
-        description="Total binaries evaluated",
-    )
+    raw_data_path: Path | None = Field(default=None)
 
-    # Raw data reference
-    raw_data_path: Path | None = Field(
-        default=None,
-        description="Path to raw measurement data",
-    )
-
-    def get_category_rankings(self, category: MetricCategory) -> list[tuple[str, float, str]]:
-        """Get rankings for a category with display strings.
-
-        Returns:
-            List of (decompiler_name, score, display_string) tuples
-        """
-        if category not in self.category_breakdowns:
-            return []
-
-        breakdown = self.category_breakdowns[category]
-        result = []
-
-        for name, score in breakdown.rankings:
-            cat_score = breakdown.scores[name]
-            display = cat_score.headline_display or f"{score:.1f}"
-            result.append((name, score, display))
-
-        return result
+    def get_metric_rankings(self, metric_name: str) -> list[tuple[str, float]]:
+        """Get decompiler rankings for a specific metric (by perfect_percentage)."""
+        ranked = []
+        for dec_name, dec_score in self.decompiler_scores.items():
+            if metric_name in dec_score.metric_scores:
+                ms = dec_score.metric_scores[metric_name]
+                ranked.append((dec_name, ms.perfect_percentage))
+        ranked.sort(key=lambda x: x[1], reverse=True)
+        return ranked
 
     def get_overall_rankings(self) -> list[tuple[str, float]]:
-        """Get overall rankings across all categories."""
+        """Get overall rankings (by overall_perfect_percentage)."""
         ranked = sorted(
             self.decompiler_scores.items(),
-            key=lambda x: x[1].overall_score,
+            key=lambda x: x[1].overall_perfect_percentage,
             reverse=True,
         )
-        return [(name, score.overall_score) for name, score in ranked]
+        return [(name, score.overall_perfect_percentage) for name, score in ranked]
 
     def to_display_dict(self) -> dict[str, Any]:
-        """Convert to a display-friendly dictionary."""
-        result = {
+        result: dict[str, Any] = {
             "name": self.name,
             "generated_at": self.generated_at.isoformat(),
             "projects": self.projects_evaluated,
             "decompilers": self.decompilers,
             "total_functions": self.total_functions,
-            "categories": {},
+            "metrics": {},
         }
 
-        for category in MetricCategory:
-            if category not in self.category_breakdowns:
-                continue
-
-            rankings = self.get_category_rankings(category)
-            result["categories"][category.value] = {
-                "name": category.value.title(),
+        for metric_name in self.metrics:
+            rankings = self.get_metric_rankings(metric_name)
+            result["metrics"][metric_name] = {
+                "name": metric_name,
                 "rankings": [
-                    {"decompiler": name, "score": score, "display": display}
-                    for name, score, display in rankings
+                    {"decompiler": name, "perfect_percentage": pct}
+                    for name, pct in rankings
                 ],
             }
 
         result["overall"] = [
-            {"decompiler": name, "score": score}
-            for name, score in self.get_overall_rankings()
+            {"decompiler": name, "perfect_percentage": pct}
+            for name, pct in self.get_overall_rankings()
         ]
 
         return result
 
     def to_toml(self, path: Path) -> None:
-        """Save scoreboard to TOML file."""
         import toml
 
         data = self.model_dump(mode="json", exclude={"raw_data_path"})
-
-        # Convert enums to strings
-        data["category_weights"] = {
-            k.value if hasattr(k, "value") else k: v
-            for k, v in data.get("category_weights", {}).items()
-        }
 
         with open(path, "w") as f:
             toml.dump(data, f)
 
     @classmethod
     def from_toml(cls, path: Path) -> Scoreboard:
-        """Load scoreboard from TOML file."""
         import toml
 
         data = toml.load(path)
-
-        # Convert string keys back to enums where needed
-        if "category_weights" in data:
-            data["category_weights"] = {
-                MetricCategory(k): v for k, v in data["category_weights"].items()
-            }
-
         return cls(**data)
 
     def render_text(self) -> str:
-        """Render scoreboard as formatted text."""
         lines = []
         lines.append(f"{'=' * 60}")
         lines.append(f"  {self.name}")
@@ -280,17 +143,22 @@ class Scoreboard(BaseModel):
         lines.append(f"{'=' * 60}")
         lines.append("")
 
-        for category in MetricCategory:
-            if category not in self.category_breakdowns:
-                continue
-
-            lines.append(f"{category.value.title()}:")
-            rankings = self.get_category_rankings(category)
-
-            for i, (name, score, display) in enumerate(rankings):
-                prefix = "  " if i > 0 else "  "
-                lines.append(f"{prefix}{name} - {display}")
-
+        for metric_name in self.metrics:
+            lines.append(f"{metric_name.upper()}:")
+            lines.append("-" * 40)
+            rankings = self.get_metric_rankings(metric_name)
+            for i, (dec_name, pct) in enumerate(rankings):
+                marker = ">" if i == 0 else " "
+                lines.append(f"  {marker} {dec_name:20} {pct:>10.1f}%")
             lines.append("")
+
+        lines.append("OVERALL (perfect on all metrics):")
+        lines.append("-" * 40)
+        for i, (dec_name, pct) in enumerate(self.get_overall_rankings()):
+            marker = ">" if i == 0 else " "
+            lines.append(f"  {marker} {dec_name:20} {pct:>10.1f}%")
+
+        lines.append("")
+        lines.append("=" * 60)
 
         return "\n".join(lines)

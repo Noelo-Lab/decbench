@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-DecBench is a benchmarking suite for evaluating decompiler performance. It implements a three-stage pipeline (compile → decompile → evaluate) with pluggable decompilers and metrics.
+DecBench is a benchmarking suite for evaluating decompiler performance. It implements a three-stage pipeline (compile → decompile → evaluate) with pluggable decompilers and three core metrics.
 
 ## Common Commands
 
@@ -26,6 +26,7 @@ decbench run project.toml           # Run full pipeline
 decbench list-decompilers           # Show available decompilers
 decbench list-metrics               # Show available metrics
 decbench evaluate binary.elf        # Evaluate single binary
+decbench report scoreboard.toml     # Generate HTML report
 ```
 
 ## Architecture
@@ -41,23 +42,32 @@ decbench evaluate binary.elf        # Evaluate single binary
 - `metrics/registry.py` - Metric plugins with `@register_metric` decorator
 - `compilers/` - Compiler plugins (GCC)
 
-**Metric Categories** (`decbench/metrics/`):
-- `faithful/` - CFG-based metrics (Graph Edit Distance)
-- `simple/` - Structural metrics (LOC similarity)
-- `correct/` - Correctness metrics (byte matching)
+**Three Metrics** (`decbench/metrics/`):
+- `ged.py` - Structural Correctness: CFG Graph Edit Distance between source and decompiled code
+- `type_match.py` - Type Correctness: Variable type recovery accuracy vs DWARF ground truth
+- `byte_match.py` - Recompilation Bytematch: Assembly similarity after recompiling decompiled code
+
+**Scoring** (`decbench/scoring/`):
+- `aggregator.py` - Aggregates per-function results across binaries, tracks per-function perfects for Overall
+- `scoreboard.py` - Builds Scoreboard with per-metric rankings and Overall (perfect on all 3 metrics)
+
+**Results Rendering** (`decbench/rendering/`):
+- `html.py` - Self-contained HTML report with sections for each metric and Overall
 
 **Data Models** (`decbench/models/`):
 - Pydantic-based models for projects, decompilation results, metrics, and scoreboards
 - Configuration via TOML files
+- No category-based organization - flat metric system
 
 **Data Flow**:
-Project TOML → `Project` → compile → `CompileResult` (binaries + .i files) → decompile → `DecompilationResult` → extract CFGs with pyjoern → compute metrics → `MetricResult` → aggregate → `Scoreboard`
+Project TOML → `Project` → compile → binaries + .i files → decompile → `DecompilationResult` → compute metrics (GED needs CFGs via pyjoern, type_match needs DWARF via pyelftools, byte_match recompiles with gcc) → `MetricResult` → aggregate → `Scoreboard` → HTML report
 
 ## Key Files
 
 - `decbench/cli.py` - Click-based CLI entry point
 - `decbench/config.py` - Global configuration (searches decbench.toml, ~/.config/decbench/config.toml)
 - `tests/example_project/` - Example C project with Makefile for testing
+- `e2e_test_3metrics.py` - End-to-end test with all 3 metrics on coreutils
 
 ## Coding Standards
 

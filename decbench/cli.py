@@ -77,18 +77,13 @@ def run(
     skip_decompile,
     skip_evaluate,
 ) -> None:
-    """Run the full benchmark pipeline on project(s).
-
-    PROJECTS: Paths to project TOML configuration files.
-    """
+    """Run the full benchmark pipeline on project(s)."""
     from rich.console import Console
-    from rich.progress import Progress
 
     from decbench.pipeline.executor import PipelineConfig, PipelineExecutor
 
     console = Console()
 
-    # Load projects
     project_list = []
     for project_path in projects:
         try:
@@ -103,7 +98,6 @@ def run(
         console.print("[yellow]No projects specified. Use --help for usage.[/yellow]")
         return
 
-    # Configure pipeline
     config = PipelineConfig(
         output_dir=Path(output),
         optimization_levels=[OptimizationLevel(o) for o in opt_level],
@@ -115,7 +109,6 @@ def run(
         skip_evaluate=skip_evaluate,
     )
 
-    # Run pipeline
     executor = PipelineExecutor(config)
 
     console.print("\n[bold]Running DecBench pipeline...[/bold]\n")
@@ -123,7 +116,6 @@ def run(
     try:
         results = executor.run(project_list)
 
-        # Display results
         console.print("\n[bold green]Pipeline complete![/bold green]\n")
 
         if results.scoreboard:
@@ -180,7 +172,6 @@ def evaluate(binary, source, output, decompiler) -> None:
             Path(source) if source else None,
         )
 
-        # Display results
         for binary_name, dec_results in results.evaluate_results.items():
             console.print(f"\n[bold]{binary_name}[/bold]")
 
@@ -203,10 +194,9 @@ def list_decompilers() -> None:
 
     from decbench.decompilers.registry import DecompilerRegistry
 
-    # Import decompiler modules to register them
-    import decbench.decompilers.angr_dec
-    import decbench.decompilers.ghidra_dec
-    import decbench.decompilers.ida_dec
+    import decbench.decompilers.angr_dec  # noqa: F401
+    import decbench.decompilers.ghidra_dec  # noqa: F401
+    import decbench.decompilers.ida_dec  # noqa: F401
 
     console = Console()
     table = Table(title="Available Decompilers")
@@ -217,11 +207,11 @@ def list_decompilers() -> None:
     for name in DecompilerRegistry.list_registered():
         try:
             dec = DecompilerRegistry.get(name)
-            available = "✓" if dec.is_available() else "✗"
+            available = "Y" if dec.is_available() else "N"
             version = dec.get_version() or "-"
             table.add_row(name, available, version)
         except Exception:
-            table.add_row(name, "✗", "-")
+            table.add_row(name, "N", "-")
 
     console.print(table)
 
@@ -234,23 +224,20 @@ def list_metrics() -> None:
 
     from decbench.metrics.registry import MetricRegistry
 
-    # Import metric modules to register them
-    import decbench.metrics.faithful
-    import decbench.metrics.simple
-    import decbench.metrics.correct
+    # Import to register
+    import decbench.metrics  # noqa: F401
 
     console = Console()
     table = Table(title="Available Metrics")
     table.add_column("Name", style="cyan")
-    table.add_column("Category", style="yellow")
     table.add_column("Description")
 
     for name in MetricRegistry.list_registered():
         try:
             metric = MetricRegistry.get(name)
-            table.add_row(name, metric.category.value, metric.description)
+            table.add_row(name, metric.description)
         except Exception:
-            table.add_row(name, "-", "-")
+            table.add_row(name, "-")
 
     console.print(table)
 
@@ -285,6 +272,29 @@ def show(scoreboard_path, format) -> None:
     elif format == "json":
         import json
         console.print(json.dumps(scoreboard.to_display_dict(), indent=2))
+
+
+@main.command()
+@click.argument("scoreboard_path", type=click.Path(exists=True))
+@click.option(
+    "-o", "--output",
+    type=click.Path(),
+    default="results/report.html",
+    help="Output HTML file path",
+)
+def report(scoreboard_path, output) -> None:
+    """Generate an HTML report from a scoreboard."""
+    from rich.console import Console
+
+    from decbench.models.scoreboard import Scoreboard
+    from decbench.rendering.html import render_html_report
+
+    console = Console()
+
+    scoreboard = Scoreboard.from_toml(Path(scoreboard_path))
+    render_html_report(scoreboard, Path(output))
+
+    console.print(f"Report generated: [bold]{output}[/bold]")
 
 
 @main.command()

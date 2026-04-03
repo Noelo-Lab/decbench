@@ -35,7 +35,9 @@ dependencies = [
     "pyjoern>=1.2.18",
     "click>=8.0",
     "rich>=13.0",
-    "angr"
+    "angr",
+    "capstone>=5.0",
+    "diff-match-patch>=20230430",
 ]
 
 [project.optional-dependencies]
