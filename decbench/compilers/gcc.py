@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import struct
 import subprocess
 from pathlib import Path
 
@@ -157,6 +158,22 @@ class GCCCompiler(Compiler):
                 error_message=str(e),
             )
 
+    @staticmethod
+    def _is_elf_executable(path: Path) -> bool:
+        """Check if a file is a linked ELF binary (executable or shared object)."""
+        try:
+            with open(path, "rb") as f:
+                magic = f.read(4)
+                if magic != b"\x7fELF":
+                    return False
+                # e_type is at offset 16, 2 bytes little-endian
+                f.seek(16)
+                e_type = struct.unpack("<H", f.read(2))[0]
+                # ET_EXEC = 2 (executable), ET_DYN = 3 (shared/PIE)
+                return e_type in (2, 3)
+        except (OSError, struct.error):
+            return False
+
     def compile_project(
         self,
         project_dir: Path,
@@ -166,11 +183,19 @@ class GCCCompiler(Compiler):
         pre_commands: list[str] | None = None,
         make_command: str | None = None,
         extra_flags: list[str] | None = None,
+        project_root: Path | None = None,
     ) -> list[CompileResult]:
         """Compile an entire project."""
         project_dir = Path(project_dir)
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # project_root is where configure/make run from (the repo root).
+        # project_dir is where source files live (may be a subdirectory).
+        if project_root is None:
+            project_root = project_dir
+        else:
+            project_root = Path(project_root)
 
         results = []
 
@@ -183,14 +208,14 @@ class GCCCompiler(Compiler):
         env["CFLAGS"] = cflags
         env["CC"] = self.gcc_path
 
-        # Run pre-commands (e.g., ./configure)
+        # Run pre-commands (e.g., ./configure) from the project root
         if pre_commands:
             for cmd in pre_commands:
                 try:
                     subprocess.run(
                         cmd,
                         shell=True,
-                        cwd=project_dir,
+                        cwd=project_root,
                         env=env,
                         timeout=600,
                         check=True,
@@ -205,36 +230,55 @@ class GCCCompiler(Compiler):
                 subprocess.run(
                     make_command,
                     shell=True,
-                    cwd=project_dir,
+                    cwd=project_root,
                     env=env,
                     timeout=1800,  # 30 min timeout for large projects
                     check=True,
                 )
 
-                # Find generated .o files
-                for obj_file in project_dir.rglob("*.o"):
-                    # Try to find matching .c file
-                    c_file = obj_file.with_suffix(".c")
-                    if not c_file.exists():
-                        c_file = None
+                # Find linked ELF executables for decompilation.
+                # Decompilers need linked binaries (ET_EXEC/ET_DYN),
+                # not relocatable .o files (ET_REL).
+                for entry in project_dir.rglob("*"):
+                    if not entry.is_file():
+                        continue
+                    if entry.suffix in (".o", ".a", ".i", ".s", ".c", ".h"):
+                        continue
+                    if not self._is_elf_executable(entry):
+                        continue
 
-                    # Copy to output
-                    dest_obj = output_dir / obj_file.name
-                    shutil.copy2(obj_file, dest_obj)
+                    dest_bin = output_dir / entry.name
+                    shutil.copy2(entry, dest_bin)
 
-                    # Look for .i file
-                    i_file = obj_file.with_suffix(".i")
+                    # Find matching .c and .i files via the .o file
+                    obj_file = entry.with_suffix(".o")
+                    c_file = entry.with_suffix(".c")
+                    i_file = entry.with_suffix(".i")
                     dest_i = None
                     if i_file.exists():
                         dest_i = output_dir / i_file.name
                         shutil.copy2(i_file, dest_i)
+                    elif obj_file.exists():
+                        # .i file may be named after the .o file
+                        alt_i = obj_file.with_suffix(".i")
+                        if alt_i.exists() and alt_i != i_file:
+                            dest_i = output_dir / alt_i.name
+                            shutil.copy2(alt_i, dest_i)
 
                     results.append(CompileResult(
-                        source_path=c_file or obj_file.with_suffix(".c"),
-                        object_path=dest_obj,
+                        source_path=c_file if c_file.exists() else entry,
+                        object_path=dest_bin,
                         preprocessed_path=dest_i,
                         success=True,
                     ))
+
+                # Also copy .i and .o files for source CFG extraction
+                for obj_file in project_dir.rglob("*.o"):
+                    i_file = obj_file.with_suffix(".i")
+                    if i_file.exists():
+                        dest_i = output_dir / i_file.name
+                        if not dest_i.exists():
+                            shutil.copy2(i_file, dest_i)
 
             except subprocess.CalledProcessError as e:
                 results.append(CompileResult(

@@ -2,23 +2,20 @@
 # This is a sample project from the SAILR evaluation set
 
 name = "coreutils"
-version = "v9.1"
+version = "9.1"
 
-# Source configuration
-source_remote = "git://git.sv.gnu.org/coreutils.git"
-remote_type = "git"
+# Source configuration - use release tarball (includes pre-generated ./configure)
+source_remote = "https://ftp.gnu.org/gnu/coreutils/coreutils-9.1.tar.xz"
+remote_type = "tar"
 
 # Build directories
 package_dir = "coreutils"
 source_dir = "src"
 
-# Build commands
-post_download_cmds = ["./bootstrap"]
+# Build commands (no bootstrap needed with release tarball)
+post_download_cmds = []
 pre_make_cmds = ["./configure --quiet --disable-gcc-warnings"]
 make_cmd = "make"
-
-# Optional patch for gnulib compatibility
-# apply_patch = "patches/coreutils_gnulib.diff"
 
 [compilation]
 # Optimization levels to compile

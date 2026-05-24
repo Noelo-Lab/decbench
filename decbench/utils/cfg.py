@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+import shutil
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from networkx import DiGraph
@@ -30,25 +34,34 @@ def extract_cfgs_from_source(source_path: Path) -> dict[str, DiGraph]:
         )
 
     cfgs = {}
+    # Joern doesn't recognize .i files; copy to .c temp file if needed
+    temp_c_path = None
+    parse_path = source_path
+    if source_path.suffix == ".i":
+        temp_c_path = Path(tempfile.mktemp(suffix=".c"))
+        shutil.copy2(source_path, temp_c_path)
+        parse_path = temp_c_path
 
     try:
-        # Parse source with Joern
-        parsed = parse_source(str(source_path))
+        # parse_source returns dict[str, Function] or dict[tuple[str,str], Function]
+        parsed = parse_source(parse_path)
 
         if parsed is None:
             return cfgs
 
         # Extract CFGs for each function
-        for func in parsed.functions:
-            func_name = func.name
-            cfg = func.cfg
+        for key, func in parsed.items():
+            func_name = func.name if hasattr(func, "name") else str(key)
+            cfg = func.cfg if hasattr(func, "cfg") else None
 
             if cfg is not None:
                 cfgs[func_name] = cfg
 
     except Exception as e:
-        # Log but don't fail
-        pass
+        logger.warning("CFG extraction from source %s failed: %s", source_path, e)
+    finally:
+        if temp_c_path is not None:
+            temp_c_path.unlink(missing_ok=True)
 
     return cfgs
 
@@ -85,18 +98,18 @@ def extract_cfgs_from_decompilation(
         temp_path = Path(f.name)
 
     try:
-        parsed = parse_source(str(temp_path))
+        parsed = parse_source(temp_path)
 
         if parsed is not None:
-            for func in parsed.functions:
-                func_name = func.name
-                cfg = func.cfg
+            for key, func in parsed.items():
+                func_name = func.name if hasattr(func, "name") else str(key)
+                cfg = func.cfg if hasattr(func, "cfg") else None
 
                 if cfg is not None:
                     cfgs[func_name] = cfg
 
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("CFG extraction from decompilation failed: %s", e)
     finally:
         temp_path.unlink(missing_ok=True)
 

@@ -28,6 +28,14 @@ class GhidraDecompiler(Decompiler):
     display_name = "Ghidra"
     version = None
 
+    # CRT/compiler-generated functions that are not user code
+    _SKIP_NAMES = frozenset({
+        "_start", "__libc_start_main", "__libc_csu_init", "__libc_csu_fini",
+        "_init", "_fini", "__do_global_dtors_aux", "register_tm_clones",
+        "deregister_tm_clones", "frame_dummy", "__libc_start_call_main",
+        "_dl_relocate_static_pie", "__gmon_start__",
+    })
+
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
         self._pyghidra = None
@@ -166,10 +174,11 @@ class GhidraDecompiler(Decompiler):
             functions = []
             func_manager = program.getFunctionManager()
             for func in func_manager.getFunctions(True):
-                # Skip external functions
-                if func.isExternal():
+                if func.isExternal() or func.isThunk():
                     continue
                 name = str(func.getName())
+                if name in self._SKIP_NAMES:
+                    continue
                 addr = int(func.getEntryPoint().getOffset())
                 functions.append((name, addr))
 
@@ -218,10 +227,12 @@ class GhidraDecompiler(Decompiler):
                     if func:
                         target_funcs.append(func)
             else:
-                # Get all non-external functions
+                # Get all non-external, non-stub functions
                 target_funcs = [
                     func for func in func_manager.getFunctions(True)
                     if not func.isExternal()
+                    and not func.isThunk()
+                    and str(func.getName()) not in self._SKIP_NAMES
                 ]
 
             # Decompile each function

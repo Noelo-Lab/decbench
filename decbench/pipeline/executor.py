@@ -70,6 +70,16 @@ class PipelineConfig(BaseModel):
         description="Skip evaluation step",
     )
 
+    # Testing mode
+    binary_limit: int | None = Field(
+        default=None,
+        description="Limit number of binaries to process (None for all)",
+    )
+    binary_sample: int | None = Field(
+        default=None,
+        description="Deterministically sample N binaries to process (None for all)",
+    )
+
 
 @dataclass
 class PipelineResults:
@@ -133,6 +143,52 @@ class PipelineExecutor:
                 self.config.parallel,
                 self.config.workers,
             )
+        else:
+            print("Skipping compilation, discovering existing binaries...")
+            self._discover_existing_binaries(projects, output_dir)
+
+        # Apply binary limit if set
+        if self.config.binary_limit is not None:
+            for project in projects:
+                for opt in self.config.optimization_levels:
+                    if opt in project.compiled_binaries:
+                        binaries = project.compiled_binaries[opt]
+                        if len(binaries) > self.config.binary_limit:
+                            project.compiled_binaries[opt] = binaries[:self.config.binary_limit]
+                            print(f"Limited to {self.config.binary_limit} binaries for {project.name}/{opt.value}")
+                    if opt in project.preprocessed_sources:
+                        # Keep only sources matching the limited binaries
+                        limited_names = {
+                            b.stem for b in project.compiled_binaries.get(opt, [])
+                        }
+                        project.preprocessed_sources[opt] = {
+                            name: path
+                            for name, path in project.preprocessed_sources[opt].items()
+                            if name in limited_names
+                        }
+
+        # Apply binary sampling if set (deterministic random selection)
+        if self.config.binary_sample is not None:
+            import random
+            for project in projects:
+                for opt in self.config.optimization_levels:
+                    if opt in project.compiled_binaries:
+                        binaries = project.compiled_binaries[opt]
+                        if len(binaries) > self.config.binary_sample:
+                            rng = random.Random(42)
+                            sampled = sorted(rng.sample(binaries, self.config.binary_sample))
+                            project.compiled_binaries[opt] = sampled
+                            names = [b.stem for b in sampled]
+                            print(f"Sampled {self.config.binary_sample} binaries for {project.name}/{opt.value}: {names}")
+                    if opt in project.preprocessed_sources:
+                        sampled_names = {
+                            b.stem for b in project.compiled_binaries.get(opt, [])
+                        }
+                        project.preprocessed_sources[opt] = {
+                            name: path
+                            for name, path in project.preprocessed_sources[opt].items()
+                            if name in sampled_names
+                        }
 
         # Step 2: Decompile
         if not self.config.skip_decompile:
@@ -185,6 +241,70 @@ class PipelineExecutor:
         print(f"Scoreboard saved to {scoreboard_path}")
 
         return results
+
+    @staticmethod
+    def _is_elf_executable(path: Path) -> bool:
+        """Check if a file is a linked ELF binary (executable or shared object)."""
+        import struct
+
+        try:
+            with open(path, "rb") as f:
+                magic = f.read(4)
+                if magic != b"\x7fELF":
+                    return False
+                f.seek(16)
+                e_type = struct.unpack("<H", f.read(2))[0]
+                return e_type in (2, 3)
+        except (OSError, struct.error):
+            return False
+
+    def _discover_existing_binaries(
+        self, projects: list[Project], output_dir: Path
+    ) -> None:
+        """Populate project.compiled_binaries from previously compiled output.
+
+        Scans ``<output_dir>/<opt>/<project>/compiled/`` for ELF executables
+        and ``.i`` preprocessed sources so that downstream pipeline stages
+        (decompile, evaluate) can run when compilation is skipped.
+        """
+        for project in projects:
+            for opt in self.config.optimization_levels:
+                compiled_dir = (
+                    output_dir / opt.value / project.name / "compiled"
+                )
+                if not compiled_dir.is_dir():
+                    print(
+                        f"Warning: compiled directory not found: {compiled_dir}"
+                    )
+                    continue
+
+                # Discover ELF binaries
+                binaries: list[Path] = []
+                for entry in sorted(compiled_dir.iterdir()):
+                    if entry.is_file() and self._is_elf_executable(entry):
+                        binaries.append(entry)
+
+                if binaries:
+                    project.compiled_binaries[opt] = binaries
+                    print(
+                        f"Discovered {len(binaries)} binaries for "
+                        f"{project.name}/{opt.value}"
+                    )
+                else:
+                    print(
+                        f"Warning: no ELF binaries found in {compiled_dir}"
+                    )
+
+                # Discover preprocessed .i sources
+                i_files = {
+                    f.stem: f for f in sorted(compiled_dir.glob("*.i"))
+                }
+                if i_files:
+                    project.preprocessed_sources[opt] = i_files
+                    print(
+                        f"Discovered {len(i_files)} preprocessed sources for "
+                        f"{project.name}/{opt.value}"
+                    )
 
     def run_single_binary(
         self,

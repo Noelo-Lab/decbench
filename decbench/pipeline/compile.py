@@ -49,8 +49,12 @@ def download_source(project: Project, target_dir: Path) -> Path:
     elif config.remote_type == RemoteType.TAR:
         # Download and extract tarball
         import urllib.request
+        from urllib.parse import urlparse
 
-        tar_path = target_dir / "source.tar.gz"
+        # Preserve the original file extension for correct archive detection
+        url_path = urlparse(config.source_remote).path
+        filename = Path(url_path).name or "source.tar.gz"
+        tar_path = target_dir / filename
         urllib.request.urlretrieve(config.source_remote, tar_path)
 
         # Extract
@@ -143,7 +147,8 @@ def compile_project(
             output_dir=opt_output_dir,
             optimization=opt_str,
             pre_commands=config.pre_make_cmds,
-            make_command=config.make_cmd if config.make_cmd != "make" else None,
+            make_command=config.make_cmd,
+            project_root=source_dir,
         )
 
         # Also copy original C files

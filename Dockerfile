@@ -31,7 +31,7 @@ RUN apt-get update && apt-get install -y \
     graphviz-dev \
     libgraphviz-dev \
     pkg-config \
-    default-jre \
+    default-jdk \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Ghidra 12
@@ -41,6 +41,9 @@ RUN wget https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghid
     unzip ghidra_12.0_PUBLIC_20251205.zip -d /opt && \
     mv /opt/ghidra_12.0_PUBLIC ${GHIDRA_INSTALL_DIR} && \
     rm ghidra_12.0_PUBLIC_20251205.zip
+
+# Allow running ./configure as root (needed in Docker)
+ENV FORCE_UNSAFE_CONFIGURE=1
 
 # Set up working directory
 WORKDIR /workspace
@@ -54,6 +57,7 @@ RUN python3.12 -m pip install --break-system-packages \
     angr \
     cfgutils \
     pyjoern \
+    pyghidra \
     networkx \
     pyelftools \
     rich \

@@ -76,6 +76,14 @@ class AngrDecompiler(Decompiler):
             )
         return self._project
 
+    # CRT/compiler-generated functions that are not user code
+    _SKIP_NAMES = frozenset({
+        "_start", "__libc_start_main", "__libc_csu_init", "__libc_csu_fini",
+        "_init", "_fini", "__do_global_dtors_aux", "register_tm_clones",
+        "deregister_tm_clones", "frame_dummy", "__libc_start_call_main",
+        "_dl_relocate_static_pie", "__gmon_start__",
+    })
+
     def discover_functions(self, binary_path: Path) -> list[tuple[str, int]]:
         """Discover functions using angr's CFG analysis."""
         if not self.is_available():
@@ -91,8 +99,13 @@ class AngrDecompiler(Decompiler):
 
         functions = []
         for addr, func in cfg.kb.functions.items():
-            # Skip external/plt functions
+            # Skip external/plt/alignment functions
             if func.is_simprocedure or func.is_plt:
+                continue
+            if getattr(func, "alignment", False):
+                continue
+            # Skip compiler/CRT-generated functions
+            if func.name in self._SKIP_NAMES:
                 continue
             functions.append((func.name, addr))
 

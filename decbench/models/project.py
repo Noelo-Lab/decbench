@@ -91,9 +91,9 @@ class ProjectConfig(BaseModel):
         default=[],
         description="Commands to run before make (e.g., ./configure)",
     )
-    make_cmd: str = Field(
-        default="make",
-        description="Build command",
+    make_cmd: str | None = Field(
+        default=None,
+        description="Build command (e.g., 'make'). None to compile files individually.",
     )
     post_make_cmds: list[str] = Field(
         default=[],
