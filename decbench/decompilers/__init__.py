@@ -3,19 +3,11 @@
 from decbench.decompilers.base import Decompiler, DecompilerConfig
 from decbench.decompilers.registry import DecompilerRegistry, register_decompiler
 
-# Import plugin modules so @register_decompiler decorators run
+# Import plugin modules so @register_decompiler decorators run.
+# declib_dec registers all backends (ida, ghidra, binja, angr); the heavy
+# decompiler imports happen lazily inside each plugin.
 try:
-    from decbench.decompilers import angr_dec  # noqa: F401
-except ImportError:
-    pass
-
-try:
-    from decbench.decompilers import ghidra_dec  # noqa: F401
-except ImportError:
-    pass
-
-try:
-    from decbench.decompilers import ida_dec  # noqa: F401
+    from decbench.decompilers import declib_dec  # noqa: F401
 except ImportError:
     pass
 

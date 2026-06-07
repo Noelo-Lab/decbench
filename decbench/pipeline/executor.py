@@ -225,6 +225,19 @@ class PipelineExecutor:
             decompilers=self.config.decompilers,
         )
 
+        # Build and persist per-function data for the interactive report
+        from decbench.scoring.function_data_builder import build_function_data
+
+        function_data = build_function_data(
+            results.evaluate_results,
+            projects,
+            results.decompile_results,
+        )
+        function_data_path = output_dir / "function_results.json"
+        function_data.to_json(function_data_path)
+        results.scoreboard.raw_data_path = function_data_path
+        print(f"Function data saved to {function_data_path}")
+
         # Compute statistics
         results.total_time_seconds = time.time() - start_time
 

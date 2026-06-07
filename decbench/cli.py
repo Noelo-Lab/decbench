@@ -194,9 +194,7 @@ def list_decompilers() -> None:
 
     from decbench.decompilers.registry import DecompilerRegistry
 
-    import decbench.decompilers.angr_dec  # noqa: F401
-    import decbench.decompilers.ghidra_dec  # noqa: F401
-    import decbench.decompilers.ida_dec  # noqa: F401
+    import decbench.decompilers.declib_dec  # noqa: F401
 
     console = Console()
     table = Table(title="Available Decompilers")
@@ -282,17 +280,48 @@ def show(scoreboard_path, format) -> None:
     default="results/report.html",
     help="Output HTML file path",
 )
-def report(scoreboard_path, output) -> None:
+@click.option(
+    "--function-data",
+    type=click.Path(),
+    default=None,
+    help="Path to function_results.json for interactive report "
+    "(default: sibling of scoreboard)",
+)
+def report(scoreboard_path, output, function_data) -> None:
     """Generate an HTML report from a scoreboard."""
     from rich.console import Console
 
+    from decbench.models.function_data import FunctionData
     from decbench.models.scoreboard import Scoreboard
     from decbench.rendering.html import render_html_report
 
     console = Console()
 
     scoreboard = Scoreboard.from_toml(Path(scoreboard_path))
-    render_html_report(scoreboard, Path(output))
+
+    # Resolve the function data path: explicit -> sibling -> None.
+    if function_data is not None:
+        fd_path: Path | None = Path(function_data)
+    else:
+        sibling = Path(scoreboard_path).parent / "function_results.json"
+        fd_path = sibling if sibling.exists() else None
+
+    fd: FunctionData | None = None
+    if fd_path is not None:
+        try:
+            fd = FunctionData.from_json(fd_path)
+        except Exception as e:
+            console.print(
+                f"[yellow]Could not load function data from {fd_path}: {e}. "
+                "Generating static report.[/yellow]"
+            )
+            fd = None
+    else:
+        console.print(
+            "[yellow]No function data found; generating static report.[/yellow]"
+        )
+
+    render_html_report(scoreboard, Path(output), fd)
 
     console.print(f"Report generated: [bold]{output}[/bold]")
 

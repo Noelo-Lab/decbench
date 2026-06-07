@@ -114,6 +114,17 @@ class ProjectConfig(BaseModel):
         description="Only compile these specific files",
     )
 
+    # Labels
+    labels: list[str] = Field(
+        default_factory=list,
+        description="Labels applied to all binaries in this project "
+        "(e.g. 'firmware', 'closed-source')",
+    )
+    binary_labels: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description="Per-binary label additions, keyed by binary name (stem)",
+    )
+
     @field_validator("local_path", mode="before")
     @classmethod
     def convert_path(cls, v) -> Path | None:

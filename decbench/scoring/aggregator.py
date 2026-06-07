@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from decbench.models.metrics import MetricResult
 from decbench.metrics.registry import MetricRegistry
+from decbench.models.metrics import MetricResult
 
 if TYPE_CHECKING:
     from decbench.models.project import OptimizationLevel
@@ -74,7 +74,9 @@ def aggregate_results(
     decompilers_seen: set[str] = set()
     metrics_seen: set[str] = set()
     binary_count = 0
-    function_count = 0
+    # Distinct project::opt::binary::function keys across all decompilers
+    # and metrics, so totals are not inflated by either dimension.
+    distinct_functions: set[str] = set()
 
     for project_name, opt_results in evaluation_results.items():
         for opt_level, binary_results in opt_results.items():
@@ -106,10 +108,18 @@ def aggregate_results(
                             all_values[dec_name][metric_name].append(
                                 (value.value, is_perfect)
                             )
-                            function_count += 1
 
                             # Track per-function perfects for Overall computation
-                            func_key = f"{binary_name}::{func_name}"
+                            opt_value = (
+                                opt_level.value
+                                if hasattr(opt_level, "value")
+                                else str(opt_level)
+                            )
+                            func_key = (
+                                f"{project_name}::{opt_value}::"
+                                f"{binary_name}::{func_name}"
+                            )
+                            distinct_functions.add(func_key)
                             if func_key not in aggregated.per_function[dec_name]:
                                 aggregated.per_function[dec_name][func_key] = {}
                             aggregated.per_function[dec_name][func_key][metric_name] = is_perfect
@@ -146,7 +156,7 @@ def aggregate_results(
             aggregated.by_decompiler[dec_name][metric_name] = agg
 
     aggregated.total_binaries = binary_count
-    aggregated.total_functions = function_count // max(len(decompilers_seen), 1)
+    aggregated.total_functions = len(distinct_functions)
     aggregated.decompilers = sorted(decompilers_seen)
     aggregated.metrics = sorted(metrics_seen)
 

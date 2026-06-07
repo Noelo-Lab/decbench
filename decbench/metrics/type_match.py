@@ -8,6 +8,7 @@ Based on the approach from decompiler-types-benchmark (SURE'25).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 from typing import TYPE_CHECKING, Any
@@ -17,8 +18,9 @@ from decbench.metrics.registry import register_metric
 from decbench.models.metrics import AggregationType, MetricResult, MetricValue
 
 if TYPE_CHECKING:
-    from networkx import DiGraph
     from pathlib import Path
+
+    from networkx import DiGraph
 
     from decbench.models.decompilation import DecompilationResult, FunctionDecompilation
 
@@ -46,6 +48,8 @@ TYPE_MAP: dict[str, str] = {
     # Ghidra types
     "uint": "int",
     "ulong": "long long",
+    # LP64: plain "long" is 8 bytes, same as DWARF "long int"/"long long"
+    "long": "long long",
     "ushort": "short",
     "uchar": "char",
     "uint64_t": "long long",
@@ -88,10 +92,12 @@ def normalize_type(type_str: str) -> set[str]:
     if normalized:
         forms.add(normalized)
 
-    # Standard normalizations
+    # Standard normalizations (DWARF base-type names like "short int" /
+    # "long int" must converge with decompiler spellings like "short")
     for original, replacement in [
         ("long long int", "long long"),
         ("long int", "long long"),
+        ("short int", "short"),
         ("_Bool", "bool"),
         ("Bool", "bool"),
         ("boolean", "bool"),
@@ -102,6 +108,13 @@ def normalize_type(type_str: str) -> set[str]:
 
     # Remove whitespace variations
     forms = {re.sub(r"\s+", " ", f).strip() for f in forms if f.strip()}
+
+    # Canonicalize pointer spacing ("char * *" / "char **" -> "char**")
+    forms |= {re.sub(r"\s*\*", "*", f) for f in forms}
+
+    # Re-apply TYPE_MAP to derived forms (e.g. "unsigned long" -> "long" -> LP64
+    # "long long") after qualifier stripping.
+    forms |= {TYPE_MAP[f] for f in forms if f in TYPE_MAP}
 
     return forms
 
@@ -120,7 +133,6 @@ def extract_ground_truth_types(binary_path: Path) -> dict[str, list[dict[str, An
             - size: byte size
     """
     from elftools.elf.elffile import ELFFile
-    from elftools.dwarf.dwarf_expr import DWARFExprParser
 
     result: dict[str, list[dict[str, Any]]] = {}
 
@@ -158,10 +170,20 @@ def _parse_function_die(die: Any, dwarfinfo: Any) -> tuple[str | None, list[dict
     func_name = die.attributes["DW_AT_name"].value.decode("utf-8", "replace")
     variables: list[dict[str, Any]] = []
 
+    arg_index = 0
     for child in die.iter_children():
         if child.tag in ("DW_TAG_lexical_block", "DW_TAG_inlined_subroutine"):
             variables.extend(_parse_lexical_block(child, dwarfinfo))
-        elif child.tag in ("DW_TAG_formal_parameter", "DW_TAG_variable"):
+        elif child.tag == "DW_TAG_formal_parameter":
+            var = _parse_variable_die(
+                child, dwarfinfo, is_arg=True, arg_index=arg_index
+            )
+            # The positional index must reflect declaration order even when
+            # an argument is dropped (e.g. fully optimized out).
+            arg_index += 1
+            if var:
+                variables.append(var)
+        elif child.tag == "DW_TAG_variable":
             var = _parse_variable_die(child, dwarfinfo)
             if var:
                 variables.append(var)
@@ -182,13 +204,22 @@ def _parse_lexical_block(die: Any, dwarfinfo: Any) -> list[dict[str, Any]]:
     return variables
 
 
-def _parse_variable_die(die: Any, dwarfinfo: Any) -> dict[str, Any] | None:
-    """Parse a variable DIE to extract type info."""
-    from elftools.dwarf.dwarf_expr import DWARFExprParser
+def _parse_variable_die(
+    die: Any,
+    dwarfinfo: Any,
+    is_arg: bool = False,
+    arg_index: int | None = None,
+) -> dict[str, Any] | None:
+    """Parse a variable DIE to extract type info.
 
-    # Get stack offsets
-    offsets = _get_location(die, dwarfinfo)
-    if not offsets:
+    Variables that have ANY DWARF location (stack OR register) are kept:
+    at -O2 most locals/args live in registers (loclists with ``DW_OP_reg*``)
+    and have no ``DW_OP_fbreg`` stack offset, but they still exist at runtime
+    and decompilers are expected to recover them. Only variables without a
+    location (fully optimized out) are dropped.
+    """
+    offsets, has_location = _get_location(die, dwarfinfo)
+    if not has_location:
         return None
 
     # Follow abstract origin if present
@@ -206,10 +237,8 @@ def _parse_variable_die(die: Any, dwarfinfo: Any) -> dict[str, Any] | None:
     type_names: list[str] = []
     size = 0
 
-    try:
+    with contextlib.suppress(Exception):
         type_names, size = _parse_type_die(die, dwarfinfo)
-    except Exception:
-        pass
 
     if not type_names:
         return None
@@ -224,17 +253,27 @@ def _parse_variable_die(die: Any, dwarfinfo: Any) -> dict[str, Any] | None:
         "type": list(all_forms),
         "rbp_offset": list(set(offsets)),
         "size": size,
+        "is_arg": is_arg,
+        "arg_index": arg_index if is_arg else None,
     }
 
 
-def _get_location(die: Any, dwarfinfo: Any) -> list[int]:
-    """Extract stack offsets from DW_AT_location."""
+def _get_location(die: Any, dwarfinfo: Any) -> tuple[list[int], bool]:
+    """Extract location info from DW_AT_location.
+
+    Returns:
+        Tuple of (stack offsets from DW_OP_fbreg expressions, whether the
+        variable has ANY location at all). Register-resident variables (the
+        common case at -O2) yield ``([], True)``; fully optimized-out
+        variables yield ``([], False)``.
+    """
     from elftools.dwarf.dwarf_expr import DWARFExprParser
 
     offsets: list[int] = []
+    has_location = False
 
     if "DW_AT_location" not in die.attributes:
-        return offsets
+        return offsets, has_location
 
     loc_attr = die.attributes["DW_AT_location"]
     expr_parser = DWARFExprParser(dwarfinfo.structs)
@@ -242,6 +281,8 @@ def _get_location(die: Any, dwarfinfo: Any) -> list[int]:
     try:
         if loc_attr.form == "DW_FORM_exprloc":
             ops = expr_parser.parse_expr(loc_attr.value)
+            if ops:
+                has_location = True
             for op in ops:
                 if op.op_name == "DW_OP_fbreg":
                     offsets.append(op.args[0] + 16)
@@ -257,6 +298,8 @@ def _get_location(die: Any, dwarfinfo: Any) -> list[int]:
                 if expr is None:
                     continue
                 ops = expr_parser.parse_expr(expr)
+                if ops:
+                    has_location = True
                 if len(ops) != 1:
                     continue
                 for op in ops:
@@ -265,7 +308,7 @@ def _get_location(die: Any, dwarfinfo: Any) -> list[int]:
     except Exception:
         pass
 
-    return offsets
+    return offsets, has_location
 
 
 def _parse_type_die(die: Any, dwarfinfo: Any) -> tuple[list[str], int]:
@@ -420,6 +463,109 @@ def extract_types_from_decompiled_code(code: str) -> list[dict[str, Any]]:
     return variables
 
 
+def _calibrate_shift(gt_offsets: list[int], decomp_offsets: list[int]) -> int | None:
+    """Find an additive shift aligning decompiled offsets to ground-truth offsets.
+
+    Searches shifts ``k`` in ``range(-32, 33)`` (ties broken toward the smallest
+    ``|k|``) maximizing the count of decompiled offsets ``d`` where ``d + k`` is a
+    ground-truth offset. To avoid spurious single-variable alignments: if a nonzero
+    ``k`` is best and there are at least 2 decompiled offsets, that ``k`` must align
+    at least 2 offsets; otherwise fall back to ``k = 0`` if it aligns at least 1,
+    else return ``None``.
+
+    Args:
+        gt_offsets: Ground-truth stack offsets.
+        decomp_offsets: Decompiled (declib-lifted) stack offsets.
+
+    Returns:
+        The best shift ``k``, or ``None`` if no shift aligns anything.
+    """
+    if not gt_offsets or not decomp_offsets:
+        return None
+
+    gt_set = set(gt_offsets)
+
+    best_k: int | None = None
+    best_count = 0
+    # Iterate by increasing |k| so ties resolve toward the smallest magnitude.
+    for k in sorted(range(-32, 33), key=lambda x: (abs(x), x)):
+        # Count UNIQUE ground-truth offsets matched so duplicate decompiled
+        # slots cannot inflate a spurious shift.
+        count = len({d + k for d in decomp_offsets} & gt_set)
+        if count > best_count:
+            best_count = count
+            best_k = k
+
+    if best_k is None or best_count == 0:
+        return None
+
+    # Guard against spurious single-variable alignments at a nonzero shift.
+    if best_k != 0 and len(decomp_offsets) >= 2 and best_count < 2:
+        zero_count = len(set(decomp_offsets) & gt_set)
+        return 0 if zero_count >= 1 else None
+
+    return best_k
+
+
+def _calibrate_shift_multi(
+    pairs: list[tuple[list[int], list[int]]],
+) -> int | None:
+    """Calibrate one additive shift across many functions' offset sets.
+
+    Each pair is ``(gt_offsets, decomp_offsets)`` for one function. For a
+    candidate shift, a function votes with ``max(0, unique_matches - 1)`` so
+    that a lone slot coincidentally aligning somewhere contributes nothing,
+    while multi-variable alignments (real ABI-constant shifts) accumulate.
+    Falls back to plain unique-match counting when no shift earns a
+    discounted vote (e.g. every function has a single stack variable).
+
+    Args:
+        pairs: Per-function (ground-truth offsets, decompiled offsets).
+
+    Returns:
+        The best shift, or ``None`` if nothing aligns at all.
+    """
+    pairs = [(g, d) for g, d in pairs if g and d]
+    if not pairs:
+        return None
+
+    candidates = sorted(range(-32, 33), key=lambda x: (abs(x), x))
+
+    def matches(gt_offs: list[int], dec_offs: list[int], k: int) -> int:
+        return len({d + k for d in dec_offs} & set(gt_offs))
+
+    best_k: int | None = None
+    best_votes = 0
+    for k in candidates:
+        votes = sum(max(0, matches(g, d, k) - 1) for g, d in pairs)
+        if votes > best_votes:
+            best_votes = votes
+            best_k = k
+
+    if best_k is not None:
+        return best_k
+
+    # Fallback: no multi-variable signal anywhere; use plain unique counts,
+    # guarded against electing a shift from single-slot coincidences.
+    for k in candidates:
+        votes = sum(matches(g, d, k) for g, d in pairs)
+        if votes > best_votes:
+            best_votes = votes
+            best_k = k
+
+    if best_k is None or best_votes == 0:
+        return None
+    if best_k != 0:
+        # Prefer no shift whenever it aligns anything; otherwise require a
+        # nonzero shift to be supported by more than one coincidence.
+        zero_votes = sum(matches(g, d, 0) for g, d in pairs)
+        if zero_votes >= 1:
+            return 0
+        if best_votes < 2:
+            return None
+    return best_k
+
+
 @register_metric("type_match")
 class TypeMatchMetric(Metric):
     """Type correctness metric.
@@ -456,13 +602,33 @@ class TypeMatchMetric(Metric):
         source_cfg: DiGraph | None = None,
         decompiled_cfg: DiGraph | None = None,
         ground_truth_vars: list[dict[str, Any]] | None = None,
+        calibration_shift: int | None = None,
         **kwargs: Any,
     ) -> MetricValue:
         """Compute type match accuracy for a single function.
 
+        When the decompiled function exposes structured variables, matching
+        proceeds in three passes (each decompiled variable credited at most
+        once):
+
+        1. Arguments by ABI position: DWARF formal parameters (in declaration
+           order) vs decompiled arguments (by index). Position is a reliable
+           identity even when names are synthetic (angr) and offsets are
+           absent (registers at -O2).
+        2. Stack variables by calibrated offset.
+        3. Everything else by exact name (covers register-resident locals
+           when the decompiler imported debug names, and stack slots promoted
+           to args/registers).
+
+        Without structured variables, falls back to regex parsing of the
+        decompiled text and name matching.
+
         Args:
-            decompiled: The decompiled function
-            ground_truth_vars: Ground truth variables from DWARF
+            decompiled: The decompiled function.
+            ground_truth_vars: Ground truth variables from DWARF.
+            calibration_shift: Pre-computed offset shift (e.g. calibrated
+                across the whole binary). When ``None``, the shift is
+                calibrated from this function's offsets alone.
         """
         if not ground_truth_vars:
             return MetricValue(
@@ -470,62 +636,242 @@ class TypeMatchMetric(Metric):
                 metadata={"error": "No ground truth types available"},
             )
 
-        # Extract types from decompiled code
+        gt_stack_vars = sum(1 for gv in ground_truth_vars if gv.get("rbp_offset"))
+        decomp_stack_vars = sum(
+            1 for v in decompiled.variables if v.stack_offset is not None
+        )
+
+        if decompiled.variables:
+            return self._match_structured(
+                decompiled,
+                ground_truth_vars,
+                gt_stack_vars,
+                decomp_stack_vars,
+                calibration_shift,
+            )
+
+        return self._match_by_regex(
+            decompiled, ground_truth_vars, gt_stack_vars, decomp_stack_vars
+        )
+
+    @staticmethod
+    def _build_result(
+        tp: int,
+        fp: int,
+        fn: int,
+        ground_truth_vars: list[dict[str, Any]],
+        decomp_vars: int,
+        matched_by: str,
+        calibration_shift: int | None,
+        gt_stack_vars: int,
+        decomp_stack_vars: int,
+        extra_metadata: dict[str, Any] | None = None,
+    ) -> MetricValue:
+        """Assemble a MetricValue with the standard metadata payload."""
+        total = tp + fp + fn
+        accuracy = tp / total if total > 0 else 0.0
+        metadata: dict[str, Any] = {
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "gt_vars": len(ground_truth_vars),
+            "decomp_vars": decomp_vars,
+            "matched_by": matched_by,
+            "calibration_shift": calibration_shift,
+            "gt_stack_vars": gt_stack_vars,
+            "decomp_stack_vars": decomp_stack_vars,
+        }
+        if extra_metadata:
+            metadata.update(extra_metadata)
+        return MetricValue(
+            value=accuracy,
+            raw_value=accuracy,
+            metadata=metadata,
+        )
+
+    def _match_structured(
+        self,
+        decompiled: FunctionDecompilation,
+        ground_truth_vars: list[dict[str, Any]],
+        gt_stack_vars: int,
+        decomp_stack_vars: int,
+        calibration_shift: int | None = None,
+    ) -> MetricValue:
+        """Match GT vars to structured decompiled vars: arg position, then
+        stack offset, then name. Each decompiled variable is credited at most
+        once (DWARF can report more variables at an offset/name than the
+        decompiler recovered, e.g. shadowed locals)."""
+        if calibration_shift is not None:
+            shift: int | None = calibration_shift
+        else:
+            gt_offsets: list[int] = []
+            for gv in ground_truth_vars:
+                gt_offsets.extend(gv.get("rbp_offset", []))
+
+            decomp_offsets = [
+                v.stack_offset
+                for v in decompiled.variables
+                if v.stack_offset is not None
+            ]
+
+            shift = _calibrate_shift(gt_offsets, decomp_offsets)
+
+        k = shift if shift is not None else 0
+
+        var_types: list[set[str]] = [
+            normalize_type(v.type) for v in decompiled.variables
+        ]
+        by_arg_index: dict[int, int] = {}
+        by_off: dict[int, list[int]] = {}
+        by_name: dict[str, list[int]] = {}
+        for i, v in enumerate(decompiled.variables):
+            if v.arg_index is not None and v.arg_index not in by_arg_index:
+                by_arg_index[v.arg_index] = i
+            if v.stack_offset is not None:
+                by_off.setdefault(v.stack_offset + k, []).append(i)
+            if v.name:
+                by_name.setdefault(v.name, []).append(i)
+
+        used: set[int] = set()
+
+        def claim(candidates: list[int], gt_types: set[str]) -> bool | None:
+            """Claim the best unused candidate: True=tp, False=fp, None=miss."""
+            avail = [i for i in candidates if i not in used]
+            if not avail:
+                return None
+            hit = next((i for i in avail if gt_types & var_types[i]), None)
+            if hit is not None:
+                used.add(hit)
+                return True
+            used.add(avail[0])
+            return False
+
+        n = len(ground_truth_vars)
+        verdicts: list[bool | None] = [None] * n
+        decided: list[bool] = [False] * n
+        pass_counts = {"arg": 0, "offset": 0, "name": 0}
+
+        # Pass 1: arguments by ABI position. Position is a reliable identity
+        # even with synthetic names (angr) and register args (-O2).
+        for gi, gv in enumerate(ground_truth_vars):
+            arg_index = gv.get("arg_index")
+            if not gv.get("is_arg") or arg_index is None:
+                continue
+            di = by_arg_index.get(arg_index)
+            if di is None or di in used:
+                continue
+            used.add(di)
+            decided[gi] = True
+            verdicts[gi] = bool(set(gv.get("type", [])) & var_types[di])
+            pass_counts["arg"] += 1
+
+        # Pass 2: stack variables by calibrated offset (any-of across the
+        # DWARF loclist offsets).
+        for gi, gv in enumerate(ground_truth_vars):
+            if decided[gi]:
+                continue
+            candidates: list[int] = []
+            for off in gv.get("rbp_offset", []):
+                candidates.extend(by_off.get(off, []))
+            if not candidates:
+                continue
+            verdict = claim(candidates, set(gv.get("type", [])))
+            if verdict is not None:
+                decided[gi] = True
+                verdicts[gi] = verdict
+                pass_counts["offset"] += 1
+
+        # Pass 3: names. Covers register-resident locals when the decompiler
+        # imported debug names, and stack slots promoted to args/registers.
+        for gi, gv in enumerate(ground_truth_vars):
+            if decided[gi]:
+                continue
+            gt_name = gv.get("name", "")
+            if not gt_name:
+                continue
+            verdict = claim(by_name.get(gt_name, []), set(gv.get("type", [])))
+            if verdict is not None:
+                decided[gi] = True
+                verdicts[gi] = verdict
+                pass_counts["name"] += 1
+
+        tp = sum(1 for d, v in zip(decided, verdicts, strict=True) if d and v)
+        fp = sum(1 for d, v in zip(decided, verdicts, strict=True) if d and not v)
+        fn = sum(1 for d in decided if not d)
+
+        return self._build_result(
+            tp,
+            fp,
+            fn,
+            ground_truth_vars,
+            len(decompiled.variables),
+            "structured",
+            shift,
+            gt_stack_vars,
+            decomp_stack_vars,
+            extra_metadata={
+                "matched_by_arg": pass_counts["arg"],
+                "matched_by_offset": pass_counts["offset"],
+                "matched_by_name": pass_counts["name"],
+                "gt_arg_vars": sum(
+                    1 for gv in ground_truth_vars if gv.get("is_arg")
+                ),
+            },
+        )
+
+    def _match_by_regex(
+        self,
+        decompiled: FunctionDecompilation,
+        ground_truth_vars: list[dict[str, Any]],
+        gt_stack_vars: int,
+        decomp_stack_vars: int,
+    ) -> MetricValue:
+        """Match GT vars to regex-extracted decompiled declarations by name."""
         decomp_vars = extract_types_from_decompiled_code(decompiled.decompiled_code)
 
         if not decomp_vars:
-            # No variables found in decompilation
             fn = len(ground_truth_vars)
-            return MetricValue(
-                value=0.0,
-                metadata={
-                    "tp": 0,
-                    "fp": 0,
-                    "fn": fn,
-                    "gt_vars": len(ground_truth_vars),
-                    "decomp_vars": 0,
-                },
+            return self._build_result(
+                0,
+                0,
+                fn,
+                ground_truth_vars,
+                0,
+                "regex",
+                None,
+                gt_stack_vars,
+                decomp_stack_vars,
             )
 
-        # Build sets of normalized types for decompiled code by variable name
-        decomp_type_by_name: dict[str, set[str]] = {}
+        type_by_name: dict[str, set[str]] = {}
         for var in decomp_vars:
-            name = var["name"]
-            if name not in decomp_type_by_name:
-                decomp_type_by_name[name] = set()
-            decomp_type_by_name[name].update(var["type"])
+            type_by_name.setdefault(var["name"], set()).update(var["type"])
 
-        # Match ground truth to decompiled by variable name
         tp = 0
         fp = 0
         fn = 0
 
         for gt_var in ground_truth_vars:
-            gt_name = gt_var["name"]
-            gt_types = set(gt_var["type"])
-
-            if gt_name in decomp_type_by_name:
-                decomp_types = decomp_type_by_name[gt_name]
-                if gt_types.intersection(decomp_types):
+            gt_name = gt_var.get("name", "")
+            gt_types = set(gt_var.get("type", []))
+            if gt_name in type_by_name:
+                if gt_types.intersection(type_by_name[gt_name]):
                     tp += 1
                 else:
                     fp += 1
             else:
                 fn += 1
 
-        total = tp + fp + fn
-        accuracy = tp / total if total > 0 else 0.0
-
-        return MetricValue(
-            value=accuracy,
-            raw_value=accuracy,
-            metadata={
-                "tp": tp,
-                "fp": fp,
-                "fn": fn,
-                "gt_vars": len(ground_truth_vars),
-                "decomp_vars": len(decomp_vars),
-            },
+        return self._build_result(
+            tp,
+            fp,
+            fn,
+            ground_truth_vars,
+            len(decomp_vars),
+            "regex",
+            None,
+            gt_stack_vars,
+            decomp_stack_vars,
         )
 
     def compute_for_binary(
@@ -559,6 +905,12 @@ class TypeMatchMetric(Metric):
                 binary_path,
             )
 
+        # Calibrate the GT<->decompiler offset shift once per binary: the
+        # shift is an ABI/decompiler constant, and pooling offsets across all
+        # functions makes calibration robust for functions with few stack
+        # variables (where a lone slot could align to a spurious shift).
+        binary_shift = self._calibrate_binary_shift(decompilation, gt_types)
+
         for func_name, func_decomp in decompilation.functions.items():
             try:
                 gt_vars = gt_types.get(func_name, [])
@@ -568,11 +920,34 @@ class TypeMatchMetric(Metric):
                 value = self.compute_for_function(
                     func_decomp,
                     ground_truth_vars=gt_vars,
+                    calibration_shift=binary_shift,
                 )
                 function_results[func_name] = value
 
             except Exception as e:
                 errors.append(f"{func_name}: {str(e)}")
+
+        # Diagnostic: GT existed but nothing matched across all functions.
+        if gt_types and (
+            not function_results
+            or all(v.value == 0.0 for v in function_results.values())
+        ):
+            total_gt_vars = sum(len(v) for v in gt_types.values())
+            total_gt_stack_vars = sum(
+                1 for vs in gt_types.values() for gv in vs if gv.get("rbp_offset")
+            )
+            logger.warning(
+                "type_match scored 0 for all matched functions in %s "
+                "(gt_funcs=%d, gt_vars=%d, gt_stack_vars=%d). Likely causes: "
+                "(a) the decompiler produced no structured variables "
+                "(arguments/stack vars) to align positionally or by offset; "
+                "(b) variable names/offsets/types did not align between DWARF "
+                "and the decompiler output.",
+                binary_path,
+                len(gt_types),
+                total_gt_vars,
+                total_gt_stack_vars,
+            )
 
         result = MetricResult(
             metric_name=self.name,
@@ -586,3 +961,31 @@ class TypeMatchMetric(Metric):
         result.compute_aggregates(perfect_value=self.perfect_value)
 
         return result
+
+    @staticmethod
+    def _calibrate_binary_shift(
+        decompilation: DecompilationResult,
+        gt_types: dict[str, list[dict[str, Any]]],
+    ) -> int | None:
+        """Calibrate the offset shift across all functions of a binary.
+
+        Gathers per-function (ground-truth, decompiled) stack offset sets and
+        finds the single additive shift that aligns them best across the
+        binary. Returns ``None`` when there is nothing to calibrate against.
+        """
+        pairs: list[tuple[list[int], list[int]]] = []
+
+        for func_name, func_decomp in decompilation.functions.items():
+            gt_vars = gt_types.get(func_name, [])
+            if not gt_vars:
+                continue
+            func_gt = [o for gv in gt_vars for o in gv.get("rbp_offset", [])]
+            func_dec = [
+                v.stack_offset
+                for v in func_decomp.variables
+                if v.stack_offset is not None
+            ]
+            if func_gt and func_dec:
+                pairs.append((func_gt, func_dec))
+
+        return _calibrate_shift_multi(pairs)

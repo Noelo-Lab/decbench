@@ -4,8 +4,8 @@ import pytest
 
 from decbench.metrics.base import Metric, MetricConfig
 from decbench.metrics.registry import MetricRegistry, register_metric
+from decbench.models.decompilation import FunctionDecompilation, VariableInfo
 from decbench.models.metrics import MetricValue
-from decbench.models.decompilation import FunctionDecompilation
 
 
 class TestMetricRegistry:
@@ -88,8 +88,9 @@ class TestGEDMetric:
     def test_ged_identical_cfgs(self) -> None:
         """GED of identical graphs should be 0."""
         pytest.importorskip("cfgutils")
-        from decbench.metrics.ged import GEDMetric
         import networkx as nx
+
+        from decbench.metrics.ged import GEDMetric
 
         # cfgutils expects nodes with is_entrypoint attribute
         class CFGNode:
@@ -213,6 +214,316 @@ int main() {
         names = [v["name"] for v in vars]
         assert "x" in names
         assert "counter" in names
+
+    def test_offset_exact_match(self) -> None:
+        """Structured var at the exact GT offset and type -> perfect."""
+        from decbench.metrics.type_match import TypeMatchMetric
+
+        func = FunctionDecompilation(
+            name="test",
+            address=0x1000,
+            decompiled_code="// no decls here",
+            variables=[
+                VariableInfo(name="v0", type="int", stack_offset=-4, kind="stack"),
+            ],
+        )
+        gt_vars = [
+            {"name": "x", "type": ["int"], "rbp_offset": [-4], "size": 4},
+        ]
+
+        metric = TypeMatchMetric()
+        result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
+        assert result.value == 1.0
+        assert result.metadata["matched_by"] == "structured"
+        assert result.metadata["tp"] == 1
+        assert result.metadata["calibration_shift"] == 0
+
+    def test_args_match_by_position_with_synthetic_names(self) -> None:
+        """O2-style: register args match positionally even with angr names."""
+        from decbench.metrics.type_match import TypeMatchMetric
+
+        func = FunctionDecompilation(
+            name="test",
+            address=0x1000,
+            decompiled_code="// no decls",
+            variables=[
+                VariableInfo(name="a0", type="unsigned int", kind="arg", arg_index=0),
+                VariableInfo(name="a1", type="char *", kind="arg", arg_index=1),
+            ],
+        )
+        # Register-resident args at -O2: names differ, no stack offsets.
+        gt_vars = [
+            {"name": "count", "type": ["int"], "rbp_offset": [], "size": 4,
+             "is_arg": True, "arg_index": 0},
+            {"name": "buf", "type": ["char*"], "rbp_offset": [], "size": 8,
+             "is_arg": True, "arg_index": 1},
+        ]
+
+        metric = TypeMatchMetric()
+        result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
+        assert result.value == 1.0
+        assert result.metadata["matched_by"] == "structured"
+        assert result.metadata["matched_by_arg"] == 2
+
+    def test_arg_position_type_mismatch_is_fp(self) -> None:
+        """Positional arg hit with the wrong type counts as a false positive."""
+        from decbench.metrics.type_match import TypeMatchMetric
+
+        func = FunctionDecompilation(
+            name="test",
+            address=0x1000,
+            decompiled_code="// no decls",
+            variables=[
+                VariableInfo(name="a0", type="char", kind="arg", arg_index=0),
+            ],
+        )
+        gt_vars = [
+            {"name": "n", "type": ["long long"], "rbp_offset": [], "size": 8,
+             "is_arg": True, "arg_index": 0},
+        ]
+
+        metric = TypeMatchMetric()
+        result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
+        assert result.metadata["fp"] == 1
+        assert result.value == 0.0
+
+    def test_register_local_matches_by_name(self) -> None:
+        """O2-style register local (no offsets anywhere) matches by name."""
+        from decbench.metrics.type_match import TypeMatchMetric
+
+        func = FunctionDecompilation(
+            name="test",
+            address=0x1000,
+            decompiled_code="// no decls",
+            variables=[
+                VariableInfo(name="sum", type="int", kind="stack"),
+            ],
+        )
+        gt_vars = [
+            {"name": "sum", "type": ["int"], "rbp_offset": [], "size": 4},
+        ]
+
+        metric = TypeMatchMetric()
+        result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
+        assert result.value == 1.0
+        assert result.metadata["matched_by_name"] == 1
+
+    def test_o2_ground_truth_keeps_register_vars(self, tmp_path) -> None:
+        """At -O2, register-located vars must still appear in ground truth."""
+        import shutil
+        import subprocess
+
+        from decbench.metrics.type_match import extract_ground_truth_types
+
+        cc = shutil.which("cc") or shutil.which("gcc")
+        if cc is None:
+            pytest.skip("no C compiler available")
+
+        src = tmp_path / "t.c"
+        src.write_text(
+            "int helper(int first, char *second) {\n"
+            "    int doubled = first * 2;\n"
+            "    return doubled + (second != 0);\n"
+            "}\n"
+            "int main(int argc, char **argv) { return helper(argc, argv[0]); }\n"
+        )
+        binary = tmp_path / "t"
+        subprocess.run(
+            [cc, "-g", "-O2", "-fno-inline", "-o", str(binary), str(src)],
+            check=True,
+        )
+
+        gt = extract_ground_truth_types(binary)
+        assert "helper" in gt, f"helper missing from O2 ground truth: {sorted(gt)}"
+        by_name = {v["name"]: v for v in gt["helper"]}
+        # Register-resident args kept, with positional indices
+        assert by_name["first"]["is_arg"] is True
+        assert by_name["first"]["arg_index"] == 0
+        assert by_name["second"]["arg_index"] == 1
+        assert "int" in by_name["first"]["type"]
+
+    def test_one_slot_not_double_counted(self) -> None:
+        """A single decompiled slot satisfies at most one GT variable."""
+        from decbench.metrics.type_match import TypeMatchMetric
+
+        func = FunctionDecompilation(
+            name="test",
+            address=0x1000,
+            decompiled_code="// no decls",
+            variables=[
+                VariableInfo(name="i", type="int", stack_offset=-8, kind="stack"),
+            ],
+        )
+        # Two shadowed locals named "i" at distinct offsets; only one recovered
+        gt_vars = [
+            {"name": "i", "type": ["int"], "rbp_offset": [-8], "size": 4},
+            {"name": "i", "type": ["int"], "rbp_offset": [-16], "size": 4},
+        ]
+
+        metric = TypeMatchMetric()
+        result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
+        assert result.metadata["tp"] == 1
+        assert result.metadata["fn"] == 1
+        assert result.value == 0.5
+
+    def test_short_int_dwarf_name_matches_decompiler_short(self) -> None:
+        """GCC's DWARF 'short int' must match decompiler 'short'/'_WORD'."""
+        from decbench.metrics.type_match import normalize_type
+
+        gt_forms = normalize_type("short int")
+        for decompiler_spelling in ("short", "__int16", "_WORD", "ushort"):
+            assert gt_forms & normalize_type(decompiler_spelling), (
+                f"'short int' does not match {decompiler_spelling!r}"
+            )
+
+    def test_binary_calibration_ignores_single_slot_coincidences(self) -> None:
+        """All-single-var functions must not elect a spurious nonzero shift."""
+        from decbench.metrics.type_match import _calibrate_shift_multi
+
+        # Three coincidental +4 alignments from unrelated single slots, and
+        # one function genuinely aligned at shift 0.
+        pairs = [
+            ([-8], [-12]),
+            ([-12], [-16]),
+            ([-16], [-20]),
+            ([-4], [-4]),
+        ]
+        assert _calibrate_shift_multi(pairs) == 0
+
+    def test_offset_miss_rescued_by_name(self) -> None:
+        """GT stack var promoted to an arg (no offset) is rescued by name."""
+        from decbench.metrics.type_match import TypeMatchMetric
+
+        func = FunctionDecompilation(
+            name="test",
+            address=0x1000,
+            decompiled_code="// no decls",
+            variables=[
+                VariableInfo(name="x", type="int", stack_offset=-4, kind="stack"),
+                # argc was promoted to an argument: correct name+type, no offset
+                VariableInfo(name="argc", type="int", stack_offset=None, kind="arg"),
+            ],
+        )
+        gt_vars = [
+            {"name": "x", "type": ["int"], "rbp_offset": [-4], "size": 4},
+            {"name": "argc", "type": ["int"], "rbp_offset": [-20], "size": 4},
+        ]
+
+        metric = TypeMatchMetric()
+        result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
+        assert result.value == 1.0
+        assert result.metadata["matched_by"] == "structured"
+        assert result.metadata["tp"] == 2
+        assert result.metadata["fn"] == 0
+
+    def test_offset_constant_shift_calibration(self) -> None:
+        """Decompiled offsets shifted +16 from GT (2 vars) -> shift -16, perfect."""
+        from decbench.metrics.type_match import TypeMatchMetric
+
+        func = FunctionDecompilation(
+            name="test",
+            address=0x1000,
+            decompiled_code="// no decls",
+            variables=[
+                VariableInfo(name="v0", type="int", stack_offset=12, kind="stack"),
+                VariableInfo(name="v1", type="char", stack_offset=11, kind="stack"),
+            ],
+        )
+        gt_vars = [
+            {"name": "x", "type": ["int"], "rbp_offset": [-4], "size": 4},
+            {"name": "y", "type": ["char"], "rbp_offset": [-5], "size": 1},
+        ]
+
+        metric = TypeMatchMetric()
+        result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
+        assert result.metadata["calibration_shift"] == -16
+        assert result.value == 1.0
+        assert result.metadata["matched_by"] == "structured"
+
+    def test_offset_type_mismatch(self) -> None:
+        """Var at matching offset but wrong type -> false positive."""
+        from decbench.metrics.type_match import TypeMatchMetric
+
+        func = FunctionDecompilation(
+            name="test",
+            address=0x1000,
+            decompiled_code="// no decls",
+            variables=[
+                VariableInfo(name="v0", type="char", stack_offset=-4, kind="stack"),
+            ],
+        )
+        gt_vars = [
+            {"name": "x", "type": ["int"], "rbp_offset": [-4], "size": 4},
+        ]
+
+        metric = TypeMatchMetric()
+        result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
+        assert result.metadata["fp"] == 1
+        assert result.value == 0.0
+        assert result.metadata["matched_by"] == "structured"
+
+    def test_name_fallback_no_offsets(self) -> None:
+        """Structured vars without stack offsets -> fall back to name matching."""
+        from decbench.metrics.type_match import TypeMatchMetric
+
+        func = FunctionDecompilation(
+            name="test",
+            address=0x1000,
+            decompiled_code="// no decls",
+            variables=[
+                VariableInfo(name="x", type="int", stack_offset=None, kind="arg"),
+            ],
+        )
+        gt_vars = [
+            {"name": "x", "type": ["int"], "rbp_offset": [-4], "size": 4},
+        ]
+
+        metric = TypeMatchMetric()
+        result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
+        assert result.metadata["matched_by"] == "structured"
+        assert result.value == 1.0
+        assert result.metadata["tp"] == 1
+
+    def test_regex_fallback_no_variables(self) -> None:
+        """No structured variables -> fall back to regex extraction by name."""
+        from decbench.metrics.type_match import TypeMatchMetric
+
+        func = FunctionDecompilation(
+            name="test",
+            address=0x1000,
+            decompiled_code="int x;\n",
+            variables=[],
+        )
+        gt_vars = [
+            {"name": "x", "type": ["int"], "rbp_offset": [-4], "size": 4},
+        ]
+
+        metric = TypeMatchMetric()
+        result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
+        assert result.metadata["matched_by"] == "regex"
+        assert result.value == 1.0
+
+    def test_offset_loclist_any_of(self) -> None:
+        """GT loclist with multiple offsets matches if any aligns."""
+        from decbench.metrics.type_match import TypeMatchMetric
+
+        func = FunctionDecompilation(
+            name="test",
+            address=0x1000,
+            decompiled_code="// no decls",
+            variables=[
+                VariableInfo(name="v0", type="int", stack_offset=-24, kind="stack"),
+            ],
+        )
+        gt_vars = [
+            {"name": "x", "type": ["int"], "rbp_offset": [-20, -24], "size": 4},
+        ]
+
+        metric = TypeMatchMetric()
+        result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
+        assert result.value == 1.0
+        assert result.metadata["matched_by"] == "structured"
+        assert result.metadata["tp"] == 1
 
 
 class TestByteMatchMetric:

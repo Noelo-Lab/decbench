@@ -42,7 +42,7 @@ def main() -> int:
     config = PipelineConfig(
         output_dir=output_dir,
         optimization_levels=[OptimizationLevel.O2],
-        decompilers=["angr"],
+        decompilers=["angr", "ida", "ghidra"],
         metrics=["ged", "type_match", "byte_match"],
         workers=2,
         skip_compile=True,

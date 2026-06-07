@@ -191,6 +191,7 @@ def _compile_function(
         # Add minimal headers
         src_file.write("#include <stdint.h>\n")
         src_file.write("#include <stddef.h>\n")
+        src_file.write("#include <stdbool.h>\n")
         src_file.write("#include <stdlib.h>\n")
         src_file.write("#include <string.h>\n")
         src_file.write("#include <stdio.h>\n\n")

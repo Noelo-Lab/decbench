@@ -1,20 +1,25 @@
 """Data models for DecBench."""
 
-from decbench.models.project import Project, ProjectConfig, CompilationConfig
 from decbench.models.decompilation import (
     DecompilationResult,
-    FunctionDecompilation,
     DecompilerMetadata,
+    FunctionDecompilation,
+)
+from decbench.models.function_data import (
+    BinaryGroup,
+    FunctionData,
+    FunctionRecord,
 )
 from decbench.models.metrics import (
+    FunctionMetrics,
     MetricResult,
     MetricValue,
-    FunctionMetrics,
 )
+from decbench.models.project import CompilationConfig, Project, ProjectConfig
 from decbench.models.scoreboard import (
-    Scoreboard,
     DecompilerScore,
     MetricScore,
+    Scoreboard,
 )
 
 __all__ = [
@@ -30,4 +35,7 @@ __all__ = [
     "Scoreboard",
     "DecompilerScore",
     "MetricScore",
+    "FunctionData",
+    "BinaryGroup",
+    "FunctionRecord",
 ]

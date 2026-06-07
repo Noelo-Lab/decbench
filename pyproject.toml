@@ -38,6 +38,9 @@ dependencies = [
     "angr",
     "capstone>=5.0",
     "diff-match-patch>=20230430",
+    # Unified decompiler interface (IDA/Ghidra/Binja/angr backends).
+    # Installed editable from a local checkout (~/github/declib).
+    "declib>=4.0.0",
 ]
 
 [project.optional-dependencies]

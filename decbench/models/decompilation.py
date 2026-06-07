@@ -18,6 +18,28 @@ class LineMapping(BaseModel):
     )
 
 
+class VariableInfo(BaseModel):
+    """Structured variable info recovered by a decompiler.
+
+    Stack offsets are in declib's canonical (lifted) stack-offset space,
+    which is rbp-relative-ish with locals at negative offsets. The
+    type_match metric calibrates against DWARF offsets at compare time.
+    """
+
+    name: str = Field(default="", description="Variable name in decompiled output")
+    type: str = Field(default="", description="Variable type as a C type string")
+    stack_offset: int | None = Field(
+        default=None,
+        description="Stack offset (declib-lifted); None for register vars/args",
+    )
+    size: int | None = Field(default=None, description="Size in bytes")
+    kind: str = Field(default="stack", description="'stack' or 'arg'")
+    arg_index: int | None = Field(
+        default=None,
+        description="Positional index for function arguments (ABI order)",
+    )
+
+
 class FunctionDecompilation(BaseModel):
     """Decompilation result for a single function."""
 
@@ -30,6 +52,12 @@ class FunctionDecompilation(BaseModel):
     line_mappings: list[LineMapping] = Field(
         default_factory=list,
         description="Line to address mappings",
+    )
+
+    # Structured variable info (stack vars + args) for type matching
+    variables: list[VariableInfo] = Field(
+        default_factory=list,
+        description="Recovered stack variables and function arguments",
     )
 
     # Pre-computed metadata (optional, computed during decompilation)

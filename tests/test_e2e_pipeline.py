@@ -246,6 +246,251 @@ class TestScoringPipeline:
             assert "Type Correctness" in content
             assert "Recompilation Bytematch" in content
             assert "Overall" in content
+            # No function data -> banner present, no embedded data.
+            assert "Interactive filtering unavailable" in content
+            assert "const DATA" not in content
+
+    def test_html_report_with_function_data(self) -> None:
+        from decbench.models.function_data import (
+            BinaryGroup,
+            FunctionData,
+            FunctionRecord,
+        )
+        from decbench.models.scoreboard import (
+            DecompilerScore,
+            MetricScore,
+            Scoreboard,
+        )
+        from decbench.rendering.html import render_html_report
+
+        scoreboard = Scoreboard(
+            name="Interactive Report",
+            metrics=["ged", "type_match"],
+            decompilers=["angr"],
+            total_functions=2,
+            total_binaries=1,
+            decompiler_scores={
+                "angr": DecompilerScore(
+                    name="angr",
+                    metric_scores={
+                        "ged": MetricScore(
+                            metric_name="ged", decompiler_name="angr",
+                            perfect_count=1, total_count=2,
+                            perfect_percentage=50.0,
+                        ),
+                        "type_match": MetricScore(
+                            metric_name="type_match", decompiler_name="angr",
+                            perfect_count=1, total_count=2,
+                            perfect_percentage=50.0,
+                        ),
+                    },
+                    overall_perfect_count=1, overall_total_count=2,
+                    overall_perfect_percentage=50.0,
+                ),
+            },
+        )
+
+        function_data = FunctionData(
+            decompilers=["angr"],
+            metrics=["ged", "type_match"],
+            perfect_values={"ged": 0.0, "type_match": 1.0},
+            groups=[
+                BinaryGroup(
+                    project="proj",
+                    opt_level="O2",
+                    binary="bin1",
+                    labels=["O2", "optimized"],
+                    # Use a value that contains a "</script>" substring to
+                    # confirm the embedded JSON escapes "<" characters.
+                    functions=[
+                        FunctionRecord(
+                            function="</script>_func",
+                            values={"angr": {"ged": 0.0, "type_match": 1.0}},
+                            perfects={
+                                "angr": {"ged": True, "type_match": True}
+                            },
+                            labels=["O2", "optimized"],
+                        ),
+                        FunctionRecord(
+                            function="func2",
+                            values={"angr": {"ged": 2.0, "type_match": 0.5}},
+                            perfects={
+                                "angr": {"ged": False, "type_match": False}
+                            },
+                            labels=["O2", "optimized", "large"],
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "report.html"
+            render_html_report(scoreboard, output_path, function_data)
+
+            assert output_path.exists()
+            content = output_path.read_text()
+
+            # Embedded data + interactive sections present.
+            assert "const DATA" in content
+            assert 'id="filters"' in content
+            assert 'id="comparison-matrix"' in content
+            assert 'id="per-binary-breakdown"' in content
+
+            # The raw "</script>" sequence must NOT appear inside the
+            # embedded JSON. The script tag itself closes with "</script>",
+            # so check that the function name was escaped via <.
+            assert "\\u003c/script>_func" in content
+            # And the literal unescaped function name must be absent.
+            assert "</script>_func" not in content
+
+
+class TestLabels:
+    """Test the pure label-derivation functions."""
+
+    def test_opt_level_labels(self) -> None:
+        from decbench.scoring.labels import opt_level_labels
+
+        assert opt_level_labels("O0") == ["O0", "unoptimized"]
+        assert opt_level_labels("O2") == ["O2", "optimized"]
+
+    def test_binary_labels_for_merge_and_dedup(self) -> None:
+        from decbench.models.project import ProjectConfig
+        from decbench.scoring.labels import binary_labels_for
+
+        config = ProjectConfig(
+            name="proj",
+            labels=["firmware"],
+            binary_labels={"bin1": ["big"]},
+        )
+
+        labels = binary_labels_for(config, "O2", "bin1")
+        assert labels == ["O2", "optimized", "firmware", "big"]
+
+        # A binary without per-binary additions still inherits project labels.
+        labels2 = binary_labels_for(config, "O0", "bin2")
+        assert labels2 == ["O0", "unoptimized", "firmware"]
+
+        # Duplicates across sources are removed, order-stable.
+        config2 = ProjectConfig(
+            name="proj2",
+            labels=["O2", "firmware"],
+            binary_labels={"bin1": ["firmware", "big"]},
+        )
+        labels3 = binary_labels_for(config2, "O2", "bin1")
+        assert labels3 == ["O2", "optimized", "firmware", "big"]
+
+    def test_function_labels_for_large_threshold(self) -> None:
+        from decbench.scoring.labels import function_labels_for
+
+        base = ["O2", "optimized"]
+
+        # Below threshold -> no "large".
+        assert function_labels_for(base, 50, large_threshold=100) == base
+        # At threshold -> "large" appended.
+        assert function_labels_for(base, 100, large_threshold=100) == [
+            "O2", "optimized", "large"
+        ]
+        # Above threshold -> "large" appended.
+        assert function_labels_for(base, 250, large_threshold=100) == [
+            "O2", "optimized", "large"
+        ]
+        # Unknown line count -> no "large".
+        assert function_labels_for(base, None, large_threshold=100) == base
+
+
+class TestFunctionData:
+    """Test building and serializing the per-function dataset."""
+
+    def _eval_results(self):
+        from decbench.models.metrics import MetricResult, MetricValue
+        from decbench.models.project import OptimizationLevel
+
+        return {
+            "test_project": {
+                OptimizationLevel.O2: {
+                    "binary1": {
+                        "angr": {
+                            "ged": MetricResult(
+                                metric_name="ged",
+                                decompiler_name="angr",
+                                binary_name="binary1",
+                                function_results={
+                                    "func1": MetricValue(value=0.0),
+                                    "func2": MetricValue(value=2.0),
+                                },
+                            ),
+                            "type_match": MetricResult(
+                                metric_name="type_match",
+                                decompiler_name="angr",
+                                binary_name="binary1",
+                                function_results={
+                                    "func1": MetricValue(value=1.0),
+                                    "func2": MetricValue(value=0.5),
+                                },
+                            ),
+                        },
+                    },
+                },
+            },
+        }
+
+    def test_build_function_data(self) -> None:
+        from decbench.models.project import Project, ProjectConfig
+        from decbench.scoring.function_data_builder import build_function_data
+
+        eval_results = self._eval_results()
+        project = Project(
+            config=ProjectConfig(name="test_project", labels=["firmware"])
+        )
+
+        fd = build_function_data(eval_results, [project])
+
+        assert fd.schema_version == 1
+        assert fd.decompilers == ["angr"]
+        assert fd.metrics == ["ged", "type_match"]
+        assert fd.perfect_values == {"ged": 0.0, "type_match": 1.0}
+
+        assert len(fd.groups) == 1
+        group = fd.groups[0]
+        assert group.project == "test_project"
+        assert group.opt_level == "O2"
+        assert group.binary == "binary1"
+        assert group.labels == ["O2", "optimized", "firmware"]
+
+        assert len(group.functions) == 2
+        funcs = {f.function: f for f in group.functions}
+
+        f1 = funcs["func1"]
+        assert f1.values == {"angr": {"ged": 0.0, "type_match": 1.0}}
+        assert f1.perfects == {"angr": {"ged": True, "type_match": True}}
+        assert f1.labels == ["O2", "optimized", "firmware"]
+
+        f2 = funcs["func2"]
+        assert f2.values == {"angr": {"ged": 2.0, "type_match": 0.5}}
+        assert f2.perfects == {"angr": {"ged": False, "type_match": False}}
+
+    def test_function_data_json_round_trip(self, tmp_path) -> None:
+        from decbench.models.function_data import FunctionData
+        from decbench.models.project import Project, ProjectConfig
+        from decbench.scoring.function_data_builder import build_function_data
+
+        eval_results = self._eval_results()
+        project = Project(config=ProjectConfig(name="test_project"))
+        fd = build_function_data(eval_results, [project])
+
+        path = tmp_path / "function_results.json"
+        fd.to_json(path)
+        assert path.exists()
+
+        loaded = FunctionData.from_json(path)
+        assert loaded.decompilers == fd.decompilers
+        assert loaded.metrics == fd.metrics
+        assert loaded.perfect_values == fd.perfect_values
+        assert len(loaded.groups) == len(fd.groups)
+        assert loaded.groups[0].functions[0].perfects == (
+            fd.groups[0].functions[0].perfects
+        )
 
 
 @pytest.mark.skipif(

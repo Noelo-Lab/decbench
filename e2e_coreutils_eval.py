@@ -314,7 +314,7 @@ def main():
         "--decompilers",
         "-d",
         nargs="+",
-        choices=["angr", "angr_phoenix", "angr_dream", "ghidra"],
+        choices=["angr", "ghidra", "ida", "binja"],
         default=["angr", "ghidra"],
         help="Decompilers to use (default: angr ghidra)"
     )

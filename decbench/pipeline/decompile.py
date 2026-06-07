@@ -97,7 +97,16 @@ def decompile_project(
     if parallel and (len(binaries) * len(decompilers)) > 1:
         workers = workers or cpu_count()
 
-        with ProcessPoolExecutor(max_workers=workers) as executor:
+        # Fresh process per task: isolates JVM (Ghidra) and idalib (IDA)
+        # state between decompiler backends. Requires Python 3.11+.
+        try:
+            executor_ctx = ProcessPoolExecutor(
+                max_workers=workers, max_tasks_per_child=1
+            )
+        except TypeError:  # Python 3.10
+            executor_ctx = ProcessPoolExecutor(max_workers=workers)
+
+        with executor_ctx as executor:
             futures = {}
 
             for binary_path in binaries:

@@ -67,7 +67,7 @@ def build_scoreboard(
         overall_perfect = 0
         overall_total = len(per_func)
 
-        for func_key, metric_perfects in per_func.items():
+        for metric_perfects in per_func.values():
             all_perfect = all(
                 metric_perfects.get(m, False) for m in all_metric_names
             )

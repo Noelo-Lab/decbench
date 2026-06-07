@@ -2,8 +2,12 @@
 # Generates executable and .o files with debug symbols and preprocessed .i files
 
 CC = cc
-# Base flags for reproducible decompilation benchmarking
-CFLAGS = -g -fno-inline -fno-builtin -save-temps=obj -O2
+# Benchmark-critical flags are force-appended to whatever CFLAGS the
+# environment provides: the DecBench pipeline injects the optimization level
+# through env CFLAGS, and a user's own CFLAGS must not drop -g/-save-temps.
+# (No -O here so the pipeline's chosen level always wins; plain `make`
+# builds default to -O0.)
+override CFLAGS += -g -fno-inline -fno-builtin -save-temps=obj
 
 all: example example.o
 

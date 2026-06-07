@@ -13,14 +13,14 @@ local_path = "tests/example_project"
 package_dir = "example_project"
 source_dir = "."
 
-# No special build commands needed
+# Clean first so per-optimization-level rebuilds never reuse stale artifacts
 post_download_cmds = []
-pre_make_cmds = []
+pre_make_cmds = ["make clean"]
 make_cmd = "make"
 post_make_cmds = []
 
 [compilation]
-optimization_levels = ["O2"]
+optimization_levels = ["O0", "O2"]
 base_flags = ["-g", "-fno-inline", "-fno-builtin", "-save-temps=obj"]
 emit_preprocessed = true
 c_compiler = "cc"
