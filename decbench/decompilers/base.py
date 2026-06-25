@@ -72,6 +72,24 @@ class Decompiler(ABC):
             config: Configuration for the decompiler
         """
         self.config = config or DecompilerConfig()
+        # Set by the registry when a versioned spec (``name@version``) is
+        # resolved, so multiple versions of one decompiler run as distinct,
+        # comparable entries. ``requested_version`` is the pinned label from
+        # the spec; ``get_version()`` reports the realized/actual version.
+        self.requested_version: str | None = None
+        self._spec_id: str | None = None
+
+    @property
+    def id(self) -> str:
+        """Canonical id used as this decompiler's key in results/scoreboards.
+
+        ``name`` when unversioned, ``name@version`` when a version was pinned.
+        """
+        from decbench.decompilers.spec import make_id
+
+        if self._spec_id is not None:
+            return self._spec_id
+        return make_id(self.name, self.requested_version)
 
     @abstractmethod
     def is_available(self) -> bool:

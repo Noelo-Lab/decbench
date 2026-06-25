@@ -1,0 +1,30 @@
+# DecBench Project Configuration: GnuTLS
+# GnuTLS is a secure communications (TLS/SSL) library; labels mark it as a SAILR
+# crypto/networking library target. NOTE: long build (~20-40 min serial).
+
+name = "gnutls"
+version = "3.7.8"
+
+# Source configuration - use release tarball (ships pre-generated ./configure,
+# avoids the network-fragile bootstrap/autogen that fetches gnulib).
+source_remote = "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.7/gnutls-3.7.8.tar.xz"
+remote_type = "tar"
+
+# Build directories (package_dir unused for tar, set for documentation)
+package_dir = "gnutls"
+source_dir = "src"
+
+# Build commands. nettle-dev + libgmp-dev + libtasn1 are installed; libunistring
+# and p11-kit are NOT, so use the included copies / disable p11-kit. Disable docs,
+# tests, guile, and the C++ wrapper to keep the build to the CLI tools
+# (gnutls-cli/gnutls-serv/certtool) for SAILR parity.
+post_download_cmds = []
+pre_make_cmds = ["./configure --quiet --with-included-libtasn1 --with-included-unistring --without-p11-kit --disable-doc --disable-tests --disable-guile --disable-cxx"]
+make_cmd = "make"
+
+labels = ["sailr", "library", "crypto", "networking"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

@@ -58,6 +58,42 @@ optimization_levels = ["O2"]
             assert project.name == "test"
             assert project.config.version == "1.0"
 
+    def test_opt_level_gcc_flags(self) -> None:
+        from decbench.models.project import opt_gcc_flags
+
+        assert OptimizationLevel.O0.gcc_flags == ["-O0"]
+        assert OptimizationLevel.O2.gcc_flags == ["-O2"]
+        assert OptimizationLevel.O2_NOINLINE.gcc_flags == ["-O2", "-fno-inline"]
+
+        # String values and enum members map identically
+        assert opt_gcc_flags("O2-noinline") == ["-O2", "-fno-inline"]
+        assert opt_gcc_flags(OptimizationLevel.O2_NOINLINE) == ["-O2", "-fno-inline"]
+        assert opt_gcc_flags("O0") == ["-O0"]
+        # Unknown ad-hoc levels fall back to -<value>
+        assert opt_gcc_flags("Og") == ["-Og"]
+
+    def test_o2_noinline_round_trip(self) -> None:
+        assert OptimizationLevel("O2-noinline") is OptimizationLevel.O2_NOINLINE
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
+            f.write('''
+name = "test"
+source_dir = "src"
+remote_type = "local"
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+''')
+            f.flush()
+            project = Project.from_toml(Path(f.name))
+            assert OptimizationLevel.O2_NOINLINE in project.compilation.optimization_levels
+
+    def test_base_flags_no_inline_by_default(self) -> None:
+        # Inlining is controlled by the opt level, not base flags
+        config = CompilationConfig()
+        assert "-fno-inline" not in config.base_flags
+        assert "-fno-builtin" in config.base_flags
+
     def test_project_to_toml(self) -> None:
         project = Project(
             config=ProjectConfig(name="test", source_dir="src"),

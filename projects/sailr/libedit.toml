@@ -1,0 +1,32 @@
+# DecBench Project Configuration: libedit
+# libedit (editline) is a BSD-licensed line-editing/history/tokenization library,
+# a libreadline replacement that drives terminal input. Labels mark it as a sailr
+# benchmark target in the library / terminal categories.
+
+name = "libedit"
+version = "3.1-20221030"
+
+# Source configuration - use the official editline release tarball (ships a
+# pre-generated ./configure, so no autoreconf/gnulib network fetch is needed).
+# sailr pinned the same snapshot via Debian's salsa git tag 3.1-20221030-1.
+source_remote = "https://thrysoee.dk/editline/libedit-20221030-3.1.tar.gz"
+remote_type = "tar"
+
+# Build directories (package_dir documents the extracted dir; tar uses the
+# single extracted directory as the source root). source_dir "src" keeps parity
+# with the sailr recipe, collecting the built library from the src/ subtree.
+package_dir = "libedit-20221030-3.1"
+source_dir = "src"
+
+# Build commands (no bootstrap needed with the release tarball; libncurses-dev
+# is installed for the terminfo backend).
+post_download_cmds = []
+pre_make_cmds = ["./configure --quiet"]
+make_cmd = "make"
+
+labels = ["sailr", "library", "terminal"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

@@ -56,22 +56,33 @@ class DecompilerRegistry:
         """Get an instance of a registered decompiler.
 
         Args:
-            name: Name of the decompiler
+            name: Decompiler spec — either a bare name (``"ghidra"``) or a
+                version-pinned spec (``"ghidra@12.1"``). The version suffix
+                lets multiple versions of one decompiler run as distinct
+                entries; it is resolved against the decompiler versions config.
             config: Optional configuration
 
         Returns:
-            Decompiler instance
+            Decompiler instance (with ``requested_version`` / ``id`` set when
+            a version was pinned)
 
         Raises:
             KeyError: If decompiler is not registered
         """
-        if name not in cls._decompilers:
+        from decbench.decompilers.spec import make_id, parse_spec
+
+        base_name, version = parse_spec(name)
+
+        if base_name not in cls._decompilers:
             available = ", ".join(cls._decompilers.keys())
             raise KeyError(
-                f"Decompiler '{name}' not found. Available: {available}"
+                f"Decompiler '{base_name}' not found. Available: {available}"
             )
 
-        return cls._decompilers[name](config)
+        instance = cls._decompilers[base_name](config)
+        instance.requested_version = version
+        instance._spec_id = make_id(base_name, version)
+        return instance
 
     @classmethod
     def list_registered(cls) -> list[str]:

@@ -1,0 +1,26 @@
+# DecBench Project Configuration: dpkg
+# dpkg is the Debian package manager's low-level CLI tooling (dpkg, dpkg-deb, ...).
+# Labels: sailr (ported sailr-eval target), cli-tool, package-management.
+
+name = "dpkg"
+version = "1.20.12"
+
+# Official Debian source tarball (ships a generated ./configure, so no autogen needed).
+# Pulled from the snapshot archive since this version is no longer in the live pool.
+source_remote = "https://snapshot.debian.org/archive/debian/20220903T155935Z/pool/main/d/dpkg/dpkg_1.20.12.tar.xz"
+remote_type = "tar"
+
+# package_dir is documentation-only for tar sources (the single extracted dir is used).
+package_dir = "dpkg-1.20.12"
+# Only collect the dpkg CLI binaries under src/, matching the sailr recipe.
+source_dir = "src"
+
+pre_make_cmds = ["./configure --quiet"]
+make_cmd = "make"
+
+labels = ["sailr", "cli-tool", "package-management"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

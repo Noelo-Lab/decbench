@@ -1,0 +1,24 @@
+# DecBench Project Configuration: GNU Diffutils
+# GNU Diffutils provides file comparison CLI tools (diff, cmp, diff3, sdiff).
+# Labels mark it as a sailr target, a CLI tool, and a text-processing utility.
+
+name = "diffutils"
+version = "3.8"
+
+# Official GNU release tarball (ships a generated ./configure, no bootstrap/gnulib fetch).
+source_remote = "https://mirrors.kernel.org/gnu/diffutils/diffutils-3.8.tar.xz"
+remote_type = "tar"
+
+# package_dir is unused for tar (single extracted dir becomes the source root) but kept for docs.
+package_dir = "diffutils-3.8"
+source_dir = "src"
+
+pre_make_cmds = ["./configure --quiet --disable-gcc-warnings"]
+make_cmd = "make"
+
+labels = ["sailr", "cli-tool", "text-processing"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

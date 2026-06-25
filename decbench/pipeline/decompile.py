@@ -21,6 +21,8 @@ def decompile_binary(
     output_dir: Path | None = None,
     functions: list[tuple[str, int]] | None = None,
     config: DecompilerConfig | None = None,
+    function_names: set[str] | None = None,
+    progress_path: Path | None = None,
 ) -> DecompilationResult:
     """Decompile a single binary.
 
@@ -30,6 +32,10 @@ def decompile_binary(
         output_dir: Directory for output files
         functions: Optional list of (name, address) to decompile
         config: Decompiler configuration
+        function_names: Optional set of source function names to restrict
+            decompilation to (skips bundled filler; large speedup for angr).
+        progress_path: Optional path to pickle partial results to after each
+            function (so a timeout-kill preserves completed work).
 
     Returns:
         DecompilationResult with all function decompilations
@@ -43,6 +49,8 @@ def decompile_binary(
         binary_path,
         functions=functions,
         output_dir=output_dir,
+        function_names=function_names,
+        progress_path=progress_path,
     )
 
 

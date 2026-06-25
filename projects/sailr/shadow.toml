@@ -1,0 +1,32 @@
+# DecBench Project Configuration: shadow (shadow-utils)
+# shadow provides the system password/account management CLI tools (login,
+# passwd, su, useradd, ...). Labels mark it as a sailr benchmark target in the
+# cli-tool / security / system categories.
+
+name = "shadow"
+version = "4.13"
+
+# Source configuration - use the official release tarball (ships a pre-generated
+# ./configure, so sailr's 5-command autotools bootstrap chain is dropped; no
+# gnulib/autogen network fetch needed).
+source_remote = "https://github.com/shadow-maint/shadow/releases/download/4.13/shadow-4.13.tar.xz"
+remote_type = "tar"
+
+# Build directories (package_dir documents the extracted dir; tar uses the
+# single extracted directory as the source root). source_dir "src" keeps parity
+# with the sailr recipe, collecting the CLI binaries (login, passwd, su,
+# useradd, ...) built under src/.
+package_dir = "shadow-4.13"
+source_dir = "src"
+
+# Build commands (no bootstrap needed with release tarball)
+post_download_cmds = []
+pre_make_cmds = ["./configure --quiet"]
+make_cmd = "make"
+
+labels = ["sailr", "cli-tool", "security", "system"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

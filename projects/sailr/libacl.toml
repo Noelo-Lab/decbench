@@ -1,0 +1,30 @@
+# DecBench Project Configuration: acl (libacl + getfacl/setfacl/chacl)
+# POSIX Access Control List library and tools — a security/filesystem permissions
+# library, hence the "library", "security", "filesystem" category labels.
+# NOTE: acl-2.3.1 uses NON-RECURSIVE automake, so the linked libacl.so lands in
+# the ROOT .libs/ dir (not under libacl/). We therefore use source_dir "." instead
+# of sailr's "libacl" (which would collect zero ELF binaries in decbench). This also
+# collects the getfacl/setfacl/chacl tools — richer data, acceptable.
+
+name = "libacl"
+version = "2.3.1"
+
+# Source configuration - release tarball ships a pre-generated ./configure
+source_remote = "https://download.savannah.nongnu.org/releases/acl/acl-2.3.1.tar.xz"
+remote_type = "tar"
+
+# Build directories
+package_dir = "acl-2.3.1"
+source_dir = "."
+
+# Build commands (no bootstrap needed with release tarball; libattr1-dev installed)
+post_download_cmds = []
+pre_make_cmds = ["./configure --quiet"]
+make_cmd = "make"
+
+labels = ["sailr", "library", "security", "filesystem"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

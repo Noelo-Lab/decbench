@@ -1,0 +1,28 @@
+# DecBench Project Configuration: GNU Bash
+# Bash is the GNU Bourne-Again SHell — a command-language interpreter.
+# Labels: "shell" + "interpreter" categorize it as an interactive shell/scripting
+# interpreter (from the SAILR evaluation set).
+
+name = "bash"
+version = "5.2"
+
+# Source configuration - use release tarball (ships a pre-generated ./configure,
+# avoids fragile network bootstrap/autogen).
+source_remote = "https://mirrors.kernel.org/gnu/bash/bash-5.2.tar.gz"
+remote_type = "tar"
+
+# Build directories
+package_dir = "bash-5.2"
+source_dir = "."
+
+# Build commands (no bootstrap needed with release tarball)
+post_download_cmds = []
+pre_make_cmds = ["./configure --quiet"]
+make_cmd = "make"
+
+labels = ["sailr", "shell", "interpreter"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

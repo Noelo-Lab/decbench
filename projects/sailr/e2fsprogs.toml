@@ -1,0 +1,30 @@
+# DecBench Project Configuration: e2fsprogs (ext2/3/4 filesystem utilities)
+# Ported from the SAILR evaluation set. Only the e2fsck/ binaries are evaluated
+# (sailr parity). Labels: cli-tool (command-line utility), filesystem (operates
+# on ext2/3/4 on-disk structures).
+
+name = "e2fsprogs"
+version = "1.46.5"
+
+# Source configuration - kernel.org release tarball ships a pre-generated ./configure
+# (fallback: sailr's SourceForge URL
+#  http://prdownloads.sourceforge.net/e2fsprogs/e2fsprogs-1.46.5.tar.gz)
+source_remote = "https://mirrors.edge.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/v1.46.5/e2fsprogs-1.46.5.tar.xz"
+remote_type = "tar"
+
+# Build directories (package_dir documentary only for tar; source_dir limits
+# collected binaries to the e2fsck subtree)
+package_dir = "e2fsprogs-1.46.5"
+source_dir = "e2fsck"
+
+# Build commands (no bootstrap needed with release tarball)
+post_download_cmds = []
+pre_make_cmds = ["./configure --quiet"]
+make_cmd = "make"
+
+labels = ["sailr", "cli-tool", "filesystem"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

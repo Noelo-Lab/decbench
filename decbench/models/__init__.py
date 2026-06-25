@@ -15,7 +15,13 @@ from decbench.models.metrics import (
     MetricResult,
     MetricValue,
 )
-from decbench.models.project import CompilationConfig, Project, ProjectConfig
+from decbench.models.project import (
+    CompilationConfig,
+    OptimizationLevel,
+    Project,
+    ProjectConfig,
+    opt_gcc_flags,
+)
 from decbench.models.scoreboard import (
     DecompilerScore,
     MetricScore,
@@ -26,6 +32,8 @@ __all__ = [
     "Project",
     "ProjectConfig",
     "CompilationConfig",
+    "OptimizationLevel",
+    "opt_gcc_flags",
     "DecompilationResult",
     "FunctionDecompilation",
     "DecompilerMetadata",

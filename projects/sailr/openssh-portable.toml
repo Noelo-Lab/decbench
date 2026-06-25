@@ -1,0 +1,35 @@
+# DecBench Project Configuration: OpenSSH (portable)
+# OpenSSH portable — the SSH connectivity suite (sshd daemon, ssh/scp/sftp clients).
+# From the SAILR evaluation set. Labels: sailr (origin), daemon + server (sshd is a
+# networking server daemon) + networking (SSH transport) + crypto (key/cipher code).
+
+name = "openssh-portable"
+version = "9.1p1"
+
+# Source configuration - use the official OpenBSD release tarball, which ships a
+# pre-generated ./configure (so no autoreconf/gnulib bootstrap needed).
+source_remote = "https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-9.1p1.tar.gz"
+remote_type = "tar"
+
+# Build directories (package_dir is documentation-only for tar sources)
+package_dir = "openssh-portable"
+source_dir = "."
+
+# Build commands (release tarball already has configure; libssl-dev + zlib1g-dev
+# are installed, so the default configure picks them up)
+post_download_cmds = []
+pre_make_cmds = ["./configure --quiet"]
+make_cmd = "make"
+post_make_cmds = []
+
+labels = ["sailr", "daemon", "server", "networking", "crypto"]
+
+[compilation]
+# Optimization levels to compile
+optimization_levels = ["O0", "O2", "O2-noinline"]
+
+# Base compiler flags (no -fno-inline here; the O2-noinline level adds it)
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+
+# Compiler to use
+c_compiler = "gcc"

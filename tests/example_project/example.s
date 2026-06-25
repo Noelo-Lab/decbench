@@ -275,7 +275,7 @@ count_to_n:
 	.loc 1 67 5
 	jmp	.L20
 .L21:
-	.loc 1 68 13
+	.loc 1 68 13 discriminator 3
 	movl	-4(%rbp), %eax
 	addl	%eax, -8(%rbp)
 	.loc 1 67 29 discriminator 3
@@ -460,8 +460,6 @@ main:
 	.long	.LASF9
 	.uleb128 0xc
 	.long	0x6b
-	.uleb128 0x4
-	.long	0x72
 	.uleb128 0x6
 	.long	.LASF10
 	.byte	0xb
@@ -479,13 +477,15 @@ main:
 	.uleb128 0xd
 	.long	.LASF28
 	.byte	0x2
-	.value	0x2d4
+	.value	0x295
 	.byte	0xc
 	.long	0x58
-	.long	0xbb
+	.long	0xb6
 	.uleb128 0xe
-	.long	0x77
+	.long	0xb6
 	.byte	0
+	.uleb128 0x4
+	.long	0x72
 	.uleb128 0x5
 	.long	.LASF14
 	.byte	0x58
@@ -1007,12 +1007,12 @@ main:
 	.string	"main"
 .LASF20:
 	.string	"mode"
-.LASF27:
-	.string	"GNU C17 13.3.0 -mtune=generic -march=x86-64 -g -fno-inline -fno-builtin -fasynchronous-unwind-tables -fstack-protector-strong -fstack-clash-protection -fcf-protection"
 .LASF18:
 	.string	"needs_next"
 .LASF8:
 	.string	"long int"
+.LASF27:
+	.string	"GNU C17 11.4.0 -mtune=generic -march=x86-64 -g -fno-inline -fno-builtin -fasynchronous-unwind-tables -fstack-protector-strong -fstack-clash-protection -fcf-protection"
 .LASF16:
 	.string	"count_to_n"
 .LASF11:
@@ -1054,7 +1054,7 @@ main:
 	.string	"example.c"
 .LASF1:
 	.string	"/home/mahaloz/github/decbench/tests/example_project"
-	.ident	"GCC: (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
+	.ident	"GCC: (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0"
 	.section	.note.GNU-stack,"",@progbits
 	.section	.note.gnu.property,"a"
 	.align 8

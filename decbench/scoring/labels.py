@@ -21,12 +21,17 @@ def opt_level_labels(opt_level: str) -> list[str]:
     """Return labels derived purely from the optimization level.
 
     Args:
-        opt_level: Optimization level string (e.g. "O0", "O2").
+        opt_level: Optimization level string (e.g. "O0", "O2", "O2-noinline").
 
     Returns:
-        The opt level itself plus an "unoptimized"/"optimized" label.
+        The opt level itself, an "unoptimized"/"optimized" label, and
+        "noinline" for variants that explicitly disable inlining.
     """
-    return [opt_level, "unoptimized" if opt_level == "O0" else "optimized"]
+    base = opt_level.split("-", 1)[0]
+    labels = [opt_level, "unoptimized" if base == "O0" else "optimized"]
+    if "noinline" in opt_level:
+        labels.append("noinline")
+    return labels
 
 
 def binary_labels_for(

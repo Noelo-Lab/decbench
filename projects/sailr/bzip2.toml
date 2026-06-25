@@ -1,0 +1,28 @@
+# DecBench Project Configuration: bzip2
+# bzip2 is a CLI block-sorting file compressor (Burrows-Wheeler).
+# Labels mark it as a SAILR target, a command-line tool, and a compression utility.
+
+name = "bzip2"
+version = "1.0.8"
+
+# Source configuration - official release tarball (ships ready-to-build sources, no ./configure)
+source_remote = "https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz"
+remote_type = "tar"
+
+# Build directories
+package_dir = "bzip2"
+source_dir = "."
+
+# Build commands - bzip2 has no configure step.
+# Its Makefile HARDCODES CFLAGS, so override via command-line make vars
+# (make CLI vars win over the Makefile; shell=True expands the env vars set by decbench).
+post_download_cmds = []
+pre_make_cmds = []
+make_cmd = 'make CFLAGS="$CFLAGS" CC="$CC"'
+
+labels = ["sailr", "cli-tool", "compression"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"
