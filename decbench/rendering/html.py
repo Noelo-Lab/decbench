@@ -291,6 +291,11 @@ def _build_css() -> str:
             font-size: 0.9em;
         }
         button:hover, select:hover { color: #000; background: var(--text); }
+        .ds-btn { margin: 0 0.3rem 0.3rem 0; }
+        .ds-btn.active {
+            color: #000; background: var(--text);
+            border-style: solid; font-weight: 700;
+        }
         .counter { color: var(--text-muted); font-size: 0.9em; }
         .ul-dash { list-style: none; padding: 0; }
         .ul-dash li { padding: 0.1rem 0; }
@@ -438,57 +443,42 @@ def _build_metric_section(scoreboard: Scoreboard, metric_name: str) -> str:
     </div>"""
 
 
-def _distinct_labels(function_data: FunctionData) -> list[str]:
-    """Return all distinct labels across binaries and functions, order-stable."""
-    seen: set[str] = set()
-    result: list[str] = []
-    for group in function_data.groups:
-        for label in group.labels:
-            if label not in seen:
-                seen.add(label)
-                result.append(label)
-        for func in group.functions:
-            for label in func.labels:
-                if label not in seen:
-                    seen.add(label)
-                    result.append(label)
-    return result
-
-
 def _build_filters_section(function_data: FunctionData) -> str:
-    """Build the filter chips, per-binary toggles, and counter."""
-    labels = _distinct_labels(function_data)
-    chips = ""
-    for label in labels:
-        # Escape user-supplied strings: the attribute value must survive HTML
-        # parsing intact so dataset.label matches the JSON-carried labels.
-        esc = html_escape(label)
-        chips += (
-            f'<label class="chip"><input type="checkbox" data-label="{esc}" '
-            f"checked> {esc}</label>"
+    """Build the single dataset selector (full / hard / hard-inlined / tiny).
+
+    Replaces the old label-chip + per-binary toggle soup: the report now offers
+    one choice — which curated dataset to view — and everything below recomputes
+    over it. Presets come from ``function_data.dataset_presets`` (tagged by
+    :mod:`decbench.scoring.datasets`).
+    """
+    presets = function_data.dataset_presets or []
+    buttons = ""
+    for i, preset in enumerate(presets):
+        active = " active" if i == 0 else ""
+        buttons += (
+            f'<button class="ds-btn{active}" data-dataset="{html_escape(preset.name)}">'
+            f"{html_escape(preset.label)}</button>"
         )
 
-    binary_checks = ""
-    for group in function_data.groups:
-        key = f"{group.project}/{group.opt_level}/{group.binary}"
-        esc = html_escape(key)
-        binary_checks += (
-            f'<label><input type="checkbox" data-binary="{esc}" checked> '
-            f"{esc}</label>"
-        )
+    if not presets:
+        # Backward-compat: data without presets -> nothing to select; the JS
+        # treats everything as active.
+        return """
+    <div class="section" id="filters">
+        <h2>dataset</h2>
+        <p class="desc">showing all functions (no dataset presets in this data).</p>
+        <span class="counter" id="function-counter"></span>
+    </div>"""
 
     return f"""
     <div class="section" id="filters">
-        <h2>filters</h2>
-        <div class="chips">{chips}</div>
-        <details>
-            <summary>per-binary toggles</summary>
-            <div class="binary-list">{binary_checks}</div>
-        </details>
-        <div class="controls">
-            <button id="reset-filters">reset</button>
-            <span class="counter" id="function-counter"></span>
-        </div>
+        <h2>dataset</h2>
+        <p class="desc">
+            pick one curated view; every score below recomputes over it.
+        </p>
+        <div class="controls" id="dataset-controls">{buttons}</div>
+        <div class="desc" id="dataset-desc"></div>
+        <span class="counter" id="function-counter"></span>
     </div>"""
 
 
@@ -591,21 +581,28 @@ def _build_script(function_data: FunctionData) -> str:
         "type_match": "Type Correctness",
         "byte_match": "Recompilation Bytematch"
     };
+    const PRESETS = DATA.dataset_presets || [];
     const state = {
-        disabledLabels: new Set(),
-        disabledBinaries: new Set()
+        dataset: PRESETS.length ? PRESETS[0].name : null
     };
 
     function binaryKey(g) {
         return g.project + "/" + g.opt_level + "/" + g.binary;
     }
 
+    // A function is active iff it belongs to the selected dataset preset. With
+    // no presets (older data) everything is active.
     function isActive(group, func) {
-        if (state.disabledBinaries.has(binaryKey(group))) return false;
-        for (const label of func.labels) {
-            if (state.disabledLabels.has(label)) return false;
+        if (!state.dataset) return true;
+        const ds = func.datasets || [];
+        return ds.indexOf(state.dataset) >= 0;
+    }
+
+    function groupHasActive(group) {
+        for (const func of group.functions) {
+            if (isActive(group, func)) return true;
         }
-        return true;
+        return false;
     }
 
     function pctClass(pct) {
@@ -755,7 +752,7 @@ def _build_script(function_data: FunctionData) -> str:
         tbody.innerHTML = "";
         for (const group of DATA.groups) {
             const bk = binaryKey(group);
-            if (state.disabledBinaries.has(bk)) continue;
+            if (!groupHasActive(group)) continue;
             const tr = document.createElement("tr");
             const tdName = document.createElement("td");
             tdName.textContent = bk;
@@ -807,7 +804,7 @@ def _build_script(function_data: FunctionData) -> str:
         if (binEl) {
             let active = 0;
             for (const group of DATA.groups) {
-                if (!state.disabledBinaries.has(binaryKey(group))) active += 1;
+                if (groupHasActive(group)) active += 1;
             }
             binEl.textContent = active.toLocaleString();
         }
@@ -821,7 +818,8 @@ def _build_script(function_data: FunctionData) -> str:
         updateStats(result);
         const counter = document.getElementById("function-counter");
         if (counter) {
-            counter.textContent = "showing " + result.activeFunctions +
+            const dsName = state.dataset ? ("[" + state.dataset + "] ") : "";
+            counter.textContent = dsName + "showing " + result.activeFunctions +
                 " / " + result.totalFunctions + " functions";
         }
     }
@@ -1107,34 +1105,33 @@ def _build_script(function_data: FunctionData) -> str:
         sel.appendChild(overallOpt);
         sel.addEventListener("change", refresh);
 
-        document.querySelectorAll('input[data-label]').forEach(function (cb) {
-            cb.addEventListener("change", function () {
-                if (cb.checked) state.disabledLabels.delete(cb.dataset.label);
-                else state.disabledLabels.add(cb.dataset.label);
-                refresh();
-            });
-        });
-        document.querySelectorAll('input[data-binary]').forEach(function (cb) {
-            cb.addEventListener("change", function () {
-                if (cb.checked) state.disabledBinaries.delete(cb.dataset.binary);
-                else state.disabledBinaries.add(cb.dataset.binary);
-                refresh();
-            });
-        });
-
-        document.getElementById("reset-filters").addEventListener(
-            "click", function () {
-                state.disabledLabels.clear();
-                state.disabledBinaries.clear();
-                document.querySelectorAll(
-                    'input[data-label], input[data-binary]'
-                ).forEach(function (cb) { cb.checked = true; });
-                refresh();
-            });
+        initDatasetSelector();
 
         refresh();
         initHardest();
         initHistory();
+    }
+
+    function setDatasetDesc() {
+        const el = document.getElementById("dataset-desc");
+        if (!el) return;
+        const p = PRESETS.filter(function (x) { return x.name === state.dataset; })[0];
+        el.textContent = p ? p.description : "";
+    }
+
+    // Wire the single dataset selector (full / hard / hard-inlined / tiny).
+    function initDatasetSelector() {
+        const btns = document.querySelectorAll(".ds-btn");
+        btns.forEach(function (b) {
+            b.addEventListener("click", function () {
+                state.dataset = b.getAttribute("data-dataset");
+                btns.forEach(function (x) { x.classList.remove("active"); });
+                b.classList.add("active");
+                setDatasetDesc();
+                refresh();
+            });
+        });
+        setDatasetDesc();
     }
 
     if (document.readyState === "loading") {

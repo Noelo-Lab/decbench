@@ -34,6 +34,12 @@ class FunctionRecord(BaseModel):
         description="Representative decompiled line count (for size-based "
         "subsetting and the 'large' auto label)",
     )
+    datasets: list[str] = Field(
+        default_factory=list,
+        description="Names of the dataset presets this function belongs to "
+        "(e.g. 'full', 'hard', 'hard-inlined', 'tiny'); drives the report's "
+        "single dataset selector instead of many ad-hoc toggles",
+    )
 
 
 class HardestEntry(BaseModel):
@@ -60,6 +66,20 @@ class HardestEntry(BaseModel):
     source_code: str | None = Field(
         default=None, description="Best-effort source C for this function"
     )
+
+
+class DatasetPreset(BaseModel):
+    """A named, selectable view of the dataset shown in the report.
+
+    Replaces the report's many label/binary toggles with a small fixed set of
+    curated views (full / hard / hard-inlined / tiny). Membership per function
+    is precomputed server-side (see :mod:`decbench.scoring.datasets`) and stored
+    on :attr:`FunctionRecord.datasets`.
+    """
+
+    name: str = Field(..., description="Stable id used in FunctionRecord.datasets")
+    label: str = Field(..., description="Display label")
+    description: str = Field(default="", description="One-line description")
 
 
 class HistoryPoint(BaseModel):
@@ -122,6 +142,10 @@ class FunctionData(BaseModel):
     groups: list[BinaryGroup] = Field(
         default_factory=list,
         description="Per-binary groups of function records",
+    )
+    dataset_presets: list[DatasetPreset] = Field(
+        default_factory=list,
+        description="The selectable dataset views (full/hard/hard-inlined/tiny)",
     )
     hardest: list[HardestEntry] = Field(
         default_factory=list,

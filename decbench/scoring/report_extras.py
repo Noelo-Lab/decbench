@@ -329,4 +329,13 @@ def attach_extras(
         except Exception:
             function_data.history = []
 
+    # Tag each function with its dataset presets (full/hard/hard-inlined/tiny)
+    # so the report shows a single dataset selector instead of many toggles.
+    try:
+        from decbench.scoring.datasets import assign_datasets
+
+        assign_datasets(function_data)
+    except Exception:
+        pass
+
     return function_data

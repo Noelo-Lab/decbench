@@ -336,6 +336,16 @@ def report(scoreboard_path, output, function_data) -> None:
             "[yellow]No function data found; generating static report.[/yellow]"
         )
 
+    # Ensure the dataset presets (full/hard/hard-inlined/tiny) are tagged so the
+    # report's dataset selector works even when re-rendering older data.
+    if fd is not None and not fd.dataset_presets:
+        try:
+            from decbench.scoring.datasets import assign_datasets
+
+            assign_datasets(fd)
+        except Exception:
+            pass
+
     render_html_report(scoreboard, Path(output), fd)
 
     console.print(f"Report generated: [bold]{output}[/bold]")

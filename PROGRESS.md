@@ -481,3 +481,22 @@ entries** and **2 history points** (ghidra 12.0/12.1) embedded in the report;
   that skip when images are absent). New tests: caching/dataset/subset (17),
   dockerized decompilers (15). `ruff check` on touched files: only minor
   stylistic remainders (line-length/raise-from), consistent with baseline.
+
+## Report follow-up: dataset selector (replaces granular toggles)
+
+The report's many label-chip + per-binary toggles were collapsed into a single
+**dataset selector** with four curated views (`scoring/datasets.py`,
+`assign_datasets`):
+- **full** — everything (O0 + O2 + O2-noinline; per-opt double-count ok).
+- **hard** — optimized, no inlining (O2-noinline), large functions only.
+- **hard-inlined** — like hard but with inlining (O2), large only.
+- **tiny** — ~100 functions evenly sampled across inlined(O2)/optimized
+  (O2-noinline)/unoptimized(O0)/large, and spread evenly across projects.
+
+"Large" = upper tail of the size bell curve (mean+1σ over decompiled line
+counts), falling back to the `large` label when sizes are absent. Membership is
+tagged server-side per function (`FunctionRecord.datasets`); the report shows
+one selector and recomputes the matrix/per-binary/rankings over the chosen view.
+Verified on the real 38,255-function corpus: full=38255, hard=1317,
+hard-inlined=1678, tiny=100 (spanning all 26 projects). Tests: 98 passed, 2
+skipped (+5 dataset-preset tests). Report: results/sailr_full/report_v2.html.

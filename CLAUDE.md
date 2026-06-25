@@ -181,13 +181,18 @@ functions — no binary copying (`decbench subset function_results.json`).
 **Results Rendering** (`decbench/rendering/`):
 - `html.py` - Self-contained HTML report, themed after mahaloz.re (terminal
   aesthetic: black bg, Source Code Pro mono, dashed rules, Unix-path nav, ASCII
-  bars). With function data it embeds JSON + vanilla JS: label/binary toggles
-  that live-recompute all scores, a comparison matrix, and a per-binary
-  breakdown. Two extra views (built by `scoring/report_extras.py`): **Hardest
-  Functions** (a "hall of shame" of the worst-scoring functions with their
-  decompiled code) and **Historical** (pure-SVG line charts, one per metric,
-  of each decompiler's score across versions/time — driven by multi-version
-  data, e.g. `ghidra@12.0` vs `ghidra@12.1`).
+  bars). With function data it embeds JSON + vanilla JS and offers a single
+  **dataset selector** (instead of many toggles) — `full` / `hard` (O2-noinline
+  + large) / `hard-inlined` (O2 + large) / `tiny` (~100 funcs evenly sampled
+  across inlined/optimized/unoptimized/large and projects). Selecting one
+  live-recomputes the comparison matrix, per-binary breakdown, and rankings.
+  Preset membership is tagged server-side by `scoring/datasets.py`
+  (`assign_datasets`; "large" = upper tail of the size bell curve, with the
+  `large` label as fallback). Two extra views (built by
+  `scoring/report_extras.py`): **Hardest Functions** (a "hall of shame" of the
+  worst-scoring functions with their decompiled code) and **Historical**
+  (pure-SVG line charts, one per metric, of each decompiler's score across
+  versions/time — driven by multi-version data, e.g. `ghidra@12.0` vs `ghidra@12.1`).
 
 **Data Models** (`decbench/models/`):
 - Pydantic-based models for projects, decompilation results, metrics, scoreboards, and
