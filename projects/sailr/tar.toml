@@ -1,0 +1,32 @@
+# DecBench Project Configuration: GNU Tar
+# GNU tar is a CLI archiving utility (create/extract .tar archives, with
+# optional compression). From the SAILR evaluation set. Labels: sailr (origin),
+# cli-tool + archiving (a command-line archive manipulation tool).
+
+name = "tar"
+version = "1.34"
+
+# Source configuration - use the release tarball (ships a pre-generated
+# ./configure, so no ./bootstrap + gnulib network fetch is needed, unlike the
+# sailr git recipe). Known-good GNU FTP URL (verified 200).
+source_remote = "https://mirrors.kernel.org/gnu/tar/tar-1.34.tar.xz"
+remote_type = "tar"
+
+# Build directories (package_dir documents the extracted dir; tar uses the
+# single extracted directory as the source root). source_dir "src" keeps parity
+# with the sailr recipe, collecting the tar binary from src/.
+package_dir = "tar-1.34"
+source_dir = "src"
+
+# Build commands (no bootstrap needed with release tarball)
+post_download_cmds = []
+pre_make_cmds = ["./configure --disable-gcc-warnings --quiet"]
+make_cmd = "make"
+post_make_cmds = []
+
+labels = ["sailr", "cli-tool", "archiving"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

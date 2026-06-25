@@ -1,0 +1,33 @@
+# DecBench Project Configuration: sysvinit
+# sysvinit is the classic System V init system (init, shutdown, killall5, etc.).
+# Labels mark it as a sailr benchmark target in the daemon / init / system
+# categories.
+
+name = "sysvinit"
+version = "3.05"
+
+# Source configuration - sysvinit has no ./configure (plain Makefiles). Keep the
+# sailr-pinned git tag 3.05.
+source_remote = "https://github.com/slicer69/sysvinit.git"
+remote_type = "git"
+
+# Build directories. source_dir "src" keeps parity with the sailr recipe so the
+# init/shutdown/killall5 binaries enter the benchmark. package_dir documents the
+# clone dir.
+package_dir = "sysvinit"
+source_dir = "src"
+
+# Build commands. No configure step. The src/Makefile hardcodes its own CFLAGS
+# and ignores the environment, so override them on the make command line (make
+# CLI var overrides win; shell=True expands the env CFLAGS/CC decbench sets). The
+# top-level Makefile recurses into src.
+post_download_cmds = []
+pre_make_cmds = []
+make_cmd = 'make CFLAGS="$CFLAGS" CC="$CC"'
+
+labels = ["sailr", "daemon", "init", "system"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

@@ -175,9 +175,7 @@ def _parse_function_die(die: Any, dwarfinfo: Any) -> tuple[str | None, list[dict
         if child.tag in ("DW_TAG_lexical_block", "DW_TAG_inlined_subroutine"):
             variables.extend(_parse_lexical_block(child, dwarfinfo))
         elif child.tag == "DW_TAG_formal_parameter":
-            var = _parse_variable_die(
-                child, dwarfinfo, is_arg=True, arg_index=arg_index
-            )
+            var = _parse_variable_die(child, dwarfinfo, is_arg=True, arg_index=arg_index)
             # The positional index must reflect declaration order even when
             # an argument is dropped (e.g. fully optimized out).
             arg_index += 1
@@ -292,9 +290,7 @@ def _get_location(die: Any, dwarfinfo: Any) -> tuple[list[int], bool]:
             loclist = loclists.get_location_list_at_offset(loc_attr.value, die=die)
 
             for entry in loclist:
-                expr = getattr(entry, "loc_expr", None) or getattr(
-                    entry, "location_expr", None
-                )
+                expr = getattr(entry, "loc_expr", None) or getattr(entry, "location_expr", None)
                 if expr is None:
                     continue
                 ops = expr_parser.parse_expr(expr)
@@ -332,9 +328,7 @@ def _parse_type_die(die: Any, dwarfinfo: Any) -> tuple[list[str], int]:
     elif tag == "DW_TAG_typedef":
         names = []
         if "DW_AT_name" in type_die.attributes:
-            names.append(
-                type_die.attributes["DW_AT_name"].value.decode("utf-8", "replace")
-            )
+            names.append(type_die.attributes["DW_AT_name"].value.decode("utf-8", "replace"))
         child_names, size = _parse_type_die(type_die, dwarfinfo)
         names.extend(child_names)
         return names, size
@@ -362,9 +356,7 @@ def _parse_type_die(die: Any, dwarfinfo: Any) -> tuple[list[str], int]:
     elif tag == "DW_TAG_structure_type":
         names = []
         if "DW_AT_name" in type_die.attributes:
-            names.append(
-                type_die.attributes["DW_AT_name"].value.decode("utf-8", "replace")
-            )
+            names.append(type_die.attributes["DW_AT_name"].value.decode("utf-8", "replace"))
         if not names:
             names = ["struct"]
         size = 0
@@ -375,9 +367,7 @@ def _parse_type_die(die: Any, dwarfinfo: Any) -> tuple[list[str], int]:
     elif tag in ("DW_TAG_union_type", "DW_TAG_class_type"):
         names = []
         if "DW_AT_name" in type_die.attributes:
-            names.append(
-                type_die.attributes["DW_AT_name"].value.decode("utf-8", "replace")
-            )
+            names.append(type_die.attributes["DW_AT_name"].value.decode("utf-8", "replace"))
         if not names:
             names = ["union"]
         size = 0
@@ -388,9 +378,7 @@ def _parse_type_die(die: Any, dwarfinfo: Any) -> tuple[list[str], int]:
     elif tag == "DW_TAG_enumeration_type":
         names = []
         if "DW_AT_name" in type_die.attributes:
-            names.append(
-                type_die.attributes["DW_AT_name"].value.decode("utf-8", "replace")
-            )
+            names.append(type_die.attributes["DW_AT_name"].value.decode("utf-8", "replace"))
         names.append("int")
         size = 4
         if "DW_AT_byte_size" in type_die.attributes:
@@ -455,10 +443,12 @@ def extract_types_from_decompiled_code(code: str) -> list[dict[str, Any]]:
         if var_name in ("if", "else", "while", "for", "return", "switch", "case", "break"):
             continue
 
-        variables.append({
-            "name": var_name,
-            "type": list(normalize_type(type_str)),
-        })
+        variables.append(
+            {
+                "name": var_name,
+                "type": list(normalize_type(type_str)),
+            }
+        )
 
     return variables
 
@@ -636,10 +626,39 @@ class TypeMatchMetric(Metric):
                 metadata={"error": "No ground truth types available"},
             )
 
-        gt_stack_vars = sum(1 for gv in ground_truth_vars if gv.get("rbp_offset"))
-        decomp_stack_vars = sum(
-            1 for v in decompiled.variables if v.stack_offset is not None
+        # The type-match value is fully determined by the decompiled variables,
+        # the DWARF ground-truth variables, and the calibration shift. Cache on
+        # those (the decompiled code is included so the regex fallback path is
+        # also keyed correctly).
+        key_inputs = [
+            [
+                {
+                    "name": v.name,
+                    "type": v.type,
+                    "stack_offset": v.stack_offset,
+                    "size": v.size,
+                    "kind": getattr(v, "kind", None),
+                    "arg_index": v.arg_index,
+                }
+                for v in decompiled.variables
+            ],
+            decompiled.decompiled_code if not decompiled.variables else "",
+            ground_truth_vars,
+            calibration_shift,
+        ]
+        return self._cached_value(
+            key_inputs,
+            lambda: self._compute_uncached(decompiled, ground_truth_vars, calibration_shift),
         )
+
+    def _compute_uncached(
+        self,
+        decompiled: FunctionDecompilation,
+        ground_truth_vars: list[dict[str, Any]],
+        calibration_shift: int | None,
+    ) -> MetricValue:
+        gt_stack_vars = sum(1 for gv in ground_truth_vars if gv.get("rbp_offset"))
+        decomp_stack_vars = sum(1 for v in decompiled.variables if v.stack_offset is not None)
 
         if decompiled.variables:
             return self._match_structured(
@@ -650,9 +669,7 @@ class TypeMatchMetric(Metric):
                 calibration_shift,
             )
 
-        return self._match_by_regex(
-            decompiled, ground_truth_vars, gt_stack_vars, decomp_stack_vars
-        )
+        return self._match_by_regex(decompiled, ground_truth_vars, gt_stack_vars, decomp_stack_vars)
 
     @staticmethod
     def _build_result(
@@ -709,18 +726,14 @@ class TypeMatchMetric(Metric):
                 gt_offsets.extend(gv.get("rbp_offset", []))
 
             decomp_offsets = [
-                v.stack_offset
-                for v in decompiled.variables
-                if v.stack_offset is not None
+                v.stack_offset for v in decompiled.variables if v.stack_offset is not None
             ]
 
             shift = _calibrate_shift(gt_offsets, decomp_offsets)
 
         k = shift if shift is not None else 0
 
-        var_types: list[set[str]] = [
-            normalize_type(v.type) for v in decompiled.variables
-        ]
+        var_types: list[set[str]] = [normalize_type(v.type) for v in decompiled.variables]
         by_arg_index: dict[int, int] = {}
         by_off: dict[int, list[int]] = {}
         by_name: dict[str, list[int]] = {}
@@ -813,9 +826,7 @@ class TypeMatchMetric(Metric):
                 "matched_by_arg": pass_counts["arg"],
                 "matched_by_offset": pass_counts["offset"],
                 "matched_by_name": pass_counts["name"],
-                "gt_arg_vars": sum(
-                    1 for gv in ground_truth_vars if gv.get("is_arg")
-                ),
+                "gt_arg_vars": sum(1 for gv in ground_truth_vars if gv.get("is_arg")),
             },
         )
 
@@ -900,8 +911,7 @@ class TypeMatchMetric(Metric):
 
         if not gt_types:
             logger.warning(
-                "No DWARF ground truth types for %s. "
-                "Binary may not have been compiled with -g.",
+                "No DWARF ground truth types for %s. " "Binary may not have been compiled with -g.",
                 binary_path,
             )
 
@@ -929,8 +939,7 @@ class TypeMatchMetric(Metric):
 
         # Diagnostic: GT existed but nothing matched across all functions.
         if gt_types and (
-            not function_results
-            or all(v.value == 0.0 for v in function_results.values())
+            not function_results or all(v.value == 0.0 for v in function_results.values())
         ):
             total_gt_vars = sum(len(v) for v in gt_types.values())
             total_gt_stack_vars = sum(
@@ -980,11 +989,7 @@ class TypeMatchMetric(Metric):
             if not gt_vars:
                 continue
             func_gt = [o for gv in gt_vars for o in gv.get("rbp_offset", [])]
-            func_dec = [
-                v.stack_offset
-                for v in func_decomp.variables
-                if v.stack_offset is not None
-            ]
+            func_dec = [v.stack_offset for v in func_decomp.variables if v.stack_offset is not None]
             if func_gt and func_dec:
                 pairs.append((func_gt, func_dec))
 

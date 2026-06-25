@@ -79,8 +79,16 @@ def evaluate_project(
     metrics: list[str] | None = None,
     parallel: bool = True,
     workers: int | None = None,
+    precomputed_source_cfgs: dict[str, dict[str, DiGraph]] | None = None,
 ) -> dict[str, dict[str, dict[str, MetricResult]]]:
-    """Evaluate all decompilations for a project."""
+    """Evaluate all decompilations for a project.
+
+    Args:
+        precomputed_source_cfgs: If given, used as the source CFGs keyed by
+            binary name instead of re-extracting them from the preprocessed
+            sources. Lets a caller extract source CFGs once and reuse them for
+            both a decompile filter and this evaluation.
+    """
     if isinstance(optimization, str):
         optimization = OptimizationLevel(optimization)
 
@@ -93,20 +101,43 @@ def evaluate_project(
     source_cfgs_by_binary: dict[str, dict[str, DiGraph]] = {}
 
     logger.debug("preprocessed_sources keys: %s", list(project.preprocessed_sources.keys()))
-    if optimization in project.preprocessed_sources:
+    if precomputed_source_cfgs is not None:
+        source_cfgs_by_binary = precomputed_source_cfgs
+    elif optimization in project.preprocessed_sources:
         sources = project.preprocessed_sources[optimization]
         logger.debug("Found %d preprocessed sources for %s", len(sources), optimization)
-        for name, i_path in sources.items():
-            try:
-                cfgs = extract_cfgs_from_source(i_path)
-                source_cfgs_by_binary[name] = cfgs
-                if not cfgs:
-                    logger.warning("Source CFG extraction returned empty for %s (%s)", name, i_path)
-                else:
-                    logger.debug("Extracted %d CFGs from %s", len(cfgs), name)
-            except Exception as e:
-                logger.warning("Source CFG extraction failed for %s: %s", name, e)
-                source_cfgs_by_binary[name] = {}
+        # Source CFG extraction shells out to Joern (~seconds each); for projects
+        # with many binaries (e.g. coreutils) doing this serially dominates the
+        # run, so extract in parallel when there is more than one source.
+        if parallel and len(sources) > 1:
+            ex_workers = workers or cpu_count()
+            with ProcessPoolExecutor(max_workers=ex_workers) as executor:
+                futures = {
+                    executor.submit(extract_cfgs_from_source, i_path): name
+                    for name, i_path in sources.items()
+                }
+                for future in as_completed(futures):
+                    name = futures[future]
+                    try:
+                        cfgs = future.result()
+                        source_cfgs_by_binary[name] = cfgs or {}
+                        if not cfgs:
+                            logger.warning("Source CFG extraction returned empty for %s", name)
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("Source CFG extraction failed for %s: %s", name, e)
+                        source_cfgs_by_binary[name] = {}
+        else:
+            for name, i_path in sources.items():
+                try:
+                    cfgs = extract_cfgs_from_source(i_path)
+                    source_cfgs_by_binary[name] = cfgs
+                    if not cfgs:
+                        logger.warning("Source CFG extraction returned empty for %s (%s)", name, i_path)
+                    else:
+                        logger.debug("Extracted %d CFGs from %s", len(cfgs), name)
+                except Exception as e:
+                    logger.warning("Source CFG extraction failed for %s: %s", name, e)
+                    source_cfgs_by_binary[name] = {}
     else:
         logger.warning("No preprocessed sources for %s/%s", project.name, optimization)
 

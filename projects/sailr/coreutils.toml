@@ -1,11 +1,14 @@
 # DecBench Project Configuration: GNU Coreutils
-# This is a sample project from the SAILR evaluation set
+# GNU coreutils — the core CLI file/text/shell utilities for Unix-like systems.
+# From the SAILR evaluation set. Labels: sailr (origin), cli-tool + system (the
+# package is a suite of command-line system utilities).
 
 name = "coreutils"
 version = "9.1"
 
-# Source configuration - use release tarball (includes pre-generated ./configure)
-source_remote = "https://ftp.gnu.org/gnu/coreutils/coreutils-9.1.tar.xz"
+# Source configuration - use release tarball (ships a pre-generated ./configure,
+# so no bootstrap/gnulib fetch needed). Known-good URL; avoids the gnulib patch.
+source_remote = "https://mirrors.kernel.org/gnu/coreutils/coreutils-9.1.tar.xz"
 remote_type = "tar"
 
 # Build directories
@@ -16,13 +19,16 @@ source_dir = "src"
 post_download_cmds = []
 pre_make_cmds = ["./configure --quiet --disable-gcc-warnings"]
 make_cmd = "make"
+post_make_cmds = []
+
+labels = ["sailr", "cli-tool", "system"]
 
 [compilation]
 # Optimization levels to compile
-optimization_levels = ["O0", "O2"]
+optimization_levels = ["O0", "O2", "O2-noinline"]
 
-# Base compiler flags
-base_flags = ["-g", "-fno-inline", "-fno-builtin", "-save-temps=obj"]
+# Base compiler flags (no -fno-inline here; the O2-noinline level adds it)
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
 
 # Compiler to use
 c_compiler = "gcc"

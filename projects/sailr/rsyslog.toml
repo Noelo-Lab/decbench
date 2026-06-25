@@ -1,0 +1,44 @@
+# DecBench Project Configuration: rsyslog
+# rsyslog is a high-performance system logging daemon (rsyslogd) — the modern
+# successor to sysklogd. Labeled as a daemon/server/logging target from the
+# SAILR evaluation set (the benchmark binary is tools/rsyslogd).
+#
+# Dependency note: rsyslog HARD-requires libestr and libfastjson, which are NOT
+# installed system-wide and there is no sudo. They were staged out-of-band into
+# ~/.local/sailr-deps via:
+#   mkdir -p ~/.local/sailr-deps && cd ~/.local/sailr-deps
+#   apt-get download libestr0 libestr-dev libfastjson4 libfastjson-dev
+#   for d in *.deb; do dpkg-deb -x "$d" .; done
+# and the staged .pc files were sed-patched so prefix= points at
+# ~/.local/sailr-deps/usr instead of /usr. The pre_make_cmds below export
+# PKG_CONFIG_PATH / CFLAGS / LDFLAGS (with -rpath) so configure & the linker find
+# these private copies.
+
+name = "rsyslog"
+version = "8.2210.0"
+
+# Source configuration - official release tarball (ships pre-generated
+# ./configure, so no autogen.sh/bootstrap needed).
+source_remote = "https://www.rsyslog.com/files/download/rsyslog/rsyslog-8.2210.0.tar.gz"
+remote_type = "tar"
+
+# Build directories (package_dir is documentation-only for tar sources)
+package_dir = "rsyslog-8.2210.0"
+source_dir = "tools"
+
+# Build commands. Point configure/link at the privately-staged libestr +
+# libfastjson under ~/.local/sailr-deps. Disable optional features whose dev
+# libs are missing (libgcrypt, uuid) and the test harness (testbench/imdiag).
+post_download_cmds = []
+pre_make_cmds = [
+    'PKG_CONFIG_PATH=$HOME/.local/sailr-deps/usr/lib/x86_64-linux-gnu/pkgconfig CFLAGS="$CFLAGS -I$HOME/.local/sailr-deps/usr/include" LDFLAGS="-L$HOME/.local/sailr-deps/usr/lib/x86_64-linux-gnu -Wl,-rpath,$HOME/.local/sailr-deps/usr/lib/x86_64-linux-gnu" ./configure --quiet --disable-libgcrypt --disable-uuid --disable-testbench --disable-imdiag',
+]
+make_cmd = "make"
+post_make_cmds = []
+
+labels = ["sailr", "daemon", "server", "logging"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

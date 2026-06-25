@@ -1,0 +1,29 @@
+# DecBench Project Configuration: zlib
+# zlib is a general-purpose lossless data-compression library (DEFLATE/inflate).
+# Labels mark it as a sailr benchmark target in the library / compression categories.
+
+name = "zlib"
+version = "v1.2.13"
+
+# Source configuration - git per the sailr recipe (zlib ships a custom ./configure
+# script in-tree, so no autotools bootstrap/network fetch is needed).
+source_remote = "https://github.com/madler/zlib.git"
+remote_type = "git"
+
+# Build directories (package_dir documents the cloned dir name). source_dir "."
+# keeps parity with the sailr recipe, collecting libz.so + the example binaries.
+package_dir = "zlib"
+source_dir = "."
+
+# Build commands. zlib's ./configure is a hand-written script (not autoconf), so
+# it takes no --quiet flag; it honors the CFLAGS/CC env set by the pipeline.
+post_download_cmds = []
+pre_make_cmds = ["./configure"]
+make_cmd = "make"
+
+labels = ["sailr", "library", "compression"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

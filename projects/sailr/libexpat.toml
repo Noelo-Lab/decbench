@@ -1,0 +1,31 @@
+# DecBench Project Configuration: libexpat
+# Expat is a stream-oriented XML parser library written in C. Labels mark it as a
+# sailr benchmark target in the library / parsing categories. The evaluated binary
+# is the xmlwf command-line tool (sailr parity via source_dir "xmlwf").
+
+name = "libexpat"
+version = "2.5.0"
+
+# Source configuration - use the official release tarball (ships a pre-generated
+# ./configure, so we drop the git buildconf.sh bootstrap which would fetch over
+# the network). tar uses the single extracted directory (expat-2.5.0) as root.
+source_remote = "https://github.com/libexpat/libexpat/releases/download/R_2_5_0/expat-2.5.0.tar.gz"
+remote_type = "tar"
+
+# Build directories (package_dir documents the extracted dir; tar uses the single
+# extracted directory as the source root). source_dir "xmlwf" keeps sailr parity:
+# the xmlwf tool is the evaluated binary.
+package_dir = "expat-2.5.0"
+source_dir = "xmlwf"
+
+# Build commands (no bootstrap needed with the release tarball)
+post_download_cmds = []
+pre_make_cmds = ["./configure --without-docbook --quiet"]
+make_cmd = "make"
+
+labels = ["sailr", "library", "parsing"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

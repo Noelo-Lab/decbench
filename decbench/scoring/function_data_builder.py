@@ -60,11 +60,13 @@ def build_function_data(
         dict[OptimizationLevel, dict[str, dict[str, dict[str, MetricResult]]]],
     ],
     projects: list[Project],
-    decompile_results: dict[
-        str,
-        dict[OptimizationLevel, dict[str, dict[str, DecompilationResult]]],
-    ]
-    | None = None,
+    decompile_results: (
+        dict[
+            str,
+            dict[OptimizationLevel, dict[str, dict[str, DecompilationResult]]],
+        ]
+        | None
+    ) = None,
     large_threshold: int = DEFAULT_LARGE_LINE_THRESHOLD,
 ) -> FunctionData:
     """Build a :class:`FunctionData` dataset from pipeline results.
@@ -91,9 +93,7 @@ def build_function_data(
         project = projects_by_name.get(project_name)
 
         for opt_level, binary_results in opt_results.items():
-            opt_value = (
-                opt_level.value if hasattr(opt_level, "value") else str(opt_level)
-            )
+            opt_value = opt_level.value if hasattr(opt_level, "value") else str(opt_level)
 
             for binary_name, dec_results in binary_results.items():
                 # records keyed by function name for this binary
@@ -110,23 +110,17 @@ def build_function_data(
 
                         for func_name, value in result.function_results.items():
                             if func_name not in records:
-                                records[func_name] = FunctionRecord(
-                                    function=func_name
-                                )
+                                records[func_name] = FunctionRecord(function=func_name)
                                 func_order.append(func_name)
                             record = records[func_name]
 
-                            record.values.setdefault(dec_name, {})[metric_name] = (
-                                value.value
-                            )
+                            record.values.setdefault(dec_name, {})[metric_name] = value.value
                             record.perfects.setdefault(dec_name, {})[metric_name] = (
                                 value.value == perfect_value
                             )
 
                 if project is not None:
-                    bin_labels = binary_labels_for(
-                        project.config, opt_value, binary_name
-                    )
+                    bin_labels = binary_labels_for(project.config, opt_value, binary_name)
                 else:
                     bin_labels = list(_opt_only_labels(opt_value))
 
@@ -139,6 +133,7 @@ def build_function_data(
                         binary_name,
                         func_name,
                     )
+                    records[func_name].size = line_count
                     records[func_name].labels = function_labels_for(
                         bin_labels, line_count, large_threshold
                     )
@@ -154,7 +149,7 @@ def build_function_data(
                 )
 
     return FunctionData(
-        schema_version=1,
+        schema_version=2,
         decompilers=sorted(decompilers_seen),
         metrics=sorted(metrics_seen),
         perfect_values=perfect_values,

@@ -1,0 +1,32 @@
+# DecBench Project Configuration: libbsd
+# libbsd provides BSD-derived utility functions (strlcpy, fgetln, etc.) on
+# non-BSD systems. From the SAILR evaluation set. Labels: sailr (origin),
+# library + compat (it is a compatibility shim library, not a CLI tool).
+
+name = "libbsd"
+version = "0.11.7"
+
+# Source configuration - use the official release tarball, which ships a
+# pre-generated ./configure (so sailr's ./autogen step, which would fetch over
+# the network, is dropped). Known-good URL. libmd-dev is installed.
+source_remote = "https://libbsd.freedesktop.org/releases/libbsd-0.11.7.tar.xz"
+remote_type = "tar"
+
+# Build directories (package_dir documents the extracted dir; tar uses the
+# single extracted directory as the source root). source_dir "src" keeps parity
+# with the sailr recipe: the recursive automake build produces src/.libs/libbsd.so.
+package_dir = "libbsd-0.11.7"
+source_dir = "src"
+
+# Build commands (no autogen needed with the release tarball)
+post_download_cmds = []
+pre_make_cmds = ["./configure --quiet"]
+make_cmd = "make"
+post_make_cmds = []
+
+labels = ["sailr", "library", "compat"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

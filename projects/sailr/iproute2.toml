@@ -1,0 +1,28 @@
+# DecBench Project Configuration: iproute2
+# iproute2 is a suite of Linux networking utilities (ip, ss, tc, ...).
+# Labels: a SAILR target, a CLI tool, and networking software.
+
+name = "iproute2"
+version = "6.0.0"
+
+# Source configuration - kernel.org release tarball (ships its own ./configure).
+# The old git.kernel.org snapshot URL now returns HTTP 403; use the mirror tarball.
+source_remote = "https://mirrors.edge.kernel.org/pub/linux/utils/net/iproute2/iproute2-6.0.0.tar.xz"
+remote_type = "tar"
+
+# Build directories
+package_dir = "iproute2-6.0.0"
+source_dir = "ip"
+
+# Build commands - iproute2's configure is a custom (non-autoconf) script, so no --quiet.
+# libmnl-dev is missing; affected features auto-disable, which is fine.
+post_download_cmds = []
+pre_make_cmds = ["./configure"]
+make_cmd = "make"
+
+labels = ["sailr", "cli-tool", "networking"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

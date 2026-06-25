@@ -39,9 +39,7 @@ def _extract_function_bytes(binary_path: Path, func_name: str, address: int) -> 
 
             # Try by name first, then by address
             for sym in symtab.iter_symbols():
-                if (sym.name == func_name or sym["st_value"] == address) and sym[
-                    "st_size"
-                ] > 0:
+                if (sym.name == func_name or sym["st_value"] == address) and sym["st_size"] > 0:
                     sym_addr = sym["st_value"]
                     sym_size = sym["st_size"]
 
@@ -147,7 +145,10 @@ def _compute_jaccard_similarity(lines_a: list[str], lines_b: list[str]) -> float
         shared = 0
         b_only = 0
 
-        for op, text, in diffs:
+        for (
+            op,
+            text,
+        ) in diffs:
             n = text.count("\n")
             if op == -1:
                 a_only += n
@@ -271,7 +272,9 @@ class ByteMatchMetric(Metric):
                 metadata={"error": "No original binary for comparison"},
             )
 
-        # Extract original function bytes
+        # Extract original function bytes ONCE; reuse for both the cache key and
+        # the comparison. The byte-match value is fully determined by the
+        # decompiled code, the original function bytes, and the compiler+flags.
         original_bytes = _extract_function_bytes(
             original_binary_path, decompiled.name, decompiled.address
         )
@@ -281,6 +284,24 @@ class ByteMatchMetric(Metric):
                 metadata={"error": "Could not extract original function bytes"},
             )
 
+        key_inputs = [
+            decompiled.decompiled_code,
+            decompiled.name,
+            decompiled.address,
+            original_bytes.hex(),
+            self.compiler,
+            list(self.compile_flags),
+        ]
+        return self._cached_value(
+            key_inputs,
+            lambda: self._compute_uncached(decompiled, original_bytes),
+        )
+
+    def _compute_uncached(
+        self,
+        decompiled: FunctionDecompilation,
+        original_bytes: bytes,
+    ) -> MetricValue:
         # Compile decompiled code
         obj_path = _compile_function(
             decompiled.decompiled_code,

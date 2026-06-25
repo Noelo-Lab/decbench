@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 from decbench.compilers.base import Compiler, CompileResult
+from decbench.models.project import opt_gcc_flags
 
 
 class GCCCompiler(Compiler):
@@ -29,10 +30,11 @@ class GCCCompiler(Compiler):
         """
         self.gcc_path = gcc_path or self._find_gcc()
 
-        # Default base flags for reproducible decompilation benchmarking
+        # Default base flags for reproducible decompilation benchmarking.
+        # Inlining is governed by the optimization level (O2-noinline), not
+        # base flags, so plain O2 stays a genuine O2.
         self.base_flags = base_flags or [
             "-g",  # Debug symbols
-            "-fno-inline",  # Don't inline functions
             "-fno-builtin",  # Don't use builtin optimizations
         ]
 
@@ -95,7 +97,7 @@ class GCCCompiler(Compiler):
 
         # Build command
         flags = list(self.base_flags)
-        flags.append(f"-{optimization}")
+        flags.extend(opt_gcc_flags(optimization))
 
         if emit_preprocessed:
             flags.append("-save-temps=obj")
@@ -201,7 +203,7 @@ class GCCCompiler(Compiler):
 
         # Set up environment with our compiler flags
         env = os.environ.copy()
-        cflags = " ".join(self.base_flags + [f"-{optimization}"])
+        cflags = " ".join(self.base_flags + opt_gcc_flags(optimization))
         if extra_flags:
             cflags += " " + " ".join(extra_flags)
 
@@ -232,7 +234,7 @@ class GCCCompiler(Compiler):
                     shell=True,
                     cwd=project_root,
                     env=env,
-                    timeout=1800,  # 30 min timeout for large projects
+                    timeout=3600,  # 1h timeout for large serial builds (e.g. gnutls)
                     check=True,
                 )
 
@@ -241,6 +243,10 @@ class GCCCompiler(Compiler):
                 # not relocatable .o files (ET_REL).
                 for entry in project_dir.rglob("*"):
                     if not entry.is_file():
+                        continue
+                    if entry.is_symlink():
+                        # Library builds symlink lib.so -> lib.so.X -> lib.so.X.Y.Z;
+                        # only collect the real file once.
                         continue
                     if entry.suffix in (".o", ".a", ".i", ".s", ".c", ".h"):
                         continue

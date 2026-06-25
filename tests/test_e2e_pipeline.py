@@ -247,7 +247,7 @@ class TestScoringPipeline:
             assert "Recompilation Bytematch" in content
             assert "Overall" in content
             # No function data -> banner present, no embedded data.
-            assert "Interactive filtering unavailable" in content
+            assert "interactive filtering unavailable" in content.lower()
             assert "const DATA" not in content
 
     def test_html_report_with_function_data(self) -> None:
@@ -353,6 +353,9 @@ class TestLabels:
 
         assert opt_level_labels("O0") == ["O0", "unoptimized"]
         assert opt_level_labels("O2") == ["O2", "optimized"]
+        assert opt_level_labels("O2-noinline") == [
+            "O2-noinline", "optimized", "noinline"
+        ]
 
     def test_binary_labels_for_merge_and_dedup(self) -> None:
         from decbench.models.project import ProjectConfig
@@ -446,7 +449,7 @@ class TestFunctionData:
 
         fd = build_function_data(eval_results, [project])
 
-        assert fd.schema_version == 1
+        assert fd.schema_version == 2
         assert fd.decompilers == ["angr"]
         assert fd.metrics == ["ged", "type_match"]
         assert fd.perfect_values == {"ged": 0.0, "type_match": 1.0}

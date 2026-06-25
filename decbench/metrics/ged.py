@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any
 
 from decbench.metrics.base import Metric, MetricConfig
@@ -12,6 +13,12 @@ if TYPE_CHECKING:
     from networkx import DiGraph
 
     from decbench.models.decompilation import FunctionDecompilation
+
+
+# Exact GED is super-polynomial; a handful of huge optimized CFGs can dominate a
+# whole benchmark run. Above this node count we fall back to a cheap structural
+# distance so the run stays bounded. Tunable via DECBENCH_GED_MAX_NODES.
+GED_MAX_NODES = int(os.environ.get("DECBENCH_GED_MAX_NODES") or "60")
 
 
 @register_metric("ged")
@@ -42,11 +49,11 @@ class GEDMetric(Metric):
         if self._vj_ged is None:
             try:
                 from cfgutils.similarity import vj_ged
+
                 self._vj_ged = vj_ged
             except ImportError:
                 raise ImportError(
-                    "cfgutils is required for GED metric. "
-                    "Install with: pip install cfgutils"
+                    "cfgutils is required for GED metric. " "Install with: pip install cfgutils"
                 )
         return self._vj_ged
 
@@ -63,29 +70,64 @@ class GEDMetric(Metric):
                 metadata={"error": "Missing CFG"},
             )
 
-        vj_ged = self._get_vj_ged()
+        # GED is a pure function of the two CFG structures (node/edge sets) and
+        # the oversize threshold. Key on their canonical, sorted shapes so the
+        # super-polynomial computation is never repeated for identical graphs.
+        key_inputs = [
+            sorted(str(n) for n in source_cfg.nodes()),
+            sorted((str(u), str(v)) for u, v in source_cfg.edges()),
+            sorted(str(n) for n in decompiled_cfg.nodes()),
+            sorted((str(u), str(v)) for u, v in decompiled_cfg.edges()),
+            GED_MAX_NODES,
+        ]
+        return self._cached_value(
+            key_inputs,
+            lambda: self._compute_uncached(source_cfg, decompiled_cfg),
+        )
 
+    def _compute_uncached(
+        self,
+        source_cfg: DiGraph,
+        decompiled_cfg: DiGraph,
+    ) -> MetricValue:
+        s_nodes = source_cfg.number_of_nodes()
+        d_nodes = decompiled_cfg.number_of_nodes()
+        source_size = s_nodes + source_cfg.number_of_edges()
+        decomp_size = d_nodes + decompiled_cfg.number_of_edges()
+        base_meta = {
+            "source_nodes": s_nodes,
+            "source_edges": source_cfg.number_of_edges(),
+            "source_size": source_size,
+            "decompiled_nodes": d_nodes,
+            "decompiled_edges": decompiled_cfg.number_of_edges(),
+            "decompiled_size": decomp_size,
+        }
+
+        # Cheap structural fallback for oversized graphs: exact GED is too slow
+        # and these are rarely a perfect match anyway. The size delta is a sound
+        # lower bound on the true edit distance, so a 0 here is still a genuine
+        # structural match.
+        if s_nodes > GED_MAX_NODES or d_nodes > GED_MAX_NODES:
+            approx = float(
+                abs(s_nodes - d_nodes)
+                + abs(source_cfg.number_of_edges() - decompiled_cfg.number_of_edges())
+            )
+            return MetricValue(
+                value=approx,
+                raw_value=approx,
+                metadata={**base_meta, "approximated": True},
+            )
+
+        vj_ged = self._get_vj_ged()
         try:
             ged_value = vj_ged(source_cfg, decompiled_cfg)
-
-            source_size = source_cfg.number_of_nodes() + source_cfg.number_of_edges()
-            decomp_size = decompiled_cfg.number_of_nodes() + decompiled_cfg.number_of_edges()
-
             return MetricValue(
                 value=float(ged_value),
                 raw_value=ged_value,
-                metadata={
-                    "source_nodes": source_cfg.number_of_nodes(),
-                    "source_edges": source_cfg.number_of_edges(),
-                    "source_size": source_size,
-                    "decompiled_nodes": decompiled_cfg.number_of_nodes(),
-                    "decompiled_edges": decompiled_cfg.number_of_edges(),
-                    "decompiled_size": decomp_size,
-                },
+                metadata=base_meta,
             )
-
         except Exception as e:
             return MetricValue(
                 value=float("inf"),
-                metadata={"error": str(e)},
+                metadata={**base_meta, "error": str(e)},
             )

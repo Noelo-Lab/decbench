@@ -1,0 +1,28 @@
+# DecBench Project Configuration: cronie
+# cronie is a fork of the standard UNIX cron daemon (crond) bundling anacron
+# and the crontab tools. Labeled as a daemon and scheduling target from the
+# SAILR evaluation set.
+
+name = "cronie"
+version = "1.6.1"
+
+# Source configuration - use release tarball (ships pre-generated ./configure,
+# so no autogen.sh/bootstrap needed)
+source_remote = "https://github.com/cronie-crond/cronie/releases/download/cronie-1.6.1/cronie-1.6.1.tar.gz"
+remote_type = "tar"
+
+# Build directories
+package_dir = "cronie"
+source_dir = "src"
+
+# Build commands (no autogen needed with release tarball)
+post_download_cmds = []
+pre_make_cmds = ["./configure --quiet"]
+make_cmd = "make"
+
+labels = ["sailr", "daemon", "scheduling"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

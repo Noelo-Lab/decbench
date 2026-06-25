@@ -10,13 +10,49 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class OptimizationLevel(str, Enum):
-    """Compiler optimization levels."""
+    """Compiler optimization levels.
+
+    ``O2_NOINLINE`` is O2 with function inlining disabled: inlining is an
+    outlier optimization that destroys function boundaries, so benchmarks
+    need an optimized configuration with it specifically turned off.
+    """
     O0 = "O0"
     O1 = "O1"
     O2 = "O2"
     O3 = "O3"
     Os = "Os"
     Oz = "Oz"
+    O2_NOINLINE = "O2-noinline"
+
+    @property
+    def gcc_flags(self) -> list[str]:
+        """GCC flags implementing this optimization level."""
+        return _OPT_GCC_FLAGS[self]
+
+
+_OPT_GCC_FLAGS: dict[OptimizationLevel, list[str]] = {
+    OptimizationLevel.O0: ["-O0"],
+    OptimizationLevel.O1: ["-O1"],
+    OptimizationLevel.O2: ["-O2"],
+    OptimizationLevel.O3: ["-O3"],
+    OptimizationLevel.Os: ["-Os"],
+    OptimizationLevel.Oz: ["-Oz"],
+    OptimizationLevel.O2_NOINLINE: ["-O2", "-fno-inline"],
+}
+
+
+def opt_gcc_flags(optimization: OptimizationLevel | str) -> list[str]:
+    """Map an optimization level (enum or its string value) to GCC flags.
+
+    Unknown plain strings fall back to ``-<value>`` so ad-hoc levels keep
+    working (e.g. ``"Og"`` -> ``["-Og"]``).
+    """
+    if isinstance(optimization, OptimizationLevel):
+        return list(optimization.gcc_flags)
+    try:
+        return list(OptimizationLevel(optimization).gcc_flags)
+    except ValueError:
+        return [f"-{optimization}"]
 
 
 class RemoteType(str, Enum):
@@ -35,9 +71,11 @@ class CompilationConfig(BaseModel):
     )
     base_flags: list[str] = Field(
         default=[
-            "-g", "-fno-inline", "-fno-builtin", "-save-temps=obj"
+            "-g", "-fno-builtin", "-save-temps=obj"
         ],
-        description="Base compiler flags applied to all compilations",
+        description="Base compiler flags applied to all compilations. "
+        "Inlining is controlled by the optimization level (use O2-noinline "
+        "for optimized-but-no-inlining builds), not by base flags.",
     )
     extra_flags: list[str] = Field(
         default=[],
@@ -167,6 +205,14 @@ class Project(BaseModel):
 
         # Extract compilation config if present
         compilation_data = data.pop("compilation", {})
+
+        # Resolve a relative apply_patch against the TOML's directory so
+        # projects can ship patches next to their config.
+        patch = data.get("apply_patch")
+        if patch and not Path(patch).is_absolute():
+            candidate = (Path(path).parent / patch).resolve()
+            if candidate.exists():
+                data["apply_patch"] = str(candidate)
 
         return cls(
             config=ProjectConfig(**data),

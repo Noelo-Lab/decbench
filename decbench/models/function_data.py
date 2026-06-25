@@ -29,6 +29,58 @@ class FunctionRecord(BaseModel):
         default_factory=list,
         description="Labels applied to this function",
     )
+    size: int | None = Field(
+        default=None,
+        description="Representative decompiled line count (for size-based "
+        "subsetting and the 'large' auto label)",
+    )
+
+
+class HardestEntry(BaseModel):
+    """A single 'hardest function' row: a function with a poor metric value.
+
+    Precomputed server-side (bounded count) so the report can show a
+    'Hall of Shame' of the functions decompilers struggle with most,
+    including the decompiled (and, when available, source) code.
+    """
+
+    metric: str = Field(..., description="Metric this entry is ranked under")
+    decompiler: str = Field(..., description="Decompiler id (may be name@version)")
+    project: str = Field(...)
+    opt_level: str = Field(...)
+    binary: str = Field(...)
+    function: str = Field(...)
+    value: float = Field(..., description="Raw metric value (worse = harder)")
+    perfect_value: float = Field(..., description="The value considered perfect")
+    size: int | None = Field(default=None, description="Decompiled line count")
+    labels: list[str] = Field(default_factory=list)
+    decompiled_code: str | None = Field(
+        default=None, description="Decompiled C for this function"
+    )
+    source_code: str | None = Field(
+        default=None, description="Best-effort source C for this function"
+    )
+
+
+class HistoryPoint(BaseModel):
+    """One (decompiler, version, date) sample of aggregate scores.
+
+    Powers the historical line charts: how a decompiler's metric scores
+    change across versions/time. Built by ingesting multiple scoreboards.
+    """
+
+    decompiler: str = Field(..., description="Base decompiler name, e.g. 'ghidra'")
+    version: str = Field(..., description="Version label, e.g. '11.3' or '12.1'")
+    date: str | None = Field(
+        default=None, description="ISO date this version is associated with"
+    )
+    scores: dict[str, float] = Field(
+        default_factory=dict,
+        description="metric -> perfect percentage at this version",
+    )
+    overall: float = Field(
+        default=0.0, description="Overall (perfect on all metrics) percentage"
+    )
 
 
 class BinaryGroup(BaseModel):
@@ -50,10 +102,14 @@ class BinaryGroup(BaseModel):
 class FunctionData(BaseModel):
     """Top-level per-function dataset embedded in the HTML report."""
 
-    schema_version: int = Field(default=1, description="Data schema version")
+    schema_version: int = Field(default=2, description="Data schema version")
     decompilers: list[str] = Field(
         default_factory=list,
-        description="All decompilers present in the dataset",
+        description="All decompilers present in the dataset (ids; may be name@version)",
+    )
+    decompiler_versions: dict[str, str] = Field(
+        default_factory=dict,
+        description="decompiler id -> human version label (for display)",
     )
     metrics: list[str] = Field(
         default_factory=list,
@@ -66,6 +122,14 @@ class FunctionData(BaseModel):
     groups: list[BinaryGroup] = Field(
         default_factory=list,
         description="Per-binary groups of function records",
+    )
+    hardest: list[HardestEntry] = Field(
+        default_factory=list,
+        description="Precomputed 'hardest functions' (worst scores) with code",
+    )
+    history: list[HistoryPoint] = Field(
+        default_factory=list,
+        description="Historical score samples across decompiler versions/time",
     )
 
     def to_json(self, path: Path) -> None:

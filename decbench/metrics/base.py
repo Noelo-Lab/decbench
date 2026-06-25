@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
+from decbench import caching
 from decbench.models.metrics import (
     AggregationType,
     MetricResult,
@@ -48,8 +50,43 @@ class Metric(ABC):
     requires_source_cfg: bool = False
     requires_decompiled_cfg: bool = False
 
+    # Bump when a metric's computation semantics change so stale cache entries
+    # from an older code version are never reused. Override per-metric when its
+    # specific inputs/formula change.
+    cache_version: str = "1"
+
     def __init__(self, config: MetricConfig | None = None):
         self.config = config or MetricConfig()
+
+    def _cached_value(
+        self,
+        key_inputs: list[Any],
+        compute: Callable[[], MetricValue],
+    ) -> MetricValue:
+        """Return a metric value, served from the on-disk cache when possible.
+
+        The metric value is a pure function of ``key_inputs`` (plus the metric
+        name and :attr:`cache_version`). On a cache hit we reconstruct the
+        :class:`MetricValue` from its stored JSON; on a miss we compute it and
+        store the result. Caching is a no-op when disabled
+        (``DECBENCH_NO_CACHE``) so behavior is byte-identical to no cache.
+        """
+        if not caching.cache_enabled():
+            return compute()
+
+        key = caching.stable_hash(self.name, self.cache_version, *key_inputs)
+        cache = caching.get_cache("metric")
+        hit = cache.get(key)
+        if hit is not None:
+            try:
+                return MetricValue(**hit)
+            except Exception:
+                # Corrupt/incompatible cache entry: fall through and recompute.
+                pass
+
+        value = compute()
+        cache.put(key, value.model_dump(mode="json"))
+        return value
 
     @abstractmethod
     def compute_for_function(
@@ -58,8 +95,7 @@ class Metric(ABC):
         source_cfg: DiGraph | None = None,
         decompiled_cfg: DiGraph | None = None,
         **kwargs: Any,
-    ) -> MetricValue:
-        ...
+    ) -> MetricValue: ...
 
     def compute_for_binary(
         self,

@@ -1,0 +1,31 @@
+# DecBench Project Configuration: kmod
+# kmod is the Linux kernel module management toolset (insmod/rmmod/modprobe/lsmod
+# via the multi-call `kmod` binary). Labels mark it as a SAILR CLI system/kernel tool.
+
+name = "kmod"
+version = "30"
+
+# Source configuration - use release tarball (ships a pre-generated ./configure)
+source_remote = "https://mirrors.edge.kernel.org/pub/linux/utils/kernel/kmod/kmod-30.tar.xz"
+remote_type = "tar"
+
+# Build directories
+package_dir = "kmod"
+source_dir = "tools"
+
+# Build commands (no autogen needed with release tarball)
+post_download_cmds = []
+pre_make_cmds = ["./configure --quiet --disable-manpages"]
+make_cmd = "make"
+
+labels = ["sailr", "cli-tool", "system", "kernel"]
+
+[compilation]
+# Optimization levels to compile
+optimization_levels = ["O0", "O2", "O2-noinline"]
+
+# Base compiler flags (O2-noinline appends -fno-inline; do not add it here)
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+
+# Compiler to use
+c_compiler = "gcc"

@@ -31,6 +31,8 @@ RUN apt-get update && apt-get install -y \
     graphviz-dev \
     libgraphviz-dev \
     pkg-config \
+    meson \
+    ninja-build \
     default-jdk \
     && rm -rf /var/lib/apt/lists/*
 
@@ -41,6 +43,19 @@ RUN wget https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghid
     unzip ghidra_12.0_PUBLIC_20251205.zip -d /opt && \
     mv /opt/ghidra_12.0_PUBLIC ${GHIDRA_INSTALL_DIR} && \
     rm ghidra_12.0_PUBLIC_20251205.zip
+
+# Install radare2 from source + the r2dec plugin so the `r2dec` backend works
+# natively in this image. We build from source (not the apt package) because the
+# r2dec plugin must compile against radare2's dev headers (/usr/include/libr),
+# which the host's packaged radare2 lacks. With the plugin present, the
+# R2DecDecompiler uses the real r2dec commands (pd:d / pdd) instead of falling
+# back to radare2's built-in `pdc`.
+ARG R2_REF=master
+RUN git clone --depth=1 --branch "${R2_REF}" https://github.com/radareorg/radare2 /opt/radare2 \
+    && /opt/radare2/sys/install.sh \
+    && r2pm -U \
+    && r2pm -ci r2dec \
+    && r2 -v
 
 # Allow running ./configure as root (needed in Docker)
 ENV FORCE_UNSAFE_CONFIGURE=1
@@ -63,6 +78,7 @@ RUN python3.12 -m pip install --break-system-packages \
     rich \
     toml \
     pydantic \
+    r2pipe \
     && python3.12 -m pip install --break-system-packages -e .
 
 # Pre-install Joern binaries so they don't need to be downloaded at runtime
@@ -70,3 +86,13 @@ RUN python3.12 -m pyjoern --install
 
 # Default command
 CMD ["/bin/bash"]
+
+# ---------------------------------------------------------------------------
+# Decompiler backends: angr, Ghidra (12.0 above), and **r2dec** (radare2 + the
+# r2dec plugin, installed above) all work natively in THIS image. IDA/Binary
+# Ninja need their own licensed installs. The heavier RetDec and Reko
+# toolchains live in their own images under docker/ (retdec.Dockerfile,
+# reko.Dockerfile) — build with `decbench decompiler-build <retdec|reko>`
+# (see docker/README.md). docker/r2dec.Dockerfile is kept as a standalone
+# fallback but is redundant now that r2dec is built in here.
+# ---------------------------------------------------------------------------

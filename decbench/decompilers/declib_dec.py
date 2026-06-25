@@ -141,8 +141,24 @@ class DeclibDecompiler(Decompiler):
         binary_path: Path,
         functions: list[tuple[str, int]] | None = None,
         output_dir: Path | None = None,
+        function_names: set[str] | None = None,
+        progress_path: Path | None = None,
     ) -> DecompilationResult:
-        """Decompile a binary through declib."""
+        """Decompile a binary through declib.
+
+        Args:
+            function_names: If given, only functions whose name is in this set
+                are decompiled. This restricts work to the project's own source
+                functions (skipping bundled gnulib/static filler that no metric
+                scores), which is a large speedup for slow decompilers. Names
+                not found in the binary are silently ignored; an empty/None set
+                means "all enumerated functions".
+            progress_path: If given, the partial result is pickled here after
+                each function so a hard external timeout-kill still preserves the
+                functions decompiled so far (important for slow backends like
+                angr on large binaries).
+        """
+        import pickle as _pickle
         if not self.is_available():
             raise RuntimeError(f"Decompiler '{self.name}' is not available")
 
@@ -168,6 +184,48 @@ class DeclibDecompiler(Decompiler):
                     deci, binary_path, elf_base
                 )
 
+            if function_names:
+                filtered = [
+                    (n, a) for (n, a) in target_funcs if n in function_names
+                ]
+                # Only apply the filter if it actually matched something — if
+                # decompiler names don't line up with source names (e.g. a
+                # stripped/renamed binary), fall back to decompiling everything
+                # rather than producing an empty result.
+                if filtered:
+                    _l.debug(
+                        "declib/%s: filtered %d/%d functions to source set for %s",
+                        self.name, len(filtered), len(target_funcs), binary_path.name,
+                    )
+                    target_funcs = filtered
+
+            def _dump_progress() -> None:
+                if progress_path is None:
+                    return
+                try:
+                    partial = DecompilationResult(
+                        binary_path=binary_path,
+                        binary_name=binary_path.stem,
+                        decompiler=DecompilerMetadata(
+                            decompiler_name=self.name,
+                            decompiler_version=self.get_version(),
+                            total_time_seconds=time.time() - start_time,
+                            failed_functions=list(failed_functions),
+                            extra={
+                                "backend": self.force_decompiler,
+                                "via": "declib",
+                                "partial": True,
+                            },
+                        ),
+                        functions=dict(decompiled_functions),
+                        output_dir=output_dir,
+                    )
+                    tmp = progress_path.with_suffix(progress_path.suffix + ".tmp")
+                    tmp.write_bytes(_pickle.dumps(partial))
+                    tmp.replace(progress_path)
+                except Exception:  # noqa: BLE001 - progress dump is best-effort
+                    pass
+
             for func_name, lifted_addr in target_funcs:
                 try:
                     func_result = self._decompile_one(
@@ -181,6 +239,8 @@ class DeclibDecompiler(Decompiler):
                     decompiled_functions[func_name] = func_result
                 else:
                     failed_functions.append(func_name)
+
+                _dump_progress()
 
         except Exception as e:
             _l.error(
@@ -402,12 +462,12 @@ class DeclibDecompiler(Decompiler):
         return code
 
 
-@register_decompiler("ida")
+@register_decompiler("ida-declib")
 class IDADeclibDecompiler(DeclibDecompiler):
     """IDA Pro (Hex-Rays) via declib + idalib (IDA 9+)."""
 
-    name = "ida"
-    display_name = "IDA Pro"
+    name = "ida-declib"
+    display_name = "IDA Pro (declib)"
     force_decompiler = "ida"
     _uses_project_dir = True
 
@@ -466,12 +526,12 @@ class IDADeclibDecompiler(DeclibDecompiler):
             return "unknown"
 
 
-@register_decompiler("ghidra")
+@register_decompiler("ghidra-declib")
 class GhidraDeclibDecompiler(DeclibDecompiler):
     """Ghidra via declib + pyghidra (requires GHIDRA_INSTALL_DIR)."""
 
-    name = "ghidra"
-    display_name = "Ghidra"
+    name = "ghidra-declib"
+    display_name = "Ghidra (declib)"
     force_decompiler = "ghidra"
     _uses_project_dir = True
 
@@ -500,12 +560,12 @@ class GhidraDeclibDecompiler(DeclibDecompiler):
         return "unknown"
 
 
-@register_decompiler("binja")
+@register_decompiler("binja-declib")
 class BinjaDeclibDecompiler(DeclibDecompiler):
     """Binary Ninja via declib (requires a headless-capable license)."""
 
-    name = "binja"
-    display_name = "Binary Ninja"
+    name = "binja-declib"
+    display_name = "Binary Ninja (declib)"
     force_decompiler = "binja"
 
     def is_available(self) -> bool:
@@ -529,12 +589,12 @@ class BinjaDeclibDecompiler(DeclibDecompiler):
             return "unknown"
 
 
-@register_decompiler("angr")
+@register_decompiler("angr-declib")
 class AngrDeclibDecompiler(DeclibDecompiler):
     """angr's decompiler via declib (headless, no angr-management needed)."""
 
-    name = "angr"
-    display_name = "angr"
+    name = "angr-declib"
+    display_name = "angr (declib)"
     force_decompiler = "angr"
 
     def is_available(self) -> bool:

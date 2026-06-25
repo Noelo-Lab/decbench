@@ -1,0 +1,25 @@
+# DecBench Project Configuration: dash (Debian Almquist shell)
+# dash is a small, POSIX-compliant Unix shell / command interpreter.
+# Labels: "shell" and "interpreter" since it parses and executes shell scripts.
+# Source is a git snapshot tarball (no generated ./configure), so we run
+# ./autogen.sh in post_download_cmds before configuring.
+
+name = "dash"
+version = "0.5.11+git20210903"
+
+source_remote = "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/dash/0.5.11+git20210903+057cd650a4ed-8ubuntu1/dash_0.5.11+git20210903+057cd650a4ed.orig.tar.xz"
+remote_type = "tar"
+
+package_dir = "dash-0.5.11+git20210903+057cd650a4ed"
+source_dir = "src"
+
+post_download_cmds = ["./autogen.sh"]
+pre_make_cmds = ["./configure --quiet"]
+make_cmd = "make"
+
+labels = ["sailr", "shell", "interpreter"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

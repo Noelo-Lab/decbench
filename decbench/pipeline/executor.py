@@ -233,6 +233,22 @@ class PipelineExecutor:
             projects,
             results.decompile_results,
         )
+
+        # Attach the "hardest functions" table and any historical samples for
+        # the interactive report. Best-effort: never let report extras break a
+        # completed run.
+        try:
+            from decbench.scoring.report_extras import attach_extras
+
+            attach_extras(
+                function_data,
+                evaluation_results=results.evaluate_results,
+                decompile_results=results.decompile_results,
+                projects=projects,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"Report extras unavailable ({exc}); continuing.")
+
         function_data_path = output_dir / "function_results.json"
         function_data.to_json(function_data_path)
         results.scoreboard.raw_data_path = function_data_path

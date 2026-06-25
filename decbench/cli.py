@@ -28,9 +28,10 @@ def main() -> None:
     "--opt-level",
     "-O",
     multiple=True,
-    type=click.Choice(["O0", "O1", "O2", "O3", "Os"]),
+    type=click.Choice([o.value for o in OptimizationLevel]),
     default=["O2"],
-    help="Optimization levels to compile with",
+    help="Optimization levels to compile with "
+    "(O2-noinline is O2 with function inlining disabled)",
 )
 @click.option(
     "--decompiler",
@@ -66,6 +67,18 @@ def main() -> None:
     is_flag=True,
     help="Skip evaluation step",
 )
+@click.option(
+    "--binary-limit",
+    type=int,
+    default=None,
+    help="Process at most N binaries per project/opt-level",
+)
+@click.option(
+    "--binary-sample",
+    type=int,
+    default=None,
+    help="Deterministically sample N binaries per project/opt-level",
+)
 def run(
     projects,
     output,
@@ -76,6 +89,8 @@ def run(
     skip_compile,
     skip_decompile,
     skip_evaluate,
+    binary_limit,
+    binary_sample,
 ) -> None:
     """Run the full benchmark pipeline on project(s)."""
     from rich.console import Console
@@ -107,6 +122,8 @@ def run(
         skip_compile=skip_compile,
         skip_decompile=skip_decompile,
         skip_evaluate=skip_evaluate,
+        binary_limit=binary_limit,
+        binary_sample=binary_sample,
     )
 
     executor = PipelineExecutor(config)
@@ -192,9 +209,8 @@ def list_decompilers() -> None:
     from rich.console import Console
     from rich.table import Table
 
-    from decbench.decompilers.registry import DecompilerRegistry
-
     import decbench.decompilers.declib_dec  # noqa: F401
+    from decbench.decompilers.registry import DecompilerRegistry
 
     console = Console()
     table = Table(title="Available Decompilers")
@@ -220,10 +236,9 @@ def list_metrics() -> None:
     from rich.console import Console
     from rich.table import Table
 
-    from decbench.metrics.registry import MetricRegistry
-
     # Import to register
     import decbench.metrics  # noqa: F401
+    from decbench.metrics.registry import MetricRegistry
 
     console = Console()
     table = Table(title="Available Metrics")
@@ -338,7 +353,7 @@ def init_project(name, output) -> None:
     """Initialize a new project configuration file."""
     from rich.console import Console
 
-    from decbench.models.project import Project, ProjectConfig, CompilationConfig
+    from decbench.models.project import CompilationConfig, Project, ProjectConfig
 
     console = Console()
 
@@ -355,6 +370,129 @@ def init_project(name, output) -> None:
 
     console.print(f"Created project configuration: [bold]{output_path}[/bold]")
     console.print("Edit this file to configure your project.")
+
+
+@main.group()
+def dataset() -> None:
+    """Manage saved binary datasets (re-run without recompiling)."""
+    pass
+
+
+@dataset.command("save")
+@click.argument("results_dir", type=click.Path(exists=True))
+@click.argument("name")
+@click.option(
+    "--store",
+    type=click.Path(),
+    default=None,
+    help="Dataset store root (default: ~/.local/share/decbench/datasets)",
+)
+def dataset_save(results_dir, name, store) -> None:
+    """Save the compiled binaries under RESULTS_DIR as a reusable dataset NAME."""
+    from rich.console import Console
+
+    from decbench.dataset import save_dataset
+
+    console = Console()
+    manifest = save_dataset(
+        Path(results_dir), name, store_root=Path(store) if store else None
+    )
+    console.print(
+        f"Saved dataset [bold]{name}[/bold]: {len(manifest.binaries)} binaries "
+        f"across {len(manifest.compile_sets())} compile-sets."
+    )
+
+
+@dataset.command("list")
+@click.option(
+    "--store",
+    type=click.Path(),
+    default=None,
+    help="Dataset store root (default: ~/.local/share/decbench/datasets)",
+)
+def dataset_list(store) -> None:
+    """List saved binary datasets."""
+    from rich.console import Console
+    from rich.table import Table
+
+    from decbench.dataset import list_datasets
+
+    console = Console()
+    table = Table(title="Saved Datasets")
+    table.add_column("Name", style="cyan")
+    table.add_column("Binaries")
+    table.add_column("Compile sets")
+    for info in list_datasets(store_root=Path(store) if store else None):
+        table.add_row(info["name"], str(info["binaries"]), str(info["compile_sets"]))
+    console.print(table)
+
+
+@dataset.command("materialize")
+@click.argument("name")
+@click.argument("dest", type=click.Path())
+@click.option("--store", type=click.Path(), default=None)
+def dataset_materialize(name, dest, store) -> None:
+    """Lay dataset NAME back out under DEST so `run --skip-compile` finds it."""
+    from rich.console import Console
+
+    from decbench.dataset import materialize
+
+    console = Console()
+    materialize(name, Path(dest), store_root=Path(store) if store else None)
+    console.print(f"Materialized [bold]{name}[/bold] into {dest}")
+
+
+@main.command()
+@click.argument("function_data", type=click.Path(exists=True))
+@click.option(
+    "-o", "--output", type=click.Path(), default="subset_large.json",
+    help="Where to write the subset manifest",
+)
+@click.option(
+    "--method", type=click.Choice(["std", "percentile"]), default="std",
+    help="Tail selection: mean+k*std, or top-(100-k) percentile",
+)
+@click.option("--k", type=float, default=1.0, help="std multiplier or percentile")
+def subset(function_data, output, method, k) -> None:
+    """Compute the large-function subset (upper tail of the size bell curve)."""
+    from rich.console import Console
+
+    from decbench.models.function_data import FunctionData
+    from decbench.scoring.subset import compute_large_subset, size_distribution
+
+    console = Console()
+    fd = FunctionData.from_json(Path(function_data))
+    dist = size_distribution(fd)
+    manifest = compute_large_subset(fd, method=method, k=k)
+    manifest.to_json(Path(output))
+    console.print(
+        f"Sizes: mean={dist['mean']:.1f} std={dist['std']:.1f} "
+        f"p90={dist.get('p90', 0):.0f} max={dist.get('max', 0):.0f}"
+    )
+    console.print(
+        f"Large subset: [bold]{len(manifest.functions)}[/bold] / {dist['count']} "
+        f"functions (threshold size >= {manifest.threshold:.1f}) -> {output}"
+    )
+
+
+@main.command("decompiler-build")
+@click.argument("name")
+def decompiler_build(name) -> None:
+    """Build the Docker image for a dockerized decompiler (reko/retdec/r2dec)."""
+    from rich.console import Console
+
+    import decbench.decompilers  # noqa: F401  (register backends)
+    from decbench.decompilers.registry import DecompilerRegistry
+
+    console = Console()
+    dec = DecompilerRegistry.get(name)
+    builder = getattr(dec, "build_image", None)
+    if builder is None:
+        console.print(f"[red]{name} is not a dockerized decompiler[/red]")
+        return
+    console.print(f"Building image for [bold]{name}[/bold]...")
+    builder()
+    console.print("Done.")
 
 
 if __name__ == "__main__":

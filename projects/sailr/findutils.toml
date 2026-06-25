@@ -1,0 +1,32 @@
+# DecBench Project Configuration: GNU Findutils
+# Findutils is the GNU package providing the `find`, `xargs`, and `locate`
+# file-search CLI utilities. Labeled as a sailr cli-tool focused on search.
+
+name = "findutils"
+version = "4.9.0"
+
+# Source configuration - use release tarball (ships a pre-generated ./configure,
+# avoiding the fragile ./bootstrap + gnulib network fetch used by the git recipe)
+source_remote = "https://mirrors.kernel.org/gnu/findutils/findutils-4.9.0.tar.xz"
+remote_type = "tar"
+
+# Build directories (package_dir is documentation only for tar sources)
+package_dir = "findutils"
+source_dir = "find"
+
+# Build commands (no bootstrap needed with release tarball)
+post_download_cmds = []
+pre_make_cmds = ["./configure --quiet"]
+make_cmd = "make"
+
+labels = ["sailr", "cli-tool", "search"]
+
+[compilation]
+# Optimization levels to compile
+optimization_levels = ["O0", "O2", "O2-noinline"]
+
+# Base compiler flags (O2-noinline adds -fno-inline at the opt-level layer)
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+
+# Compiler to use
+c_compiler = "gcc"
