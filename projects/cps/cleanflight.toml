@@ -1,0 +1,47 @@
+# DecBench CPS target: Cleanflight
+# Cleanflight is an open-source flight-controller firmware for multirotors / FPV
+# drones (the ancestor of Betaflight, sharing its Make build system). This builds
+# the DALRCF405 board, a pure STM32F405 (ARM Cortex-M4F) target, producing a
+# bare-metal ARM flight-controller ELF.
+name = "cleanflight"
+# Cleanflight's 2.x releases live only on the maintenance branch (the newest git
+# *tag* is the ancient v1.14.2); pin the stable 2.3.x maintenance branch
+# (currently 2.3.2).
+version = "CLFL_v2.3.x-maintenance"
+
+source_remote = "https://github.com/cleanflight/cleanflight"
+remote_type = "git"
+package_dir = "cleanflight"
+source_dir = "."
+
+# The build invokes `python`, but the toolchain image only ships `python3`; drop
+# a python->python3 shim into a repo dir we then prepend to PATH in make_cmd.
+post_download_cmds = []
+pre_make_cmds = ["mkdir -p tools/shim && ln -sf \"$(command -v python3)\" tools/shim/python"]
+
+# Toolchain note: like Betaflight, Cleanflight HARD-PINS arm-none-eabi-gcc
+# (mk/tools.mk expects 7.2.1) and otherwise wants `make arm_sdk_install`. We use
+# the system gcc 13.2.1 by NOT providing ARM_SDK_DIR (so ARM_SDK_PREFIX falls
+# back to the system arm-none-eabi- on PATH) and overriding GCC_REQUIRED_VERSION
+# on the command line to the installed compiler's `-dumpversion` (the documented
+# override path). Flag injection: EXTRA_FLAGS is the user-flag hook, appended
+# after the per-file -O2/-Os, so our opt level + -g + -save-temps win. We forward
+# decbench's $CFLAGS through it and add:
+#   -fcommon  : the codebase relies on tentative-definition merging (it was
+#               written for gcc 7, which defaulted to -fcommon); gcc 10+ defaults
+#               to -fno-common and the link fails with "multiple definition" of
+#               globals declared in headers. -fcommon restores the old behavior.
+#   -Wno-error: the -Werror codebase trips new gcc 13 warnings.
+# Board arch flags (-mcpu=cortex-m4 -mthumb -mfloat-abi=hard ...) come from the
+# DALRCF405 target, untouched, so the ELF is ARM.
+# IMPORTANT: if a future image swaps the arm gcc, update GCC_REQUIRED_VERSION to
+# that compiler's `arm-none-eabi-gcc -dumpversion` (here: 13.2.1).
+make_cmd = 'PATH="$PWD/tools/shim:$PATH" make TARGET=DALRCF405 GCC_REQUIRED_VERSION=13.2.1 EXTRA_FLAGS="$CFLAGS -Wno-error -fcommon"'
+
+labels = ["cps", "drone", "flight-controller", "avionics", "bare-metal", "cortex-m4", "stm32f4"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "arm-none-eabi-gcc"
+target_arch = "arm"  # only collect the ARM hardware binaries (drop host tools)

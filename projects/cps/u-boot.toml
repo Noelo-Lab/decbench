@@ -1,0 +1,44 @@
+# DecBench CPS target: U-Boot (Das U-Boot)
+# Das U-Boot is the de-facto embedded bootloader for Linux on ARM/RISC-V/etc.
+# Here it is cross-compiled for the ARM Versatile Express Cortex-A9 board
+# (vexpress_ca9x4, ARMv7-A) with arm-linux-gnueabihf-, producing the ARM ELF
+# `u-boot`. Labels mark it as a CPS bootloader for embedded Linux on armv7.
+name = "u-boot"
+version = "v2024.10"
+
+source_remote = "https://github.com/u-boot/u-boot"
+remote_type = "git"
+package_dir = "u-boot"
+source_dir = "."
+
+# Build mechanics:
+# - U-Boot is a Kbuild project: the cross toolchain is selected by CROSS_COMPILE
+#   (not CC), and extra compiler flags are appended via KCFLAGS (which is added
+#   AFTER U-Boot's own -march=armv7-a/-mfloat-abi=soft/-Os, so the arch flags
+#   survive and our -O level + -g + -save-temps win). decbench's $CFLAGS is
+#   passed straight into KCFLAGS, and $CC is set to arm-linux-gnueabihf-gcc.
+# - A board defconfig must be generated before the build (pre_make_cmds).
+# - No submodules needed.
+#
+# NOTE on opt levels: U-Boot does NOT build at -O0. Its driver model relies on
+# the compiler dead-code-eliminating inline-only stubs (e.g.
+# of_device_is_compatible / of_get_stdout when livetree is off); at -O0 GCC
+# emits out-of-line calls to functions that have no definition, so the final
+# link fails with "undefined reference". Verified at O2 and O2-noinline only.
+#
+# BUILD DEPS (host tools): U-Boot's mkimage/mkeficapsule host tools require
+# libssl-dev, uuid-dev, and libgnutls28-dev. These must be present in the build
+# image (add to the toolchain Dockerfile). Without them the `tools` build fails
+# (openssl/evp.h, uuid/uuid.h, gnutls/gnutls.h) and no u-boot ELF is produced.
+post_download_cmds = []
+pre_make_cmds = ["make CROSS_COMPILE=arm-linux-gnueabihf- vexpress_ca9x4_defconfig"]
+make_cmd = 'make CROSS_COMPILE=arm-linux-gnueabihf- KCFLAGS="$CFLAGS" -j"$(nproc)"'
+
+labels = ["cps", "bootloader", "embedded-linux", "armv7", "vexpress-ca9x4"]
+
+[compilation]
+# -O0 fails to link (see note above); ship the two optimized levels.
+optimization_levels = ["O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "arm-linux-gnueabihf-gcc"
+target_arch = "arm"  # only collect the ARM hardware binaries (drop host tools)

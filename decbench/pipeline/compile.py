@@ -139,6 +139,7 @@ def compile_project(
         compiler = GCCCompiler(
             gcc_path=compilation.c_compiler,
             base_flags=compilation.base_flags + compilation.extra_flags,
+            target_arch=compilation.target_arch,
         )
 
         # Compile

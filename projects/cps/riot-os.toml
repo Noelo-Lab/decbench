@@ -1,0 +1,31 @@
+# DecBench CPS target: RIOT-OS
+# RIOT is a real-time IoT operating system for low-power microcontrollers.
+# Here it builds the hello-world example for the ST Nucleo-F401RE board
+# (STM32F401 / ARM Cortex-M4), so the output is a bare-metal ARM firmware ELF.
+name = "riot-os"
+version = "2024.10"
+
+source_remote = "https://github.com/RIOT-OS/RIOT"
+remote_type = "git"
+package_dir = "RIOT"
+source_dir = "."
+
+# RIOT uses the system arm-none-eabi-gcc directly (no vendored SDK).
+# CRITICAL: RIOT's build system appends the *environment* CFLAGS to its own
+# internal CFLAGS (which define the CPU-family / clock-config macros). A
+# command-line `make CFLAGS=...` would OVERRIDE those macros and break the build
+# (#error "Not supported CPU family"). decbench exports CFLAGS into the env, so
+# we must NOT pass CFLAGS on the make command line — just let `make` inherit the
+# env. The board target supplies -mcpu=cortex-m4 -mthumb; our env CFLAGS append
+# -g -save-temps=obj and the opt level after it.
+post_download_cmds = []
+pre_make_cmds = []
+make_cmd = 'cd examples/hello-world && make BOARD=nucleo-f401re CC="$CC"'
+
+labels = ["cps", "rtos", "iot", "bare-metal", "cortex-m4", "stm32f4"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "arm-none-eabi-gcc"
+target_arch = "arm"  # only collect the ARM hardware binaries (drop host tools)

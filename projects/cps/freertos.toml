@@ -1,0 +1,41 @@
+# DecBench CPS target: FreeRTOS (CORTEX_MPS2_QEMU GCC demo)
+# FreeRTOS is a real-time operating system kernel for embedded devices.
+# This target builds the self-contained ARM Cortex-M3 MPS2 (QEMU) "full" demo
+# with arm-none-eabi-gcc: the FreeRTOS kernel plus the common demo/test tasks
+# linked into a single bare-metal firmware ELF (RTOSDemo.out).
+name = "freertos"
+version = "202411.00"
+
+source_remote = "https://github.com/FreeRTOS/FreeRTOS"
+remote_type = "git"
+package_dir = "FreeRTOS"
+source_dir = "."
+
+# The FreeRTOS kernel lives in the FreeRTOS-Kernel submodule (FreeRTOS/Source);
+# the demo Makefile references it as $(FREERTOS_ROOT)/Source, so it must be
+# checked out. Only the kernel submodule is needed (init it specifically to
+# avoid pulling the huge CMock/test-tooling submodules).
+post_download_cmds = ["git submodule update --init --depth 1 FreeRTOS/Source"]
+
+# The demo Makefile builds CFLAGS with plain '+=' (no ?=), so a command-line
+# CFLAGS= would clobber its arch flags (-mthumb -mcpu=cortex-m3). Instead we
+# append an EXTRA_CFLAGS hook right after the makefile's own CFLAGS lines, then
+# pass our flags through it so they land LAST (our -O2 beats the demo's -Os, and
+# -g/-save-temps=obj reach the compiler) while the arch flags are preserved.
+pre_make_cmds = [
+  "sed -i '/CFLAGS += $(INCLUDE_DIRS)/a CFLAGS += $(EXTRA_CFLAGS)' FreeRTOS/Demo/CORTEX_MPS2_QEMU_IAR_GCC/build/gcc/Makefile",
+]
+
+# make_cmd runs in the clone root; cd into the demo's GCC build dir. Output:
+# FreeRTOS/Demo/CORTEX_MPS2_QEMU_IAR_GCC/build/gcc/output/RTOSDemo.out (ARM ELF)
+# plus per-source .i files in that output/ dir, all under source_dir=".".
+# Verified: ELF 32-bit ARM, with debug_info, not stripped; 41 .i files.
+make_cmd = 'cd FreeRTOS/Demo/CORTEX_MPS2_QEMU_IAR_GCC/build/gcc && make EXTRA_CFLAGS="$CFLAGS"'
+
+labels = ["cps", "rtos", "real-time-kernel", "bare-metal", "cortex-m3", "mps2-qemu"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "arm-none-eabi-gcc"
+target_arch = "arm"  # only collect the ARM hardware binaries (drop host tools)

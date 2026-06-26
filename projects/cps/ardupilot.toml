@@ -1,0 +1,38 @@
+# DecBench CPS target: ArduPilot (ArduCopter)
+# ArduPilot is a widely-used open-source drone AUTOPILOT / flight-control stack.
+# Here it is cross-compiled for the Matek F405 flight controller
+# (STMicro STM32F405, ARM Cortex-M4F, ChibiOS RTOS) with arm-none-eabi-, which
+# is the realistic on-hardware build (NOT the host-x86 SITL simulator). Output
+# ELF: build/MatekF405/bin/arducopter (ARM 32-bit, with DWARF).
+name = "ardupilot"
+version = "Copter-4.5.7"
+
+source_remote = "https://github.com/ArduPilot/ardupilot"
+remote_type = "git"
+package_dir = "ardupilot"
+source_dir = "."
+
+# ArduPilot builds via its own `waf` wrapper. It needs its (large, recursive)
+# submodule tree, and it picks the cross toolchain itself from --board
+# (arm-none-eabi-g++ for the F405/ChibiOS target) -- it does NOT consume
+# decbench's $CC/$CFLAGS, so the opt level cannot be driven from decbench and
+# the project's own flags (default -O2 -g for ChibiOS boards) are used. The ELF
+# already carries DWARF (-g), so the type_match metric works; the binary is C++
+# compiled by waf, so -save-temps does NOT reach it and there are no .i files.
+#
+# --disable-Werror is required: with this toolchain (gcc 13.2) the stock build
+# trips -Werror=maybe-uninitialized in RC_Channel.cpp / AP_AHRS_DCM.cpp.
+post_download_cmds = ["git submodule update --init --recursive --depth 1"]
+pre_make_cmds = ["python3 ./waf configure --board MatekF405 --disable-Werror"]
+make_cmd = "python3 ./waf copter"
+
+labels = ["cps", "autopilot", "avionics", "bare-metal", "cortex-m4", "matekf405"]
+
+[compilation]
+# waf controls optimization internally (board default ~-O2); decbench's opt
+# flags do not reach the compiler, so a single realistic level is used. The same
+# ELF is produced regardless of which level decbench requests.
+optimization_levels = ["O2"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "arm-none-eabi-gcc"
+target_arch = "arm"  # only collect the ARM hardware binaries (drop host tools)

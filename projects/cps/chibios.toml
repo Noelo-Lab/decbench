@@ -1,0 +1,35 @@
+# DecBench CPS target: ChibiOS (RT-STM32F407-DISCOVERY demo)
+# ChibiOS/RT is a compact real-time operating system for embedded devices.
+# This target builds the STM32F407 Discovery (Cortex-M4) RT demo with
+# arm-none-eabi-gcc: the RT kernel + HAL + board support linked into a single
+# bare-metal firmware ELF (ch.elf).
+name = "chibios"
+version = "ver21.11.5"
+
+source_remote = "https://github.com/ChibiOS/ChibiOS"
+remote_type = "git"
+package_dir = "ChibiOS"
+source_dir = "."
+
+# Self-contained checkout; no submodules needed for this demo.
+post_download_cmds = []
+pre_make_cmds = []
+
+# ChibiOS's GCC rules.mk builds CFLAGS as: CFLAGS = $(MCFLAGS) $(OPT) ...
+# where MCFLAGS = -mcpu=$(MCU) -mthumb (the arch flags, MCU=cortex-m4) and
+# OPT = $(USE_OPT). USE_OPT is the documented hook for optimization/extra
+# compiler flags and is overridable on the command line (its default is
+# guarded by ifeq). Passing USE_OPT="$CFLAGS" injects our -O2/-g/
+# -save-temps=obj/-fno-builtin into OPT while MCFLAGS keeps the arch flags, so
+# the ELF stays ARM. make_cmd cds into the demo dir (build runs there); the ELF
+# (build/ch.elf) and .i files (build/obj/*.i) land under source_dir=".".
+# Verified: ELF 32-bit ARM, with debug_info, not stripped; 74 .i files.
+make_cmd = 'cd demos/STM32/RT-STM32F407-DISCOVERY && make USE_OPT="$CFLAGS"'
+
+labels = ["cps", "rtos", "real-time-kernel", "bare-metal", "cortex-m4", "stm32f407"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "arm-none-eabi-gcc"
+target_arch = "arm"  # only collect the ARM hardware binaries (drop host tools)

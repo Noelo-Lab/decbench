@@ -514,3 +514,67 @@ skipped (+5 dataset-preset tests). Report: results/sailr_full/report_v2.html.
 - Report: hovering a per-binary breakdown row now shows the function name(s)
   that binary contributes to the current dataset (`tr.title`; for `tiny` that is
   exactly one function). Tests: 103 passed, 2 skipped (+5 new dataset tests).
+
+---
+
+# CPS / drone / RTOS dataset — cross-compiled embedded targets (2026-06-26)
+
+Added a new category of benchmark targets: drone / cyber-physical / RTOS
+firmware, each **cross-compiled for specific embedded hardware** (real MCU /
+board), as `projects/cps/*.toml`. Built foundation-first then fanned out three
+agents that each verified builds inside an ARM-toolchain Docker image
+(`decbench-cps-toolchain`) using decbench's exact compile contract.
+
+## 11 targets — all VERIFIED (ARM ELF; .i / -g where the build allows)
+
+| target | what | hardware (MCU/board) | toolchain | opts | .i | -g |
+|---|---|---|---|---|---|---|
+| libopencm3 | Cortex-M firmware lib + examples | STM32F4 / Cortex-M4 | arm-none-eabi | O0/O2/O2-ni | 125 | yes |
+| freertos | RTOS kernel demo | MPS2 / Cortex-M3 | arm-none-eabi | O0/O2/O2-ni | 41 | yes |
+| chibios | RTOS demo | STM32F407 / Cortex-M4 | arm-none-eabi | O0/O2/O2-ni | 74 | yes |
+| nuttx | RTOS (nsh) | stm32f4discovery / Cortex-M4 | arm-none-eabi | O0/O2/O2-ni | 1093 | yes |
+| riot-os | IoT RTOS example | nucleo-f401re / Cortex-M4 | arm-none-eabi | O0/O2/O2-ni | 43 | yes |
+| betaflight | drone flight controller | STM32F405 / Cortex-M4F | arm-none-eabi | O0/O2/O2-ni | 416 | yes |
+| cleanflight | drone flight controller | DALRCF405 / Cortex-M4F | arm-none-eabi | O0/O2/O2-ni | 257 | yes |
+| crazyflie | nano-drone firmware | cf2 STM32F405 / Cortex-M4F | arm-none-eabi | O0/O2/O2-ni | 532 | yes |
+| ardupilot | drone autopilot (ChibiOS) | MatekF405 / Cortex-M4F | arm-none-eabi | O2 | — | yes |
+| px4-autopilot | drone autopilot (NuttX) | px4_fmu-v5 / Cortex-M7F | arm-none-eabi | O2 | — | yes |
+| u-boot | embedded bootloader | vexpress-ca9x4 / Cortex-A9 (ARMv7) | arm-linux-gnueabihf | O2/O2-ni | 253 | yes |
+
+- ardupilot/px4 use waf/cmake that pick the toolchain by board, so decbench's
+  CFLAGS don't reach them → single realistic opt level, no `.i` (ELF + DWARF
+  present). u-boot drops O0 (driver-model DCE needs ≥O1). Everything else builds
+  all three opt levels with `.i` + `-g`.
+- byte_match will be ~0 for these (recompiles with host x86 gcc vs ARM bytes);
+  GED (needs `.i`) and type_match (needs DWARF) are the usable metrics, plus
+  structural decompilation by angr/Ghidra (both handle ARM/Thumb).
+
+## How they cross-compile through decbench
+- `c_compiler = "arm-none-eabi-gcc"` (bare-metal Cortex-M) or
+  `"arm-linux-gnueabihf-gcc"` (embedded-Linux ARM, u-boot). The project's own
+  board/target build supplies the `-mcpu=cortex-mX -mthumb -mfloat-abi=...` arch
+  flags; decbench appends `-g -save-temps=obj` + the opt level via each
+  project's flag-injection hook (EXTRA_FLAGS / USE_OPT / KCFLAGS / EXTRAFLAGS /
+  KCFLAGS / `make CFLAGS=` as appropriate — see each TOML). Submodules via
+  `post_download_cmds`.
+- **New `target_arch` filter** (`CompilationConfig.target_arch`): cross-compiled
+  builds produce incidental **host tools** (e.g. u-boot's x86 `mkimage`);
+  `target_arch = "arm"` makes `compile_project` collect only the ARM hardware
+  binaries. Verified: u-boot went from 21 collected (16 x86 + 5 ARM) to just the
+  ARM binaries.
+
+## Toolchain (Dockerfile)
+Added both cross toolchains (gcc-arm-none-eabi + newlib/binutils; gcc-arm-linux-
+gnueabihf) plus cmake/flex/dtc/file/libtool-bin, the U-Boot host-tool libs
+(libssl-dev, uuid-dev, libgnutls28-dev), python-is-python3, and the ArduPilot
+(waf) / PX4 (cmake) Python helpers (empy 3.3.4, pyserial, future, jsonschema,
+pyyaml, lxml, cerberus, jinja2, numpy, …).
+
+## Validation
+`scripts/cps_compile_smoke.py` drives decbench's real `compile_project` and
+reports collected ELF arch + `.i` counts. Confirmed end-to-end through decbench:
+- riot-os (arm-none-eabi): 1 ARM ELF + 38 `.i` → PASS.
+- u-boot (arm-linux-gnueabihf): ARM `u-boot` + EFI apps + 253 `.i`, host x86
+  tools filtered out by `target_arch` → PASS.
+Categorized via TOML `labels` (cps + kind + domain + bare-metal/embedded-linux +
+MCU/board). Tests: 103 passed, 2 skipped.

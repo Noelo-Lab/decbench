@@ -57,6 +57,26 @@ RUN git clone --depth=1 --branch "${R2_REF}" https://github.com/radareorg/radare
     && r2pm -ci r2dec \
     && r2 -v
 
+# Cross toolchains + build tooling for the CPS / drone / RTOS targets
+# (projects/cps/*.toml), which are compiled for real embedded hardware:
+#   * arm-none-eabi-gcc  -> bare-metal Cortex-M firmware (RTOS kernels, flight
+#                           controllers, autopilots: FreeRTOS/ChibiOS/NuttX,
+#                           Betaflight/Crazyflie/ArduPilot/PX4, libopencm3, RIOT)
+#   * arm-linux-gnueabihf -> embedded-Linux ARM (e.g. Das U-Boot)
+# Plus cmake/flex/dtc/etc. and the Python helpers ArduPilot(waf)/PX4(cmake) need.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi \
+    libstdc++-arm-none-eabi-newlib \
+    gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
+    cmake flex file device-tree-compiler libtool-bin \
+    libssl-dev uuid-dev libgnutls28-dev python-is-python3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3.12 -m pip install --break-system-packages \
+       pyserial future "empy==3.3.4" jsonschema kconfiglib pymavlink \
+       pexpect toml numpy pyros-genmsg packaging jinja2 pyyaml lxml cerberus \
+    && arm-none-eabi-gcc --version | head -1 \
+    && arm-linux-gnueabihf-gcc --version | head -1
+
 # Allow running ./configure as root (needed in Docker)
 ENV FORCE_UNSAFE_CONFIGURE=1
 

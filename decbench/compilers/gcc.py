@@ -21,14 +21,19 @@ class GCCCompiler(Compiler):
         self,
         gcc_path: str | None = None,
         base_flags: list[str] | None = None,
+        target_arch: str | None = None,
     ):
         """Initialize GCC compiler.
 
         Args:
             gcc_path: Path to gcc binary, or None to use PATH
             base_flags: Base compiler flags always applied
+            target_arch: If set (e.g. 'arm'), only collect ELF binaries of this
+                machine architecture from make-based builds (drops incidental
+                host tools from cross-compiled projects).
         """
         self.gcc_path = gcc_path or self._find_gcc()
+        self.target_arch = target_arch
 
         # Default base flags for reproducible decompilation benchmarking.
         # Inlining is governed by the optimization level (O2-noinline), not
@@ -176,6 +181,24 @@ class GCCCompiler(Compiler):
         except (OSError, struct.error):
             return False
 
+    # ELF e_machine -> short arch name (the ones we cross-compile for / against).
+    _ELF_MACHINES = {
+        0x28: "arm", 0xB7: "aarch64", 0x3E: "x86-64", 0x03: "x86",
+        0xF3: "riscv", 0x08: "mips", 0x14: "ppc", 0x15: "ppc64",
+    }
+
+    @classmethod
+    def _elf_machine(cls, path: Path) -> str | None:
+        """Return the short architecture name of an ELF (e_machine), or None."""
+        try:
+            with open(path, "rb") as f:
+                if f.read(4) != b"\x7fELF":
+                    return None
+                f.seek(18)  # e_machine
+                return cls._ELF_MACHINES.get(struct.unpack("<H", f.read(2))[0], "other")
+        except (OSError, struct.error):
+            return None
+
     def compile_project(
         self,
         project_dir: Path,
@@ -251,6 +274,10 @@ class GCCCompiler(Compiler):
                     if entry.suffix in (".o", ".a", ".i", ".s", ".c", ".h"):
                         continue
                     if not self._is_elf_executable(entry):
+                        continue
+                    # For cross-compiled projects, skip incidental host tools
+                    # (e.g. x86 mkimage) and keep only the target-arch binaries.
+                    if self.target_arch and self._elf_machine(entry) != self.target_arch:
                         continue
 
                     dest_bin = output_dir / entry.name

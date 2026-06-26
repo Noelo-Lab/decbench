@@ -87,6 +87,13 @@ class CompilationConfig(BaseModel):
         default=True,
         description="Whether to emit preprocessed C code (.i files)",
     )
+    target_arch: str | None = Field(
+        default=None,
+        description="If set (e.g. 'arm', 'aarch64'), only collect compiled ELF "
+        "binaries of this machine architecture. Cross-compiled projects (the "
+        "CPS/embedded targets) build incidental host tools (e.g. x86 mkimage) "
+        "during their build; this keeps only the real hardware binaries.",
+    )
 
 
 class ProjectConfig(BaseModel):
