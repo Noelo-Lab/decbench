@@ -78,3 +78,40 @@ def test_idempotent() -> None:
     assign_datasets(fd)
     second = [sorted(f.datasets) for g in fd.groups for f in g.functions]
     assert first == second
+
+
+def _tiny_keys(fd: FunctionData) -> set[str]:
+    return {
+        f"{g.project}/{g.opt_level}/{f.function}"
+        for g in fd.groups
+        for f in g.functions
+        if "tiny" in f.datasets
+    }
+
+
+def test_tiny_is_seeded_and_reproducible() -> None:
+    # Same seed -> identical tiny selection, every time.
+    fd1 = _make_data()
+    assign_datasets(fd1, tiny_total=20, seed=42)
+    fd2 = _make_data()
+    assign_datasets(fd2, tiny_total=20, seed=42)
+    assert _tiny_keys(fd1) == _tiny_keys(fd2)
+    assert len(_tiny_keys(fd1)) > 0
+
+
+def test_tiny_changes_with_seed() -> None:
+    # A different seed should (with this much data) pick a different sample.
+    fd_a = _make_data()
+    assign_datasets(fd_a, tiny_total=20, seed=1)
+    fd_b = _make_data()
+    assign_datasets(fd_b, tiny_total=20, seed=2)
+    assert _tiny_keys(fd_a) != _tiny_keys(fd_b)
+
+
+def test_env_var_seed(monkeypatch) -> None:
+    monkeypatch.setenv("DECBENCH_TINY_SEED", "777")
+    fd_env = _make_data()
+    assign_datasets(fd_env, tiny_total=20)  # seed from env
+    fd_explicit = _make_data()
+    assign_datasets(fd_explicit, tiny_total=20, seed=777)  # same, explicit
+    assert _tiny_keys(fd_env) == _tiny_keys(fd_explicit)

@@ -146,3 +146,5 @@ workspace/
 testing/
 /results/
 /results*
+# stray top-level generated report (real ones live in results/)
+/report.html

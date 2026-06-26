@@ -183,8 +183,9 @@ functions — no binary copying (`decbench subset function_results.json`).
   aesthetic: black bg, Source Code Pro mono, dashed rules, Unix-path nav, ASCII
   bars). With function data it embeds JSON + vanilla JS and offers a single
   **dataset selector** (instead of many toggles) — `full` / `hard` (O2-noinline
-  + large) / `hard-inlined` (O2 + large) / `tiny` (~100 funcs evenly sampled
-  across inlined/optimized/unoptimized/large and projects). Selecting one
+  + large) / `hard-inlined` (O2 + large) / `tiny` (~100 funcs **seeded-randomly**
+  sampled across inlined/optimized/unoptimized/large and projects; seed via
+  `DECBENCH_TINY_SEED`, default 1337). Selecting one
   live-recomputes the comparison matrix, per-binary breakdown, and rankings.
   Preset membership is tagged server-side by `scoring/datasets.py`
   (`assign_datasets`; "large" = upper tail of the size bell curve, with the

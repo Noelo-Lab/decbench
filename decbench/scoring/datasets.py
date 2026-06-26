@@ -11,7 +11,9 @@ metadata on the :class:`FunctionData`:
 * **hard-inlined** — like *hard* but **with** inlining (plain O2), large only.
 * **tiny** — ~100 functions total, evenly sampled from four categories
   (inlined=O2, optimized=O2-noinline, unoptimized=O0, large) and spread evenly
-  across projects, so it is a fast, representative slice.
+  across projects, so it is a fast, representative slice. The sample is a
+  **seeded random** selection — stable across runs for a given seed, but
+  changeable via ``DECBENCH_TINY_SEED`` (or ``assign_datasets(seed=...)``).
 
 "Large" is the upper tail of the function-size bell curve (``mean + k·std`` over
 decompiled line counts), matching :mod:`decbench.scoring.subset`. The majority
@@ -20,6 +22,8 @@ of functions are small, so this surfaces the genuinely hard, large ones.
 
 from __future__ import annotations
 
+import os
+import random
 import statistics
 from collections import OrderedDict
 from typing import TYPE_CHECKING
@@ -29,7 +33,25 @@ from decbench.models.function_data import DatasetPreset
 if TYPE_CHECKING:
     from decbench.models.function_data import BinaryGroup, FunctionData, FunctionRecord
 
-__all__ = ["assign_datasets", "large_threshold", "PRESETS"]
+__all__ = ["assign_datasets", "large_threshold", "PRESETS", "DEFAULT_TINY_SEED"]
+
+# Fixed default seed for the `tiny` sample so the selection is reproducible
+# across runs/machines. Override per call (``assign_datasets(seed=...)``) or via
+# the ``DECBENCH_TINY_SEED`` environment variable to roll a different sample.
+DEFAULT_TINY_SEED = 1337
+
+
+def _resolve_seed(seed: int | None) -> int:
+    """Resolve the tiny-sample seed: explicit arg > env var > default."""
+    if seed is not None:
+        return seed
+    env = os.environ.get("DECBENCH_TINY_SEED")
+    if env:
+        try:
+            return int(env)
+        except ValueError:
+            pass
+    return DEFAULT_TINY_SEED
 
 PRESETS: list[DatasetPreset] = [
     DatasetPreset(
@@ -83,12 +105,18 @@ def _round_robin_by_project(
     items: list[tuple[BinaryGroup, FunctionRecord]],
     quota: int,
     exclude: set[int],
+    rng: random.Random,
 ) -> list[tuple[BinaryGroup, FunctionRecord]]:
-    """Pick up to ``quota`` records, spread as evenly as possible over projects.
+    """Pick up to ``quota`` records as a *seeded random* sample, spread evenly
+    over projects.
 
-    Deterministic: candidates are sorted by (project, opt, binary, function) and
-    drawn round-robin across projects. ``exclude`` (a set of ``id(record)``)
-    keeps the four category buckets from picking the same function twice.
+    Candidates are grouped by project; the member order within each project and
+    the project visitation order are both shuffled with ``rng`` (so the picks
+    are random but fully reproducible for a given seed), then drawn round-robin
+    across projects so no project dominates. Inputs are sorted first so the
+    shuffle is reproducible regardless of incoming ordering. ``exclude`` (a set
+    of ``id(record)``) keeps the four category buckets from picking the same
+    function twice.
     """
     by_project: OrderedDict[str, list[tuple[BinaryGroup, FunctionRecord]]] = OrderedDict()
     ordered = sorted(
@@ -100,7 +128,13 @@ def _round_robin_by_project(
             continue
         by_project.setdefault(g.project, []).append((g, f))
 
+    # Seeded-random selection: shuffle members within each project and the
+    # order in which projects are visited.
+    for lst in by_project.values():
+        rng.shuffle(lst)
     projects = list(by_project.keys())
+    rng.shuffle(projects)
+
     picked: list[tuple[BinaryGroup, FunctionRecord]] = []
     i = 0
     while len(picked) < quota and any(by_project.values()):
@@ -113,12 +147,21 @@ def _round_robin_by_project(
 
 
 def assign_datasets(
-    function_data: FunctionData, tiny_total: int = 100, k: float = 1.0
+    function_data: FunctionData,
+    tiny_total: int = 100,
+    k: float = 1.0,
+    seed: int | None = None,
 ) -> FunctionData:
     """Tag every record with its dataset presets and set ``dataset_presets``.
 
-    Idempotent: re-running re-derives membership from scratch.
+    The ``tiny`` sample is a **seeded random** selection: deterministic for a
+    given seed (so the chosen targets are stable across runs), but changeable.
+    Seed resolution: ``seed`` arg > ``DECBENCH_TINY_SEED`` env var >
+    :data:`DEFAULT_TINY_SEED`.
+
+    Idempotent: re-running with the same seed re-derives identical membership.
     """
+    rng = random.Random(_resolve_seed(seed))
     threshold = large_threshold(function_data, k=k)
 
     def is_large(f: FunctionRecord) -> bool:
@@ -150,7 +193,7 @@ def assign_datasets(
     per_bucket = max(1, tiny_total // len(buckets))
     chosen: set[int] = set()
     for _name, items in buckets.items():
-        for _g, f in _round_robin_by_project(items, per_bucket, chosen):
+        for _g, f in _round_robin_by_project(items, per_bucket, chosen, rng):
             chosen.add(id(f))
             if "tiny" not in f.datasets:
                 f.datasets.append("tiny")
