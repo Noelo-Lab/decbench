@@ -237,6 +237,8 @@ def _build_css() -> str:
             border-bottom: dashed 1px var(--border-color);
         }
         tr:last-child td { border-bottom: none; }
+        .binrow { cursor: help; }
+        .binrow:hover td { background: rgba(219, 219, 219, 0.08); }
         .rank { color: var(--text-muted); width: 3.5em; }
         .bar-ascii {
             color: var(--text-muted);
@@ -501,6 +503,8 @@ def _build_per_binary_section(function_data: FunctionData) -> str:
     return """
     <div class="section" id="per-binary-breakdown">
         <h2>per-binary breakdown</h2>
+        <p class="desc">hover a binary row to see the function name(s) it
+        contributes to the current dataset.</p>
         <div class="controls">
             <label class="counter" for="breakdown-metric">metric:</label>
             <select id="breakdown-metric"></select>
@@ -754,6 +758,19 @@ def _build_script(function_data: FunctionData) -> str:
             const bk = binaryKey(group);
             if (!groupHasActive(group)) continue;
             const tr = document.createElement("tr");
+            // Tooltip: the function name(s) this binary contributes to the
+            // current dataset (for `tiny` that is exactly one function).
+            const fns = [];
+            for (const func of group.functions) {
+                if (isActive(group, func)) fns.push(func.function);
+            }
+            const MAX_TIP = 25;
+            let tip = fns.slice(0, MAX_TIP).join(", ");
+            if (fns.length > MAX_TIP) tip += ", (+" + (fns.length - MAX_TIP) + " more)";
+            tr.title = (fns.length === 1)
+                ? ("function: " + fns[0])
+                : (fns.length + " functions: " + tip);
+            tr.className = "binrow";
             const tdName = document.createElement("td");
             tdName.textContent = bk;
             tr.appendChild(tdName);

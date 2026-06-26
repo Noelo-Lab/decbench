@@ -500,3 +500,17 @@ one selector and recomputes the matrix/per-binary/rankings over the chosen view.
 Verified on the real 38,255-function corpus: full=38255, hard=1317,
 hard-inlined=1678, tiny=100 (spanning all 26 projects). Tests: 98 passed, 2
 skipped (+5 dataset-preset tests). Report: results/sailr_full/report_v2.html.
+
+## tiny sampling: seeded + even, one-per-binary; per-binary hover
+
+- The `tiny` sample is now a **seeded random** selection (reproducible across
+  runs; seed via `assign_datasets(seed=...)` or `DECBENCH_TINY_SEED`, default
+  `DEFAULT_TINY_SEED=1337`), so the chosen targets are stable but changeable.
+- Even on two axes: round-robin across projects AND **at most one function per
+  binary** (project,opt,binary) while distinct binaries last — a second pass
+  relaxes the binary rule only if there are too few binaries to fill the quota.
+  On the full corpus, `tiny` = 100 functions from 100 distinct binaries across
+  all 26 projects.
+- Report: hovering a per-binary breakdown row now shows the function name(s)
+  that binary contributes to the current dataset (`tr.title`; for `tiny` that is
+  exactly one function). Tests: 103 passed, 2 skipped (+5 new dataset tests).

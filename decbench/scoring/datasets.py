@@ -10,10 +10,11 @@ metadata on the :class:`FunctionData`:
 * **hard** — optimized, **no inlining** (O2-noinline), **large** functions only.
 * **hard-inlined** — like *hard* but **with** inlining (plain O2), large only.
 * **tiny** — ~100 functions total, evenly sampled from four categories
-  (inlined=O2, optimized=O2-noinline, unoptimized=O0, large) and spread evenly
-  across projects, so it is a fast, representative slice. The sample is a
-  **seeded random** selection — stable across runs for a given seed, but
-  changeable via ``DECBENCH_TINY_SEED`` (or ``assign_datasets(seed=...)``).
+  (inlined=O2, optimized=O2-noinline, unoptimized=O0, large), spread evenly
+  across projects, and — while there are enough distinct binaries — taking **at
+  most one function per binary**, so it is a fast, representative slice. The
+  sample is a **seeded random** selection — stable across runs for a given seed,
+  but changeable via ``DECBENCH_TINY_SEED`` (or ``assign_datasets(seed=...)``).
 
 "Large" is the upper tail of the function-size bell curve (``mean + k·std`` over
 decompiled line counts), matching :mod:`decbench.scoring.subset`. The majority
@@ -101,22 +102,34 @@ def large_threshold(function_data: FunctionData, k: float = 1.0) -> float | None
     return mean + k * std
 
 
-def _round_robin_by_project(
+def _binkey(g: BinaryGroup) -> tuple[str, str, str]:
+    """Identity of a single compiled binary: (project, opt level, binary)."""
+    return (g.project, g.opt_level, g.binary)
+
+
+def _sample_even(
     items: list[tuple[BinaryGroup, FunctionRecord]],
     quota: int,
-    exclude: set[int],
+    chosen_fns: set[int],
+    used_bins: set[tuple[str, str, str]],
     rng: random.Random,
 ) -> list[tuple[BinaryGroup, FunctionRecord]]:
-    """Pick up to ``quota`` records as a *seeded random* sample, spread evenly
-    over projects.
+    """Pick up to ``quota`` records as a *seeded random*, evenly-spread sample.
 
-    Candidates are grouped by project; the member order within each project and
-    the project visitation order are both shuffled with ``rng`` (so the picks
-    are random but fully reproducible for a given seed), then drawn round-robin
-    across projects so no project dominates. Inputs are sorted first so the
-    shuffle is reproducible regardless of incoming ordering. ``exclude`` (a set
-    of ``id(record)``) keeps the four category buckets from picking the same
-    function twice.
+    Evenness on two axes:
+
+    * **projects** — candidates are grouped by project and drawn round-robin so
+      no project dominates.
+    * **binaries** — *at most one function is taken from any one binary* while
+      distinct binaries remain (a first pass enforces this); only if there are
+      not enough binaries to meet ``quota`` does a second pass relax the rule
+      and allow a second function from a binary.
+
+    The member order within each project and the project visitation order are
+    shuffled with ``rng`` (random but fully reproducible for a given seed).
+    ``chosen_fns`` (``id(record)``) and ``used_bins`` (:func:`_binkey`) are
+    shared across the four category buckets and **mutated** here, so the rules
+    hold across the whole ``tiny`` sample, not just within one bucket.
     """
     by_project: OrderedDict[str, list[tuple[BinaryGroup, FunctionRecord]]] = OrderedDict()
     ordered = sorted(
@@ -124,25 +137,42 @@ def _round_robin_by_project(
         key=lambda gf: (gf[0].project, gf[0].opt_level, gf[0].binary, gf[1].function),
     )
     for g, f in ordered:
-        if id(f) in exclude:
+        if id(f) in chosen_fns:
             continue
         by_project.setdefault(g.project, []).append((g, f))
 
-    # Seeded-random selection: shuffle members within each project and the
-    # order in which projects are visited.
     for lst in by_project.values():
         rng.shuffle(lst)
     projects = list(by_project.keys())
     rng.shuffle(projects)
 
     picked: list[tuple[BinaryGroup, FunctionRecord]] = []
-    i = 0
-    while len(picked) < quota and any(by_project.values()):
-        proj = projects[i % len(projects)]
-        bucket = by_project[proj]
-        if bucket:
-            picked.append(bucket.pop(0))
-        i += 1
+
+    def pass_once(one_per_binary: bool) -> None:
+        advanced = True
+        while len(picked) < quota and advanced:
+            advanced = False
+            for proj in projects:
+                if len(picked) >= quota:
+                    break
+                lst = by_project[proj]
+                idx = None
+                for j, (g, f) in enumerate(lst):
+                    if id(f) in chosen_fns:
+                        continue
+                    if one_per_binary and _binkey(g) in used_bins:
+                        continue
+                    idx = j
+                    break
+                if idx is not None:
+                    g, f = lst.pop(idx)
+                    picked.append((g, f))
+                    chosen_fns.add(id(f))
+                    used_bins.add(_binkey(g))
+                    advanced = True
+
+    pass_once(one_per_binary=True)  # at most one function per binary...
+    pass_once(one_per_binary=False)  # ...relaxed only if binaries run short
     return picked
 
 
@@ -192,9 +222,9 @@ def assign_datasets(
     }
     per_bucket = max(1, tiny_total // len(buckets))
     chosen: set[int] = set()
+    used_bins: set[tuple[str, str, str]] = set()
     for _name, items in buckets.items():
-        for _g, f in _round_robin_by_project(items, per_bucket, chosen, rng):
-            chosen.add(id(f))
+        for _g, f in _sample_even(items, per_bucket, chosen, used_bins, rng):
             if "tiny" not in f.datasets:
                 f.datasets.append("tiny")
 
