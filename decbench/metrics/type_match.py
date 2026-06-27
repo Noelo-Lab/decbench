@@ -122,8 +122,12 @@ def normalize_type(type_str: str) -> set[str]:
 def extract_ground_truth_types(binary_path: Path) -> dict[str, list[dict[str, Any]]]:
     """Extract ground truth variable types from DWARF debug info.
 
+    Works for **ELF and PE** binaries (the PE/MinGW malware targets) — the DWARF
+    is read via :func:`decbench.utils.binfmt.dwarf_info`, which handles PE's
+    string-table-encoded section names. The DIE-walking below is format-agnostic.
+
     Args:
-        binary_path: Path to ELF binary compiled with -g
+        binary_path: Path to an ELF or PE binary compiled with -g
 
     Returns:
         Dict mapping function_name -> list of variable dicts with:
@@ -132,29 +136,25 @@ def extract_ground_truth_types(binary_path: Path) -> dict[str, list[dict[str, An
             - rbp_offset: list of stack offsets
             - size: byte size
     """
-    from elftools.elf.elffile import ELFFile
+    from decbench.utils import binfmt
 
     result: dict[str, list[dict[str, Any]]] = {}
 
     try:
-        with open(binary_path, "rb") as f:
-            elf = ELFFile(f)
+        dwarfinfo = binfmt.dwarf_info(binary_path)
+        if dwarfinfo is None:
+            logger.debug("No DWARF info in %s", binary_path)
+            return result
 
-            if not elf.has_dwarf_info():
-                logger.debug("No DWARF info in %s", binary_path)
-                return result
+        for CU in dwarfinfo.iter_CUs():
+            top_DIE = CU.get_top_DIE()
+            for DIE in top_DIE.iter_children():
+                if DIE.tag != "DW_TAG_subprogram":
+                    continue
 
-            dwarfinfo = elf.get_dwarf_info()
-
-            for CU in dwarfinfo.iter_CUs():
-                top_DIE = CU.get_top_DIE()
-                for DIE in top_DIE.iter_children():
-                    if DIE.tag != "DW_TAG_subprogram":
-                        continue
-
-                    func_name, variables = _parse_function_die(DIE, dwarfinfo)
-                    if func_name and variables:
-                        result[func_name] = variables
+                func_name, variables = _parse_function_die(DIE, dwarfinfo)
+                if func_name and variables:
+                    result[func_name] = variables
 
     except Exception as e:
         logger.warning("Failed to extract DWARF types from %s: %s", binary_path, e)

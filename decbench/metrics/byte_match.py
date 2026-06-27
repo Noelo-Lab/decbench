@@ -26,75 +26,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _extract_function_bytes(binary_path: Path, func_name: str, address: int) -> bytes | None:
-    """Extract function bytes from an ELF binary by name or address."""
-    try:
-        from elftools.elf.elffile import ELFFile
-
-        with open(binary_path, "rb") as f:
-            elf = ELFFile(f)
-            symtab = elf.get_section_by_name(".symtab")
-            if symtab is None:
-                return None
-
-            # Try by name first, then by address
-            for sym in symtab.iter_symbols():
-                if (sym.name == func_name or sym["st_value"] == address) and sym["st_size"] > 0:
-                    sym_addr = sym["st_value"]
-                    sym_size = sym["st_size"]
-
-                    for section in elf.iter_sections():
-                        sh_addr = section["sh_addr"]
-                        sh_size = section["sh_size"]
-                        if sh_addr <= sym_addr < sh_addr + sh_size:
-                            offset = sym_addr - sh_addr
-                            data = section.data()
-                            return data[offset : offset + sym_size]
-
-    except Exception as e:
-        logger.debug("Failed to extract bytes for %s: %s", func_name, e)
-
-    return None
-
-
-def _extract_function_from_object(obj_path: Path, func_name: str) -> bytes | None:
-    """Extract function bytes from a compiled object file."""
-    try:
-        from elftools.elf.elffile import ELFFile
-
-        with open(obj_path, "rb") as f:
-            elf = ELFFile(f)
-
-            text_section = elf.get_section_by_name(".text")
-            if text_section is None:
-                return None
-
-            symtab = elf.get_section_by_name(".symtab")
-            if symtab is None:
-                return None
-
-            for sym in symtab.iter_symbols():
-                if sym.name == func_name and sym["st_size"] > 0:
-                    offset = sym["st_value"]
-                    size = sym["st_size"]
-                    data = text_section.data()
-                    return data[offset : offset + size]
-
-    except Exception:
-        pass
-
-    return None
-
-
-def _disassemble_bytes(data: bytes, address: int = 0) -> list[str]:
+def _disassemble_bytes(data: bytes, address: int = 0, arch_mode: tuple | None = None) -> list[str]:
     """Disassemble bytes to normalized assembly lines using capstone.
 
+    ``arch_mode`` is a (capstone arch, capstone mode) tuple matching the
+    binary's architecture (x86-32/64, ARM, ...). Defaults to x86-64.
     Normalizes addresses and skips nops for stable comparison.
     """
     try:
         import capstone
 
-        cs = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+        if arch_mode is None:
+            arch_mode = (capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+        cs = capstone.Cs(*arch_mode)
         cs.detail = True
 
         lines: list[str] = []
@@ -272,10 +216,34 @@ class ByteMatchMetric(Metric):
                 metadata={"error": "No original binary for comparison"},
             )
 
+        from decbench.utils import binfmt
+
+        # Recompile THE SAME WAY THE SOURCE WAS COMPILED: pick the toolchain and
+        # arch/opt flags that match the original binary's own format+arch
+        # (PE -> MinGW, ARM -> arm-none-eabi, x86 -> gcc; flags from the DWARF
+        # producer), instead of a fixed host gcc. If that toolchain isn't
+        # installed, we can't match it — return a non-scoring result rather than
+        # comparing against a wrong-arch recompile.
+        info = binfmt.detect(original_binary_path)
+        if info is None:
+            return MetricValue(value=0.0, metadata={"error": "Unrecognized binary format"})
+        recompiler = binfmt.recompiler_for(info)
+        if recompiler is None or not binfmt.tool_available(recompiler):
+            return MetricValue(
+                value=0.0,
+                metadata={
+                    "skipped": True,
+                    "reason": f"no matching toolchain ({recompiler}) for {info.fmt}/{info.arch}",
+                },
+            )
+        # producer flags (e.g. -m32 -march=... -O2, or -mcpu=cortex-m4 -mthumb)
+        # so the recompile matches; then compile to an object.
+        flags = binfmt.producer_flags(original_binary_path) + ["-c", "-fno-builtin", "-w"]
+        arch_mode = binfmt.capstone_arch_mode(info)
+
         # Extract original function bytes ONCE; reuse for both the cache key and
-        # the comparison. The byte-match value is fully determined by the
-        # decompiled code, the original function bytes, and the compiler+flags.
-        original_bytes = _extract_function_bytes(
+        # the comparison.
+        original_bytes = binfmt.function_bytes(
             original_binary_path, decompiled.name, decompiled.address
         )
         if original_bytes is None:
@@ -289,25 +257,32 @@ class ByteMatchMetric(Metric):
             decompiled.name,
             decompiled.address,
             original_bytes.hex(),
-            self.compiler,
-            list(self.compile_flags),
+            recompiler,
+            list(flags),
         ]
         return self._cached_value(
             key_inputs,
-            lambda: self._compute_uncached(decompiled, original_bytes),
+            lambda: self._compute_uncached(
+                decompiled, original_bytes, recompiler, flags, arch_mode
+            ),
         )
 
     def _compute_uncached(
         self,
         decompiled: FunctionDecompilation,
         original_bytes: bytes,
+        compiler: str,
+        flags: list[str],
+        arch_mode: tuple | None,
     ) -> MetricValue:
-        # Compile decompiled code
+        from decbench.utils import binfmt
+
+        # Compile decompiled code the same way as source (matching toolchain).
         obj_path = _compile_function(
             decompiled.decompiled_code,
             decompiled.name,
-            self.compiler,
-            self.compile_flags,
+            compiler,
+            flags,
         )
 
         if obj_path is None:
@@ -317,8 +292,9 @@ class ByteMatchMetric(Metric):
             )
 
         try:
-            # Extract recompiled function bytes
-            recompiled_bytes = _extract_function_from_object(obj_path, decompiled.name)
+            # Extract recompiled function bytes (.text of the single-function
+            # object — ELF or COFF/MinGW).
+            recompiled_bytes = binfmt.object_text_bytes(obj_path, decompiled.name)
 
             if recompiled_bytes is None:
                 return MetricValue(
@@ -339,9 +315,9 @@ class ByteMatchMetric(Metric):
                     },
                 )
 
-            # Disassemble and compute Jaccard similarity
-            original_asm = _disassemble_bytes(original_bytes, decompiled.address)
-            recompiled_asm = _disassemble_bytes(recompiled_bytes, 0)
+            # Disassemble (with the binary's own arch) and compute similarity
+            original_asm = _disassemble_bytes(original_bytes, decompiled.address, arch_mode)
+            recompiled_asm = _disassemble_bytes(recompiled_bytes, 0, arch_mode)
 
             if original_asm and recompiled_asm:
                 similarity = _compute_jaccard_similarity(original_asm, recompiled_asm)

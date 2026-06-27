@@ -23,7 +23,8 @@ from decbench.dataset import (
     materialize,
     save_dataset,
 )
-from decbench.metrics.byte_match import ByteMatchMetric, _extract_function_bytes
+from decbench.metrics.byte_match import ByteMatchMetric
+from decbench.utils.binfmt import function_bytes as _extract_function_bytes
 from decbench.metrics.ged import GEDMetric
 from decbench.metrics.type_match import TypeMatchMetric
 from decbench.models.decompilation import FunctionDecompilation, VariableInfo

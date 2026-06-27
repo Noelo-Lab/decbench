@@ -189,7 +189,19 @@ functions — no binary copying (`decbench subset function_results.json`).
   ③ rest by exact name. Regex text parsing is the last-resort fallback. At `-O2`,
   register locals that decompilers fold into expressions count as misses for
   everyone uniformly.
-- `byte_match.py` - Recompilation Bytematch: Assembly similarity after recompiling decompiled code
+- `byte_match.py` - Recompilation Bytematch: assembly similarity after recompiling
+  the decompiled C **the same way the source was compiled** — the toolchain and
+  `-m*/-O*` flags matching the original binary's own format+arch (PE→MinGW,
+  ARM→arm-none-eabi, x86→gcc; flags read from the DWARF producer), via
+  `decbench/utils/binfmt.py`. Returns a non-scoring result if that toolchain
+  isn't installed (don't fake a wrong-arch recompile). Works on ELF and PE.
+
+`decbench/utils/binfmt.py` is the shared binary-format helper: detect ELF/PE +
+arch, pick the matching recompiler + capstone arch, read DWARF from ELF *or* PE
+(PE: `.debug_*` sections via objdump file offsets -> pyelftools, since LIEF's
+community build has no DWARF reader and PE COFF truncates section names), and
+extract function bytes from a final ELF/PE or a recompiled ELF/COFF object. Both
+type_match and byte_match use it, so they work on the PE (MinGW) malware targets.
 
 **Scoring** (`decbench/scoring/`):
 - `aggregator.py` - Aggregates per-function results (function key:

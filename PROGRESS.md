@@ -694,3 +694,34 @@ three.
 decbench's real `compile_project` on `mydoom` (in-container): guard passed,
 `download_cmd` fetched theZoo, MinGW built it, the pipeline **collected the PE32
 binary + 10 `.i` files**. Tests: still green.
+
+## Windows/PE support in the type & byte metrics (2026-06-27)
+
+The PE (MinGW-built) malware targets now score on **type_match and byte_match**,
+not just GED — via a new shared helper `decbench/utils/binfmt.py`.
+
+- **binfmt**: detects ELF vs PE + arch; reads DWARF from **either** (PE: pull the
+  `.debug_*` sections by their objdump-reported file offsets and hand-build a
+  pyelftools `DWARFInfo` — LIEF's community build has no DWARF reader, and PE
+  COFF truncates long section names to string-table refs like `/29`); extracts a
+  function's bytes from a final ELF/PE (DWARF range + LIEF
+  `get_content_from_virtual_address`) and from a recompiled ELF/COFF object;
+  picks the **matching recompiler** (PE→`{i686,x86_64}-w64-mingw32-gcc`,
+  ARM→`arm-none-eabi-gcc`, x86→`gcc`) and the right capstone arch; and reads the
+  original `-m*/-O*` flags from the DWARF producer.
+- **type_match**: `extract_ground_truth_types` now sources DWARF via
+  `binfmt.dwarf_info`, so it reads PE DWARF; the DIE-walking is unchanged. ELF
+  output is identical (in-memory DWARFInfo rebuild verified to give the same
+  ground truth).
+- **byte_match**: recompiles the decompiled C **the same way the source was
+  built** — the matching toolchain + the original producer flags — then extracts
+  and disassembles with the binary's own arch. If the matching toolchain isn't
+  installed it returns a **non-scoring** result instead of comparing a
+  wrong-arch host-gcc recompile. This also fixes byte_match for the ARM/CPS
+  targets (it now recompiles with arm-none-eabi-gcc + the Cortex-M flags).
+- Deps: `lief` + `pefile` added to pyproject + the Dockerfile.
+
+Verified in-container on a MinGW PE: type_match read the PE-DWARF ground truth
+(`x`, `i`) and scored; byte_match recompiled with MinGW + `-m32 -march=pentiumpro
+-O2` and the disassembly matched (jaccard 1.0). ELF path unchanged; full suite
+103 passed, 2 skipped.

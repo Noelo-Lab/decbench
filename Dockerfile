@@ -79,6 +79,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && python3.12 -m pip install --break-system-packages \
        pyserial future "empy==3.3.4" jsonschema kconfiglib pymavlink \
        pexpect toml numpy pyros-genmsg packaging jinja2 pyyaml lxml cerberus \
+       lief pefile \
     && arm-none-eabi-gcc --version | head -1 \
     && arm-linux-gnueabihf-gcc --version | head -1
 
