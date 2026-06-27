@@ -578,3 +578,46 @@ reports collected ELF arch + `.i` counts. Confirmed end-to-end through decbench:
   tools filtered out by `target_arch` → PASS.
 Categorized via TOML `labels` (cps + kind + domain + bare-metal/embedded-linux +
 MCU/board). Tests: 103 passed, 2 skipped.
+
+## CPS scoring — preliminary measurement (2026-06-27)
+
+The CPS/ARM targets are **not in any published scoreboard yet** — the big
+`sailr_full` run was x86-only, and these ARM binaries had never been
+decompiled/evaluated. A small sample run (decompile+evaluate of one compiled
+target) measured the impact. Sample: **riot-os** (STM32F401 / Cortex-M4, O2),
+angr + ghidra, first ~11 source∩binary functions.
+
+| corpus | dec | GED | type_match | byte_match | Overall |
+|---|---|---|---|---|---|
+| sailr (x86, 38,255 fns) | angr | 24.3% | 9.1% | 0.6% | 0.0% |
+| sailr (x86, 38,255 fns) | ghidra | 18.7% | 11.8% | 1.0% | 0.0% |
+| riot-os (ARM, 11 fns) | angr | 54.5% | **0.0%** | 0.0% | 0.0% |
+| riot-os (ARM, 11 fns) | ghidra | 45.5% | **42.9%** | 0.0% | 0.0% |
+
+Findings (directional — tiny, libc-biased sample, not a corpus measurement):
+- **byte_match -> ~0** for every decompiler on ARM: it recompiles the decompiled
+  C with the host **x86** gcc and compares to the **ARM** original bytes, so it
+  cannot match cross-arch. Architectural, not a decompiler failure.
+- **Overall -> ~0**, unchanged: with byte_match unable to be perfect, no CPS
+  function is perfect-on-all-3 — but Overall is already ~0 on x86 too.
+- **GED is arch-portable** and works on ARM for both decompilers (the high
+  numbers here are inflated by the libc/init stub functions the sampler picked).
+- **type_match splits hard by decompiler on ARM**: Ghidra recovers ARM stack
+  vars/args well (42.9%), angr recovered ~none (0.0%) — its Cortex-M variable
+  recovery is weak (CLE logs "Unknown reloc 40 on ARMCortexM" + "variable offset
+  with stride shorter than the primitive type"). So adding CPS would **widen
+  Ghidra's type-recovery lead** over angr.
+- **Coverage skew**: angr is ~15-20 s/fn and CPS firmware is large (px4 ELF is
+  46 MB) -> angr will mostly time out on CPS; Ghidra has far better coverage.
+- Pipeline notes: Ghidra's raw backend writes its project file next to the
+  binary, so it needs a writable dir (it failed only on the root-owned Docker
+  smoke output; normal `decbench run` output dirs are user-owned, so this is a
+  non-issue in practice). angr loads Cortex-M with relocation warnings but still
+  decompiles.
+
+Aggregate effect if CPS is folded into the `full` dataset: byte_match average
+drops (more zeros), Overall stays ~0, type_match widens the Ghidra>angr gap, GED
+shifts toward the ARM values, and the `tiny`/`hard` presets start sampling CPS
+binaries. A definitive CPS scoreboard needs a full decompile+evaluate run across
+all 11 targets (compile in Docker -> decompile locally with angr/Ghidra ->
+evaluate); GED + type_match are the meaningful metrics there (byte_match ~0).
