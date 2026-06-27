@@ -199,6 +199,51 @@ class GCCCompiler(Compiler):
         except (OSError, struct.error):
             return None
 
+    # PE COFF Machine -> short arch name (for MinGW-built Windows malware).
+    _PE_MACHINES = {0x14C: "x86", 0x8664: "x86-64", 0xAA64: "aarch64", 0x1C0: "arm"}
+
+    @staticmethod
+    def _is_pe_executable(path: Path) -> bool:
+        """Check if a file is a PE (Windows) executable/DLL (MinGW output)."""
+        try:
+            with open(path, "rb") as f:
+                if f.read(2) != b"MZ":
+                    return False
+                f.seek(0x3C)
+                pe_off = struct.unpack("<I", f.read(4))[0]
+                f.seek(pe_off)
+                return f.read(4) == b"PE\x00\x00"
+        except (OSError, struct.error):
+            return False
+
+    @classmethod
+    def _is_linked_binary(cls, path: Path) -> bool:
+        """A linked executable the decompilers can load: ELF (exec/dyn) or PE.
+
+        PE support lets the malware targets (Windows C cross-compiled with MinGW)
+        be collected alongside the ELF targets.
+        """
+        return cls._is_elf_executable(path) or cls._is_pe_executable(path)
+
+    @classmethod
+    def _binary_machine(cls, path: Path) -> str | None:
+        """Short arch name for an ELF or PE binary (for the target_arch filter)."""
+        m = cls._elf_machine(path)
+        if m is not None:
+            return m
+        try:
+            with open(path, "rb") as f:
+                if f.read(2) != b"MZ":
+                    return None
+                f.seek(0x3C)
+                pe_off = struct.unpack("<I", f.read(4))[0]
+                f.seek(pe_off)
+                if f.read(4) != b"PE\x00\x00":
+                    return None
+                return cls._PE_MACHINES.get(struct.unpack("<H", f.read(2))[0], "other")
+        except (OSError, struct.error):
+            return None
+
     def compile_project(
         self,
         project_dir: Path,
@@ -273,11 +318,12 @@ class GCCCompiler(Compiler):
                         continue
                     if entry.suffix in (".o", ".a", ".i", ".s", ".c", ".h"):
                         continue
-                    if not self._is_elf_executable(entry):
+                    if not self._is_linked_binary(entry):
                         continue
                     # For cross-compiled projects, skip incidental host tools
                     # (e.g. x86 mkimage) and keep only the target-arch binaries.
-                    if self.target_arch and self._elf_machine(entry) != self.target_arch:
+                    # Accepts ELF and PE (MinGW-built malware) machine names.
+                    if self.target_arch and self._binary_machine(entry) != self.target_arch:
                         continue
 
                     dest_bin = output_dir / entry.name

@@ -87,6 +87,17 @@ DECBENCH_SMALL_DECOMPILERS="angr,ida,ghidra@12.0,ghidra@12.1" python scripts/run
 # The two C++ autopilots (ArduPilot, PX4) are DISABLED in projects/cps/disabled/
 # (decbench has no C++ support yet — pyjoern/GED is C-only); their recipes are
 # verified-working and re-enable by moving the TOML back up to projects/cps/.
+#
+# Plus REAL MALWARE targets in projects/malware/*.toml (C, from theZoo): mirai,
+# mirai-win (ELF/gcc), mydoom, x0r-usb, minipig, dexter (PE/MinGW). These are
+# COMPILED, NEVER EXECUTED, and ONLY inside the container: each sets
+# is_malware=true and compile_project REFUSES to build them on a bare host
+# (needs /.dockerenv or DECBENCH_ALLOW_MALWARE=1). download_cmd fetches+extracts
+# (password 'infected') just the one theZoo zip; make_cmd is a DIRECT gcc/mingw
+# compile (not the malware's Makefile). PE binaries are collected like ELF
+# (compilers/gcc.py PE detection). PE metrics: GED + structural decompilation
+# only (byte_match/type_match are ELF/DWARF-only via pyelftools). See
+# projects/malware/README.md (DO NOT EXECUTE). Binaries never leave results/.
 
 # Large multi-target runs: prefer the resilient drivers in scripts/ over a single
 # `decbench run` — they use the 'spawn' multiprocessing context (the default

@@ -28,6 +28,16 @@ def download_source(project: Project, target_dir: Path) -> Path:
     config = project.config
     target_dir.mkdir(parents=True, exist_ok=True)
 
+    # Custom fetch (e.g. malware: download + password-extract a theZoo zip
+    # without cloning the whole repo). Runs in a fresh per-project dir.
+    if config.download_cmd:
+        src = target_dir / (config.package_dir or config.name)
+        src.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            config.download_cmd, shell=True, cwd=src, timeout=600, check=True
+        )
+        return src
+
     if config.remote_type == RemoteType.LOCAL:
         # Just use local path
         if config.local_path:
@@ -90,6 +100,24 @@ def compile_project(
     """
     config = project.config
     compilation = project.compilation
+
+    # SAFETY: malware targets are REAL malware. They are only ever COMPILED
+    # (never executed) for decompiler benchmarking, and only inside a container.
+    # Refuse to build them on a bare host unless explicitly overridden, so a
+    # stray `decbench run` can't drop malware binaries on someone's machine.
+    if config.is_malware:
+        import os
+
+        in_container = os.path.exists("/.dockerenv") or os.environ.get(
+            "DECBENCH_IN_CONTAINER"
+        )
+        if not in_container and os.environ.get("DECBENCH_ALLOW_MALWARE") != "1":
+            raise RuntimeError(
+                f"Refusing to compile malware target '{config.name}' outside a "
+                "container. These are REAL malware sources — compile (never "
+                "execute) only inside the decbench Docker image. Override with "
+                "DECBENCH_ALLOW_MALWARE=1 if you really know what you're doing."
+            )
 
     # Convert optimization to string
     if isinstance(optimization, OptimizationLevel):

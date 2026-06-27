@@ -127,6 +127,25 @@ class ProjectConfig(BaseModel):
         description="Subdirectory containing source files",
     )
 
+    # Custom fetch: when set, this shell command (run in a fresh source dir)
+    # is responsible for producing the source tree, instead of git/tar. Used by
+    # the malware targets to fetch + password-extract theZoo zips without
+    # cloning the whole repo.
+    download_cmd: str | None = Field(
+        default=None,
+        description="Shell command that fetches/extracts the source into the "
+        "current directory (overrides remote_type-based download)",
+    )
+
+    # Danger flag: this target is REAL MALWARE. It is compiled (never executed)
+    # only for decompiler benchmarking, and ONLY inside a container — the
+    # pipeline refuses to build it on a bare host (see compile_project).
+    is_malware: bool = Field(
+        default=False,
+        description="REAL malware source — compile-only, container-only, never "
+        "execute. Guarded in compile_project.",
+    )
+
     # Build commands
     post_download_cmds: list[str] = Field(
         default=[],

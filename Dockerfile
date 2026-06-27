@@ -64,12 +64,17 @@ RUN git clone --depth=1 --branch "${R2_REF}" https://github.com/radareorg/radare
 #                           Betaflight/Crazyflie/ArduPilot/PX4, libopencm3, RIOT)
 #   * arm-linux-gnueabihf -> embedded-Linux ARM (e.g. Das U-Boot)
 # Plus cmake/flex/dtc/etc. and the Python helpers ArduPilot(waf)/PX4(cmake) need.
+# gcc-mingw-w64 cross-compiles the Windows-C malware targets (projects/malware/)
+# to PE; unzip extracts theZoo's password-protected source zips. Malware is
+# COMPILED, NEVER EXECUTED, and only inside this container (see projects/malware
+# /README.md and the is_malware guard in compile_project).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi \
     libstdc++-arm-none-eabi-newlib \
     gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
     cmake flex file device-tree-compiler libtool-bin \
     libssl-dev uuid-dev libgnutls28-dev python-is-python3 \
+    gcc-mingw-w64 unzip \
     && rm -rf /var/lib/apt/lists/* \
     && python3.12 -m pip install --break-system-packages \
        pyserial future "empy==3.3.4" jsonschema kconfiglib pymavlink \

@@ -633,3 +633,64 @@ moved to `projects/cps/disabled/` so they are excluded from every
 build recipes remain verified-working; re-enable by moving the TOML back up to
 `projects/cps/`. Active CPS dataset is now **9 C targets** (libopencm3, freertos,
 chibios, nuttx, riot-os, betaflight, cleanflight, crazyflie, u-boot).
+
+---
+
+# Malware dataset — REAL malware decompiler targets (2026-06-27)
+
+Added REAL malware (C only, from theZoo) as decompiler benchmark targets in
+`projects/malware/*.toml`. These are **COMPILED, NEVER EXECUTED**, and only
+inside the container — malware analysis is a core *defensive* use of decompilers.
+
+## Reality of theZoo's C malware
+theZoo `Source/{Original,Reversed}` (97 samples) is mostly C++/Windows (26),
+scripts/asm/VB/Android (~35), or unidentified. Only ~10 are C, and only ~3 of
+those are Linux/POSIX (all Mirai). So "compile like everyone else" (gcc→ELF)
+can't reach 10 from theZoo; the user opted to cross-compile the Windows‑C
+samples with **MinGW → PE** to get a useful set.
+
+## Final set: 6 distinct C malware (of ~12 candidates compiled-tested)
+| name | family | OS | format | compiler |
+|---|---|---|---|---|
+| mirai | IoT botnet (Mirai) | linux | ELF | gcc |
+| mirai-win | Mirai variant ("eragon") | linux | ELF | gcc |
+| mydoom | email worm (MyDoom.A) | windows | PE32 | i686 MinGW |
+| x0r-usb | USB/IRC worm | windows | PE32 | i686 MinGW |
+| minipig | PE infector | windows | PE32 | i686 MinGW |
+| dexter | point-of-sale scraper | windows | PE32 DLL | i686 MinGW |
+
+Each builds at O0/O2/O2-noinline with `.i` + (ELF) DWARF.
+
+**Honestly failed (no TOML)** — genuine source/platform issues, not given up on
+lightly: `remhead` (bundled NT headers structurally conflict with modern MinGW),
+`dokan` (modern-gcc source incompatibilities), `rubilyn` (macOS-kernel rootkit,
+needs XNU headers). `mirai-2016` was dropped (byte-identical to `mirai`/IoT.Mirai
+— a true duplicate). The `Reversed` dir's Win32 samples are assembly. C++ is
+excluded per "C only". So 6 is the real ceiling of theZoo's compilable C malware.
+
+## Safety design (decbench foundation)
+- `ProjectConfig.is_malware` + a guard in `compile_project` that **refuses to
+  build on a bare host** (requires `/.dockerenv` / `DECBENCH_IN_CONTAINER`, or an
+  explicit `DECBENCH_ALLOW_MALWARE=1` override).
+- `ProjectConfig.download_cmd`: fetches+extracts just the one theZoo zip
+  (password `infected`) — no full theZoo clone, no malware in the repo.
+- `make_cmd` is a **direct gcc/MinGW compile** of the .c files (decbench's
+  `$CC`/`$CFLAGS`), NOT the malware's own Makefile — avoids build-time payloads.
+- PE-binary collection added to `compilers/gcc.py` (MZ/PE detection + PE machine),
+  so MinGW output is collected like ELF.
+- Dockerfile ships `gcc-mingw-w64` + `unzip`. `projects/malware/README.md` has
+  the loud DO-NOT-EXECUTE policy. Compiled binaries land only in gitignored
+  `results/` and are never run.
+- All verify-compilation was done in ephemeral `--rm` containers, no host mounts;
+  no binary was ever executed.
+
+## Metric coverage
+GED (source CFG from `.i`) + structural decompilation (angr/Ghidra load ELF and
+PE) apply to all. For the PE targets, **byte_match and type_match don't apply**
+yet (both read ELF/DWARF via pyelftools). The Mirai/ELF targets can score on all
+three.
+
+## Validation
+decbench's real `compile_project` on `mydoom` (in-container): guard passed,
+`download_cmd` fetched theZoo, MinGW built it, the pipeline **collected the PE32
+binary + 10 `.i` files**. Tests: still green.
