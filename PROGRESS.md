@@ -621,3 +621,15 @@ shifts toward the ARM values, and the `tiny`/`hard` presets start sampling CPS
 binaries. A definitive CPS scoreboard needs a full decompile+evaluate run across
 all 11 targets (compile in Docker -> decompile locally with angr/Ghidra ->
 evaluate); GED + type_match are the meaningful metrics there (byte_match ~0).
+
+## CPS: C++ targets disabled (2026-06-27)
+
+Two of the 11 CPS targets are **C++** — **ArduPilot** (~61% C++) and **PX4**
+(~50% C++); the other 9 are C (verified via GitHub language stats). decbench has
+no C++ support yet (GED's source-CFG extractor / pyjoern is C-oriented — these
+two produce no `.i` and can't be scored on GED), so they have been **disabled**:
+moved to `projects/cps/disabled/` so they are excluded from every
+`projects/cps/*.toml` evaluation glob, with a README and an in-file banner. Their
+build recipes remain verified-working; re-enable by moving the TOML back up to
+`projects/cps/`. Active CPS dataset is now **9 C targets** (libopencm3, freertos,
+chibios, nuttx, riot-os, betaflight, cleanflight, crazyflie, u-boot).

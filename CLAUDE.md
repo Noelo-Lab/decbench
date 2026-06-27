@@ -75,15 +75,18 @@ DECBENCH_SMALL_DECOMPILERS="angr,ida,ghidra@12.0,ghidra@12.1" python scripts/run
 
 # Benchmark targets: 26 sailr-eval Debian packages live in projects/sailr/*.toml
 # (each builds at O0 / O2 / O2-noinline, labeled by kind + domain).
-# Plus 11 CPS/drone/RTOS firmware targets in projects/cps/*.toml, each
+# Plus 9 active CPS/drone/RTOS firmware targets in projects/cps/*.toml, each
 # CROSS-COMPILED for specific embedded hardware (Cortex-M/-A): libopencm3,
-# FreeRTOS, ChibiOS, NuttX, RIOT-OS, Betaflight, Cleanflight, Crazyflie,
-# ArduPilot, PX4, U-Boot. They set c_compiler=arm-none-eabi-gcc (bare metal) or
+# FreeRTOS, ChibiOS, NuttX, RIOT-OS, Betaflight, Cleanflight, Crazyflie, U-Boot.
+# All are C. They set c_compiler=arm-none-eabi-gcc (bare metal) or
 # arm-linux-gnueabihf-gcc (embedded Linux) and target_arch="arm" so only the
 # hardware binaries are collected (not incidental x86 host tools). The Docker
 # image ships both cross toolchains + their build deps; verify a build with
 # scripts/cps_compile_smoke.py inside the image. angr/Ghidra decompile ARM;
 # byte_match is ~0 for ARM (host-x86 recompile), GED/type_match are the metrics.
+# The two C++ autopilots (ArduPilot, PX4) are DISABLED in projects/cps/disabled/
+# (decbench has no C++ support yet — pyjoern/GED is C-only); their recipes are
+# verified-working and re-enable by moving the TOML back up to projects/cps/.
 
 # Large multi-target runs: prefer the resilient drivers in scripts/ over a single
 # `decbench run` — they use the 'spawn' multiprocessing context (the default

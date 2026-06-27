@@ -1,3 +1,11 @@
+# ============================================================================
+# DISABLED — this target is C++ (PX4 is ~50% C++) and decbench does not support
+# C++ yet (GED's source-CFG extractor / pyjoern is C-oriented, so it produces
+# no .i and cannot be scored). Parked in projects/cps/disabled/ so it is
+# excluded from every `projects/cps/*.toml` evaluation glob. Move it back up to
+# projects/cps/ to re-enable once C++ support lands. The recipe below is
+# verified-working (builds a real ARM Cortex-M7F ELF + DWARF).
+# ============================================================================
 # DecBench CPS target: PX4-Autopilot
 # PX4 is a widely-used open-source drone AUTOPILOT / flight-control stack.
 # Here it is cross-compiled for the Pixhawk FMUv5 flight controller
