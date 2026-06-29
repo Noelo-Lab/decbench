@@ -45,6 +45,19 @@ TYPE_MAP: dict[str, str] = {
     "_WORD": "short",
     "_BYTE": "char",
     "_BOOL": "bool",
+    # kuna types (SLEIGH core-type spellings: intN/uintN are sized in BYTES,
+    # matching the undefinedN convention above — int4 is a 4-byte int, int8 an
+    # 8-byte int). Without these kuna's recovered types never normalize to the
+    # DWARF base-type names and type_match is unfairly ~0, the same way angr's
+    # undefinedN / IDA's __intN are aliased here.
+    "int1": "char",
+    "int2": "short",
+    "int4": "int",
+    "int8": "long long",
+    "uint1": "char",
+    "uint2": "short",
+    "uint4": "int",
+    "uint8": "long long",
     # Ghidra types
     "uint": "int",
     "ulong": "long long",

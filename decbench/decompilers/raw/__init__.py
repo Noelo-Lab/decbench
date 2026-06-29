@@ -24,6 +24,7 @@ from decbench.decompilers.raw import (
     binja_raw,  # noqa: F401
     ghidra_raw,  # noqa: F401
     ida_raw,  # noqa: F401
+    kuna_raw,  # noqa: F401
 )
 
-__all__ = ["angr_raw", "ghidra_raw", "ida_raw", "binja_raw"]
+__all__ = ["angr_raw", "ghidra_raw", "ida_raw", "binja_raw", "kuna_raw"]
