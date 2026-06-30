@@ -86,6 +86,57 @@ def _lookup_decompiled(
         return None
 
 
+def _lookup_binary_path(
+    decompile_results: Any,
+    project: str,
+    opt_level: Any,
+    binary: str,
+) -> Any:
+    """Best-effort path to the original binary for a (project, opt, binary)."""
+    if not decompile_results:
+        return None
+    try:
+        opt_results = decompile_results.get(project) or {}
+        binary_results = opt_results.get(opt_level)
+        if binary_results is None:
+            ov = _opt_value(opt_level)
+            for key, val in opt_results.items():
+                if _opt_value(key) == ov:
+                    binary_results = val
+                    break
+        if not binary_results:
+            return None
+        dec_results = binary_results.get(binary) or {}
+        for dec_result in dec_results.values():
+            bp = getattr(dec_result, "binary_path", None)
+            if bp is not None:
+                return bp
+    except Exception:
+        return None
+    return None
+
+
+def _lookup_source(
+    decompile_results: Any,
+    project: str,
+    opt_level: Any,
+    binary: str,
+    func_name: str,
+) -> str | None:
+    """Best-effort original source text for one function (for side-by-side view)."""
+    bp = _lookup_binary_path(decompile_results, project, opt_level, binary)
+    if bp is None:
+        return None
+    try:
+        from pathlib import Path
+
+        from decbench.utils.source_extract import function_source
+
+        return function_source(Path(bp), func_name)
+    except Exception:
+        return None
+
+
 def _lookup_line_count(
     decompile_results: Any,
     project: str,
@@ -160,9 +211,7 @@ def build_hardest(
                 for dec_name, metric_results in (dec_results or {}).items():
                     for metric_name, result in (metric_results or {}).items():
                         if metric_name not in perfect_cache:
-                            perfect_cache[metric_name] = _perfect_value_for(
-                                metric_name
-                            )
+                            perfect_cache[metric_name] = _perfect_value_for(metric_name)
                         perfect = perfect_cache[metric_name]
                         fr = getattr(result, "function_results", None) or {}
                         for func_name, mv in fr.items():
@@ -227,12 +276,102 @@ def build_hardest(
                     size=size,
                     labels=[],
                     decompiled_code=code,
-                    source_code=None,
+                    source_code=_lookup_source(
+                        decompile_results,
+                        c["project"],
+                        c["opt_key"],
+                        c["binary"],
+                        c["function"],
+                    ),
                 )
             )
             kept += 1
 
     return entries
+
+
+def build_samples(
+    function_data: FunctionData,
+    decompile_results: Any,
+    max_samples: int = 140,
+) -> list[Any]:
+    """Curated side-by-side samples (source + each decompiler's output).
+
+    Prefers the ``tiny`` representative slice (so it spans projects/opt levels at
+    one function per binary); falls back to any function with decompiled code.
+    Requires datasets to be assigned first (see :func:`attach_extras`).
+    """
+    from decbench.models.function_data import SampleEntry
+
+    samples: list[SampleEntry] = []
+    groups = function_data.groups
+
+    def opt_key_for(group_opt: str) -> Any:
+        return group_opt  # _lookup_* tolerate string opt keys via _opt_value
+
+    candidates = [(g, f) for g in groups for f in g.functions if "tiny" in (f.datasets or [])]
+    if not candidates:
+        candidates = [(g, f) for g in groups for f in g.functions]
+
+    for g, f in candidates:
+        if len(samples) >= max_samples:
+            break
+        decompiled: dict[str, str] = {}
+        for dec in function_data.decompilers:
+            code = _lookup_decompiled(
+                decompile_results,
+                g.project,
+                opt_key_for(g.opt_level),
+                g.binary,
+                dec,
+                f.function,
+            )
+            if code:
+                decompiled[dec] = code
+        if not decompiled:
+            continue
+        source = _lookup_source(
+            decompile_results, g.project, opt_key_for(g.opt_level), g.binary, f.function
+        )
+        samples.append(
+            SampleEntry(
+                project=g.project,
+                opt_level=g.opt_level,
+                binary=g.binary,
+                function=f.function,
+                size=f.size,
+                labels=f.labels,
+                source_code=source,
+                decompiled=decompiled,
+                values=f.values,
+                perfects=f.perfects,
+            )
+        )
+    return samples
+
+
+def compute_compile_rates(evaluation_results: Any) -> dict[str, float]:
+    """decompiler -> fraction of byte_match functions whose code recompiled.
+
+    Reads the ``compilable`` flag the byte_match metric records per function.
+    """
+    comp: dict[str, int] = {}
+    tot: dict[str, int] = {}
+    for _project, opt_results in (evaluation_results or {}).items():
+        for _opt, binary_results in (opt_results or {}).items():
+            for _binary, dec_results in (binary_results or {}).items():
+                for dec_name, metric_results in (dec_results or {}).items():
+                    bm = (metric_results or {}).get("byte_match")
+                    if bm is None:
+                        continue
+                    for mv in getattr(bm, "function_results", {}).values():
+                        meta = getattr(mv, "metadata", None) or {}
+                        if "compilable" not in meta:
+                            continue
+                        tot[dec_name] = tot.get(dec_name, 0) + 1
+                        if meta.get("compilable"):
+                            comp[dec_name] = comp.get(dec_name, 0) + 1
+    return {d: comp.get(d, 0) / n for d, n in tot.items() if n}
 
 
 def build_history(
@@ -267,10 +406,7 @@ def build_history(
                         decompiler=str(decompiler),
                         version=str(version),
                         date=item.get("date"),
-                        scores={
-                            str(k): float(v)
-                            for k, v in (item.get("scores") or {}).items()
-                        },
+                        scores={str(k): float(v) for k, v in (item.get("scores") or {}).items()},
                         overall=float(item.get("overall", 0.0) or 0.0),
                     )
                 )
@@ -331,11 +467,24 @@ def attach_extras(
 
     # Tag each function with its dataset presets (full/hard/hard-inlined/tiny)
     # so the report shows a single dataset selector instead of many toggles.
+    # Must run BEFORE build_samples (which prefers the `tiny` slice).
     try:
         from decbench.scoring.datasets import assign_datasets
 
         assign_datasets(function_data)
     except Exception:
         pass
+
+    # Side-by-side Compare samples (original source vs each decompiler's output).
+    try:
+        function_data.samples = build_samples(function_data, decompile_results)
+    except Exception:
+        function_data.samples = []
+
+    # Per-decompiler recompilation (compilability) rate for the Metrics page.
+    try:
+        function_data.compile_rates = compute_compile_rates(evaluation_results)
+    except Exception:
+        function_data.compile_rates = {}
 
     return function_data

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-import shutil
+import re
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -16,11 +16,59 @@ if TYPE_CHECKING:
     from decbench.models.decompilation import DecompilationResult
 
 
+_LINE_MARKER = re.compile(r'^#\s+\d+\s+"([^"]*)"')
+
+
+def _is_system_header(path: str) -> bool:
+    """True if a preprocessor line-marker file is a system/toolchain header.
+
+    Covers glibc (/usr/include), gcc internals (/usr/lib/gcc), the cross/mingw
+    toolchains (also under /usr/...), and the preprocessor's synthetic files
+    (<built-in>, <command-line>, stdc-predef.h).
+    """
+    return (
+        not path
+        or path.startswith("<")
+        or path.startswith("/usr/")
+        or "/usr/lib/gcc" in path
+        or path.endswith("stdc-predef.h")
+    )
+
+
+def strip_system_headers(preprocessed: str) -> str:
+    """Drop inlined system-header code from a preprocessed (.i) translation unit.
+
+    A ``.i`` file is the project source with EVERY ``#include`` expanded inline,
+    so it is dominated (80-98%) by glibc/toolchain headers. Joern then either
+    times out parsing megabytes of headers or drowns the project's own functions
+    in thousands of header inlines — which is why GED "source-parse failures"
+    were really header-bloat timeouts, not real failures.
+
+    Using the ``# <line> "<file>"`` markers gcc emits, we keep only lines that
+    came from the project's own files. ``#ifdef`` selection and macro expansion
+    have ALREADY been done by the real compiler, so the result is exactly the
+    code that was compiled (the right ifdef branches) — fair and small.
+    """
+    keep: list[str] = []
+    in_system = True  # before the first marker
+    for line in preprocessed.splitlines():
+        m = _LINE_MARKER.match(line)
+        if m is not None:
+            in_system = _is_system_header(m.group(1))
+            continue  # drop the marker line itself
+        if not in_system:
+            keep.append(line)
+    return "\n".join(keep) + "\n"
+
+
 def extract_cfgs_from_source(source_path: Path) -> dict[str, DiGraph]:
     """Extract CFGs from a C source file using pyjoern.
 
     Args:
-        source_path: Path to C source file (.c or .i)
+        source_path: Path to C source file (.c or .i). For ``.i`` files the
+            inlined system headers are stripped first (see
+            :func:`strip_system_headers`) so Joern parses only the project's own
+            (already-preprocessed, correctly-ifdef'd) code — fast and complete.
 
     Returns:
         Dictionary mapping function names to CFG DiGraphs
@@ -29,18 +77,20 @@ def extract_cfgs_from_source(source_path: Path) -> dict[str, DiGraph]:
         from pyjoern import parse_source
     except ImportError:
         raise ImportError(
-            "pyjoern is required for CFG extraction. "
-            "Install with: pip install pyjoern"
+            "pyjoern is required for CFG extraction. " "Install with: pip install pyjoern"
         )
 
     cfgs = {}
-    # Joern doesn't recognize .i files; copy to .c temp file if needed
-    temp_c_path = None
-    parse_path = source_path
+    # Always parse via a UNIQUE temp .c: Joern names its workspace after the input
+    # file's basename, so parsing the same filename concurrently (e.g. the same
+    # function file across opt levels) would collide. A unique temp name avoids
+    # that. For .i we also strip the inlined system headers first.
+    temp_c_path = Path(tempfile.mktemp(suffix=".c"))
     if source_path.suffix == ".i":
-        temp_c_path = Path(tempfile.mktemp(suffix=".c"))
-        shutil.copy2(source_path, temp_c_path)
-        parse_path = temp_c_path
+        temp_c_path.write_text(strip_system_headers(source_path.read_text(errors="replace")))
+    else:
+        temp_c_path.write_text(source_path.read_text(errors="replace"))
+    parse_path = temp_c_path
 
     try:
         # parse_source returns dict[str, Function] or dict[tuple[str,str], Function]
@@ -81,8 +131,7 @@ def extract_cfgs_from_decompilation(
         from pyjoern import parse_source
     except ImportError:
         raise ImportError(
-            "pyjoern is required for CFG extraction. "
-            "Install with: pip install pyjoern"
+            "pyjoern is required for CFG extraction. " "Install with: pip install pyjoern"
         )
 
     cfgs = {}

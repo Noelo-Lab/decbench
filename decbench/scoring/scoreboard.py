@@ -60,18 +60,21 @@ def build_scoreboard(
             )
             dec_score.metric_scores[metric_name] = ms
 
-        # Compute Overall: functions that are perfect on ALL metrics
+        # Compute Overall: functions perfect on ALL metrics, counted ONLY over
+        # functions that were evaluated on every metric. A function missing a
+        # metric (e.g. byte_match abstained for ARM/PE) is EXCLUDED from Overall
+        # rather than counted as a failure — "couldn't measure" != "wrong".
         per_func = aggregated.per_function.get(dec_name, {})
         all_metric_names = aggregated.metrics
 
         overall_perfect = 0
-        overall_total = len(per_func)
+        overall_total = 0
 
         for metric_perfects in per_func.values():
-            all_perfect = all(
-                metric_perfects.get(m, False) for m in all_metric_names
-            )
-            if all_perfect:
+            if not all(m in metric_perfects for m in all_metric_names):
+                continue
+            overall_total += 1
+            if all(metric_perfects[m] for m in all_metric_names):
                 overall_perfect += 1
 
         dec_score.overall_perfect_count = overall_perfect

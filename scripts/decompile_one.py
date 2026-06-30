@@ -27,13 +27,15 @@ from decbench.pipeline.decompile import decompile_binary
 
 def main() -> int:
     binary, dec_name, out_dir, pkl_out = sys.argv[1:5]
-    names: set[str] | None = None
+    # The binary handed to us is a STRIPPED copy (no symbols), so the filter is a
+    # JSON list of target ADDRESSES (DWARF low_pc), not names.
+    target_addrs: set[int] | None = None
     if len(sys.argv) > 5 and sys.argv[5] not in ("", "NONE"):
         try:
             loaded = json.loads(Path(sys.argv[5]).read_text())
-            names = set(loaded) or None
+            target_addrs = {int(a) for a in loaded} or None
         except Exception:
-            names = None
+            target_addrs = None
     # Write partial progress straight to the output pickle, so if the
     # orchestrator kills this process on timeout, the functions completed so far
     # are still recoverable. The final write below replaces it atomically.
@@ -41,7 +43,7 @@ def main() -> int:
         Path(binary),
         dec_name,
         Path(out_dir),
-        function_names=names,
+        function_names=target_addrs,
         progress_path=Path(pkl_out),
     )
     Path(pkl_out).write_bytes(pickle.dumps(result))

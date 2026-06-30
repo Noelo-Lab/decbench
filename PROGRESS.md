@@ -725,3 +725,71 @@ Verified in-container on a MinGW PE: type_match read the PE-DWARF ground truth
 (`x`, `i`) and scored; byte_match recompiled with MinGW + `-m32 -march=pentiumpro
 -O2` and the disassembly matched (jaccard 1.0). ELF path unchanged; full suite
 103 passed, 2 skipped.
+
+## Byte-match fairness overhaul + report redesign (2026-06-28)
+
+Two workstreams: (a) make the Recompilation Bytematch metric *fair* (it scored
+~0 for everyone), and (b) redesign the HTML report into a swebench-style
+leaderboard with a sidebar, a Metrics explainer, and a side-by-side Compare view.
+
+### Byte-match investigation (root cause)
+Replaying the real metric on stored `sailr_full` decompilations (O0 sample)
+showed two distinct causes, both fixable and both *unfair*:
+- **Most functions never compiled** → auto-scored 0. angr only 38.9% compiled,
+  Ghidra only 16.3%. Failures were systematic: Ghidra emits undefined
+  pseudo-types (`undefined4`/`code`/`uint`), angr emits illegal tokens
+  (`GLIBC_2.2.5::stderr`) and conflicts with the force-included stdlib headers.
+- **Even when compiled, scoring was too punishing**: `_disassemble_bytes`'
+  comment *claimed* it normalized addresses but the code didn't — so unlinked
+  `call`/`jmp` targets and every `[rip±disp]` counted as mismatches.
+
+### Fixes (user chose "maximize compilation")
+- `decbench/metrics/fixup.py` (NEW): token sanitization (strip `NS::`) + minimal
+  includes (stdint/stddef only, so we don't collide with decompiler typedefs) +
+  a **gcc-diagnostic-driven self-repair loop** (`LC_ALL=C` so gcc emits ASCII
+  quotes the regexes can parse — the original miss that made Ghidra *worse*).
+  Injects only what gcc reports missing; withdraws any decl that causes a
+  conflict. Applied uniformly to all decompilers.
+- `byte_match.py`: real `_normalize_operands` (blank branch/call targets +
+  `[rip±disp]`), uses `compile_with_fixup`, records `compilable` per function,
+  cleans the temp object dir, `cache_version="2"`.
+- Result on sailr (24,793 functions w/ surviving artifacts, 21 projects):
+  compile rate **16-39% → ~44-46%**; byte_match mean **0.05 → ~0.19 (3-4×)**;
+  perfect-rate ghidra 0.99%→2.01%, angr 0.62%→0.91%.
+
+### Offline re-eval (no re-decompile)
+- `scripts/reeval_bytematch.py` (NEW): parallel (spawn), resumable per-binary
+  recompute of byte_match from stored `decompiled/*.c` + `compiled/` binaries.
+  Gotcha found: the on-disk results tree is a **partial snapshot** — whole
+  projects (tar, libedit, openssh, ...) have no `.c`/binaries; binaries can have
+  extensions (`psize.aux`) or be shared libs (`libedit.so.0.0.70`).
+- `scripts/rebuild_function_data.py` (NEW): merges new byte_match (DROPS it where
+  the artifact is gone, so the column is uniformly the new metric), builds
+  Compare `samples` + `Hardest` (with source), `compile_rates`, recomputes the
+  scoreboard. Originals backed up to `*.orig.*`.
+
+### Source extraction (Compare view)
+- `decbench/utils/source_extract.py` (NEW): DWARF decl_file/line + brace-matching
+  (string/char/comment aware) to slice one function's original source out of the
+  per-binary `.c`. Definition-vs-call disambiguation requires `{` after `)`.
+
+### Report (`decbench/rendering/html.py`, rewritten)
+- Left **sidebar** SPA (view routing via `location.hash`), dataset selector +
+  stats in the sidebar.
+- **Leaderboard**: swebench-style sortable table (rows=decompilers, cols=Overall
+  + per-metric perfect % + Compiles), recomputes live over the dataset.
+- **Metrics** page explaining the 3 goals (structure/types/recompilation) and the
+  "perfect on all 3 = source recovered" framing → the Overall column.
+- **Compare**: source vs each decompiler side-by-side w/ per-metric scores.
+- Hardest now shows source too; Historical unchanged. All code-derived text is
+  HTML-escaped (XSS-safe). Verified end-to-end in jsdom (no runtime errors) +
+  headless-Chrome screenshots.
+- `models/function_data.py`: `SampleEntry`, `FunctionData.samples`,
+  `FunctionData.compile_rates`. `report_extras.attach_extras` now also builds
+  samples + compile rates (live-run path).
+
+Tests: +`test_byte_match_fixup.py`, +`test_source_extract.py`,
++`test_report_extras.py`; updated the e2e report assertions to the new markup.
+Full suite **120 passed, 2 skipped** (excluding the env-broken Ghidra smoke
+test). ruff/black clean on changed files (html.py gets a per-file E501 ignore —
+it embeds CSS/JS/HTML).

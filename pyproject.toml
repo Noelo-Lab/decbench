@@ -73,7 +73,15 @@ target-version = ["py310"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# The HTML renderer embeds CSS/JS/HTML as template strings, where the 100-col
+# Python rule produces awkward breaks in foreign-language lines (and unbreakable
+# URLs). Logic-affecting rules still apply; only line length is relaxed here.
+"decbench/rendering/html.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.10"

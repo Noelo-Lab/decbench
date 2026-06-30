@@ -13,15 +13,22 @@ DecBench is a benchmarking suite for evaluating decompiler performance. It imple
   `source /home/mahaloz/.virtualenvs/decbench/bin/activate`.
 - Decompiler backends **available and working** on this machine (verified via
   the raw, declib-free interfaces — see Architecture): **angr** (pip),
-  **Ghidra 12.1** AND **Ghidra 12.0** (`/home/mahaloz/bin/ghidra_12.{1,0}`, via
-  pyghidra; export `GHIDRA_INSTALL_DIR` for the unversioned default),
-  **IDA Pro 9.2 idalib** (at `/home/mahaloz/ctf/tools/idapro_9.2`, license
-  present — it works; the older note that only an unusable IDA 8.0 exists is
-  obsolete), and **r2dec** (native radare2 at `/usr/bin`, using the built-in
-  `pdc` pseudo-decompiler since the r2dec plugin can't build without dev
-  headers/sudo). **Binary Ninja is NOT installed** (`binja` coded but
-  unavailable). **RetDec/Reko** are Dockerized (`docker/`, images not pre-built).
-  `decbench list-decompilers` shows availability.
+  **phoenix** (angr driven with the Phoenix structurer — a distinct decompiler;
+  plain `angr` uses angr's default SAILR structurer), **Ghidra 12.1** AND
+  **Ghidra 12.0** (`/home/mahaloz/bin/ghidra_12.{1,0}`, via pyghidra; export
+  `GHIDRA_INSTALL_DIR` for the unversioned default), **IDA Pro 9.2 idalib** (at
+  `/home/mahaloz/ctf/tools/idapro_9.2`), **Binary Ninja 3.1** (install at
+  `/home/mahaloz/ctf/tools/binja/binaryninja`; added to the venv via a
+  `binaryninja.pth` in site-packages; needs a license at
+  `~/.binaryninja/license.dat` — a Commercial/Ultimate license is required for
+  headless use, and it must cover v3.1), and **r2dec** (native radare2 at
+  `/usr/bin`, built-in `pdc`). **RetDec/Reko** are Dockerized (`docker/`).
+  `decbench list-decompilers` shows availability. The 5-decompiler benchmark set
+  is **angr, phoenix, ghidra, ida, binja**.
+- **Phoenix** = `decbench/decompilers/raw/angr_raw.py::RawAngrPhoenixDecompiler`
+  (`structurer = "Phoenix"`). The base `RawAngrDecompiler` has a `structurer`
+  attr (None = SAILR default); set it via angr's `get_structurer_option()`
+  ("SAILR"/"Phoenix"/"DREAM").
 - **Two Ghidra versions** are configured for multi-version benchmarking in
   `~/.config/decbench/decompilers.toml` (`ghidra@12.0` → ghidra_12.0,
   `ghidra@12.1` → ghidra_12.1). Run them as distinct specs: `-d ghidra@12.0 -d
@@ -111,6 +118,40 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 #   DECBENCH_DECOMPILE_TIMEOUT (s, default 300), DECBENCH_GED_MAX_NODES (60).
 #   Restart resumes from per-project checkpoints; `... results/sailr_full -- grep`
 #   limits to named projects. Single project: scripts/decompile_one.py.
+
+# FULL run over ALL projects (sailr x86 + cps ARM + malware ARM/PE). Both drivers
+# now gather projects/{sailr,cps,malware}/*.toml (gather_tomls(); cps/disabled/
+# excluded). sailr compiles on the host; cps/malware need the cross/mingw
+# toolchains so they compile INSIDE the slim `decbench-compile` image
+# (Dockerfile.compile — ARM + mingw + decbench's light compile deps; the host has
+# no cross/mingw gcc). Decompilation runs on the HOST for all of them (the raw
+# backends + executor discover ELF *and* PE; PE malware decompiles via
+# ghidra/ida/binja/angr). Steps:
+#   1) host-compile sailr:  python scripts/compile_all.py results/full_run 20
+#   2) docker build -f Dockerfile.compile -t decbench-compile .   (one-time)
+#   3) docker-compile cps+malware INTO the same tree (run as host user, /.dockerenv
+#      satisfies the is_malware guard):
+#      docker run --rm -v "$PWD":/workspace -w /workspace -e PYTHONPATH=/workspace \
+#        -e HOME=/tmp --user "$(id -u):$(id -g)" decbench-compile \
+#        python3 scripts/compile_all.py results/full_run 8 <cps+malware stems...>
+#   4) one decompile+evaluate+report pass over everything (resumes per-project):
+#      DECBENCH_WORKERS=40 DECBENCH_DECOMPILERS=angr,phoenix,ghidra,ida,binja \
+#        GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
+#        python scripts/run_benchmark.py results/full_run
+#   byte_match ABSTAINS (no result, not 0) for ARM/PE on the host (no cross/mingw
+#   recompiler) — GED + type_match carry cps/malware. Overall counts only
+#   functions evaluated on ALL metrics (so abstained byte_match isn't a failure).
+
+# Recompute ONLY byte_match over an existing results tree WITHOUT re-decompiling
+# (uses the stored decompiled/*.c + compiled binaries), then rebuild the report
+# data (merge new byte_match, build Compare samples + Hardest w/ source, compile
+# rates, recompute scoreboard). Used to refresh after a byte_match metric change:
+python scripts/reeval_bytematch.py results/sailr_full 40   # parallel, resumable -> byte_match_new.json
+python scripts/rebuild_function_data.py results/sailr_full # -> function_results.json + scoreboard.toml
+#   NOTE: the on-disk results tree may be a PARTIAL snapshot (some projects have
+#   no decompiled .c); rebuild DROPS byte_match for functions whose artifact is
+#   gone so the column is uniformly the new metric (per-metric denominators
+#   already differ). Re-render: decbench report results/sailr_full/scoreboard.toml
 ```
 
 **Why the run driver isn't just `decbench run`** (key scaling facts): angr's
@@ -195,6 +236,22 @@ functions — no binary copying (`decbench subset function_results.json`).
   ARM→arm-none-eabi, x86→gcc; flags read from the DWARF producer), via
   `decbench/utils/binfmt.py`. Returns a non-scoring result if that toolchain
   isn't installed (don't fake a wrong-arch recompile). Works on ELF and PE.
+  **Two fairness passes (v2, `cache_version="2"`) — investigate before changing:**
+  (1) a **compilability fixup** (`decbench/metrics/fixup.py`) so decompiler
+  output actually builds instead of auto-scoring 0 — it strips illegal tokens
+  (`GLIBC_2.2.5::stderr` symbol-version names), then runs a **gcc-diagnostic-driven
+  self-repair loop** (`LC_ALL=C` for ASCII quotes) that injects ONLY what the
+  compiler reports missing: `typedef`s for pseudo-types (`undefined4`/`code`/`uint`),
+  decls for implicit functions, globals for undeclared ids — never redefining what
+  the decompiler already declared (conflict-withdrawal handles the rare clash).
+  This *maximizes compilation* uniformly for all decompilers (raised compile rate
+  ~16-39%→~44-46% on sailr). (2) **operand normalization** in `_disassemble_bytes`
+  blanks link-time-dependent operands (branch/call targets, `[rip±disp]`) so a
+  function whose only "difference" is an unlinked call displacement isn't
+  penalized. The metric still records `compilable` per function (surfaced as the
+  report's per-decompiler **compile rate**). Net effect on sailr: byte_match mean
+  ~0.05→~0.19 (3-4×). Type recovery is measured separately by `type_match`, so
+  fixing types to compile is fair.
 
 `decbench/utils/binfmt.py` is the shared binary-format helper: detect ELF/PE +
 arch, pick the matching recompiler + capstone arch, read DWARF from ELF *or* PE
@@ -214,22 +271,30 @@ type_match and byte_match use it, so they work on the PE (MinGW) malware targets
   as `function_results.json`
 
 **Results Rendering** (`decbench/rendering/`):
-- `html.py` - Self-contained HTML report, themed after mahaloz.re (terminal
-  aesthetic: black bg, Source Code Pro mono, dashed rules, Unix-path nav, ASCII
-  bars). With function data it embeds JSON + vanilla JS and offers a single
-  **dataset selector** (instead of many toggles) — `full` / `hard` (O2-noinline
-  + large) / `tiny` (~100 funcs **seeded-randomly** sampled across
-  inlined/optimized/unoptimized/large and projects, **at most one per binary**
-  while binaries last; seed via `DECBENCH_TINY_SEED`, default 1337). Selecting
-  one live-recomputes the comparison matrix, per-binary breakdown, and rankings.
-  Hovering a per-binary row shows the function name(s) it contributes.
+- `html.py` - Self-contained **single-page app** with a left **sidebar** that
+  switches views, themed after mahaloz.re (terminal aesthetic: black bg, Source
+  Code Pro mono, dashed rules, ASCII bars). All views are driven client-side from
+  the embedded per-function dataset; the sidebar **dataset selector** (`full` /
+  `hard` / `hard-inlined` / `tiny`) live-recomputes every aggregate. Views:
+  - **Leaderboard** — swebench.com-style ranked table: one row per decompiler,
+    columns = Overall (perfect on all 3 metrics) + each metric's perfect % +
+    Compiles (compile rate); **sortable** by any column.
+  - **Metrics** — explains the three decompilation goals (control-flow structure
+    → GED, types → type_match, recompilation → byte_match), what "perfect" means
+    for each, and a per-decompiler perfect-rate + compile-rate table.
+  - **Compare** — **side-by-side original source vs each decompiler's output** for
+    a curated set of functions (the `tiny` slice), with per-metric scores. Source
+    comes from `decbench/utils/source_extract.py` (DWARF decl_file/line + brace
+    matching). Filterable.
+  - **Hardest** — worst-scoring functions with decompiled code AND source.
+  - **Historical** — pure-SVG per-metric line charts across decompiler versions
+    (e.g. `ghidra@12.0` vs `ghidra@12.1`).
   Preset membership is tagged server-side by `scoring/datasets.py`
-  (`assign_datasets`; "large" = upper tail of the size bell curve, with the
-  `large` label as fallback). Two extra views (built by
-  `scoring/report_extras.py`): **Hardest Functions** (a "hall of shame" of the
-  worst-scoring functions with their decompiled code) and **Historical**
-  (pure-SVG line charts, one per metric, of each decompiler's score across
-  versions/time — driven by multi-version data, e.g. `ghidra@12.0` vs `ghidra@12.1`).
+  (`assign_datasets`; "large" = upper tail of the size bell curve). The
+  code-carrying extras (`samples`, `hardest`, `compile_rates`) are built by
+  `scoring/report_extras.py` (`build_samples`/`build_hardest`/`compute_compile_rates`,
+  wired in `attach_extras` AFTER datasets are assigned). Models in
+  `models/function_data.py` (`SampleEntry`, `compile_rates`).
 
 **Data Models** (`decbench/models/`):
 - Pydantic-based models for projects, decompilation results, metrics, scoreboards, and

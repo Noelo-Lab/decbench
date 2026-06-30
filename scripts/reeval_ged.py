@@ -1,0 +1,192 @@
+"""Recompute ONLY the GED metric over an existing results tree, using the new
+header-stripped source CFGs (decbench.utils.cfg.strip_system_headers).
+
+Why: GED's source CFGs were extracted from full preprocessed .i files, which are
+80-98% inlined system headers — Joern timed out on the big ones, so a huge share
+of functions had NO source CFG and silently dropped out of GED (looked like the
+decompilers' fault). Stripping the headers (keeping the compiler's own ifdef/macro
+resolution) makes Joern fast and complete, so GED can be measured on far more
+functions. This re-scores GED to reflect that.
+
+Two stages, both parallel via the 'spawn' context (fork deadlocks once angr's
+threads are live):
+  A. source CFGs per project (from the O0 .i — source is identical across opt
+     levels), cached to <results>/ged_src/<project>.pkl
+  B. per (opt, project, binary, dec): parse the stored decompiled .c, compute GED
+     for every function whose source CFG exists -> <results>/ged_new.json mapping
+     opt::project::binary::dec::func -> {"value": float, "perfect": bool}.
+
+Usage:  python scripts/reeval_ged.py results/full_run [workers] [only-projects...]
+"""
+
+from __future__ import annotations
+
+import json
+import multiprocessing as mp
+import os
+import pickle
+import sys
+from pathlib import Path
+
+DECOMPILERS = ("angr", "phoenix", "ghidra", "ida", "binja", "kuna")
+OPT_LEVELS = ("O0", "O2", "O2-noinline")
+SRC_OPT = "O0"  # source CFGs are opt-independent; extract once from here
+
+
+# ---- Stage A: source CFGs per project -------------------------------------
+def src_cfgs_for_i(i_path: str) -> tuple[str, dict]:
+    """Worker: extract (stripped) source CFGs for one .i file."""
+    from decbench.utils.cfg import extract_cfgs_from_source
+
+    try:
+        cfgs = extract_cfgs_from_source(Path(i_path)) or {}
+    except Exception:  # noqa: BLE001
+        cfgs = {}
+    return i_path, cfgs
+
+
+def build_source_cfgs(root: Path, projects: list[str], workers: int) -> Path:
+    """Extract + cache source CFGs per project (one pickle each)."""
+    src_dir = root / "ged_src"
+    src_dir.mkdir(exist_ok=True)
+    # Gather .i files per project that still need a source-CFG cache.
+    todo: dict[str, list[str]] = {}
+    for proj in projects:
+        if (src_dir / f"{proj}.pkl").exists():
+            continue
+        comp = root / SRC_OPT / proj / "compiled"
+        if not comp.is_dir():
+            continue
+        ifiles = [
+            str(f)
+            for f in sorted(comp.glob("*.i"))
+            if "conftest" not in f.name and not f.name.startswith("a-")
+        ]
+        if ifiles:
+            todo[proj] = ifiles
+    if not todo:
+        print("[ged/src] all source-CFG caches present", flush=True)
+        return src_dir
+    # path -> project, for routing results
+    owner = {p: proj for proj, paths in todo.items() for p in paths}
+    all_paths = list(owner)
+    print(
+        f"[ged/src] extracting source CFGs: {len(all_paths)} files over "
+        f"{len(todo)} projects, {workers} workers",
+        flush=True,
+    )
+    acc: dict[str, dict] = {proj: {} for proj in todo}
+    ctx = mp.get_context("spawn")
+    done = 0
+    with ctx.Pool(processes=workers) as pool:
+        for ipath, cfgs in pool.imap_unordered(src_cfgs_for_i, all_paths):
+            acc[owner[ipath]].update(cfgs)
+            done += 1
+            if done % 50 == 0 or done == len(all_paths):
+                print(f"[ged/src] {done}/{len(all_paths)} source files", flush=True)
+    for proj, cfgs in acc.items():
+        (src_dir / f"{proj}.pkl").write_bytes(pickle.dumps(cfgs))
+        print(f"[ged/src] {proj}: {len(cfgs)} source functions cached", flush=True)
+    return src_dir
+
+
+# ---- Stage B: GED per (opt, project, binary, dec) -------------------------
+def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
+    """Worker: recompute GED for every function of one (binary, dec).
+
+    ``task`` = (opt, project, stem, dec, decompiled_c_path, src_pkl_path).
+    """
+    opt, project, stem, dec, c_path, src_pkl = task
+    from decbench.metrics.ged import GEDMetric
+    from decbench.utils.cfg import extract_cfgs_from_source
+
+    src_cfgs = pickle.loads(Path(src_pkl).read_bytes())
+    try:
+        dec_cfgs = extract_cfgs_from_source(Path(c_path)) or {}
+    except Exception:  # noqa: BLE001
+        dec_cfgs = {}
+    metric = GEDMetric()
+    perfect_val = metric.perfect_value
+    out: dict[str, dict] = {}
+    for fn, dcfg in dec_cfgs.items():
+        scfg = src_cfgs.get(fn)
+        if scfg is None:
+            continue
+        try:
+            mv = metric.compute_for_function(None, source_cfg=scfg, decompiled_cfg=dcfg)
+        except Exception:  # noqa: BLE001
+            continue
+        out[fn] = {"value": float(mv.value), "perfect": bool(mv.value == perfect_val)}
+    key = f"{opt}::{project}::{stem}::{dec}"
+    return key, out
+
+
+def build_tasks(root: Path, src_dir: Path, only: set[str] | None) -> list[tuple]:
+    tasks = []
+    for opt in OPT_LEVELS:
+        odir = root / opt
+        if not odir.is_dir():
+            continue
+        for proj in sorted(p for p in odir.iterdir() if p.is_dir()):
+            if only and proj.name not in only:
+                continue
+            src_pkl = src_dir / f"{proj.name}.pkl"
+            dec_dir = proj / "decompiled"
+            if not (src_pkl.exists() and dec_dir.is_dir()):
+                continue
+            for dec in DECOMPILERS:
+                for cf in sorted(dec_dir.glob(f"{dec}_*.c")):
+                    stem = cf.name[len(dec) + 1 : -2]
+                    tasks.append((opt, proj.name, stem, dec, str(cf), str(src_pkl)))
+    return tasks
+
+
+def main() -> None:
+    root = Path(sys.argv[1] if len(sys.argv) > 1 else "results/full_run")
+    workers = int(sys.argv[2]) if len(sys.argv) > 2 else 16
+    only = {a for a in sys.argv[3:] if not a.lstrip("-").isdigit()} or None
+
+    projects = sorted(p.name for p in (root / SRC_OPT).iterdir() if p.is_dir())
+    if only:
+        projects = [p for p in projects if p in only]
+    src_dir = build_source_cfgs(root, projects, workers)
+
+    ckpt_dir = root / "reeval_ged"
+    ckpt_dir.mkdir(exist_ok=True)
+    tasks = build_tasks(root, src_dir, only)
+    pending = [
+        t
+        for t in tasks
+        if not (
+            ckpt_dir / (f"{t[0]}::{t[1]}::{t[2]}::{t[3]}".replace("::", "__") + ".json")
+        ).exists()
+    ]
+    print(f"[ged] {len(tasks)} tasks, {len(pending)} pending, {workers} workers", flush=True)
+
+    ctx = mp.get_context("spawn")
+    done = 0
+    with ctx.Pool(processes=workers) as pool:
+        for key, result in pool.imap_unordered(eval_one, pending):
+            (ckpt_dir / (key.replace("::", "__") + ".json")).write_text(json.dumps(result))
+            done += 1
+            if done % 25 == 0 or done == len(pending):
+                print(f"[ged] {done}/{len(pending)} (binary,dec) done", flush=True)
+
+    merged: dict[str, dict] = {}
+    for cp in ckpt_dir.glob("*.json"):
+        key = cp.stem.replace("__", "::")
+        for func, v in json.loads(cp.read_text()).items():
+            merged[f"{key}::{func}"] = v
+    out_path = root / "ged_new.json"
+    out_path.write_text(json.dumps(merged))
+    perf = sum(1 for v in merged.values() if v.get("perfect"))
+    print(
+        f"[ged] wrote {out_path} ({len(merged)} funcs, {perf} perfect "
+        f"= {100*perf/max(1,len(merged)):.1f}%)",
+        flush=True,
+    )
+
+
+if __name__ == "__main__":
+    os.environ.setdefault("PYTHONWARNINGS", "ignore")
+    main()

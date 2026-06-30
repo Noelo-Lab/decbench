@@ -27,7 +27,20 @@ from decbench.pipeline.compile import compile_project
 # with downloads done but never extracted).
 _MP = multiprocessing.get_context("spawn")
 
-PROJECTS_DIR = Path("projects/sailr")
+# All benchmark project dirs (top-level *.toml only; cps/disabled/ is excluded
+# since glob is non-recursive). sailr is x86 (host-compilable); cps (ARM) and
+# malware (ARM/PE) need the cross/mingw toolchains, so those are compiled inside
+# the decbench-cps-toolchain Docker image. Restrict with the trailing `only` args.
+PROJECT_DIRS = [Path("projects/sailr"), Path("projects/cps"), Path("projects/malware")]
+
+
+def gather_tomls() -> list[Path]:
+    out: list[Path] = []
+    for d in PROJECT_DIRS:
+        out.extend(sorted(d.glob("*.toml")))
+    return sorted(out, key=lambda p: p.stem)
+
+
 OPT_LEVELS = [
     OptimizationLevel.O0,
     OptimizationLevel.O2,
@@ -107,7 +120,7 @@ def main() -> int:
     only = set(sys.argv[3:])  # optional: restrict to these project stems
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    tomls = sorted(PROJECTS_DIR.glob("*.toml"))
+    tomls = gather_tomls()
     if only:
         tomls = [t for t in tomls if t.stem in only]
 
@@ -154,9 +167,7 @@ def main() -> int:
         else:
             broken.append(proj)
 
-    print(
-        f"\nFully OK ({len(fully_ok)}): {', '.join(fully_ok)}", flush=True
-    )
+    print(f"\nFully OK ({len(fully_ok)}): {', '.join(fully_ok)}", flush=True)
     print(f"Partial ({len(partial)}): {', '.join(partial)}", flush=True)
     print(f"BROKEN ({len(broken)}): {', '.join(broken)}", flush=True)
 
