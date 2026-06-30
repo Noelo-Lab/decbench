@@ -25,6 +25,14 @@ class FunctionRecord(BaseModel):
         default_factory=dict,
         description="decompiler -> metric -> whether the value is perfect",
     )
+    decompiled: dict[str, bool] = Field(
+        default_factory=dict,
+        description="decompiler -> whether it successfully produced output for "
+        "this function (False = decompile failed / timed out). The denominator "
+        "for every metric is the set of functions a decompiler decompiled, so "
+        "all metrics share one denominator per decompiler; a missing metric on a "
+        "decompiled function counts as not-perfect.",
+    )
     labels: list[str] = Field(
         default_factory=list,
         description="Labels applied to this function",
@@ -60,11 +68,37 @@ class HardestEntry(BaseModel):
     perfect_value: float = Field(..., description="The value considered perfect")
     size: int | None = Field(default=None, description="Decompiled line count")
     labels: list[str] = Field(default_factory=list)
-    decompiled_code: str | None = Field(
-        default=None, description="Decompiled C for this function"
-    )
+    decompiled_code: str | None = Field(default=None, description="Decompiled C for this function")
     source_code: str | None = Field(
         default=None, description="Best-effort source C for this function"
+    )
+
+
+class SampleEntry(BaseModel):
+    """A curated function shown in the report's side-by-side 'Compare' view.
+
+    Carries the original source next to each decompiler's output (plus per-metric
+    scores) so a reader can eyeball, e.g., Ghidra's recovery against the truth.
+    Bounded server-side to a representative slice (see
+    :func:`decbench.scoring.report_extras.build_samples`) to keep the embedded
+    report small.
+    """
+
+    project: str = Field(...)
+    opt_level: str = Field(...)
+    binary: str = Field(...)
+    function: str = Field(...)
+    size: int | None = Field(default=None, description="Decompiled line count")
+    labels: list[str] = Field(default_factory=list)
+    source_code: str | None = Field(default=None, description="Original source C")
+    decompiled: dict[str, str] = Field(
+        default_factory=dict, description="decompiler id -> decompiled C"
+    )
+    values: dict[str, dict[str, float]] = Field(
+        default_factory=dict, description="decompiler -> metric -> value"
+    )
+    perfects: dict[str, dict[str, bool]] = Field(
+        default_factory=dict, description="decompiler -> metric -> perfect flag"
     )
 
 
@@ -91,16 +125,12 @@ class HistoryPoint(BaseModel):
 
     decompiler: str = Field(..., description="Base decompiler name, e.g. 'ghidra'")
     version: str = Field(..., description="Version label, e.g. '11.3' or '12.1'")
-    date: str | None = Field(
-        default=None, description="ISO date this version is associated with"
-    )
+    date: str | None = Field(default=None, description="ISO date this version is associated with")
     scores: dict[str, float] = Field(
         default_factory=dict,
         description="metric -> perfect percentage at this version",
     )
-    overall: float = Field(
-        default=0.0, description="Overall (perfect on all metrics) percentage"
-    )
+    overall: float = Field(default=0.0, description="Overall (perfect on all metrics) percentage")
 
 
 class BinaryGroup(BaseModel):
@@ -150,6 +180,23 @@ class FunctionData(BaseModel):
     hardest: list[HardestEntry] = Field(
         default_factory=list,
         description="Precomputed 'hardest functions' (worst scores) with code",
+    )
+    samples: list[SampleEntry] = Field(
+        default_factory=list,
+        description="Curated functions with source + per-decompiler output for "
+        "the side-by-side Compare view",
+    )
+    compile_rates: dict[str, float] = Field(
+        default_factory=dict,
+        description="decompiler id -> fraction of functions whose decompilation "
+        "recompiles (byte-match compilability), shown on the Metrics page",
+    )
+    dataset_info: dict = Field(
+        default_factory=dict,
+        description="Dataset overview for the About/Dataset page: total source "
+        "lines of code, per-project LOC, and Joern source-parse failure rates "
+        "(how much of the GED pipeline fails due to our own tooling). Software-"
+        "type categories are derived client-side from per-binary labels.",
     )
     history: list[HistoryPoint] = Field(
         default_factory=list,

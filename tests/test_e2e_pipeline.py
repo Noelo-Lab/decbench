@@ -247,7 +247,7 @@ class TestScoringPipeline:
             assert "Recompilation Bytematch" in content
             assert "Overall" in content
             # No function data -> banner present, no embedded data.
-            assert "interactive filtering unavailable" in content.lower()
+            assert "interactive views unavailable" in content.lower()
             assert "const DATA" not in content
 
     def test_html_report_with_function_data(self) -> None:
@@ -333,9 +333,10 @@ class TestScoringPipeline:
 
             # Embedded data + interactive sections present.
             assert "const DATA" in content
-            assert 'id="filters"' in content
-            assert 'id="comparison-matrix"' in content
-            assert 'id="per-binary-breakdown"' in content
+            # Sidebar layout: nav + JS-driven leaderboard + view routing.
+            assert 'class="sidebar"' in content
+            assert 'id="leaderboard-table"' in content
+            assert 'data-view="metrics"' in content
 
             # The raw "</script>" sequence must NOT appear inside the
             # embedded JSON. The script tag itself closes with "</script>",

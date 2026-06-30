@@ -38,12 +38,24 @@ _l = logging.getLogger(__name__)
 
 # CRT/compiler-generated functions that are not user code. Copied verbatim
 # from declib_dec so the raw backends discover the same benchmarkable set.
-SKIP_NAMES = frozenset({
-    "_start", "__libc_start_main", "__libc_csu_init", "__libc_csu_fini",
-    "_init", "_fini", "__do_global_dtors_aux", "register_tm_clones",
-    "deregister_tm_clones", "frame_dummy", "__libc_start_call_main",
-    "_dl_relocate_static_pie", "__gmon_start__", "__stack_chk_fail",
-})
+SKIP_NAMES = frozenset(
+    {
+        "_start",
+        "__libc_start_main",
+        "__libc_csu_init",
+        "__libc_csu_fini",
+        "_init",
+        "_fini",
+        "__do_global_dtors_aux",
+        "register_tm_clones",
+        "deregister_tm_clones",
+        "frame_dummy",
+        "__libc_start_call_main",
+        "_dl_relocate_static_pie",
+        "__gmon_start__",
+        "__stack_chk_fail",
+    }
+)
 
 # Name prefixes for thunks/imports that should not be benchmarked.
 SKIP_PREFIXES = ("thunk_", "j_", "__imp_", ".plt", "_dl_")
@@ -61,11 +73,7 @@ def elf_min_vaddr(binary_path: Path) -> int:
 
         with open(binary_path, "rb") as f:
             elf = ELFFile(f)
-            vaddrs = [
-                seg["p_vaddr"]
-                for seg in elf.iter_segments()
-                if seg["p_type"] == "PT_LOAD"
-            ]
+            vaddrs = [seg["p_vaddr"] for seg in elf.iter_segments() if seg["p_type"] == "PT_LOAD"]
             return min(vaddrs) if vaddrs else 0
     except Exception as e:  # noqa: BLE001
         _l.debug("Failed to read ELF min vaddr for %s: %s", binary_path, e)
@@ -135,25 +143,30 @@ def should_skip_function(
 
 def narrow_to_source(
     target_funcs: list[tuple[str, int]],
-    function_names: set[str] | None,
+    target_addrs: set[int] | None,
     *,
     backend: str,
     binary_name: str,
 ) -> list[tuple[str, int]]:
-    """Optionally restrict to the project's own source functions.
+    """Restrict to the project's own source functions BY ADDRESS.
 
-    Mirrors ``declib_dec.decompile_binary``: if ``function_names`` is given and
-    actually matches some enumerated functions, restrict to that intersection;
-    otherwise (no match — e.g. stripped/renamed binary) fall back to the full
-    list rather than producing an empty result.
+    The decompiler is given a fully-stripped binary (no symbols), so it knows
+    functions only by address; ``target_addrs`` is the set of DWARF low_pc
+    addresses (ELF-file space) for the project's source functions. We keep the
+    enumerated functions whose address is in that set. If nothing matches (an
+    unexpected address-space mismatch) we fall back to the full list rather than
+    silently producing an empty result.
     """
-    if not function_names:
+    if not target_addrs:
         return target_funcs
-    filtered = [(n, a) for (n, a) in target_funcs if n in function_names]
+    filtered = [(n, a) for (n, a) in target_funcs if a in target_addrs]
     if filtered:
         _l.debug(
             "raw/%s: filtered %d/%d functions to source set for %s",
-            backend, len(filtered), len(target_funcs), binary_name,
+            backend,
+            len(filtered),
+            len(target_funcs),
+            binary_name,
         )
         return filtered
     return target_funcs
@@ -223,9 +236,7 @@ def merge_line_addresses(
         addrs = line_to_addrs[line_num]
         if not addrs:
             continue
-        out.append(
-            LineMapping(line_number=int(line_num), addresses=sorted(int(a) for a in addrs))
-        )
+        out.append(LineMapping(line_number=int(line_num), addresses=sorted(int(a) for a in addrs)))
     return out
 
 

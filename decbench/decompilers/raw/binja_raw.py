@@ -154,7 +154,9 @@ class RawBinjaDecompiler(Decompiler):
                 requested = {n for (n, _a) in functions}
                 enumerated = [(n, a) for (n, a) in enumerated if n in requested]
             enumerated = common.narrow_to_source(
-                enumerated, function_names, backend="binja",
+                enumerated,
+                function_names,
+                backend="binja",
                 binary_name=binary_path.name,
             )
             load_base = self._binja_load_base(bv)
@@ -166,9 +168,7 @@ class RawBinjaDecompiler(Decompiler):
                 func = by_addr.get(binja_addr)
                 if func is not None:
                     try:
-                        func_result = self._decompile_one(
-                            func, func_name, file_addr
-                        )
+                        func_result = self._decompile_one(func, func_name, file_addr)
                     except Exception as e:  # noqa: BLE001
                         _l.debug("binja-raw: failed to decompile %s: %s", func_name, e)
                 if func_result is not None:
@@ -271,30 +271,37 @@ class RawBinjaDecompiler(Decompiler):
 
     @staticmethod
     def _render_c(func: Any) -> str:
-        """Render a function's High Level IL as C-ish pseudocode text.
+        """Render a function as Binary Ninja **pseudo-C** text.
 
-        Binary Ninja exposes a language-representation renderer; we prefer the C
-        view of HLIL and fall back to the plain HLIL string form.
+        Uses the linear-view *language representation* (the "Pseudo C" view),
+        which emits real C-like source — proper signature, braces, ``int32_t``,
+        ``return f(...)`` — so it parses (GED) and compiles (byte_match) like the
+        other decompilers. The raw HLIL form (``func.hlil.lines``: ``rax = ...``,
+        ``u>``, no braces) does NOT, which previously made GED/byte_match score
+        binja near-zero. Falls back to HLIL only if the linear view is
+        unavailable.
         """
         try:
-            from binaryninja import DisassemblyTextLine  # noqa: F401
-            from binaryninja.enums import LanguageRepresentationType  # noqa: F401
+            import binaryninja as bn
+
+            settings = bn.DisassemblySettings()
+            lvo = bn.LinearViewObject.single_function_language_representation(func, settings)
+            cursor = bn.LinearViewCursor(lvo)
+            cursor.seek_to_begin()
+            lines: list[str] = []
+            # Bound the walk so a pathological function can't spin forever.
+            for _ in range(100000):
+                for ln in cursor.lines:
+                    lines.append(str(ln))
+                if not cursor.next():
+                    break
+            text = "\n".join(lines).strip("\n")
+            if text.strip():
+                return text
         except Exception:  # noqa: BLE001
             pass
 
-        # Preferred: the C language representation of HLIL, if available.
-        try:
-            hlil = func.hlil
-            if hlil is not None:
-                lines: list[str] = []
-                for instr in hlil.root.lines if hasattr(hlil, "root") else hlil.lines:
-                    lines.append(str(instr))
-                if lines:
-                    return "\n".join(lines)
-        except Exception:  # noqa: BLE001
-            pass
-
-        # Fallback: stringify HLIL directly.
+        # Fallback: stringify HLIL directly (not valid C, but better than empty).
         try:
             return "\n".join(str(line) for line in func.hlil.lines)
         except Exception:  # noqa: BLE001

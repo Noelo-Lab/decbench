@@ -24,7 +24,7 @@ pre_make_cmds = []
 # the ELF stays ARM. make_cmd cds into the demo dir (build runs there); the ELF
 # (build/ch.elf) and .i files (build/obj/*.i) land under source_dir=".".
 # Verified: ELF 32-bit ARM, with debug_info, not stripped; 74 .i files.
-make_cmd = 'cd demos/STM32/RT-STM32F407-DISCOVERY && make USE_OPT="$CFLAGS"'
+make_cmd = 'cd demos/STM32/RT-STM32F407-DISCOVERY && make USE_LTO=no USE_OPT="$CFLAGS -ggdb3"'
 
 labels = ["cps", "rtos", "real-time-kernel", "bare-metal", "cortex-m4", "stm32f407"]
 

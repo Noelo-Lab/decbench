@@ -36,7 +36,7 @@ pre_make_cmds = ["mkdir -p tools/shim && ln -sf \"$(command -v python3)\" tools/
 # DALRCF405 target, untouched, so the ELF is ARM.
 # IMPORTANT: if a future image swaps the arm gcc, update GCC_REQUIRED_VERSION to
 # that compiler's `arm-none-eabi-gcc -dumpversion` (here: 13.2.1).
-make_cmd = 'PATH="$PWD/tools/shim:$PATH" make TARGET=DALRCF405 GCC_REQUIRED_VERSION=13.2.1 EXTRA_FLAGS="$CFLAGS -Wno-error -fcommon"'
+make_cmd = 'PATH="$PWD/tools/shim:$PATH" make TARGET=DALRCF405 DEBUG=GDB GCC_REQUIRED_VERSION=13.2.1 EXTRA_FLAGS="$CFLAGS -Wno-error -fcommon"'
 
 labels = ["cps", "drone", "flight-controller", "avionics", "bare-metal", "cortex-m4", "stm32f4"]
 

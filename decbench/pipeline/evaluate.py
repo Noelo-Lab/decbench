@@ -35,9 +35,7 @@ def evaluate_decompilation(
 
     # Extract CFGs from decompilation if needed
     decompiled_cfgs = None
-    needs_decomp_cfg = any(
-        MetricRegistry.get(m).requires_decompiled_cfg for m in metrics
-    )
+    needs_decomp_cfg = any(MetricRegistry.get(m).requires_decompiled_cfg for m in metrics)
     if needs_decomp_cfg:
         decompiled_cfgs = extract_cfgs_from_decompilation(decompilation)
 
@@ -132,7 +130,9 @@ def evaluate_project(
                     cfgs = extract_cfgs_from_source(i_path)
                     source_cfgs_by_binary[name] = cfgs
                     if not cfgs:
-                        logger.warning("Source CFG extraction returned empty for %s (%s)", name, i_path)
+                        logger.warning(
+                            "Source CFG extraction returned empty for %s (%s)", name, i_path
+                        )
                     else:
                         logger.debug("Extracted %d CFGs from %s", len(cfgs), name)
                 except Exception as e:
@@ -141,6 +141,15 @@ def evaluate_project(
     else:
         logger.warning("No preprocessed sources for %s/%s", project.name, optimization)
 
+    # A binary's source functions may be defined in ANY of the project's
+    # translation units (multi-.c binaries), and decompiled functions are matched
+    # to source by NAME, so match every binary against the UNION of all the
+    # project's source CFGs rather than only its same-named .i — the per-binary
+    # lookup otherwise lost most GED coverage on multi-source binaries.
+    all_source_cfgs: dict = {}
+    for _cfgs in source_cfgs_by_binary.values():
+        all_source_cfgs.update(_cfgs or {})
+
     if parallel:
         workers = workers or cpu_count()
 
@@ -148,7 +157,7 @@ def evaluate_project(
             futures = {}
 
             for binary_name, dec_results in decompilations.items():
-                source_cfgs = source_cfgs_by_binary.get(binary_name, {})
+                source_cfgs = all_source_cfgs
 
                 for dec_name, decompilation in dec_results.items():
                     future = executor.submit(
@@ -173,7 +182,7 @@ def evaluate_project(
                     results[binary_name][dec_name] = {}
     else:
         for binary_name, dec_results in decompilations.items():
-            source_cfgs = source_cfgs_by_binary.get(binary_name, {})
+            source_cfgs = all_source_cfgs
             results[binary_name] = {}
 
             for dec_name, decompilation in dec_results.items():
@@ -228,9 +237,7 @@ def evaluate_projects(
     metrics: list[str] | None = None,
     parallel: bool = True,
     workers: int | None = None,
-) -> dict[
-    str, dict[OptimizationLevel, dict[str, dict[str, dict[str, MetricResult]]]]
-]:
+) -> dict[str, dict[OptimizationLevel, dict[str, dict[str, dict[str, MetricResult]]]]]:
     """Evaluate multiple projects."""
     if optimization_levels is None:
         optimization_levels = [OptimizationLevel.O2]

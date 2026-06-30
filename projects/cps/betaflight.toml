@@ -30,12 +30,12 @@ pre_make_cmds = []
 # the STM32F405 target, untouched, so the ELF is ARM.
 # IMPORTANT: if a future image swaps the arm gcc, update GCC_REQUIRED_VERSION to
 # that compiler's `arm-none-eabi-gcc -dumpversion` (here: 13.2.1).
-make_cmd = 'make TARGET=STM32F405 GCC_REQUIRED_VERSION=13.2.1 EXTRA_FLAGS="$CFLAGS -Wno-error"'
+make_cmd = 'make TARGET=STM32F405 DEBUG=GDB GCC_REQUIRED_VERSION=13.2.1 EXTRA_FLAGS="$CFLAGS -Wno-error"'
 
 labels = ["cps", "drone", "flight-controller", "avionics", "bare-metal", "cortex-m4", "stm32f4"]
 
 [compilation]
 optimization_levels = ["O0", "O2", "O2-noinline"]
-base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj", "-fno-lto"]
 c_compiler = "arm-none-eabi-gcc"
 target_arch = "arm"  # only collect the ARM hardware binaries (drop host tools)

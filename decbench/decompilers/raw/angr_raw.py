@@ -43,6 +43,11 @@ class RawAngrDecompiler(Decompiler):
     name = "angr"
     display_name = "angr"
 
+    # Which structuring algorithm to drive angr with. ``None`` uses angr's
+    # default (currently SAILR). Subclasses set this to "Phoenix"/"DREAM" to
+    # benchmark a specific structurer as its own decompiler (see RawAngrPhoenix).
+    structurer: str | None = None
+
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
 
@@ -147,16 +152,16 @@ class RawAngrDecompiler(Decompiler):
                 target_funcs = self._enumerate(proj, elf_base, text_range)
 
             target_funcs = common.narrow_to_source(
-                target_funcs, function_names, backend="angr",
+                target_funcs,
+                function_names,
+                backend="angr",
                 binary_name=binary_path.name,
             )
 
             for func_name, file_addr in target_funcs:
                 func_result = None
                 try:
-                    func_result = self._decompile_one(
-                        proj, cfg, func_name, file_addr, elf_base
-                    )
+                    func_result = self._decompile_one(proj, cfg, func_name, file_addr, elf_base)
                 except Exception as e:  # noqa: BLE001
                     _l.debug("angr-raw: failed to decompile %s: %s", func_name, e)
 
@@ -229,9 +234,7 @@ class RawAngrDecompiler(Decompiler):
     def _angr_load_base(proj: Any) -> int:
         """The address angr loaded the main object at (its min mapped vaddr)."""
         try:
-            return int(proj.loader.main_object.mapped_base) or int(
-                proj.loader.main_object.min_addr
-            )
+            return int(proj.loader.main_object.mapped_base) or int(proj.loader.main_object.min_addr)
         except Exception:  # noqa: BLE001
             return 0
 
@@ -254,7 +257,18 @@ class RawAngrDecompiler(Decompiler):
             if func is None:
                 return None
 
-        dec = proj.analyses.Decompiler(func, cfg=cfg.model)
+        dec_kwargs: dict[str, Any] = {"cfg": cfg.model}
+        if self.structurer is not None:
+            # Select a specific structuring algorithm via angr's options system
+            # (value is convert()ed to the structurer class by the option).
+            from angr.analyses.decompiler.decompilation_options import (
+                get_structurer_option,
+            )
+
+            opt = get_structurer_option()
+            if opt is not None:
+                dec_kwargs["options"] = [(opt, self.structurer)]
+        dec = proj.analyses.Decompiler(func, **dec_kwargs)
         codegen = getattr(dec, "codegen", None)
         if codegen is None or not getattr(codegen, "text", None):
             return None
@@ -291,9 +305,7 @@ class RawAngrDecompiler(Decompiler):
         except Exception:  # noqa: BLE001
             return ""
 
-    def _extract_variables(
-        self, codegen: Any, proj: Any, func: Any
-    ) -> list[VariableInfo]:
+    def _extract_variables(self, codegen: Any, proj: Any, func: Any) -> list[VariableInfo]:
         """Pull arguments (ABI order) and stack/local variables.
 
         Arguments come from ``cfunc.arg_list`` (preserving ABI order, so the
@@ -312,11 +324,12 @@ class RawAngrDecompiler(Decompiler):
         # --- Arguments, in ABI/positional order. ---
         arg_list = getattr(cfunc, "arg_list", None) or []
         for position, cvar in enumerate(arg_list):
-            simvar = getattr(cvar, "unified_variable", None) or getattr(
-                cvar, "variable", None
+            simvar = getattr(cvar, "unified_variable", None) or getattr(cvar, "variable", None)
+            name = (
+                getattr(cvar, "name", None)
+                or (getattr(simvar, "name", None) if simvar else None)
+                or ""
             )
-            name = (getattr(cvar, "name", None)
-                    or (getattr(simvar, "name", None) if simvar else None) or "")
             vtype = self._type_str(
                 getattr(cvar, "variable_type", None) or getattr(cvar, "type", None)
             )
@@ -346,9 +359,7 @@ class RawAngrDecompiler(Decompiler):
                     break
             stack_offset = None
             if isinstance(simvar, SimStackVariable):
-                stack_offset = (
-                    int(simvar.offset) if simvar.offset is not None else None
-                )
+                stack_offset = int(simvar.offset) if simvar.offset is not None else None
             size = getattr(simvar, "size", None)
             variables.append(
                 VariableInfo(
@@ -404,3 +415,17 @@ class RawAngrDecompiler(Decompiler):
             line_to_addrs.setdefault(line_no, set()).add(file_addr)
 
         return common.merge_line_addresses(line_to_addrs)
+
+
+@register_decompiler("phoenix")
+class RawAngrPhoenixDecompiler(RawAngrDecompiler):
+    """angr driven with the **Phoenix** structuring algorithm.
+
+    Same native angr pipeline as :class:`RawAngrDecompiler`, but forces the
+    Phoenix structurer instead of angr's default (SAILR), so the two appear as
+    distinct decompilers in the benchmark.
+    """
+
+    name = "phoenix"
+    display_name = "angr (Phoenix)"
+    structurer = "Phoenix"

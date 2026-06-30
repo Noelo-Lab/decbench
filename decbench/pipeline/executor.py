@@ -154,13 +154,13 @@ class PipelineExecutor:
                     if opt in project.compiled_binaries:
                         binaries = project.compiled_binaries[opt]
                         if len(binaries) > self.config.binary_limit:
-                            project.compiled_binaries[opt] = binaries[:self.config.binary_limit]
-                            print(f"Limited to {self.config.binary_limit} binaries for {project.name}/{opt.value}")
+                            project.compiled_binaries[opt] = binaries[: self.config.binary_limit]
+                            print(
+                                f"Limited to {self.config.binary_limit} binaries for {project.name}/{opt.value}"
+                            )
                     if opt in project.preprocessed_sources:
                         # Keep only sources matching the limited binaries
-                        limited_names = {
-                            b.stem for b in project.compiled_binaries.get(opt, [])
-                        }
+                        limited_names = {b.stem for b in project.compiled_binaries.get(opt, [])}
                         project.preprocessed_sources[opt] = {
                             name: path
                             for name, path in project.preprocessed_sources[opt].items()
@@ -170,6 +170,7 @@ class PipelineExecutor:
         # Apply binary sampling if set (deterministic random selection)
         if self.config.binary_sample is not None:
             import random
+
             for project in projects:
                 for opt in self.config.optimization_levels:
                     if opt in project.compiled_binaries:
@@ -179,11 +180,11 @@ class PipelineExecutor:
                             sampled = sorted(rng.sample(binaries, self.config.binary_sample))
                             project.compiled_binaries[opt] = sampled
                             names = [b.stem for b in sampled]
-                            print(f"Sampled {self.config.binary_sample} binaries for {project.name}/{opt.value}: {names}")
+                            print(
+                                f"Sampled {self.config.binary_sample} binaries for {project.name}/{opt.value}: {names}"
+                            )
                     if opt in project.preprocessed_sources:
-                        sampled_names = {
-                            b.stem for b in project.compiled_binaries.get(opt, [])
-                        }
+                        sampled_names = {b.stem for b in project.compiled_binaries.get(opt, [])}
                         project.preprocessed_sources[opt] = {
                             name: path
                             for name, path in project.preprocessed_sources[opt].items()
@@ -287,9 +288,7 @@ class PipelineExecutor:
         except (OSError, struct.error):
             return False
 
-    def _discover_existing_binaries(
-        self, projects: list[Project], output_dir: Path
-    ) -> None:
+    def _discover_existing_binaries(self, projects: list[Project], output_dir: Path) -> None:
         """Populate project.compiled_binaries from previously compiled output.
 
         Scans ``<output_dir>/<opt>/<project>/compiled/`` for ELF executables
@@ -298,36 +297,35 @@ class PipelineExecutor:
         """
         for project in projects:
             for opt in self.config.optimization_levels:
-                compiled_dir = (
-                    output_dir / opt.value / project.name / "compiled"
-                )
+                compiled_dir = output_dir / opt.value / project.name / "compiled"
                 if not compiled_dir.is_dir():
-                    print(
-                        f"Warning: compiled directory not found: {compiled_dir}"
-                    )
+                    print(f"Warning: compiled directory not found: {compiled_dir}")
                     continue
 
-                # Discover ELF binaries
+                # Discover ELF executables AND PE binaries (the malware targets
+                # are MinGW PE .exe/.dll; without the PE check they'd never be
+                # decompiled). cps ARM firmware is ELF, so it's covered already.
+                from decbench.utils import binfmt
+
                 binaries: list[Path] = []
                 for entry in sorted(compiled_dir.iterdir()):
-                    if entry.is_file() and self._is_elf_executable(entry):
+                    if not entry.is_file() or entry.is_symlink():
+                        continue
+                    if self._is_elf_executable(entry):
+                        binaries.append(entry)
+                        continue
+                    info = binfmt.detect(entry)
+                    if info is not None and info.fmt == "pe":
                         binaries.append(entry)
 
                 if binaries:
                     project.compiled_binaries[opt] = binaries
-                    print(
-                        f"Discovered {len(binaries)} binaries for "
-                        f"{project.name}/{opt.value}"
-                    )
+                    print(f"Discovered {len(binaries)} binaries for " f"{project.name}/{opt.value}")
                 else:
-                    print(
-                        f"Warning: no ELF binaries found in {compiled_dir}"
-                    )
+                    print(f"Warning: no ELF binaries found in {compiled_dir}")
 
                 # Discover preprocessed .i sources
-                i_files = {
-                    f.stem: f for f in sorted(compiled_dir.glob("*.i"))
-                }
+                i_files = {f.stem: f for f in sorted(compiled_dir.glob("*.i"))}
                 if i_files:
                     project.preprocessed_sources[opt] = i_files
                     print(

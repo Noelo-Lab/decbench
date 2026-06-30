@@ -1,0 +1,22 @@
+# Keep the Docker build context small: exclude results, stale workspace cruft,
+# VCS, caches, generated reports, and the local Python venv if any.
+results/
+workspace/
+.git/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+node_modules/
+*.html
+*.log
+.venv/
+venv/
+build/
+dist/
+*.egg-info/

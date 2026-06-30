@@ -9,8 +9,7 @@ Based on the approach from Decomperson (USENIX Security 2022).
 from __future__ import annotations
 
 import logging
-import subprocess
-import tempfile
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,12 +25,108 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Branch/call mnemonics whose operand is a code address. After single-function
+# recompilation that target is an *unlinked* relative displacement (or a
+# different absolute, since we disassemble the original at its real vaddr and the
+# recompiled object at 0), so the printed target is layout/linker-dependent and
+# must be normalized away before diffing — otherwise every call/jump counts as a
+# mismatch even when the control flow is identical.
+_BRANCH_MNEMONICS = frozenset(
+    {
+        "call",
+        "jmp",
+        "loop",
+        "loope",
+        "loopne",
+        "jecxz",
+        "jrcxz",
+        "je",
+        "jne",
+        "jz",
+        "jnz",
+        "jg",
+        "jge",
+        "jl",
+        "jle",
+        "ja",
+        "jae",
+        "jb",
+        "jbe",
+        "jc",
+        "jnc",
+        "js",
+        "jns",
+        "jo",
+        "jno",
+        "jp",
+        "jnp",
+        "jpe",
+        "jpo",
+        "jcxz",
+        # ARM / AArch64 branches.
+        "b",
+        "bl",
+        "blx",
+        "bx",
+        "beq",
+        "bne",
+        "bcs",
+        "bcc",
+        "bmi",
+        "bpl",
+        "bvs",
+        "bvc",
+        "bhi",
+        "bls",
+        "bge",
+        "blt",
+        "bgt",
+        "ble",
+        "cbz",
+        "cbnz",
+    }
+)
+
+# An immediate hex literal, optionally ARM-style ``#``-prefixed (and possibly
+# negative): matches ``0x40``, ``#0x40``, ``#-0x40``.
+_HEX_TOKEN = re.compile(r"#?-?0x[0-9a-fA-F]+")
+# A PC/IP-relative *memory* operand: x86 ``[rip + 0x..]`` / ``[rip - 0x..]`` and
+# AArch64 literal loads ``[pc, #0x..]``. The displacement encodes a data/GOT
+# offset fixed up at link time, so it is layout-dependent and gets a placeholder.
+_PC_REL_MEM = re.compile(r"\[(rip|pc)\s*[+\-,]\s*#?-?0x[0-9a-fA-F]+\]")
+# AArch64 PC-relative *address* computations whose immediate is the (page)
+# target itself — capstone prints e.g. ``adrp x0, #0x400000``.
+_PC_REL_MNEMONICS = frozenset({"adrp", "adr"})
+
+
+def _normalize_operands(mnemonic: str, op_str: str) -> str:
+    """Replace layout/linker-dependent operand values with a stable placeholder.
+
+    Branch/call targets and PC-relative displacements differ between the
+    original (linked, at its real vaddr) and the recompiled single-function
+    object (unlinked, based at 0) even when the instruction is semantically the
+    same. We blank those so the diff measures *real* assembly differences, not
+    relocation noise — the central fairness fix for this metric.
+    """
+    # PC-relative data references: [rip + 0x..] / [pc, #0x..] -> [<base>+X]
+    op_str = _PC_REL_MEM.sub(lambda m: f"[{m.group(1)}+X]", op_str)
+    # Blank the immediate when it IS a link-dependent address: AArch64 adrp/adr
+    # (the immediate is the PC-relative target), or a DIRECT branch/call target
+    # (a bare address, no memory operand). An indirect ``call [rax + 0x20]``
+    # displacement is a base-independent struct/vtable offset — a real difference
+    # we keep — so memory-operand branches are excluded.
+    if mnemonic in _PC_REL_MNEMONICS or (mnemonic in _BRANCH_MNEMONICS and "[" not in op_str):
+        op_str = _HEX_TOKEN.sub("X", op_str)
+    return op_str
+
+
 def _disassemble_bytes(data: bytes, address: int = 0, arch_mode: tuple | None = None) -> list[str]:
     """Disassemble bytes to normalized assembly lines using capstone.
 
     ``arch_mode`` is a (capstone arch, capstone mode) tuple matching the
     binary's architecture (x86-32/64, ARM, ...). Defaults to x86-64.
-    Normalizes addresses and skips nops for stable comparison.
+    Skips nops (alignment padding) and normalizes layout/linker-dependent
+    operands (branch targets, PC-relative displacements) for a fair comparison.
     """
     try:
         import capstone
@@ -47,11 +142,7 @@ def _disassemble_bytes(data: bytes, address: int = 0, arch_mode: tuple | None = 
             if insn.mnemonic == "nop":
                 continue
 
-            # Normalize: use mnemonic + op_str, replacing absolute addresses
-            op_str = insn.op_str
-
-            # Replace absolute addresses with generic placeholders
-            # This makes the comparison more robust to address layout differences
+            op_str = _normalize_operands(insn.mnemonic, insn.op_str)
             line = f"{insn.mnemonic} {op_str}".strip()
             lines.append(line)
 
@@ -125,42 +216,13 @@ def _compile_function(
 ) -> Path | None:
     """Compile a single function's decompiled code to an object file.
 
-    Returns path to the object file, or None if compilation failed.
+    Thin wrapper over :func:`decbench.metrics.fixup.compile_with_fixup` (which
+    maximizes the odds the code builds). Returns the object path or ``None``.
     """
-    if flags is None:
-        flags = ["-O2", "-c"]
+    from decbench.metrics.fixup import compile_with_fixup
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".c", delete=False, prefix=f"decbench_{func_name}_"
-    ) as src_file:
-        # Add minimal headers
-        src_file.write("#include <stdint.h>\n")
-        src_file.write("#include <stddef.h>\n")
-        src_file.write("#include <stdbool.h>\n")
-        src_file.write("#include <stdlib.h>\n")
-        src_file.write("#include <string.h>\n")
-        src_file.write("#include <stdio.h>\n\n")
-        src_file.write(code)
-        src_path = Path(src_file.name)
-
-    obj_path = src_path.with_suffix(".o")
-
-    try:
-        cmd = [compiler, *flags, "-o", str(obj_path), str(src_path)]
-        result = subprocess.run(cmd, capture_output=True, timeout=30)
-
-        if result.returncode != 0:
-            return None
-
-        if not obj_path.exists():
-            return None
-
-        return obj_path
-
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return None
-    finally:
-        src_path.unlink(missing_ok=True)
+    result = compile_with_fixup(code, func_name, compiler, flags)
+    return result.obj_path
 
 
 @register_metric("byte_match")
@@ -185,6 +247,11 @@ class ByteMatchMetric(Metric):
 
     requires_source_cfg = False
     requires_decompiled_cfg = False
+
+    # v3: compilability fixup pass (decbench/metrics/fixup.py) + operand
+    # normalization (branch targets, x86 rip- and ARM pc-relative; indirect-branch
+    # displacements preserved).
+    cache_version = "3"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
@@ -275,22 +342,34 @@ class ByteMatchMetric(Metric):
         flags: list[str],
         arch_mode: tuple | None,
     ) -> MetricValue:
+        import shutil
+
+        from decbench.metrics.fixup import compile_with_fixup
         from decbench.utils import binfmt
 
-        # Compile decompiled code the same way as source (matching toolchain).
-        obj_path = _compile_function(
-            decompiled.decompiled_code,
-            decompiled.name,
-            compiler,
-            flags,
-        )
+        # Compile decompiled code the same way as source (matching toolchain),
+        # running the fixup/self-repair pass so the maximum number of functions
+        # build (otherwise non-compiling code is a flat 0 and dominates).
+        fix = compile_with_fixup(decompiled.decompiled_code, decompiled.name, compiler, flags)
+        obj_path = fix.obj_path
 
         if obj_path is None:
             return MetricValue(
                 value=0.0,
-                metadata={"compilable": False, "error": "Compilation failed"},
+                metadata={
+                    "compilable": False,
+                    "fixup_iterations": fix.iterations,
+                    "error": "Compilation failed",
+                },
             )
 
+        # The fixup pass places the object in its own temp dir; clean the dir.
+        obj_dir = obj_path.parent
+        fixup_meta = {
+            "compilable": True,
+            "fixup_iterations": fix.iterations,
+            "fixup_injected": len(fix.injected),
+        }
         try:
             # Extract recompiled function bytes (.text of the single-function
             # object — ELF or COFF/MinGW).
@@ -299,7 +378,7 @@ class ByteMatchMetric(Metric):
             if recompiled_bytes is None:
                 return MetricValue(
                     value=0.0,
-                    metadata={"compilable": True, "error": "Could not extract recompiled bytes"},
+                    metadata={**fixup_meta, "error": "Could not extract recompiled bytes"},
                 )
 
             # First check exact byte match
@@ -308,7 +387,7 @@ class ByteMatchMetric(Metric):
                     value=1.0,
                     raw_value=True,
                     metadata={
-                        "compilable": True,
+                        **fixup_meta,
                         "exact_match": True,
                         "original_size": len(original_bytes),
                         "recompiled_size": len(recompiled_bytes),
@@ -338,7 +417,7 @@ class ByteMatchMetric(Metric):
                 value=1.0 if similarity == 1.0 else similarity,
                 raw_value=similarity,
                 metadata={
-                    "compilable": True,
+                    **fixup_meta,
                     "exact_match": False,
                     "jaccard_similarity": similarity,
                     "original_size": len(original_bytes),
@@ -349,8 +428,7 @@ class ByteMatchMetric(Metric):
             )
 
         finally:
-            if obj_path:
-                obj_path.unlink(missing_ok=True)
+            shutil.rmtree(obj_dir, ignore_errors=True)
 
     def compute_for_binary(
         self,
@@ -367,6 +445,31 @@ class ByteMatchMetric(Metric):
         errors: list[str] = []
 
         original_binary_path = decompilation.binary_path
+
+        # ABSTAIN (emit no per-function results) when the matching recompile
+        # toolchain isn't installed for this binary's format/arch — e.g. ARM
+        # firmware (cps) or PE malware decompiled on an x86 host without the
+        # cross/mingw gcc. Scoring those 0 would be unfair ("couldn't measure" is
+        # not "wrong"); abstaining drops byte_match for the binary so GED +
+        # type_match carry it (per-metric denominators already differ).
+        if original_binary_path is not None:
+            from decbench.utils import binfmt
+
+            info = binfmt.detect(original_binary_path)
+            if info is not None:
+                recompiler = binfmt.recompiler_for(info)
+                if recompiler is None or not binfmt.tool_available(recompiler):
+                    return MetricResult(
+                        metric_name=self.name,
+                        decompiler_name=decompilation.decompiler.decompiler_name,
+                        binary_name=decompilation.binary_name,
+                        function_results={},
+                        computation_time_seconds=time.time() - start_time,
+                        errors=[
+                            f"abstained: no recompile toolchain ({recompiler}) "
+                            f"for {info.fmt}/{info.arch}"
+                        ],
+                    )
 
         for func_name, func_decomp in decompilation.functions.items():
             try:
