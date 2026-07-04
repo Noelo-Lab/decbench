@@ -18,27 +18,12 @@ from __future__ import annotations
 import json
 import multiprocessing as mp
 import os
-import re
 import sys
 from pathlib import Path
 
-from decbench.utils import binfmt
+from decbench.utils.results_tree import OPT_LEVELS, resolve_binary, split_functions
 
-MARKER = re.compile(r"^// Function: (\S+) @ (0x[0-9a-fA-F]+)\s*$", re.M)
 DECOMPILERS = ("angr", "phoenix", "ghidra", "ida", "binja", "kuna")
-OPT_LEVELS = ("O0", "O2", "O2-noinline")
-
-
-def split_functions(c_path: Path) -> dict[str, tuple[int, str]]:
-    """name -> (address, decompiled block) for one decompiled .c file."""
-    text = c_path.read_text(errors="replace")
-    out: dict[str, tuple[int, str]] = {}
-    matches = list(MARKER.finditer(text))
-    for i, m in enumerate(matches):
-        start = m.end()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        out[m.group(1)] = (int(m.group(2), 16), text[start:end].strip())
-    return out
 
 
 def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
@@ -70,25 +55,6 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
         out[name] = {"value": float(mv.value), "compilable": bool(md.get("compilable", False))}
     key = f"{opt}::{project}::{stem}::{dec}"
     return key, out
-
-
-def resolve_binary(comp: Path, stem: str) -> Path | None:
-    """Find the original binary for a decompiled stem.
-
-    The decompiled artifact is named ``{dec}_{stem}.c`` where stem = binary.stem,
-    but the on-disk binary keeps its full name — which may carry an extension
-    (``mydoom.exe``, ``psize.aux``) or a version suffix (``libedit.so.0.0.70``).
-    So fall back from an exact match to any sibling whose stem matches and which
-    is a real ELF/PE. (Must agree with rebuild_function_data.DiskReader.binary,
-    else byte_match would be computed here but not merged — or vice versa.)
-    """
-    exact = comp / stem
-    if exact.is_file() and binfmt.detect(exact):
-        return exact
-    for f in comp.iterdir():
-        if f.is_file() and f.stem == stem and binfmt.detect(f):
-            return f
-    return None
 
 
 def build_tasks(
