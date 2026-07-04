@@ -85,6 +85,51 @@ class TestGEDMetric:
         result = metric.compute_for_function(func, source_cfg=None, decompiled_cfg=None)
         assert result.value == float("inf")
 
+    def test_ged_degenerate_source_cfg(self) -> None:
+        """A <=1-node source CFG (prototype-only / wrong TU) is not scorable.
+
+        It must be EXCLUDED (inf, like a missing CFG) — never a finite score.
+        Before this guard, a truncated one-block decompilation scored a perfect
+        0 against a 1-node source graph while complete decompilations were
+        penalized by their real size.
+        """
+        import networkx as nx
+
+        from decbench.metrics.ged import GEDMetric
+
+        # What Joern produces when it only sees a declaration: one lone node.
+        source = nx.DiGraph()
+        source.add_node("decl_only")
+
+        # A truncated (prologue-only) decompilation stub: also one node. Under
+        # exact GED these "match" for 0 — the exact artifact being excluded.
+        stub = nx.DiGraph()
+        stub.add_node("stub_block")
+
+        func = FunctionDecompilation(
+            name="test",
+            address=0x1000,
+            decompiled_code="void test(void) { /* truncated */ }",
+        )
+
+        metric = GEDMetric()
+        result = metric.compute_for_function(func, source_cfg=source, decompiled_cfg=stub)
+        assert result.value == float("inf")
+        assert "degenerate source CFG" in result.metadata["error"]
+        assert result.metadata["source_nodes"] == 1
+
+        # A degenerate source must exclude the function no matter how big the
+        # decompiled CFG is (previously: bigger output = worse score).
+        big = nx.DiGraph()
+        big.add_edges_from((i, i + 1) for i in range(10))
+        result_big = metric.compute_for_function(func, source_cfg=source, decompiled_cfg=big)
+        assert result_big.value == float("inf")
+
+        # An empty source graph is degenerate too.
+        empty = nx.DiGraph()
+        result_empty = metric.compute_for_function(func, source_cfg=empty, decompiled_cfg=stub)
+        assert result_empty.value == float("inf")
+
     def test_ged_identical_cfgs(self) -> None:
         """GED of identical graphs should be 0."""
         pytest.importorskip("cfgutils")

@@ -20,6 +20,16 @@ if TYPE_CHECKING:
 # distance so the run stays bounded. Tunable via DECBENCH_GED_MAX_NODES.
 GED_MAX_NODES = int(os.environ.get("DECBENCH_GED_MAX_NODES") or "60")
 
+# A source CFG with this many nodes or fewer is NOT a usable structural graph.
+# In practice source_nodes == 1 means Joern only saw a prototype/declaration of
+# the function (or the wrong translation unit was matched), not its real body.
+# Scoring against such a graph inverts the metric: GED then rewards whichever
+# decompiler emitted the FEWEST nodes — a truncated one-block stub scores a
+# perfect 0 while a complete, correct decompilation is "penalized" by its real
+# size. Treat these like a missing source CFG (excluded from scoring) instead.
+# Tunable via DECBENCH_GED_MIN_SOURCE_NODES.
+GED_MIN_SOURCE_NODES = int(os.environ.get("DECBENCH_GED_MIN_SOURCE_NODES") or "1")
+
 
 @register_metric("ged")
 class GEDMetric(Metric):
@@ -70,6 +80,27 @@ class GEDMetric(Metric):
                 metadata={"error": "Missing CFG"},
             )
 
+        # Degenerate source CFG (see GED_MIN_SOURCE_NODES above): there is no
+        # source structure to compare against, so exclude the function (same
+        # treatment as a missing CFG) rather than hand a perfect 0 to whichever
+        # decompiler emitted the least output. Checked BEFORE the cache so
+        # entries recorded under the old (rewarding) semantics are never served.
+        # NOTE: this covers the degenerate-SOURCE half only. A truncated
+        # decompilation (e.g. angr's CFGFast mis-splitting a function at a
+        # function_prologs byte pattern and emitting a prologue-only stub) can
+        # still score well against a genuinely tiny source function; detecting
+        # that needs decompiler-side signals and is left as future work.
+        s_nodes = source_cfg.number_of_nodes()
+        if s_nodes <= GED_MIN_SOURCE_NODES:
+            return MetricValue(
+                value=float("inf"),
+                metadata={
+                    "error": f"degenerate source CFG (source_nodes={s_nodes})",
+                    "source_nodes": s_nodes,
+                    "decompiled_nodes": decompiled_cfg.number_of_nodes(),
+                },
+            )
+
         # GED is a pure function of the two CFG structures (node/edge sets) and
         # the oversize threshold. Key on their canonical, sorted shapes so the
         # super-polynomial computation is never repeated for identical graphs.
@@ -105,8 +136,10 @@ class GEDMetric(Metric):
 
         # Cheap structural fallback for oversized graphs: exact GED is too slow
         # and these are rarely a perfect match anyway. The size delta is a sound
-        # lower bound on the true edit distance, so a 0 here is still a genuine
-        # structural match.
+        # LOWER BOUND on the true edit distance — but a 0 here only means the
+        # two graphs have the same node and edge counts (necessary, not
+        # sufficient, for a true structural match). Consumers can tell the
+        # approximation apart via the "approximated" metadata flag.
         if s_nodes > GED_MAX_NODES or d_nodes > GED_MAX_NODES:
             approx = float(
                 abs(s_nodes - d_nodes)
