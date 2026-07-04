@@ -39,6 +39,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -234,6 +235,37 @@ class RawKunaDecompiler(Decompiler):
             cmd += ["--option", str(key), str(value)]
         return cmd
 
+    @staticmethod
+    def _kill_group(p: subprocess.Popen) -> None:
+        """SIGKILL kuna's whole process group (pgid == pid via start_new_session).
+
+        Mirrors ``scripts/run_benchmark._kill_process_group``: a plain
+        ``p.kill()`` (what ``subprocess.run(timeout=)`` does) kills only the
+        direct child, letting a hung kuna ORPHAN and spin at 100% CPU forever.
+        """
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                p.kill()
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            p.wait(timeout=15)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _timeout_seconds(self) -> float | None:
+        """Per-binary timeout: ``$DECBENCH_KUNA_TIMEOUT`` (seconds) if set,
+        else ``config.binary_timeout_seconds``."""
+        env = os.environ.get("DECBENCH_KUNA_TIMEOUT")
+        if env:
+            try:
+                return int(env)
+            except ValueError:
+                _l.warning("ignoring non-integer DECBENCH_KUNA_TIMEOUT=%r", env)
+        return self.config.binary_timeout_seconds
+
     def _run_decompile_all(self, binary_path: Path) -> Any:
         """Run ``kuna decompile-all --json`` and parse the JSON document.
 
@@ -245,16 +277,28 @@ class RawKunaDecompiler(Decompiler):
             return self._payload_cache[key]
         cmd = self._build_command(binary_path)
         _l.debug("kuna run: %s", " ".join(cmd))
-        p = subprocess.run(
+        # start_new_session=True makes kuna lead its own process group so a
+        # timeout (or any other failure) can SIGKILL the WHOLE tree. It also
+        # means an outer harness killpg can no longer reach it — this backend
+        # must own the kill on every exit path.
+        p = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=self.config.binary_timeout_seconds,
+            start_new_session=True,
         )
-        if p.returncode != 0 and not (p.stdout or "").strip():
-            tail = (p.stderr or "")[-500:]
+        try:
+            stdout, stderr = p.communicate(timeout=self._timeout_seconds())
+        finally:
+            # TimeoutExpired or ANY other exception: reap the group, then let
+            # the exception propagate unchanged so callers behave identically.
+            if p.poll() is None:
+                self._kill_group(p)
+        if p.returncode != 0 and not (stdout or "").strip():
+            tail = (stderr or "")[-500:]
             raise RuntimeError(f"kuna exited {p.returncode}: {tail}")
-        payload = json.loads(p.stdout)
+        payload = json.loads(stdout)
         self._payload_cache[key] = payload
         return payload
 
