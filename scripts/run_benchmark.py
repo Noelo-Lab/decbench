@@ -23,6 +23,7 @@ import os
 import pickle
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -75,8 +76,38 @@ WORKERS = int(os.environ.get("DECBENCH_WORKERS") or "40")
 # dominate the whole run. Binaries that exceed it are recorded as decompiler
 # timeouts (no functions credited) — an honest data point about decompiler speed.
 DECOMPILE_TIMEOUT = int(os.environ.get("DECBENCH_DECOMPILE_TIMEOUT") or "300")
+# Per-decompiler wall-clock override (seconds). kuna is a Ghidra port and is
+# normally seconds-per-binary, so a long run means it has HUNG — it has been
+# observed spinning at 100% CPU for HOURS on some stripped binaries (see the
+# kuna repo's tests/hang-repro/). Kill it much sooner than the global budget.
+DECOMPILER_TIMEOUT = {
+    "kuna": int(os.environ.get("DECBENCH_KUNA_TIMEOUT") or "120"),
+}
 _HERE = Path(__file__).resolve().parent
 _DECOMPILE_ONE = _HERE / "decompile_one.py"
+
+
+def _kill_process_group(proc: "subprocess.Popen") -> None:
+    """SIGKILL the worker's whole process group.
+
+    The worker is spawned with ``start_new_session=True`` so it leads its own
+    group (pgid == pid). Killing the GROUP reaps not just the Python worker but
+    every tool it launched (kuna, the Ghidra/kuna JVMs, IDA, ...). A plain
+    ``proc.kill()`` (what ``subprocess.run(timeout=)`` does) kills only the direct
+    child, letting a hung decompiler ORPHAN and spin forever — which is exactly
+    how kuna leaked 9 processes burning 100% CPU for 4+ hours.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        proc.wait(timeout=15)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def project_source_functions(binary_path: Path, source_stems: set[str]) -> dict[int, str]:
@@ -249,31 +280,43 @@ def _timed_decompile(
         str(pkl),
         names_file,
     ]
+    timeout_s = DECOMPILER_TIMEOUT.get(dec_name, DECOMPILE_TIMEOUT)
     failure = ""
     timed_out = False
+    proc = None
     try:
-        # start_new_session so we can kill the whole group on timeout.
-        proc = subprocess.run(
+        # start_new_session so the worker leads its own process group and we can
+        # kill the WHOLE group (worker + kuna/JVM/IDA/... it spawned) on timeout.
+        proc = subprocess.Popen(
             cmd,
-            timeout=DECOMPILE_TIMEOUT,
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        if proc.returncode == 0 and pkl.exists():
-            try:
-                result = pickle.loads(pkl.read_bytes())
-                pkl.unlink(missing_ok=True)
-                return result
-            except Exception as e:  # noqa: BLE001
-                failure = f"unpickle: {e}"
-        else:
-            failure = f"exit {proc.returncode}"
-    except subprocess.TimeoutExpired:
-        failure = f"timeout>{DECOMPILE_TIMEOUT}s"
-        timed_out = True
+        try:
+            rc = proc.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            failure = f"timeout>{timeout_s}s"
+            timed_out = True
+            _kill_process_group(proc)  # reap the worker AND the tool it spawned
+            rc = None
+        if not timed_out:
+            if rc == 0 and pkl.exists():
+                try:
+                    result = pickle.loads(pkl.read_bytes())
+                    pkl.unlink(missing_ok=True)
+                    return result
+                except Exception as e:  # noqa: BLE001
+                    failure = f"unpickle: {e}"
+            else:
+                failure = f"exit {rc}"
     except Exception as e:  # noqa: BLE001
         failure = f"{type(e).__name__}: {e}"
+    finally:
+        # Belt-and-suspenders: never leave a tool subprocess (esp. a hung kuna)
+        # orphaned and spinning, whatever path we exited on.
+        if proc is not None and proc.poll() is None:
+            _kill_process_group(proc)
 
     # On timeout/error, try to recover whatever the worker checkpointed: a
     # partial decompilation (e.g. angr got 12/40 functions before the kill) is
