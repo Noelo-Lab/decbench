@@ -130,6 +130,55 @@ switches between views and holds a **dataset selector** (`full` / `hard` /
 | **Hardest** | the worst-scoring functions, with decompiled code and source |
 | **Historical** | per-metric perfect % across decompiler versions (e.g. `ghidra@12.0` vs `ghidra@12.1`) |
 
+## Finding improvement cases
+
+`decbench improvements` mines a results tree for the concrete functions where one
+decompiler beats another on a metric — a targeted to-do list for whoever is
+improving the losing decompiler. It reads the `function_results.json` produced by
+a run and, per function, compares a **base** decompiler (the winner) against a
+**target** (the one to improve), respecting the metric's direction.
+
+The example below uses **GED** (structural correctness — CFG graph edit distance,
+where **lower is better** and `0` is a perfect structural match):
+
+```bash
+# Where does angr (base) structurally beat ghidra (target)? -m ged is the default.
+decbench improvements results/sailr_full -b angr -t ghidra -m ged
+
+# Strongest signal only: functions angr recovers *perfectly* (GED == 0) while
+# ghidra does not — the clearest wins to learn from.
+decbench improvements results/sailr_full -b angr -t ghidra -m ged --perfect-only
+```
+
+Each row locates the function on disk — binary, path to the compiled binary, and
+the function symbol + address — so you can jump straight to it:
+
+```
+angr beats ghidra on 'ged' — 356 case(s)  [base-perfect only]
+metric: ged  (lower is better, perfect = 0)
+showing 3 of 356, largest margin first
+
+── libacl / O0 / getfacl ──  results/sailr_full/O0/libacl/compiled/getfacl
+   0x281a  get_list   angr=0*  ghidra=38  Δ38
+── coreutils / O2-noinline / shred ──  results/sailr_full/O2-noinline/coreutils/compiled/shred
+   0x4160  do_wipefd  angr=0*  ghidra=36  Δ36
+```
+
+`Δ` is how much better the base scored (here, ghidra's GED); `*` marks a perfect
+base score. Cases are ordered by the largest base advantage first.
+
+| Flag | Meaning |
+|------|---------|
+| `-b, --base-decompiler` | the decompiler that is **winning** (required) |
+| `-t, --target-decompiler` | the decompiler that is **losing** — the one to improve (required) |
+| `-m, --metric` | metric to compare on: `ged` (default), `type_match`, or `byte_match`. Direction is applied automatically — GED is lower-is-better/perfect `0`; type_match and byte_match are higher-is-better/perfect `1` |
+| `--perfect-only` | only functions where the base is a **perfect** match on the metric (GED `0`, type/byte_match `1`) |
+| `--include-target-missing` | also include functions the base scored but the target has no usable score for (failed to decompile, or the metric errored) |
+| `--limit N` | cap the cases shown (`0` = all; default 50) |
+| `-f, --format text\|json` | `json` emits one object per case (binary path, address, values, margin, labels) for scripting |
+
+`RESULTS` may be a results directory or a `function_results.json` file directly.
+
 ## Project Configuration
 
 Projects are defined via TOML files:

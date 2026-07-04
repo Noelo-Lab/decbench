@@ -19,7 +19,8 @@ def main() -> None:
 @main.command()
 @click.argument("projects", nargs=-1, type=click.Path(exists=True))
 @click.option(
-    "-o", "--output",
+    "-o",
+    "--output",
     type=click.Path(),
     default="results",
     help="Output directory for results",
@@ -137,6 +138,7 @@ def run(
 
         if results.scoreboard:
             from decbench.scoring.scoreboard import render_scoreboard_text
+
             console.print(render_scoreboard_text(results.scoreboard))
 
         console.print(f"\nTotal time: {results.total_time_seconds:.1f}s")
@@ -150,12 +152,14 @@ def run(
 @main.command()
 @click.argument("binary", type=click.Path(exists=True))
 @click.option(
-    "-s", "--source",
+    "-s",
+    "--source",
     type=click.Path(exists=True),
     help="Path to source/preprocessed file for comparison",
 )
 @click.option(
-    "-o", "--output",
+    "-o",
+    "--output",
     type=click.Path(),
     default="results",
     help="Output directory",
@@ -284,13 +288,15 @@ def show(scoreboard_path, format) -> None:
         console.print(render_scoreboard_markdown(scoreboard))
     elif format == "json":
         import json
+
         console.print(json.dumps(scoreboard.to_display_dict(), indent=2))
 
 
 @main.command()
 @click.argument("scoreboard_path", type=click.Path(exists=True))
 @click.option(
-    "-o", "--output",
+    "-o",
+    "--output",
     type=click.Path(),
     default="results/report.html",
     help="Output HTML file path",
@@ -299,8 +305,7 @@ def show(scoreboard_path, format) -> None:
     "--function-data",
     type=click.Path(),
     default=None,
-    help="Path to function_results.json for interactive report "
-    "(default: sibling of scoreboard)",
+    help="Path to function_results.json for interactive report " "(default: sibling of scoreboard)",
 )
 def report(scoreboard_path, output, function_data) -> None:
     """Generate an HTML report from a scoreboard."""
@@ -332,9 +337,7 @@ def report(scoreboard_path, output, function_data) -> None:
             )
             fd = None
     else:
-        console.print(
-            "[yellow]No function data found; generating static report.[/yellow]"
-        )
+        console.print("[yellow]No function data found; generating static report.[/yellow]")
 
     # Ensure the dataset presets (full/hard/hard-inlined/tiny) are tagged so the
     # report's dataset selector works even when re-rendering older data.
@@ -354,7 +357,8 @@ def report(scoreboard_path, output, function_data) -> None:
 @main.command()
 @click.argument("name")
 @click.option(
-    "-o", "--output",
+    "-o",
+    "--output",
     type=click.Path(),
     default=".",
     help="Output directory for project file",
@@ -404,9 +408,7 @@ def dataset_save(results_dir, name, store) -> None:
     from decbench.dataset import save_dataset
 
     console = Console()
-    manifest = save_dataset(
-        Path(results_dir), name, store_root=Path(store) if store else None
-    )
+    manifest = save_dataset(Path(results_dir), name, store_root=Path(store) if store else None)
     console.print(
         f"Saved dataset [bold]{name}[/bold]: {len(manifest.binaries)} binaries "
         f"across {len(manifest.compile_sets())} compile-sets."
@@ -455,11 +457,16 @@ def dataset_materialize(name, dest, store) -> None:
 @main.command()
 @click.argument("function_data", type=click.Path(exists=True))
 @click.option(
-    "-o", "--output", type=click.Path(), default="subset_large.json",
+    "-o",
+    "--output",
+    type=click.Path(),
+    default="subset_large.json",
     help="Where to write the subset manifest",
 )
 @click.option(
-    "--method", type=click.Choice(["std", "percentile"]), default="std",
+    "--method",
+    type=click.Choice(["std", "percentile"]),
+    default="std",
     help="Tail selection: mean+k*std, or top-(100-k) percentile",
 )
 @click.option("--k", type=float, default=1.0, help="std multiplier or percentile")
@@ -483,6 +490,126 @@ def subset(function_data, output, method, k) -> None:
         f"Large subset: [bold]{len(manifest.functions)}[/bold] / {dist['count']} "
         f"functions (threshold size >= {manifest.threshold:.1f}) -> {output}"
     )
+
+
+@main.command()
+@click.argument("results", type=click.Path(exists=True))
+@click.option(
+    "-b",
+    "--base-decompiler",
+    "base",
+    required=True,
+    help="Decompiler that is WINNING on the metric (the reference to learn from)",
+)
+@click.option(
+    "-t",
+    "--target-decompiler",
+    "target",
+    required=True,
+    help="Decompiler that is LOSING on the metric (the one to improve)",
+)
+@click.option(
+    "-m",
+    "--metric",
+    default="ged",
+    show_default=True,
+    help="Metric to compare on (e.g. ged, type_match, byte_match)",
+)
+@click.option(
+    "--perfect-only",
+    is_flag=True,
+    help="Only show functions where the base decompiler is a PERFECT match on "
+    "the metric (GED == 0, type_match/byte_match == 1)",
+)
+@click.option(
+    "--include-target-missing",
+    is_flag=True,
+    help="Also include functions the base scored but for which the target has "
+    "no usable score — it failed to decompile, or the metric errored (e.g. GED "
+    "inf). Counts as the target losing.",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=50,
+    show_default=True,
+    help="Maximum number of cases to show (0 = all)",
+)
+@click.option(
+    "-f",
+    "--format",
+    "out_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="Output format",
+)
+def improvements(
+    results, base, target, metric, perfect_only, include_target_missing, limit, out_format
+) -> None:
+    """Find per-function cases where BASE beats TARGET on a metric.
+
+    RESULTS is a benchmark results directory (or a function_results.json file).
+    Each reported function is a concrete place the TARGET decompiler could
+    improve: it lists the binary, the path to it on disk, and the function
+    symbol + address (when resolvable). Respects each metric's direction, so
+    "beats" means a genuinely better score.
+
+    Example: places angr beats kuna on structural correctness, base perfect:
+
+        decbench improvements results/full_run -b angr -t kuna -m ged --perfect-only
+    """
+    import json as _json
+
+    from decbench.models.function_data import FunctionData
+    from decbench.scoring.improvements import find_improvement_cases, render_text
+
+    results_path = Path(results)
+    if results_path.is_dir():
+        fd_path = results_path / "function_results.json"
+        results_root: Path | None = results_path
+    else:
+        fd_path = results_path
+        results_root = results_path.parent
+
+    if not fd_path.exists():
+        raise click.ClickException(
+            f"No function_results.json found at {fd_path}. Point RESULTS at a "
+            "benchmark results directory (or the function_results.json itself)."
+        )
+
+    fd = FunctionData.from_json(fd_path)
+
+    try:
+        cases = find_improvement_cases(
+            fd,
+            base,
+            target,
+            metric,
+            perfect_only=perfect_only,
+            include_target_missing=include_target_missing,
+            results_root=results_root,
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
+    shown = cases if limit in (0, None) else cases[:limit]
+
+    if out_format == "json":
+        click.echo(_json.dumps([c.to_dict() for c in shown], indent=2))
+    else:
+        # click.echo (not rich) so wide tabular rows are not soft-wrapped.
+        click.echo(
+            render_text(
+                shown,
+                fd,
+                base=base,
+                target=target,
+                metric=metric,
+                total=len(cases),
+                perfect_only=perfect_only,
+            )
+        )
 
 
 @main.command("decompiler-build")

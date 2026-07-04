@@ -26,7 +26,7 @@ from pathlib import Path
 from decbench.models.function_data import FunctionData, HardestEntry, SampleEntry
 from decbench.models.scoreboard import DecompilerScore, MetricScore, Scoreboard
 from decbench.scoring.datasets import assign_datasets
-from decbench.utils import binfmt
+from decbench.utils.results_tree import resolve_binary
 from decbench.utils.source_extract import function_source
 
 MARKER = re.compile(r"^// Function: (\S+) @ (0x[0-9a-fA-F]+)\s*$", re.M)
@@ -59,17 +59,7 @@ class DiskReader:
         key = (opt, proj, stem)
         if key in self._bin_cache:
             return self._bin_cache[key]
-        comp = self.root / opt / proj / "compiled"
-        found: Path | None = None
-        if comp.is_dir():
-            exact = comp / stem
-            if exact.is_file() and binfmt.detect(exact):
-                found = exact
-            else:
-                for f in comp.iterdir():
-                    if f.is_file() and f.stem == stem and binfmt.detect(f):
-                        found = f
-                        break
+        found = resolve_binary(self.root / opt / proj / "compiled", stem)
         self._bin_cache[key] = found
         return found
 

@@ -75,6 +75,11 @@ decbench report scoreboard.toml     # Generate HTML report (interactive if
 decbench dataset save results/sailr_full sailr   # snapshot compiled binaries (no recompile later)
 decbench dataset materialize sailr results/reuse # lay back out, then: decbench run --skip-compile
 decbench subset results/sailr_full/function_results.json  # large-function subset manifest
+# Find per-function improvement targets: functions where a BASE decompiler beats
+# a TARGET on a metric (respects each metric's direction; --perfect-only = base is
+# a perfect match, e.g. GED 0). Reads a results tree's function_results.json and
+# resolves each case to its binary path + function symbol/address on disk.
+decbench improvements results/full_run -b angr -t kuna -m ged --perfect-only
 decbench decompiler-build retdec    # build a dockerized decompiler image
 # Caching is automatic (content-addressed); DECBENCH_NO_CACHE=1 disables it.
 # Quick end-to-end smoke (raw backends + 2 Ghidra versions + caching + report):
