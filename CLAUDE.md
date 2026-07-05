@@ -45,7 +45,6 @@ DecBench is a benchmarking suite for evaluating decompiler performance. It imple
   `site-packages/pyjoern/bin/joern-cli/` (its zip SHA-512 must equal
   `pyjoern.__init__.JOERN_ZIP_HASH`). Re-apply after any pyjoern reinstall.
 - `pygraphviz` builds against the system `libgraphviz-dev` (installed).
-- See PROGRESS.md "Environment setup" / "Target expansion" for full rebuild notes.
 
 ## Common Commands
 
@@ -315,8 +314,6 @@ Project TOML → `Project` → compile → binaries + .i files → decompile →
 - `decbench/config.py` - Global configuration (searches decbench.toml, ~/.config/decbench/config.toml)
 - `tests/example_project/` - Example C project with Makefile for testing (Makefile uses
   `CFLAGS ?=` so the pipeline's env CFLAGS — which carry the opt level — take effect)
-- `e2e_test_3metrics.py` - End-to-end test with all 3 metrics on coreutils
-- `PROGRESS.md` - Work log: environment setup details, declib integration notes, results
 
 ## Optimization levels
 

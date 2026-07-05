@@ -40,8 +40,8 @@ DecBench runs a three-stage pipeline:
 
 ```
 Source Code (TOML config)
-    --> Compile (gcc, multiple -O levels)
-    --> Decompile (angr, Ghidra, IDA)
+    --> Compile (gcc / cross / MinGW, multiple -O levels)
+    --> Decompile (angr, phoenix, Ghidra, IDA, Binary Ninja, ...)
     --> Evaluate (GED + Type Match + Byte Match)
     --> Scoreboard + HTML Report
 ```
@@ -179,6 +179,25 @@ base score. Cases are ordered by the largest base advantage first.
 
 `RESULTS` may be a results directory or a `function_results.json` file directly.
 
+## Published datasets
+
+Benchmark runs can be published as a public, reusable dataset (compiled
+binaries, preprocessed sources, source/decompiled CFGs, per-function results and
+scores) and pulled back down without recompiling or re-decompiling:
+
+```bash
+# Download a published config: full / hard / hard-inlined / tiny.
+decbench download tiny --dest ./decbench-data
+#   (thin alias for the standalone `decbench-data` consumer package; fetch a
+#    subset with --include binaries,sources,cfgs,results,scores)
+
+# Publish a results tree to the dataset repo layout.
+python scripts/publish_dataset.py results/full_run --dest ~/github/decbench-dataset
+```
+
+See [docs/DATASET_PUBLISHING.md](docs/DATASET_PUBLISHING.md) for the repo layout,
+the publisher, and the lightweight consumer CLI.
+
 ## Project Configuration
 
 Projects are defined via TOML files:
@@ -199,9 +218,21 @@ base_flags = ["-g", "-fno-inline", "-fno-builtin"]
 
 ## Supported Decompilers
 
-- **angr** - Open-source binary analysis framework (multiple structuring algorithms)
+Each backend subclasses the `Decompiler` ABC and registers by name; a
+decompiler's identity is `name` or `name@version` (e.g. `ghidra@12.0` vs
+`ghidra@12.1`), so multiple versions can be benchmarked as distinct columns.
+`decbench list-decompilers` shows what's available on the current machine.
+
+- **angr** - Open-source binary analysis framework (default SAILR structurer)
+- **phoenix** - angr driven with the Phoenix structurer (a distinct decompiler)
 - **Ghidra** - NSA's open-source reverse engineering tool (via pyghidra)
 - **IDA Pro** - Commercial decompiler (via idalib, IDA 9+)
+- **Binary Ninja** - Commercial decompiler (headless, needs a license)
+- **kuna** - experimental structuring backend
+
+The canonical `angr`/`ghidra`/`ida`/`binja` backends drive each tool's own API
+directly (no `declib`). Additional backends run in Docker: **RetDec**, **Reko**,
+and **r2dec** (build images with `decbench decompiler-build <name>`).
 
 ## Results
 

@@ -612,6 +612,82 @@ def improvements(
         )
 
 
+@main.command("download")
+@click.argument("config")
+@click.option(
+    "--dest",
+    type=click.Path(),
+    default=None,
+    help="Directory to download into (mirrors the dataset repo layout)",
+)
+@click.option(
+    "--repo-path",
+    type=click.Path(),
+    default=None,
+    help="Read from a LOCAL dataset repo directory instead of the HuggingFace hub",
+)
+@click.option(
+    "--include",
+    default=None,
+    help="Comma-separated sections to fetch "
+    "(binaries,sources,cfgs,results,scores); default: all",
+)
+@click.option(
+    "--revision",
+    default=None,
+    help="Dataset repo revision/branch/tag to fetch (default: main)",
+)
+def download(config, dest, repo_path, include, revision) -> None:
+    """Download a published DecBench dataset config (alias for `decbench-data`).
+
+    CONFIG is one of the published configs: full / hard / hard-inlined / tiny.
+    This is a thin alias that delegates to the standalone `decbench_data`
+    package (shipped from the HuggingFace dataset repo), so no heavy DecBench
+    imports are pulled in.
+    """
+    # Lazy import: the consumer package is optional and lives in the dataset repo.
+    try:
+        import decbench_data
+    except ImportError:
+        click.echo(
+            "The dataset tooling isn't installed. Run: pip install decbench-data  "
+            "(or: pip install "
+            "git+https://huggingface.co/datasets/noelo-lab/decbench-dataset)",
+            err=True,
+        )
+        raise SystemExit(1)
+
+    # Prefer a plain function entrypoint; fall back to the package's CLI callable.
+    entry = getattr(decbench_data, "download", None)
+    if callable(entry):
+        entry(
+            config,
+            dest=dest,
+            repo_path=repo_path,
+            include=include,
+            revision=revision,
+        )
+        return
+
+    cli = getattr(decbench_data, "main", None) or getattr(decbench_data, "cli", None)
+    if cli is None:
+        raise click.ClickException(
+            "decbench_data is installed but exposes no download entrypoint; "
+            "upgrade it or run the `decbench-data download` command directly."
+        )
+    argv = ["download", config]
+    if dest:
+        argv += ["--dest", dest]
+    if repo_path:
+        argv += ["--repo-path", repo_path]
+    if include:
+        argv += ["--include", include]
+    if revision:
+        argv += ["--revision", revision]
+    # click Command and argparse-style main both accept an argv list positionally.
+    cli(argv)
+
+
 @main.command("decompiler-build")
 @click.argument("name")
 def decompiler_build(name) -> None:
