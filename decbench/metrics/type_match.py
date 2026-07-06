@@ -466,15 +466,33 @@ def extract_types_from_decompiled_code(code: str) -> list[dict[str, Any]]:
     return variables
 
 
+def _candidate_shifts(gt_offsets: list[int], decomp_offsets: list[int]) -> list[int]:
+    """The additive shifts worth testing to align decompiled to GT offsets.
+
+    A shift ``k`` can only align a slot when ``k = g - d`` for some ground-truth
+    ``g`` and decompiled ``d`` (plus ``k = 0``). Enumerating exactly those
+    differences is **adaptive and uncapped**: it covers any frame size instead of
+    a fixed window. This matters because a decompiler's stack offsets need not be
+    rbp/CFA-relative like DWARF — IDA's Hex-Rays offsets are *frame-bottom*
+    relative, so they differ from DWARF by a per-function constant (≈ the frame
+    size) that routinely exceeds ±32. Sorted by increasing ``|k|`` so ties resolve
+    toward the smallest magnitude.
+    """
+    candidates = {g - d for g in gt_offsets for d in decomp_offsets}
+    candidates.add(0)
+    return sorted(candidates, key=lambda x: (abs(x), x))
+
+
 def _calibrate_shift(gt_offsets: list[int], decomp_offsets: list[int]) -> int | None:
     """Find an additive shift aligning decompiled offsets to ground-truth offsets.
 
-    Searches shifts ``k`` in ``range(-32, 33)`` (ties broken toward the smallest
-    ``|k|``) maximizing the count of decompiled offsets ``d`` where ``d + k`` is a
-    ground-truth offset. To avoid spurious single-variable alignments: if a nonzero
-    ``k`` is best and there are at least 2 decompiled offsets, that ``k`` must align
-    at least 2 offsets; otherwise fall back to ``k = 0`` if it aligns at least 1,
-    else return ``None``.
+    Tests the adaptive candidate shifts (see :func:`_candidate_shifts` — no fixed
+    ``±32`` window, so frame-bottom-relative conventions like IDA's are handled),
+    picking the ``k`` (ties toward smallest ``|k|``) that maximizes the count of
+    decompiled offsets ``d`` where ``d + k`` is a ground-truth offset. To avoid
+    spurious single-variable alignments: if a nonzero ``k`` is best and there are
+    at least 2 decompiled offsets, that ``k`` must align at least 2 offsets;
+    otherwise fall back to ``k = 0`` if it aligns at least 1, else return ``None``.
 
     Args:
         gt_offsets: Ground-truth stack offsets.
@@ -490,8 +508,7 @@ def _calibrate_shift(gt_offsets: list[int], decomp_offsets: list[int]) -> int | 
 
     best_k: int | None = None
     best_count = 0
-    # Iterate by increasing |k| so ties resolve toward the smallest magnitude.
-    for k in sorted(range(-32, 33), key=lambda x: (abs(x), x)):
+    for k in _candidate_shifts(gt_offsets, decomp_offsets):
         # Count UNIQUE ground-truth offsets matched so duplicate decompiled
         # slots cannot inflate a spurious shift.
         count = len({d + k for d in decomp_offsets} & gt_set)
@@ -532,6 +549,12 @@ def _calibrate_shift_multi(
     if not pairs:
         return None
 
+    # Binary-wide calibration stays in the ±32 window: pooled across the binary
+    # it is robust for the decompilers whose offsets are already rbp/CFA-relative
+    # (a small constant), and keeping it narrow avoids a coincidental large shift
+    # winning the vote. IDA's per-function frame-bottom offsets are handled
+    # separately by the per-function override in _match_structured, so they do
+    # not need (and must not perturb) this binary-wide shift.
     candidates = sorted(range(-32, 33), key=lambda x: (abs(x), x))
 
     def matches(gt_offs: list[int], dec_offs: list[int], k: int) -> int:
@@ -586,6 +609,11 @@ class TypeMatchMetric(Metric):
     name = "type_match"
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
+
+    # v2: per-function, adaptive (uncapped) stack-offset calibration so IDA's
+    # frame-bottom-relative offsets align with DWARF (the old binary-wide ±32
+    # shift silently failed for IDA, scoring most of its stack vars as misses).
+    cache_version = "2"
 
     weight = 1.0
     lower_is_better = False
@@ -731,18 +759,38 @@ class TypeMatchMetric(Metric):
         stack offset, then name. Each decompiled variable is credited at most
         once (DWARF can report more variables at an offset/name than the
         decompiler recovered, e.g. shadowed locals)."""
-        if calibration_shift is not None:
-            shift: int | None = calibration_shift
-        else:
-            gt_offsets: list[int] = []
-            for gv in ground_truth_vars:
-                gt_offsets.extend(gv.get("rbp_offset", []))
+        gt_offsets: list[int] = []
+        for gv in ground_truth_vars:
+            gt_offsets.extend(gv.get("rbp_offset", []))
+        decomp_offsets = [
+            v.stack_offset for v in decompiled.variables if v.stack_offset is not None
+        ]
+        gt_off_set = set(gt_offsets)
 
-            decomp_offsets = [
-                v.stack_offset for v in decompiled.variables if v.stack_offset is not None
-            ]
+        def _aligned(kk: int | None) -> int:
+            if kk is None or not decomp_offsets:
+                return 0
+            return len({d + kk for d in decomp_offsets} & gt_off_set)
 
-            shift = _calibrate_shift(gt_offsets, decomp_offsets)
+        # Start from the binary-wide calibrated shift (robust for functions with
+        # few stack slots), then override with THIS function's own shift when it
+        # aligns strictly more of the function's slots. IDA's Hex-Rays offsets are
+        # frame-bottom relative, so the GT<->decompiler gap is a *per-function*
+        # constant (≈ frame size) that no single binary-wide shift can fit;
+        # per-function calibration recovers those matches. Decompilers whose
+        # offsets are already binary-consistent are unaffected — their
+        # per-function shift never aligns strictly more than the binary one.
+        shift: int | None = calibration_shift if calibration_shift is not None else 0
+        func_shift = _calibrate_shift(gt_offsets, decomp_offsets)
+        if func_shift is not None and _aligned(shift) == 0 and _aligned(func_shift) > 0:
+            # Pure rescue: only when the binary-wide shift aligns NONE of this
+            # function's stack slots do we fall back to its own calibrated shift.
+            # This is the IDA case — its Hex-Rays offsets are frame-bottom
+            # relative, so the per-function GT gap is ≈ the frame size and no
+            # binary-wide ±32 shift fits. Decompilers whose offsets are already
+            # binary-consistent keep aligning >0 under the binary shift, so this
+            # never fires for them and their scores are byte-for-byte unchanged.
+            shift = func_shift
 
         k = shift if shift is not None else 0
 

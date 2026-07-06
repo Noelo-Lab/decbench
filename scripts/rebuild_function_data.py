@@ -278,6 +278,33 @@ def update_ged(fd: FunctionData, new: dict[str, dict]) -> int:
     return n
 
 
+def update_type_match(fd: FunctionData, new: dict[str, dict[str, float]]) -> int:
+    """Merge freshly recomputed type_match (from run checkpoints) in.
+
+    ``new`` is ``{decompiler: {"proj::opt::bin::fn": value}}`` (the shape emitted
+    by ``scripts/reeval_typematch.py``). For every covered (function, decompiler)
+    SET type_match + its perfect flag; entries with no fresh value are kept (the
+    reeval covers every checkpoint, so this is rare). Returns the number of
+    (function, decompiler) entries set. ged / byte_match / compile_rates are left
+    untouched.
+    """
+    n = 0
+    for g in fd.groups:
+        for f in g.functions:
+            for dec in fd.decompilers:
+                per = new.get(dec)
+                if not per:
+                    continue
+                val = per.get(f"{g.project}::{g.opt_level}::{g.binary}::{f.function}")
+                if val is None:
+                    continue
+                val = float(val)
+                f.values.setdefault(dec, {})["type_match"] = val
+                f.perfects.setdefault(dec, {})["type_match"] = val >= PERFECT["type_match"]
+                n += 1
+    return n
+
+
 def main() -> None:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else "results/sailr_full")
     # --add-only: fold a PARTIAL byte_match_new (e.g. the Docker ARM/PE recompile)
@@ -287,17 +314,24 @@ def main() -> None:
     # --ged: merge ged_new.json (header-stripped source CFGs) instead of byte_match;
     # keeps byte_match + compile_rates untouched.
     ged_mode = "--ged" in sys.argv[2:]
+    # --type-match: merge type_match_new.json (recomputed from checkpoints after a
+    # calibration fix) instead of byte_match; keeps byte_match/ged/compile_rates.
+    tm_mode = "--type-match" in sys.argv[2:]
     fd = FunctionData.from_json(root / "function_results.json")
     reader = DiskReader(root)
 
     print(
         f"[rebuild] {sum(len(g.functions) for g in fd.groups)} functions, "
         f"{len(fd.groups)} binaries, decompilers={fd.decompilers}, "
-        f"add_only={add_only}, ged={ged_mode}",
+        f"add_only={add_only}, ged={ged_mode}, type_match={tm_mode}",
         flush=True,
     )
 
-    if ged_mode:
+    if tm_mode:
+        new = json.loads((root / "type_match_new.json").read_text())
+        n = update_type_match(fd, new)
+        print(f"[rebuild] merged type_match for {n} (function,decompiler) entries", flush=True)
+    elif ged_mode:
         new = json.loads((root / "ged_new.json").read_text())
         n = update_ged(fd, new)
         print(f"[rebuild] merged GED for {n} (function,decompiler) entries", flush=True)
