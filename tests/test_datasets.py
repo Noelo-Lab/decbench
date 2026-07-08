@@ -1,4 +1,4 @@
-"""Tests for the curated dataset presets (full/hard/hard-inlined/tiny)."""
+"""Tests for the curated dataset presets (full/hard/hard-inlined/unoptimized/tiny)."""
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ def test_presets_are_attached() -> None:
         "full",
         "hard",
         "hard-inlined",
+        "unoptimized",
         "tiny",
     ]
 
@@ -39,6 +40,14 @@ def test_full_contains_everything() -> None:
     for g in fd.groups:
         for f in g.functions:
             assert "full" in f.datasets
+
+
+def test_unoptimized_is_exactly_O0() -> None:
+    fd = _make_data()
+    assign_datasets(fd)
+    for g in fd.groups:
+        for f in g.functions:
+            assert ("unoptimized" in f.datasets) == (g.opt_level == "O0")
 
 
 def test_hard_rules() -> None:

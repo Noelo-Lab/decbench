@@ -596,22 +596,29 @@ def main() -> int:
             )
 
             # 3) Evaluate, reusing the source CFGs (no re-extraction).
+            # DECBENCH_DECOMPILE_ONLY: skip the Joern GED eval here (a downstream
+            # reeval_ged pass re-scores every decompiler from the fresh .c anyway, so
+            # evaluating here is redundant double-Joern — the load hog). Decompile-only.
             te = time.time()
-            print(f"[{name}/{opt.value}] evaluating...", flush=True)
-            try:
-                ev = evaluate_project(
-                    project,
-                    dec,
-                    out_dir,
-                    opt,
-                    None,
-                    parallel=True,
-                    workers=WORKERS,
-                    precomputed_source_cfgs=src_cfgs,
-                )
-            except Exception as e:  # noqa: BLE001
-                print(f"[{name}/{opt.value}] evaluate ERROR: {e}", flush=True)
+            if os.environ.get("DECBENCH_DECOMPILE_ONLY") == "1":
+                print(f"[{name}/{opt.value}] evaluating... SKIPPED (DECOMPILE_ONLY)", flush=True)
                 ev = {}
+            else:
+                print(f"[{name}/{opt.value}] evaluating...", flush=True)
+                try:
+                    ev = evaluate_project(
+                        project,
+                        dec,
+                        out_dir,
+                        opt,
+                        None,
+                        parallel=True,
+                        workers=WORKERS,
+                        precomputed_source_cfgs=src_cfgs,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    print(f"[{name}/{opt.value}] evaluate ERROR: {e}", flush=True)
+                    ev = {}
             merged_eval = proj_eval.get(opt, {})
             for b_stem, emap in ev.items():
                 merged_eval.setdefault(b_stem, {}).update(emap)

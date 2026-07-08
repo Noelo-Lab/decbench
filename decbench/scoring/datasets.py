@@ -9,6 +9,8 @@ metadata on the :class:`FunctionData`:
   multiple opt levels counts multiple times; that double-counting is intended.
 * **hard** — optimized, **no inlining** (O2-noinline), **large** functions only.
 * **hard-inlined** — like *hard* but **with** inlining (plain O2), large only.
+* **unoptimized** — O0 functions only, to surface simple structural differences
+  without optimization noise.
 * **tiny** — ~100 functions total, evenly sampled from four categories
   (inlined=O2, optimized=O2-noinline, unoptimized=O0, large), spread evenly
   across projects, and — while there are enough distinct binaries — taking **at
@@ -69,6 +71,11 @@ PRESETS: list[DatasetPreset] = [
         name="hard-inlined",
         label="hard-inlined",
         description="optimized WITH inlining (O2), large functions only",
+    ),
+    DatasetPreset(
+        name="unoptimized",
+        label="unoptimized",
+        description="unoptimized only (O0) — surfaces simple structural differences",
     ),
     DatasetPreset(
         name="tiny",
@@ -203,9 +210,11 @@ def assign_datasets(
         (g, f) for g in function_data.groups for f in g.functions
     ]
 
-    # full / hard / hard-inlined are rule-based.
+    # full / hard / hard-inlined / unoptimized are rule-based.
     for g, f in records:
         ds = ["full"]
+        if g.opt_level == _O0:
+            ds.append("unoptimized")
         if is_large(f):
             if g.opt_level == _O2_NOINLINE:
                 ds.append("hard")
