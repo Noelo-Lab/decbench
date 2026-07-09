@@ -1,0 +1,17 @@
+{
+ "degenerate_projfunc": 11023,
+ "recoverable_strict": 2579,
+ "recoverable_loose": 3394,
+ "inf_total": 120517,
+ "inf_recoverable_strict": 77236,
+ "inf_recoverable_loose": 92774,
+ "inf_rec_strict_by_dec": {
+  "kuna": 14449,
+  "ida": 18297,
+  "phoenix": 11791,
+  "ghidra": 18528,
+  "angr": 11364,
+  "binja": 2807
+ },
+ "current_finite": 105236
+}

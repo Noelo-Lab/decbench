@@ -19,13 +19,13 @@ from __future__ import annotations
 
 import json
 import re
-import statistics
 import sys
 from pathlib import Path
 
 from decbench.models.function_data import FunctionData, HardestEntry, SampleEntry
-from decbench.models.scoreboard import DecompilerScore, MetricScore, Scoreboard
+from decbench.models.scoreboard import Scoreboard
 from decbench.scoring.datasets import assign_datasets
+from decbench.scoring.scoreboard import build_scoreboard_from_function_data
 from decbench.utils.results_tree import resolve_binary
 from decbench.utils.source_extract import function_source
 
@@ -96,10 +96,13 @@ def update_byte_match(
                         # No fresh value (artifact gone): drop any stale value.
                         mv.pop("byte_match", None)
                         f.perfects.get(dec, {}).pop("byte_match", None)
+                        f.distances.get(dec, {}).pop("byte_match", None)
                     continue
                 val = float(rec["value"])
                 mv["byte_match"] = val
                 f.perfects.setdefault(dec, {})["byte_match"] = val >= PERFECT["byte_match"]
+                if rec.get("dist") is not None:
+                    f.distances.setdefault(dec, {})["byte_match"] = float(rec["dist"])
                 t = tally.setdefault(dec, {"comp": 0, "tot": 0})
                 t["tot"] += 1
                 if rec.get("compilable"):
@@ -189,80 +192,40 @@ def build_hardest(fd: FunctionData, reader: DiskReader) -> list[HardestEntry]:
 
 
 def recompute_scoreboard(fd: FunctionData, old: Scoreboard) -> Scoreboard:
-    """Recompute per-metric + overall aggregates from the updated dataset."""
-    decs, metrics = fd.decompilers, fd.metrics
-    vals: dict[str, dict[str, list[float]]] = {d: {m: [] for m in metrics} for d in decs}
-    perf: dict[str, dict[str, int]] = {d: {m: 0 for m in metrics} for d in decs}
-    tot: dict[str, dict[str, int]] = {d: {m: 0 for m in metrics} for d in decs}
-    overall_perf = {d: 0 for d in decs}
-    overall_tot = {d: 0 for d in decs}
+    """Recompute per-metric + overall aggregates from the updated dataset.
 
-    for g in fd.groups:
-        for f in g.functions:
-            for d in decs:
-                fp = f.perfects.get(d)
-                fv = f.values.get(d)
-                if not fp or not fv:
-                    continue
-                for m in metrics:
-                    if m in fv:
-                        tot[d][m] += 1
-                        vals[d][m].append(fv[m])
-                        if fp.get(m):
-                            perf[d][m] += 1
-                # Overall, matching scoring/scoreboard.py + the report JS: count
-                # ONLY functions evaluated on every metric; a function missing a
-                # metric (byte_match abstained for ARM/PE) is EXCLUDED, not failed.
-                if all(m in fp for m in metrics):
-                    overall_tot[d] += 1
-                    if all(fp[m] for m in metrics):
-                        overall_perf[d] += 1
-
-    sb = Scoreboard(
+    Delegates to the shared :func:`build_scoreboard_from_function_data` so the
+    persisted ``scoreboard.toml`` uses the SAME shared per-metric universe
+    denominators as the HTML report (identical across decompilers; a
+    decompile/metric failure is a not-perfect miss, not an exclusion).
+    """
+    return build_scoreboard_from_function_data(
+        fd,
         name=old.name or "DecBench Scoreboard",
         description=old.description,
         version=old.version,
-        projects_evaluated=sorted({g.project for g in fd.groups}),
-        optimization_levels=sorted({g.opt_level for g in fd.groups}),
-        decompilers=decs,
-        metrics=metrics,
-        total_functions=sum(len(g.functions) for g in fd.groups),
-        total_binaries=len(fd.groups),
     )
-    for d in decs:
-        ds = DecompilerScore(name=d)
-        for m in metrics:
-            n = tot[d][m]
-            ds.metric_scores[m] = MetricScore(
-                metric_name=m,
-                decompiler_name=d,
-                perfect_count=perf[d][m],
-                total_count=n,
-                perfect_percentage=(100 * perf[d][m] / n) if n else 0.0,
-                mean=statistics.fmean(vals[d][m]) if vals[d][m] else 0.0,
-                median=statistics.median(vals[d][m]) if vals[d][m] else 0.0,
-            )
-        ds.overall_perfect_count = overall_perf[d]
-        ds.overall_total_count = overall_tot[d]
-        ds.overall_perfect_percentage = (
-            100 * overall_perf[d] / overall_tot[d] if overall_tot[d] else 0.0
-        )
-        sb.decompiler_scores[d] = ds
-    for m in metrics:
-        for rank, (d, _) in enumerate(sb.get_metric_rankings(m), 1):
-            sb.decompiler_scores[d].metric_scores[m].rank = rank
-    for rank, (d, _) in enumerate(sb.get_overall_rankings(), 1):
-        sb.decompiler_scores[d].overall_rank = rank
-    return sb
 
 
 def update_ged(fd: FunctionData, new: dict[str, dict]) -> int:
-    """Merge freshly recomputed GED (from header-stripped source CFGs) in.
+    """Replace the whole GED column with the freshly recomputed values.
 
-    For every (function, decompiler) with a fresh GED value, SET ged + its perfect
-    flag. Existing GED with no fresh value is kept (the reeval is a superset, so
-    this is rare). Returns the number of (function, decompiler) entries set.
+    The reeval (``scripts/reeval_ged.py``) now DROPS unmeasurable functions
+    (empty-prototype/degenerate source) and pairs each binary against its own
+    translation unit, so its output is the authoritative, collision-free GED set.
+    We first CLEAR every existing ged value/perfect (purging stale ``inf`` entries
+    and wrong-source scores from the prior run) and then apply the new ones — a
+    function with no fresh GED ends up with NO ged key, i.e. excluded from GED's
+    denominator. Returns the number of (function, decompiler) entries set.
     """
+    for g in fd.groups:
+        for f in g.functions:
+            for mv in f.values.values():
+                mv.pop("ged", None)
+            for mp in f.perfects.values():
+                mp.pop("ged", None)
+            for md in f.distances.values():
+                md.pop("ged", None)
     n = 0
     for g in fd.groups:
         for f in g.functions:
@@ -274,6 +237,8 @@ def update_ged(fd: FunctionData, new: dict[str, dict]) -> int:
                 val = float(rec["value"])
                 f.values.setdefault(dec, {})["ged"] = val
                 f.perfects.setdefault(dec, {})["ged"] = bool(rec.get("perfect", val == 0.0))
+                # GED distance IS the graph edit distance (the value itself).
+                f.distances.setdefault(dec, {})["ged"] = val
                 n += 1
     return n
 
@@ -295,12 +260,21 @@ def update_type_match(fd: FunctionData, new: dict[str, dict[str, float]]) -> int
                 per = new.get(dec)
                 if not per:
                     continue
-                val = per.get(f"{g.project}::{g.opt_level}::{g.binary}::{f.function}")
-                if val is None:
+                rec = per.get(f"{g.project}::{g.opt_level}::{g.binary}::{f.function}")
+                if rec is None:
                     continue
-                val = float(val)
+                # Back-compat: older type_match_new.json stored a bare float; the
+                # new form is {"value": accuracy, "dist": type-flips (fp+fn)}.
+                if isinstance(rec, dict):
+                    val = float(rec["value"])
+                    dist = rec.get("dist")
+                else:
+                    val = float(rec)
+                    dist = None
                 f.values.setdefault(dec, {})["type_match"] = val
                 f.perfects.setdefault(dec, {})["type_match"] = val >= PERFECT["type_match"]
+                if dist is not None:
+                    f.distances.setdefault(dec, {})["type_match"] = float(dist)
                 n += 1
     return n
 

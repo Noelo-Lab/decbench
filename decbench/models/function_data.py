@@ -25,6 +25,14 @@ class FunctionRecord(BaseModel):
         default_factory=dict,
         description="decompiler -> metric -> whether the value is perfect",
     )
+    distances: dict[str, dict[str, float]] = Field(
+        default_factory=dict,
+        description="decompiler -> metric -> raw EDIT DISTANCE to a perfect result "
+        "(lower is better): GED = the graph edit distance itself; type_match = "
+        "number of type-flips to exact (fp+fn); byte_match = number of changed "
+        "assembly lines. Powers the report's 'distance' view; absent for a "
+        "(decompiler, metric) with no computed value.",
+    )
     decompiled: dict[str, bool] = Field(
         default_factory=dict,
         description="decompiler -> whether it successfully produced output for "

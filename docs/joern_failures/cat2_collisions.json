@@ -1,0 +1,1142 @@
+{
+ "true_collision_groups": 508,
+ "harmless_dup_groups": 5615,
+ "wrong_source_evals_upper": 11665,
+ "wrong_source_evals_finite": 8457,
+ "per_project": {
+  "diffutils": {
+   "collision_groups": 9,
+   "wrong_source_evals": 157
+  },
+  "openssh-portable": {
+   "collision_groups": 224,
+   "wrong_source_evals": 2493
+  },
+  "gnutls": {
+   "collision_groups": 57,
+   "wrong_source_evals": 836
+  },
+  "bzip2": {
+   "collision_groups": 7,
+   "wrong_source_evals": 38
+  },
+  "iproute2": {
+   "collision_groups": 6,
+   "wrong_source_evals": 32
+  },
+  "coreutils": {
+   "collision_groups": 81,
+   "wrong_source_evals": 4481
+  },
+  "shadow": {
+   "collision_groups": 51,
+   "wrong_source_evals": 2461
+  },
+  "libacl": {
+   "collision_groups": 22,
+   "wrong_source_evals": 148
+  },
+  "zlib": {
+   "collision_groups": 5,
+   "wrong_source_evals": 138
+  },
+  "dpkg": {
+   "collision_groups": 11,
+   "wrong_source_evals": 204
+  },
+  "sysvinit": {
+   "collision_groups": 16,
+   "wrong_source_evals": 449
+  },
+  "cronie": {
+   "collision_groups": 11,
+   "wrong_source_evals": 102
+  },
+  "bash": {
+   "collision_groups": 8,
+   "wrong_source_evals": 126
+  }
+ },
+ "worst_names": [
+  {
+   "project": "coreutils",
+   "opt": "O2",
+   "func": "main",
+   "binaries": 108,
+   "skel_variants": 97,
+   "cached_nodes": 34,
+   "wrong_evals": 635
+  },
+  {
+   "project": "coreutils",
+   "opt": "O2-noinline",
+   "func": "main",
+   "binaries": 108,
+   "skel_variants": 97,
+   "cached_nodes": 34,
+   "wrong_evals": 634
+  },
+  {
+   "project": "coreutils",
+   "opt": "O0",
+   "func": "usage",
+   "binaries": 107,
+   "skel_variants": 54,
+   "cached_nodes": 4,
+   "wrong_evals": 623
+  },
+  {
+   "project": "coreutils",
+   "opt": "O2",
+   "func": "usage",
+   "binaries": 107,
+   "skel_variants": 58,
+   "cached_nodes": 4,
+   "wrong_evals": 621
+  },
+  {
+   "project": "coreutils",
+   "opt": "O2-noinline",
+   "func": "usage",
+   "binaries": 107,
+   "skel_variants": 54,
+   "cached_nodes": 4,
+   "wrong_evals": 617
+  },
+  {
+   "project": "coreutils",
+   "opt": "O0",
+   "func": "main",
+   "binaries": 108,
+   "skel_variants": 99,
+   "cached_nodes": 34,
+   "wrong_evals": 613
+  },
+  {
+   "project": "shadow",
+   "opt": "O0",
+   "func": "main",
+   "binaries": 40,
+   "skel_variants": 38,
+   "cached_nodes": 56,
+   "wrong_evals": 234
+  },
+  {
+   "project": "shadow",
+   "opt": "O2",
+   "func": "main",
+   "binaries": 40,
+   "skel_variants": 40,
+   "cached_nodes": 56,
+   "wrong_evals": 233
+  },
+  {
+   "project": "shadow",
+   "opt": "O2-noinline",
+   "func": "main",
+   "binaries": 40,
+   "skel_variants": 39,
+   "cached_nodes": 56,
+   "wrong_evals": 233
+  },
+  {
+   "project": "shadow",
+   "opt": "O0",
+   "func": "usage",
+   "binaries": 35,
+   "skel_variants": 15,
+   "cached_nodes": 1,
+   "wrong_evals": 204
+  },
+  {
+   "project": "shadow",
+   "opt": "O2-noinline",
+   "func": "usage",
+   "binaries": 35,
+   "skel_variants": 13,
+   "cached_nodes": 1,
+   "wrong_evals": 204
+  },
+  {
+   "project": "shadow",
+   "opt": "O2",
+   "func": "usage",
+   "binaries": 33,
+   "skel_variants": 13,
+   "cached_nodes": 1,
+   "wrong_evals": 191
+  },
+  {
+   "project": "shadow",
+   "opt": "O0",
+   "func": "process_flags",
+   "binaries": 22,
+   "skel_variants": 18,
+   "cached_nodes": 163,
+   "wrong_evals": 126
+  },
+  {
+   "project": "shadow",
+   "opt": "O2-noinline",
+   "func": "process_flags",
+   "binaries": 22,
+   "skel_variants": 18,
+   "cached_nodes": 163,
+   "wrong_evals": 125
+  },
+  {
+   "project": "shadow",
+   "opt": "O0",
+   "func": "fail_exit",
+   "binaries": 17,
+   "skel_variants": 5,
+   "cached_nodes": 55,
+   "wrong_evals": 96
+  },
+  {
+   "project": "shadow",
+   "opt": "O0",
+   "func": "open_files",
+   "binaries": 14,
+   "skel_variants": 10,
+   "cached_nodes": 33,
+   "wrong_evals": 78
+  },
+  {
+   "project": "shadow",
+   "opt": "O0",
+   "func": "close_files",
+   "binaries": 14,
+   "skel_variants": 12,
+   "cached_nodes": 112,
+   "wrong_evals": 78
+  },
+  {
+   "project": "sysvinit",
+   "opt": "O0",
+   "func": "main",
+   "binaries": 14,
+   "skel_variants": 14,
+   "cached_nodes": 39,
+   "wrong_evals": 78
+  },
+  {
+   "project": "sysvinit",
+   "opt": "O2",
+   "func": "main",
+   "binaries": 14,
+   "skel_variants": 14,
+   "cached_nodes": 39,
+   "wrong_evals": 78
+  },
+  {
+   "project": "sysvinit",
+   "opt": "O2-noinline",
+   "func": "main",
+   "binaries": 14,
+   "skel_variants": 14,
+   "cached_nodes": 39,
+   "wrong_evals": 78
+  },
+  {
+   "project": "shadow",
+   "opt": "O2-noinline",
+   "func": "open_files",
+   "binaries": 14,
+   "skel_variants": 13,
+   "cached_nodes": 33,
+   "wrong_evals": 71
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2-noinline",
+   "func": "main",
+   "binaries": 12,
+   "skel_variants": 12,
+   "cached_nodes": 275,
+   "wrong_evals": 66
+  },
+  {
+   "project": "shadow",
+   "opt": "O2-noinline",
+   "func": "close_files",
+   "binaries": 14,
+   "skel_variants": 13,
+   "cached_nodes": 112,
+   "wrong_evals": 65
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2",
+   "func": "main",
+   "binaries": 12,
+   "skel_variants": 12,
+   "cached_nodes": 275,
+   "wrong_evals": 64
+  },
+  {
+   "project": "shadow",
+   "opt": "O0",
+   "func": "check_perms",
+   "binaries": 11,
+   "skel_variants": 8,
+   "cached_nodes": 36,
+   "wrong_evals": 60
+  },
+  {
+   "project": "shadow",
+   "opt": "O2",
+   "func": "fail_exit",
+   "binaries": 12,
+   "skel_variants": 4,
+   "cached_nodes": 55,
+   "wrong_evals": 55
+  },
+  {
+   "project": "shadow",
+   "opt": "O2-noinline",
+   "func": "fail_exit",
+   "binaries": 12,
+   "skel_variants": 4,
+   "cached_nodes": 55,
+   "wrong_evals": 55
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "main",
+   "binaries": 12,
+   "skel_variants": 12,
+   "cached_nodes": 275,
+   "wrong_evals": 53
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2-noinline",
+   "func": "sshfatal",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 49
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2-noinline",
+   "func": "cleanup_exit",
+   "binaries": 12,
+   "skel_variants": 4,
+   "cached_nodes": 1,
+   "wrong_evals": 49
+  },
+  {
+   "project": "sysvinit",
+   "opt": "O0",
+   "func": "usage",
+   "binaries": 9,
+   "skel_variants": 4,
+   "cached_nodes": 1,
+   "wrong_evals": 48
+  },
+  {
+   "project": "gnutls",
+   "opt": "O2",
+   "func": "main",
+   "binaries": 9,
+   "skel_variants": 9,
+   "cached_nodes": 91,
+   "wrong_evals": 48
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2-noinline",
+   "func": "tilde_expand_filename",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 48
+  },
+  {
+   "project": "gnutls",
+   "opt": "O2-noinline",
+   "func": "main",
+   "binaries": 9,
+   "skel_variants": 8,
+   "cached_nodes": 91,
+   "wrong_evals": 48
+  },
+  {
+   "project": "sysvinit",
+   "opt": "O2-noinline",
+   "func": "usage",
+   "binaries": 9,
+   "skel_variants": 4,
+   "cached_nodes": 1,
+   "wrong_evals": 48
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "sshlogdie",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 47
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "xmalloc",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 5,
+   "wrong_evals": 47
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "xcalloc",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 9,
+   "wrong_evals": 47
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "xreallocarray",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 3,
+   "wrong_evals": 47
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "xrecallocarray",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 3,
+   "wrong_evals": 47
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "xvasprintf",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 5,
+   "wrong_evals": 47
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "cleanup_exit",
+   "binaries": 12,
+   "skel_variants": 4,
+   "cached_nodes": 1,
+   "wrong_evals": 47
+  },
+  {
+   "project": "coreutils",
+   "opt": "O0",
+   "func": "split_3",
+   "binaries": 9,
+   "skel_variants": 3,
+   "cached_nodes": 34,
+   "wrong_evals": 47
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2",
+   "func": "sshfatal",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 47
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "put_host_port",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 46
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "addargs",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 46
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "replacearg",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 46
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "tilde_expand_filename",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 46
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "vdollar_percent_expand",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 63,
+   "wrong_evals": 46
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "percent_expand",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 3,
+   "wrong_evals": 46
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "percent_dollar_expand",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 3,
+   "wrong_evals": 46
+  },
+  {
+   "project": "gnutls",
+   "opt": "O0",
+   "func": "main",
+   "binaries": 9,
+   "skel_variants": 8,
+   "cached_nodes": 91,
+   "wrong_evals": 46
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "mktemp_proto",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 45
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2",
+   "func": "tilde_expand_filename",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 45
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "argv_assemble",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 44
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "child_set_env",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 44
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "opt_array_append2",
+   "binaries": 12,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 42
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2",
+   "func": "cleanup_exit",
+   "binaries": 11,
+   "skel_variants": 4,
+   "cached_nodes": 1,
+   "wrong_evals": 42
+  },
+  {
+   "project": "coreutils",
+   "opt": "O0",
+   "func": "output_file",
+   "binaries": 8,
+   "skel_variants": 3,
+   "cached_nodes": 1,
+   "wrong_evals": 41
+  },
+  {
+   "project": "coreutils",
+   "opt": "O2-noinline",
+   "func": "split_3",
+   "binaries": 8,
+   "skel_variants": 3,
+   "cached_nodes": 34,
+   "wrong_evals": 40
+  },
+  {
+   "project": "gnutls",
+   "opt": "O0",
+   "func": "process_options",
+   "binaries": 8,
+   "skel_variants": 8,
+   "cached_nodes": 1,
+   "wrong_evals": 38
+  },
+  {
+   "project": "gnutls",
+   "opt": "O0",
+   "func": "usage",
+   "binaries": 8,
+   "skel_variants": 6,
+   "cached_nodes": 1,
+   "wrong_evals": 38
+  },
+  {
+   "project": "gnutls",
+   "opt": "O2-noinline",
+   "func": "usage",
+   "binaries": 8,
+   "skel_variants": 6,
+   "cached_nodes": 1,
+   "wrong_evals": 38
+  },
+  {
+   "project": "gnutls",
+   "opt": "O2-noinline",
+   "func": "process_options",
+   "binaries": 8,
+   "skel_variants": 8,
+   "cached_nodes": 1,
+   "wrong_evals": 38
+  },
+  {
+   "project": "gnutls",
+   "opt": "O2",
+   "func": "usage",
+   "binaries": 8,
+   "skel_variants": 6,
+   "cached_nodes": 1,
+   "wrong_evals": 37
+  },
+  {
+   "project": "gnutls",
+   "opt": "O2",
+   "func": "process_options",
+   "binaries": 8,
+   "skel_variants": 8,
+   "cached_nodes": 1,
+   "wrong_evals": 36
+  },
+  {
+   "project": "sysvinit",
+   "opt": "O2",
+   "func": "usage",
+   "binaries": 7,
+   "skel_variants": 4,
+   "cached_nodes": 1,
+   "wrong_evals": 36
+  },
+  {
+   "project": "bash",
+   "opt": "O0",
+   "func": "main",
+   "binaries": 7,
+   "skel_variants": 7,
+   "cached_nodes": 150,
+   "wrong_evals": 35
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2",
+   "func": "sshsk_load_resident",
+   "binaries": 9,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 35
+  },
+  {
+   "project": "bash",
+   "opt": "O2",
+   "func": "main",
+   "binaries": 7,
+   "skel_variants": 7,
+   "cached_nodes": 150,
+   "wrong_evals": 35
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2-noinline",
+   "func": "sshsk_enroll",
+   "binaries": 9,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 35
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2-noinline",
+   "func": "sshsk_sign",
+   "binaries": 9,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 35
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2-noinline",
+   "func": "sshsk_load_resident",
+   "binaries": 9,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 35
+  },
+  {
+   "project": "bash",
+   "opt": "O2-noinline",
+   "func": "main",
+   "binaries": 7,
+   "skel_variants": 7,
+   "cached_nodes": 150,
+   "wrong_evals": 35
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "sshsk_enroll",
+   "binaries": 9,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 34
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "sshsk_sign",
+   "binaries": 9,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 34
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "sshsk_load_resident",
+   "binaries": 9,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 34
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2",
+   "func": "sshsk_enroll",
+   "binaries": 9,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 34
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2",
+   "func": "sshsk_sign",
+   "binaries": 9,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 34
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "sys_tun_infilter",
+   "binaries": 10,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 32
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "sys_tun_outfilter",
+   "binaries": 10,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 32
+  },
+  {
+   "project": "shadow",
+   "opt": "O0",
+   "func": "check_flags",
+   "binaries": 6,
+   "skel_variants": 6,
+   "cached_nodes": 1,
+   "wrong_evals": 30
+  },
+  {
+   "project": "zlib",
+   "opt": "O0",
+   "func": "main",
+   "binaries": 6,
+   "skel_variants": 2,
+   "cached_nodes": 53,
+   "wrong_evals": 30
+  },
+  {
+   "project": "zlib",
+   "opt": "O2",
+   "func": "main",
+   "binaries": 6,
+   "skel_variants": 2,
+   "cached_nodes": 53,
+   "wrong_evals": 30
+  },
+  {
+   "project": "zlib",
+   "opt": "O2-noinline",
+   "func": "main",
+   "binaries": 6,
+   "skel_variants": 2,
+   "cached_nodes": 53,
+   "wrong_evals": 30
+  },
+  {
+   "project": "shadow",
+   "opt": "O2-noinline",
+   "func": "check_perms",
+   "binaries": 6,
+   "skel_variants": 6,
+   "cached_nodes": 36,
+   "wrong_evals": 29
+  },
+  {
+   "project": "coreutils",
+   "opt": "O0",
+   "func": "errno_unsupported",
+   "binaries": 6,
+   "skel_variants": 2,
+   "cached_nodes": 5,
+   "wrong_evals": 25
+  },
+  {
+   "project": "shadow",
+   "opt": "O0",
+   "func": "grp_update",
+   "binaries": 5,
+   "skel_variants": 5,
+   "cached_nodes": 2,
+   "wrong_evals": 24
+  },
+  {
+   "project": "zlib",
+   "opt": "O2",
+   "func": "inflateReset2",
+   "binaries": 5,
+   "skel_variants": 2,
+   "cached_nodes": 18,
+   "wrong_evals": 24
+  },
+  {
+   "project": "zlib",
+   "opt": "O2",
+   "func": "inflateSync",
+   "binaries": 5,
+   "skel_variants": 2,
+   "cached_nodes": 17,
+   "wrong_evals": 24
+  },
+  {
+   "project": "dpkg",
+   "opt": "O2",
+   "func": "main",
+   "binaries": 5,
+   "skel_variants": 4,
+   "cached_nodes": 3,
+   "wrong_evals": 24
+  },
+  {
+   "project": "dpkg",
+   "opt": "O2-noinline",
+   "func": "main",
+   "binaries": 5,
+   "skel_variants": 4,
+   "cached_nodes": 3,
+   "wrong_evals": 24
+  },
+  {
+   "project": "dpkg",
+   "opt": "O0",
+   "func": "printversion",
+   "binaries": 5,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 23
+  },
+  {
+   "project": "dpkg",
+   "opt": "O0",
+   "func": "usage",
+   "binaries": 5,
+   "skel_variants": 5,
+   "cached_nodes": 1,
+   "wrong_evals": 23
+  },
+  {
+   "project": "dpkg",
+   "opt": "O0",
+   "func": "main",
+   "binaries": 5,
+   "skel_variants": 4,
+   "cached_nodes": 3,
+   "wrong_evals": 23
+  },
+  {
+   "project": "shadow",
+   "opt": "O2-noinline",
+   "func": "grp_update",
+   "binaries": 5,
+   "skel_variants": 5,
+   "cached_nodes": 2,
+   "wrong_evals": 23
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "send_msg",
+   "binaries": 6,
+   "skel_variants": 4,
+   "cached_nodes": 2,
+   "wrong_evals": 22
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O0",
+   "func": "seed_rng",
+   "binaries": 8,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 22
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2",
+   "func": "send_msg",
+   "binaries": 6,
+   "skel_variants": 3,
+   "cached_nodes": 2,
+   "wrong_evals": 22
+  },
+  {
+   "project": "dpkg",
+   "opt": "O2",
+   "func": "printversion",
+   "binaries": 5,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 22
+  },
+  {
+   "project": "openssh-portable",
+   "opt": "O2-noinline",
+   "func": "send_msg",
+   "binaries": 6,
+   "skel_variants": 3,
+   "cached_nodes": 2,
+   "wrong_evals": 22
+  },
+  {
+   "project": "coreutils",
+   "opt": "O2-noinline",
+   "func": "cleanup",
+   "binaries": 5,
+   "skel_variants": 5,
+   "cached_nodes": 18,
+   "wrong_evals": 22
+  },
+  {
+   "project": "coreutils",
+   "opt": "O0",
+   "func": "cleanup",
+   "binaries": 5,
+   "skel_variants": 5,
+   "cached_nodes": 18,
+   "wrong_evals": 21
+  },
+  {
+   "project": "gnutls",
+   "opt": "O2-noinline",
+   "func": "cmd_parser",
+   "binaries": 5,
+   "skel_variants": 5,
+   "cached_nodes": 49,
+   "wrong_evals": 21
+  },
+  {
+   "project": "dpkg",
+   "opt": "O2-noinline",
+   "func": "printversion",
+   "binaries": 5,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 21
+  },
+  {
+   "project": "gnutls",
+   "opt": "O0",
+   "func": "cmd_parser",
+   "binaries": 5,
+   "skel_variants": 5,
+   "cached_nodes": 49,
+   "wrong_evals": 20
+  },
+  {
+   "project": "shadow",
+   "opt": "O0",
+   "func": "catch_signals",
+   "binaries": 4,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 18
+  },
+  {
+   "project": "diffutils",
+   "opt": "O2",
+   "func": "main",
+   "binaries": 4,
+   "skel_variants": 4,
+   "cached_nodes": 59,
+   "wrong_evals": 18
+  },
+  {
+   "project": "diffutils",
+   "opt": "O2",
+   "func": "try_help",
+   "binaries": 4,
+   "skel_variants": 2,
+   "cached_nodes": 12,
+   "wrong_evals": 18
+  },
+  {
+   "project": "diffutils",
+   "opt": "O2-noinline",
+   "func": "main",
+   "binaries": 4,
+   "skel_variants": 4,
+   "cached_nodes": 59,
+   "wrong_evals": 18
+  },
+  {
+   "project": "diffutils",
+   "opt": "O2-noinline",
+   "func": "try_help",
+   "binaries": 4,
+   "skel_variants": 3,
+   "cached_nodes": 12,
+   "wrong_evals": 18
+  },
+  {
+   "project": "shadow",
+   "opt": "O2-noinline",
+   "func": "catch_signals",
+   "binaries": 4,
+   "skel_variants": 2,
+   "cached_nodes": 1,
+   "wrong_evals": 18
+  },
+  {
+   "project": "diffutils",
+   "opt": "O0",
+   "func": "try_help",
+   "binaries": 4,
+   "skel_variants": 3,
+   "cached_nodes": 12,
+   "wrong_evals": 17
+  },
+  {
+   "project": "diffutils",
+   "opt": "O0",
+   "func": "usage",
+   "binaries": 4,
+   "skel_variants": 4,
+   "cached_nodes": 7,
+   "wrong_evals": 17
+  },
+  {
+   "project": "diffutils",
+   "opt": "O0",
+   "func": "main",
+   "binaries": 4,
+   "skel_variants": 4,
+   "cached_nodes": 59,
+   "wrong_evals": 17
+  },
+  {
+   "project": "coreutils",
+   "opt": "O0",
+   "func": "process_signals",
+   "binaries": 4,
+   "skel_variants": 2,
+   "cached_nodes": 8,
+   "wrong_evals": 17
+  },
+  {
+   "project": "coreutils",
+   "opt": "O0",
+   "func": "process_file",
+   "binaries": 4,
+   "skel_variants": 4,
+   "cached_nodes": 7,
+   "wrong_evals": 17
+  },
+  {
+   "project": "dpkg",
+   "opt": "O2",
+   "func": "usage",
+   "binaries": 5,
+   "skel_variants": 5,
+   "cached_nodes": 1,
+   "wrong_evals": 17
+  },
+  {
+   "project": "diffutils",
+   "opt": "O2-noinline",
+   "func": "usage",
+   "binaries": 4,
+   "skel_variants": 4,
+   "cached_nodes": 7,
+   "wrong_evals": 17
+  },
+  {
+   "project": "diffutils",
+   "opt": "O2-noinline",
+   "func": "check_stdout",
+   "binaries": 4,
+   "skel_variants": 3,
+   "cached_nodes": 4,
+   "wrong_evals": 17
+  }
+ ]
+}

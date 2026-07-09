@@ -141,14 +141,20 @@ def evaluate_project(
     else:
         logger.warning("No preprocessed sources for %s/%s", project.name, optimization)
 
-    # A binary's source functions may be defined in ANY of the project's
-    # translation units (multi-.c binaries), and decompiled functions are matched
-    # to source by NAME, so match every binary against the UNION of all the
-    # project's source CFGs rather than only its same-named .i — the per-binary
-    # lookup otherwise lost most GED coverage on multi-source binaries.
-    all_source_cfgs: dict = {}
-    for _cfgs in source_cfgs_by_binary.values():
-        all_source_cfgs.update(_cfgs or {})
+    # Match each binary's decompiled functions against source CFGs TU-aware:
+    # prefer the binary's OWN translation unit (so per-program functions like
+    # main/usage/static helpers hit the RIGHT body, not an arbitrary same-named
+    # function from another binary of the project), and fall back to the cross-TU
+    # best-by-name only for functions the own TU doesn't define (statically-linked
+    # library code). This replaces the old name-keyed union whose last-writer-wins
+    # collisions scored, e.g., nologin's 5-node main against another binary's
+    # 56-node main. See decbench.utils.cfg.resolved_source_for_binary.
+    from decbench.utils.cfg import best_source_by_name, resolved_source_for_binary
+
+    best_by_name = best_source_by_name(source_cfgs_by_binary)
+
+    def _source_for(binary_name: str) -> dict:
+        return resolved_source_for_binary(binary_name, source_cfgs_by_binary, best_by_name)
 
     if parallel:
         workers = workers or cpu_count()
@@ -157,7 +163,7 @@ def evaluate_project(
             futures = {}
 
             for binary_name, dec_results in decompilations.items():
-                source_cfgs = all_source_cfgs
+                source_cfgs = _source_for(binary_name)
 
                 for dec_name, decompilation in dec_results.items():
                     future = executor.submit(
@@ -182,7 +188,7 @@ def evaluate_project(
                     results[binary_name][dec_name] = {}
     else:
         for binary_name, dec_results in decompilations.items():
-            source_cfgs = all_source_cfgs
+            source_cfgs = _source_for(binary_name)
             results[binary_name] = {}
 
             for dec_name, decompilation in dec_results.items():

@@ -26,6 +26,28 @@ def _perfect_value_for(metric_name: str) -> float:
         return 0.0
 
 
+def _distance_for(metric_name: str, value: object) -> float | None:
+    """Raw edit distance to perfect for the report's 'distance' view (or None).
+
+    GED = the graph edit distance itself; type_match = type-flips to exact
+    (fp+fn); byte_match = number of changed assembly lines (``changed_lines``).
+    """
+    import math
+
+    md = getattr(value, "metadata", None) or {}
+    v = getattr(value, "value", None)
+    if metric_name == "ged":
+        return float(v) if isinstance(v, (int, float)) and math.isfinite(v) else None
+    if metric_name == "type_match":
+        if "fp" in md and "fn" in md:
+            return float(int(md["fp"]) + int(md["fn"]))
+        return None
+    if metric_name == "byte_match":
+        cl = md.get("changed_lines")
+        return float(cl) if cl is not None else None
+    return None
+
+
 def _line_count_for(
     decompile_results,
     project_name: str,
@@ -141,6 +163,9 @@ def build_function_data(
                             record.perfects.setdefault(dec_name, {})[metric_name] = (
                                 value.value == perfect_value
                             )
+                            dist = _distance_for(metric_name, value)
+                            if dist is not None:
+                                record.distances.setdefault(dec_name, {})[metric_name] = dist
 
                 # --- Decompile success/failure universe --------------------
                 # Record, per (function, decompiler), whether the decompiler

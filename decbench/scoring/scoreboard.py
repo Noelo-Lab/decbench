@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import math
+import statistics
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from decbench.models.scoreboard import (
     DecompilerScore,
@@ -10,6 +13,102 @@ from decbench.models.scoreboard import (
     Scoreboard,
 )
 from decbench.scoring.aggregator import AggregatedResults
+
+if TYPE_CHECKING:
+    from decbench.models.function_data import FunctionData
+
+
+def build_scoreboard_from_function_data(
+    fd: FunctionData,
+    name: str = "DecBench Scoreboard",
+    description: str = "",
+    version: str = "2.0",
+) -> Scoreboard:
+    """Build a scoreboard from the per-function dataset — the single source of
+    truth shared by the HTML report and ``scoreboard.toml``.
+
+    Denominator policy (matches ``rendering/html.py`` ``recompute()``): for every
+    (decompiler, metric) the denominator is the SAME shared universe — the set of
+    functions where that metric is *measurable for anyone* (a finite value from
+    some decompiler). A decompiler that failed to decompile a function, or was
+    decompiled but has no value for a measurable metric, counts as a NOT-PERFECT
+    miss IN the denominator (so every decompiler shares one denominator per
+    metric). Only metrics unmeasurable for everyone — GED with no/degenerate
+    source CFG, byte_match abstained, type_match with no DWARF ground truth — are
+    excluded, uniformly. ``mean``/``median`` still summarize the *measured* values.
+    """
+    decs, metrics = fd.decompilers, fd.metrics
+
+    def measurable(f: object, m: str) -> bool:
+        for d in decs:
+            v = getattr(f, "values", {}).get(d) or {}
+            if m in v and math.isfinite(v[m]):
+                return True
+        return False
+
+    vals: dict[str, dict[str, list[float]]] = {d: {m: [] for m in metrics} for d in decs}
+    perf: dict[str, dict[str, int]] = {d: {m: 0 for m in metrics} for d in decs}
+    tot: dict[str, dict[str, int]] = {d: {m: 0 for m in metrics} for d in decs}
+    overall_perf = {d: 0 for d in decs}
+    overall_tot = {d: 0 for d in decs}
+
+    for g in fd.groups:
+        for f in g.functions:
+            meas = {m: measurable(f, m) for m in metrics}
+            all_meas = bool(metrics) and all(meas.values())
+            for d in decs:
+                fp = f.perfects.get(d) or {}
+                fv = f.values.get(d) or {}
+                for m in metrics:
+                    if not meas[m]:
+                        continue
+                    tot[d][m] += 1
+                    if m in fv and math.isfinite(fv[m]):
+                        vals[d][m].append(fv[m])
+                    if fp.get(m):
+                        perf[d][m] += 1
+                if all_meas:
+                    overall_tot[d] += 1
+                    if all(fp.get(m) for m in metrics):
+                        overall_perf[d] += 1
+
+    sb = Scoreboard(
+        name=name,
+        description=description,
+        version=version,
+        generated_at=datetime.now(),
+        projects_evaluated=sorted({g.project for g in fd.groups}),
+        optimization_levels=sorted({g.opt_level for g in fd.groups}),
+        decompilers=decs,
+        metrics=metrics,
+        total_functions=sum(len(g.functions) for g in fd.groups),
+        total_binaries=len(fd.groups),
+    )
+    for d in decs:
+        ds = DecompilerScore(name=d)
+        for m in metrics:
+            n = tot[d][m]
+            ds.metric_scores[m] = MetricScore(
+                metric_name=m,
+                decompiler_name=d,
+                perfect_count=perf[d][m],
+                total_count=n,
+                perfect_percentage=(100 * perf[d][m] / n) if n else 0.0,
+                mean=statistics.fmean(vals[d][m]) if vals[d][m] else 0.0,
+                median=statistics.median(vals[d][m]) if vals[d][m] else 0.0,
+            )
+        ds.overall_perfect_count = overall_perf[d]
+        ds.overall_total_count = overall_tot[d]
+        ds.overall_perfect_percentage = (
+            100 * overall_perf[d] / overall_tot[d] if overall_tot[d] else 0.0
+        )
+        sb.decompiler_scores[d] = ds
+    for m in metrics:
+        for rank, (d, _) in enumerate(sb.get_metric_rankings(m), 1):
+            sb.decompiler_scores[d].metric_scores[m].rank = rank
+    for rank, (d, _) in enumerate(sb.get_overall_rankings(), 1):
+        sb.decompiler_scores[d].overall_rank = rank
+    return sb
 
 
 def build_scoreboard(

@@ -153,16 +153,18 @@ def _disassemble_bytes(data: bytes, address: int = 0, arch_mode: tuple | None = 
         return []
 
 
-def _compute_jaccard_similarity(lines_a: list[str], lines_b: list[str]) -> float:
-    """Compute Jaccard similarity between two lists of assembly lines.
+def _compute_jaccard_similarity(lines_a: list[str], lines_b: list[str]) -> tuple[float, int]:
+    """Jaccard similarity AND absolute changed-line count between two asm listings.
 
-    Uses line-level diff (diff_match_patch style) to compute:
-    shared / (a_only + shared + b_only)
+    Returns ``(similarity, changed_lines)`` where similarity = ``shared / (a_only +
+    shared + b_only)`` and ``changed_lines = a_only + b_only`` (the raw edit
+    distance surfaced on the report's 'distance' view — number of assembly lines
+    that differ). Uses a line-level diff (diff_match_patch style).
     """
     if not lines_a and not lines_b:
-        return 1.0
+        return 1.0, 0
     if not lines_a or not lines_b:
-        return 0.0
+        return 0.0, len(lines_a) + len(lines_b)
 
     try:
         from diff_match_patch import diff_match_patch
@@ -194,8 +196,8 @@ def _compute_jaccard_similarity(lines_a: list[str], lines_b: list[str]) -> float
 
         total = a_only + shared + b_only
         if total == 0:
-            return 1.0
-        return shared / total
+            return 1.0, 0
+        return shared / total, a_only + b_only
 
     except ImportError:
         # Fall back to simple set-based Jaccard
@@ -204,8 +206,8 @@ def _compute_jaccard_similarity(lines_a: list[str], lines_b: list[str]) -> float
         intersection = set_a & set_b
         union = set_a | set_b
         if not union:
-            return 1.0
-        return len(intersection) / len(union)
+            return 1.0, 0
+        return len(intersection) / len(union), len(set_a ^ set_b)
 
 
 def _compile_function(
@@ -389,6 +391,7 @@ class ByteMatchMetric(Metric):
                     metadata={
                         **fixup_meta,
                         "exact_match": True,
+                        "changed_lines": 0,
                         "original_size": len(original_bytes),
                         "recompiled_size": len(recompiled_bytes),
                     },
@@ -399,7 +402,9 @@ class ByteMatchMetric(Metric):
             recompiled_asm = _disassemble_bytes(recompiled_bytes, 0, arch_mode)
 
             if original_asm and recompiled_asm:
-                similarity = _compute_jaccard_similarity(original_asm, recompiled_asm)
+                similarity, changed_lines = _compute_jaccard_similarity(
+                    original_asm, recompiled_asm
+                )
             else:
                 # Fallback: raw byte comparison ratio
                 min_len = min(len(original_bytes), len(recompiled_bytes))
@@ -411,6 +416,7 @@ class ByteMatchMetric(Metric):
                         1 for i in range(min_len) if original_bytes[i] == recompiled_bytes[i]
                     )
                     similarity = matching / max_len
+                changed_lines = abs(len(original_bytes) - len(recompiled_bytes))
 
             # A perfect match requires similarity == 1.0
             return MetricValue(
@@ -420,6 +426,9 @@ class ByteMatchMetric(Metric):
                     **fixup_meta,
                     "exact_match": False,
                     "jaccard_similarity": similarity,
+                    # Absolute edit distance (# changed asm lines) for the report's
+                    # 'distance' view; does not affect the (unchanged) jaccard score.
+                    "changed_lines": changed_lines,
                     "original_size": len(original_bytes),
                     "recompiled_size": len(recompiled_bytes),
                     "original_asm_lines": len(original_asm),

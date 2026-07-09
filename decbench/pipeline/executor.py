@@ -12,8 +12,7 @@ from decbench.models.project import OptimizationLevel, Project
 from decbench.pipeline.compile import compile_projects
 from decbench.pipeline.decompile import decompile_projects
 from decbench.pipeline.evaluate import evaluate_projects
-from decbench.scoring.aggregator import aggregate_results
-from decbench.scoring.scoreboard import build_scoreboard
+from decbench.scoring.scoreboard import build_scoreboard_from_function_data
 
 if TYPE_CHECKING:
     from decbench.models.scoreboard import Scoreboard
@@ -216,17 +215,11 @@ class PipelineExecutor:
                 self.config.workers,
             )
 
-        # Step 4: Build scoreboard
-        print("Building scoreboard...")
-        aggregated = aggregate_results(results.evaluate_results)
-        results.scoreboard = build_scoreboard(
-            aggregated,
-            projects=[p.name for p in projects],
-            optimization_levels=[o.value for o in self.config.optimization_levels],
-            decompilers=self.config.decompilers,
-        )
-
-        # Build and persist per-function data for the interactive report
+        # Build per-function data FIRST — it carries the true function universe
+        # (every function any decompiler produced + explicit failures) and the
+        # measurability of each metric, which the scoreboard denominators derive
+        # from. Building it before the scoreboard makes scoreboard.toml and the
+        # HTML report share ONE source of truth (identical denominators).
         from decbench.scoring.function_data_builder import build_function_data
 
         function_data = build_function_data(
@@ -234,6 +227,12 @@ class PipelineExecutor:
             projects,
             results.decompile_results,
         )
+
+        # Step 4: Build scoreboard from the per-function universe (shared per-metric
+        # denominators; a decompile/metric failure is a not-perfect miss, not an
+        # exclusion). See scoring/scoreboard.py::build_scoreboard_from_function_data.
+        print("Building scoreboard...")
+        results.scoreboard = build_scoreboard_from_function_data(function_data)
 
         # Attach the "hardest functions" table and any historical samples for
         # the interactive report. Best-effort: never let report extras break a

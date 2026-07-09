@@ -1,0 +1,2470 @@
+{
+ "produced_nonloading": {
+  "angr": 35901,
+  "phoenix": 36843,
+  "ghidra": 52746,
+  "ida": 53253,
+  "binja": 10976,
+  "kuna": 42874
+ },
+ "loading": {
+  "binja": 37932
+ },
+ "src_missing": {
+  "angr": 991,
+  "phoenix": 991,
+  "ghidra": 954,
+  "ida": 963,
+  "binja": 326,
+  "kuna": 1000
+ },
+ "cat4_parsefail": {
+  "angr": 527,
+  "phoenix": 543,
+  "ghidra": 40,
+  "ida": 470,
+  "binja": 826
+ },
+ "cat4_samples": {
+  "angr": [
+   {
+    "opt": "O0",
+    "project": "gzip",
+    "binary": "gzip",
+    "func": "pqdownheap",
+    "cached_src_nodes": 17,
+    "snippet": "extern unsigned int g_4df200[1277633];\nextern char g_4dfaf4;\nextern char g_4dfb00;\n\nunsigned int [1277633] pqdownheap(unsigned long a0, unsigned int a1)\n{\n    unsigned int v0;  // [bp-0x24]\n    unsigned int i;  // [bp-0x10]\n    unsigned int v2[1277633];  // [bp-0xc]\n\n    v0 = a1;\n    v2 = (unsigned int [1277633])g_4df200[v0];\n    for (i = v0 * 2; i <= *((int *)&g_4dfaf4); i *= 2)\n    {"
+   },
+   {
+    "opt": "O0",
+    "project": "gzip",
+    "binary": "gzip",
+    "func": "read_tree",
+    "cached_src_nodes": 21,
+    "snippet": "extern unsigned long long g_4e13e0;\nextern int g_4e13e8;\nextern char g_4e1400;\nextern unsigned int g_4e1500;\nextern unsigned int g_4e1580[4];\n\nunsigned int [4] read_tree(void)\n{\n    char v6;  // al\n    int iter;  // [bp-0x28]\n    unsigned int v1;  // [bp-0x24]\n    unsigned int v2;  // [bp-0x24]\n    unsigned int cur[4];  // [bp-0x20], Other Possible Types: int\n    unsigned int v4;  // [bp-0x1c]"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "sdiff",
+    "func": "lf_skip",
+    "cached_src_nodes": 5,
+    "snippet": "void* [4] lf_skip(void* *p, unsigned long long a1)\n{\n    void* ptr[4];  // rax\n    unsigned long long i;  // [bp-0x18]\n\n    for (i = a1; i; ptr[1] = p[1] + 1)\n    {\n        p[1] = rawmemchr(p[1], 10);\n        if (p[1] == p[3])\n        {\n            ptr = sub_4042c0(p);\n            if (!ptr)\n                return ptr;\n        }"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "cmp",
+    "func": "file_position",
+    "cached_src_nodes": 3,
+    "snippet": "extern unsigned int g_4100b0[4];\nextern unsigned long long g_410200[4];\nextern char g_410215;\nextern unsigned long long g_410220[4];\n\nunsigned long long [4] file_position(unsigned int a0)\n{\n    if (*(&(&g_410215)[a0]) != 1)\n    {\n        *(&(&g_410215)[a0]) = 1;\n        g_410220[a0] = lseek(g_4100b0[a0], g_410200[a0], 1);\n    }\n    return g_410220[a0];\n}"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff3",
+    "func": "scan_diff_line",
+    "cached_src_nodes": 17,
+    "snippet": "typedef struct struct_0 {\n    char padding_0[1];\n    char field_1;\n    char field_2;\n    char field_3;\n    char field_4;\n} struct_0;\n\ntypedef struct FILE {\n} FILE;\n\nextern char g_41410b;\nextern char *g_424148;\nextern FILE *stderr;"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "add_change",
+    "cached_src_nodes": 1,
+    "snippet": "unsigned long long [5] add_change(unsigned long a0, unsigned long a1, unsigned long a2, unsigned long a3, unsigned long a4)\n{\n    unsigned long long ptr[5];  // [bp-0x10]\n\n    ptr = sub_41c945(48);\n    ptr[3] = a0;\n    ptr[4] = a1;\n    ptr[1] = a3;\n    ptr[2] = a2;\n    ptr[0] = a4;\n    return ptr;\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "build_reverse_script",
+    "cached_src_nodes": 13,
+    "snippet": "typedef struct struct_0 {\n    char padding_0[200];\n    long long field_c8;\n    char padding_d0[72];\n    unsigned long long field_118;\n    char padding_120[216];\n    long long field_1f8;\n    char padding_200[72];\n    unsigned long long field_248;\n} struct_0;\n\nunsigned long long [5] build_reverse_script(struct_0 *ptr)\n{\n    unsigned long long v0[5];  // [bp-0x50]"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "build_script",
+    "cached_src_nodes": 13,
+    "snippet": "unsigned long long [5] build_script(unsigned long long *ptr)\n{\n    unsigned long long v0[5];  // [bp-0x40]\n    unsigned long cur;  // [bp-0x38], Other Possible Types: unsigned long long\n    unsigned long iter;  // [bp-0x30], Other Possible Types: unsigned long long\n    unsigned long v3;  // [bp-0x28]\n    unsigned long v4;  // [bp-0x20]\n    unsigned long v5;  // [bp-0x18]\n    unsigned long v6;  // [bp-0x10]\n\n    v0 = NULL;\n    v3 = ptr[35];\n    v4 = ptr[73];\n    cur = ptr[25];"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "do_printf_spec",
+    "cached_src_nodes": 30,
+    "snippet": "typedef struct FILE {\n} FILE;\n\nchar [2] do_printf_spec(FILE *a0, char *a1, long long a2, long long a3, long long *a4)\n{\n    char ptr[2];  // rax\n    char p[2];  // rax\n    char addr[2];  // rax\n    char ptr3[2];  // rax\n    unsigned int v18;  // eax\n    unsigned long v19;  // rax\n    unsigned long long v20;  // rax\n    unsigned long long v21;  // rax\n    char v0;  // [bp-0x1088]"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "scan_char_literal",
+    "cached_src_nodes": 14,
+    "snippet": "char [2] scan_char_literal(char *ptr, char *p)\n{\n    char v5[2];  // rbx\n    char v7[2];  // rax\n    char addr[2];  // rax\n    char v0;  // [bp-0x1e]\n    char v1;  // [bp-0x1d]\n    unsigned int v2;  // [bp-0x1c]\n    long long v3;  // [bp-0x18]\n\n    v5 = ptr + 1;\n    v1 = *(ptr);\n    switch (v1)\n    {"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "c_escape",
+    "cached_src_nodes": 18,
+    "snippet": "char [5] c_escape(char *a0)\n{\n    unsigned int flag;  // eax\n    unsigned int choice;  // eax\n    char ptr[5];  // rax\n    char p[5];  // rax\n    char addr[5];  // rax\n    char ptr5[5];  // rax\n    char v0;  // [bp-0x34]\n    char v1;  // [bp-0x33]\n    char v2;  // [bp-0x32]\n    char v3;  // [bp-0x31]\n    char iter[5];  // [bp-0x30]\n    unsigned long long node;  // [bp-0x28]"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-sk-helper",
+    "func": "log_facility_number",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_471020[4];\nextern unsigned int g_471028[4];\n\nunsigned int [4] log_facility_number(char *a0)\n{\n    unsigned int i;  // [bp-0xc]\n\n    if (a0)\n    {\n        for (i = 0; g_471020[2 * i]; i = sub_449b30(i, 1))\n        {\n            if (!strcasecmp(g_471020[2 * i], a0))\n            {\n                [D] PutI(904:F64x8)[t30,0] = t33()"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-sk-helper",
+    "func": "log_facility_name",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_471020[4];\nextern unsigned int g_471028[4];\n\nunsigned long long [4] log_facility_name(unsigned int *a0)\n{\n    unsigned long long v2[4];  // rax\n    unsigned int v0;  // [bp-0xc]\n\n    v0 = 0;\n    while (true)\n    {\n        if (!g_471020[2 * v0])\n        {\n            v2 = NULL;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-sk-helper",
+    "func": "log_level_number",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_471100[4];\nextern unsigned int g_471108[4];\n\nunsigned int [4] log_level_number(char *a0)\n{\n    unsigned int i;  // [bp-0xc]\n\n    if (a0)\n    {\n        for (i = 0; g_471100[2 * i]; i = sub_449b30(i, 1))\n        {\n            if (!strcasecmp(g_471100[2 * i], a0))\n            {\n                [D] PutI(904:F64x8)[t30,0] = t33()"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-sk-helper",
+    "func": "log_level_name",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_471100[4];\nextern unsigned int g_471108[4];\n\nunsigned long long [4] log_level_name(unsigned int *a0)\n{\n    unsigned long long v2[4];  // rax\n    unsigned int v0;  // [bp-0xc]\n\n    v0 = 0;\n    while (true)\n    {\n        if (!g_471100[2 * v0])\n        {\n            v2 = NULL;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-sk-helper",
+    "func": "hpdelim2",
+    "cached_src_nodes": 1,
+    "snippet": "typedef struct struct_0 {\n    char field_0;\n    char field_1;\n} struct_0;\n\nchar [2] hpdelim2(struct_0 **ptr, char *p)\n{\n    unsigned long len;  // rax\n    unsigned int v4;  // eax\n    char ptr[2];  // [bp-0x28]\n    char v1[2];  // [bp-0x20]\n\n    if (!ptr || !*(ptr))\n    {"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-sk-helper",
+    "func": "hpdelim",
+    "cached_src_nodes": 1,
+    "snippet": "char [2] hpdelim(char *a0[2])\n{\n    char flag;  // [bp-0x19]\n    char v1[2];  // [bp-0x18]\n\n    flag = 0;\n    v1 = sub_4281f9(a0, &flag);\n    if (flag == 47)\n        v1 = NULL;\n    [D] PutI(904:F64x8)[t30,0] = t33()\n    [D] PutI(968:I8x8)[t30,0] = 0x01()\n    [D] PutI(904:F64x8)[t40,0] = t43()\n    [D] PutI(968:I8x8)[t40,0] = 0x01()\n    [D] PutI(904:F64x8)[t50,0] = t53()"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-sk-helper",
+    "func": "colon",
+    "cached_src_nodes": 1,
+    "snippet": "char [2] colon(char *a0)\n{\n    char cur[2];  // [bp-0x20]\n    unsigned int v1;  // [bp-0xc]\n\n    cur = a0;\n    v1 = 0;\n    if (cur[0] == 58)\n    {\n        cur = NULL;\n    }\n    else\n    {\n        if (cur[0] == 91)"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-sk-helper",
+    "func": "iptos2str",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_4701c0[4];\nextern unsigned int g_4701c8[4];\nextern unsigned long long g_47128c[4];\n\nunsigned long long [4] iptos2str(unsigned int *a0)\n{\n    unsigned long long v2[4];  // rax\n    unsigned int v0;  // [bp-0xc]\n\n    v0 = 0;\n    while (true)\n    {\n        if (!g_4701c0[2 * v0])\n        {"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-sk-helper",
+    "func": "chachapoly_new",
+    "cached_src_nodes": 12,
+    "snippet": "long long [2] chachapoly_new(long long a0, unsigned int a1)\n{\n    long long v2[2];  // rax\n    long long v3;  // rax\n    long long v4;  // rax\n    long long ptr[2];  // [bp-0x20]\n\n    if (a1 != 64)\n    {\n        v2 = NULL;\n    }\n    else\n    {\n        ptr = calloc(1, 16);"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-sk-helper",
+    "func": "ssh_digest_alg_by_name",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned int g_470560[4];\nextern unsigned long long g_470568[4];\n\nunsigned int [4] ssh_digest_alg_by_name(char *a0)\n{\n    unsigned int v2[4];  // eax\n    unsigned int v0;  // [bp-0xc]\n\n    v0 = 0;\n    while (true)\n    {\n        if (g_470560[8 * v0] == 0xffffffff)\n        {\n            v2 = 0xffffffff;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "status_to_message",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_434740[4];\n\nunsigned long long [4] status_to_message(unsigned int a0)\n{\n    unsigned int v1;  // eax\n\n    v1 = a0;\n    if (8 < v1)\n        v1 = 8;\n    [D] PutI(904:F64x8)[t44,0] = t47()\n    [D] PutI(968:I8x8)[t44,0] = 0x01()\n    [D] PutI(904:F64x8)[t54,0] = t57()\n    [D] PutI(968:I8x8)[t54,0] = 0x01()\n    [D] PutI(904:F64x8)[t64,0] = t67()"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "log_facility_number",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_435040[4];\nextern unsigned int g_435048[4];\n\nunsigned int [4] log_facility_number(char *a0)\n{\n    unsigned int i;  // [bp-0xc]\n\n    if (a0)\n    {\n        for (i = 0; g_435040[2 * i]; i = sub_42bbc0(i, 1))\n        {\n            if (!strcasecmp(g_435040[2 * i], a0))\n            {\n                [D] PutI(904:F64x8)[t30,0] = t33()"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "log_facility_name",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_435040[4];\nextern unsigned int g_435048[4];\n\nunsigned long long [4] log_facility_name(unsigned int *a0)\n{\n    unsigned long long v2[4];  // rax\n    unsigned int v0;  // [bp-0xc]\n\n    v0 = 0;\n    while (true)\n    {\n        if (!g_435040[2 * v0])\n        {\n            v2 = NULL;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "log_level_number",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_435120[4];\nextern unsigned int g_435128[4];\n\nunsigned int [4] log_level_number(char *a0)\n{\n    unsigned int i;  // [bp-0xc]\n\n    if (a0)\n    {\n        for (i = 0; g_435120[2 * i]; i = sub_42bbc0(i, 1))\n        {\n            if (!strcasecmp(g_435120[2 * i], a0))\n            {\n                [D] PutI(904:F64x8)[t30,0] = t33()"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "log_level_name",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_435120[4];\nextern unsigned int g_435128[4];\n\nunsigned long long [4] log_level_name(unsigned int *a0)\n{\n    unsigned long long v2[4];  // rax\n    unsigned int v0;  // [bp-0xc]\n\n    v0 = 0;\n    while (true)\n    {\n        if (!g_435120[2 * v0])\n        {\n            v2 = NULL;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "hpdelim2",
+    "cached_src_nodes": 1,
+    "snippet": "typedef struct struct_0 {\n    char field_0;\n    char field_1;\n} struct_0;\n\nchar [2] hpdelim2(struct_0 **ptr, char *p)\n{\n    unsigned long len;  // rax\n    unsigned int v4;  // eax\n    char ptr[2];  // [bp-0x28]\n    char v1[2];  // [bp-0x20]\n\n    if (!ptr || !*(ptr))\n    {"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "hpdelim",
+    "cached_src_nodes": 1,
+    "snippet": "char [2] hpdelim(char *a0[2])\n{\n    char flag;  // [bp-0x19]\n    char v1[2];  // [bp-0x18]\n\n    flag = 0;\n    v1 = sub_41aada(a0, &flag);\n    if (flag == 47)\n        v1 = NULL;\n    [D] PutI(904:F64x8)[t30,0] = t33()\n    [D] PutI(968:I8x8)[t30,0] = 0x01()\n    [D] PutI(904:F64x8)[t40,0] = t43()\n    [D] PutI(968:I8x8)[t40,0] = 0x01()\n    [D] PutI(904:F64x8)[t50,0] = t53()"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "colon",
+    "cached_src_nodes": 1,
+    "snippet": "char [2] colon(char *a0)\n{\n    char cur[2];  // [bp-0x20]\n    unsigned int v1;  // [bp-0xc]\n\n    cur = a0;\n    v1 = 0;\n    if (cur[0] == 58)\n    {\n        cur = NULL;\n    }\n    else\n    {\n        if (cur[0] == 91)"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "iptos2str",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_4347a0[4];\nextern unsigned int g_4347a8[4];\nextern unsigned long long g_43540c[4];\n\nunsigned long long [4] iptos2str(unsigned int *a0)\n{\n    unsigned long long v2[4];  // rax\n    unsigned int v0;  // [bp-0xc]\n\n    v0 = 0;\n    while (true)\n    {\n        if (!g_4347a0[2 * v0])\n        {"
+   }
+  ],
+  "phoenix": [
+   {
+    "opt": "O0",
+    "project": "gzip",
+    "binary": "gzip",
+    "func": "pqdownheap",
+    "cached_src_nodes": 17,
+    "snippet": "extern unsigned int g_4df200[1277633];\nextern char g_4dfaf4;\nextern char g_4dfb00;\n\nunsigned int [1277633] pqdownheap(unsigned long a0, unsigned int a1)\n{\n    unsigned int v0;  // [bp-0x24]\n    unsigned int i;  // [bp-0x10]\n    unsigned int v2[1277633];  // [bp-0xc]\n\n    v0 = a1;\n    v2 = (unsigned int [1277633])g_4df200[v0];\n    for (i = v0 * 2; i <= *((int *)&g_4dfaf4); i *= 2)\n    {"
+   },
+   {
+    "opt": "O0",
+    "project": "gzip",
+    "binary": "gzip",
+    "func": "read_tree",
+    "cached_src_nodes": 21,
+    "snippet": "extern unsigned long long g_4e13e0;\nextern int g_4e13e8;\nextern char g_4e1400;\nextern unsigned int g_4e1500;\nextern unsigned int g_4e1580[4];\n\nunsigned int [4] read_tree(void)\n{\n    char v6;  // al\n    int iter;  // [bp-0x28]\n    unsigned int v1;  // [bp-0x24]\n    unsigned int v2;  // [bp-0x24]\n    unsigned int cur[4];  // [bp-0x20], Other Possible Types: int\n    unsigned int v4;  // [bp-0x1c]"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff3",
+    "func": "scan_diff_line",
+    "cached_src_nodes": 17,
+    "snippet": "typedef struct struct_0 {\n    char padding_0[1];\n    char field_1;\n    char field_2;\n    char field_3;\n    char field_4;\n} struct_0;\n\ntypedef struct FILE {\n} FILE;\n\nextern char g_41410b;\nextern char *g_424148;\nextern FILE *stderr;"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "add_change",
+    "cached_src_nodes": 1,
+    "snippet": "unsigned long long [5] add_change(unsigned long a0, unsigned long a1, unsigned long a2, unsigned long a3, unsigned long a4)\n{\n    unsigned long long ptr[5];  // [bp-0x10]\n\n    ptr = sub_41c945(48);\n    ptr[3] = a0;\n    ptr[4] = a1;\n    ptr[1] = a3;\n    ptr[2] = a2;\n    ptr[0] = a4;\n    return ptr;\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "build_reverse_script",
+    "cached_src_nodes": 13,
+    "snippet": "typedef struct struct_0 {\n    char padding_0[200];\n    long long field_c8;\n    char padding_d0[72];\n    unsigned long long field_118;\n    char padding_120[216];\n    long long field_1f8;\n    char padding_200[72];\n    unsigned long long field_248;\n} struct_0;\n\nunsigned long long [5] build_reverse_script(struct_0 *ptr)\n{\n    unsigned long long v0[5];  // [bp-0x50]"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "build_script",
+    "cached_src_nodes": 13,
+    "snippet": "unsigned long long [5] build_script(unsigned long long *ptr)\n{\n    unsigned long long v0[5];  // [bp-0x40]\n    unsigned long cur;  // [bp-0x38], Other Possible Types: unsigned long long\n    unsigned long iter;  // [bp-0x30], Other Possible Types: unsigned long long\n    unsigned long v3;  // [bp-0x28]\n    unsigned long v4;  // [bp-0x20]\n    unsigned long v5;  // [bp-0x18]\n    unsigned long v6;  // [bp-0x10]\n\n    v0 = NULL;\n    v3 = ptr[35];\n    v4 = ptr[73];\n    cur = ptr[25];"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "do_printf_spec",
+    "cached_src_nodes": 30,
+    "snippet": "typedef struct FILE {\n} FILE;\n\nchar [2] do_printf_spec(FILE *a0, char *a1, long long a2, long long a3, long long *a4)\n{\n    char ptr[2];  // rax\n    char p[2];  // rax\n    char addr[2];  // rax\n    char ptr3[2];  // rax\n    unsigned int v18;  // eax\n    unsigned long v19;  // rax\n    unsigned long long v20;  // rax\n    unsigned long long v21;  // rax\n    char v0;  // [bp-0x1088]"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "scan_char_literal",
+    "cached_src_nodes": 14,
+    "snippet": "char [2] scan_char_literal(char *ptr, char *p)\n{\n    char v5[2];  // rbx\n    unsigned int v6;  // eax\n    char v7[2];  // rax\n    char addr[2];  // rax\n    char v0;  // [bp-0x1e]\n    char v1;  // [bp-0x1d]\n    unsigned int v2;  // [bp-0x1c]\n    long long v3;  // [bp-0x18]\n\n    v5 = ptr + 1;\n    v1 = *(ptr);\n    v6 = v1;"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "c_escape",
+    "cached_src_nodes": 18,
+    "snippet": "char [5] c_escape(char *a0)\n{\n    unsigned int flag;  // eax\n    unsigned int choice;  // eax\n    char ptr[5];  // rax\n    char p[5];  // rax\n    char addr[5];  // rax\n    char ptr5[5];  // rax\n    char v0;  // [bp-0x34]\n    char v1;  // [bp-0x33]\n    char v2;  // [bp-0x32]\n    char v3;  // [bp-0x31]\n    char iter[5];  // [bp-0x30]\n    unsigned long long node;  // [bp-0x28]"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "cmp",
+    "func": "file_position",
+    "cached_src_nodes": 3,
+    "snippet": "extern unsigned int g_4100b0[4];\nextern unsigned long long g_410200[4];\nextern char g_410215;\nextern unsigned long long g_410220[4];\n\nunsigned long long [4] file_position(unsigned int a0)\n{\n    if (*(&(&g_410215)[a0]) != 1)\n    {\n        *(&(&g_410215)[a0]) = 1;\n        g_410220[a0] = lseek(g_4100b0[a0], g_410200[a0], 1);\n    }\n    return g_410220[a0];\n}"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "sdiff",
+    "func": "lf_skip",
+    "cached_src_nodes": 5,
+    "snippet": "void* [4] lf_skip(void* *p, unsigned long long a1)\n{\n    void* ptr[4];  // rax\n    unsigned long long v0;  // [bp-0x18]\n\n    v0 = a1;\n    while (true)\n    {\n        if (!v0)\n            return ptr;\n        p[1] = rawmemchr(p[1], 10);\n        if (p[1] == p[3])\n        {\n            ptr = sub_4042c0(p);"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-pkcs11-helper",
+    "func": "log_facility_number",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_47a020[4];\nextern unsigned int g_47a028[4];\n\nunsigned int [4] log_facility_number(char *a0)\n{\n    unsigned int v2[4];  // eax\n    unsigned int v0;  // [bp-0xc]\n\n    if (a0)\n    {\n        v0 = 0;\n        while (g_47a020[2 * v0])\n        {\n            if (!strcasecmp(g_47a020[2 * v0], a0))"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-pkcs11-helper",
+    "func": "log_facility_name",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_47a020[4];\nextern unsigned int g_47a028[4];\n\nunsigned long long [4] log_facility_name(unsigned int *a0)\n{\n    unsigned long long v2[4];  // rax\n    unsigned int v0;  // [bp-0xc]\n\n    v0 = 0;\n    while (true)\n    {\n        if (!g_47a020[2 * v0])\n        {\n            v2 = NULL;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-pkcs11-helper",
+    "func": "log_level_number",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_47a100[4];\nextern unsigned int g_47a108[4];\n\nunsigned int [4] log_level_number(char *a0)\n{\n    unsigned int v2[4];  // eax\n    unsigned int v0;  // [bp-0xc]\n\n    if (a0)\n    {\n        v0 = 0;\n        while (g_47a100[2 * v0])\n        {\n            if (!strcasecmp(g_47a100[2 * v0], a0))"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-pkcs11-helper",
+    "func": "log_level_name",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_47a100[4];\nextern unsigned int g_47a108[4];\n\nunsigned long long [4] log_level_name(unsigned int *a0)\n{\n    unsigned long long v2[4];  // rax\n    unsigned int v0;  // [bp-0xc]\n\n    v0 = 0;\n    while (true)\n    {\n        if (!g_47a100[2 * v0])\n        {\n            v2 = NULL;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-pkcs11-helper",
+    "func": "hpdelim2",
+    "cached_src_nodes": 1,
+    "snippet": "typedef struct struct_0 {\n    char field_0;\n    char field_1;\n} struct_0;\n\nchar [2] hpdelim2(struct_0 **ptr, char *p)\n{\n    unsigned long len;  // rax\n    unsigned int v4;  // eax\n    char ptr[2];  // [bp-0x28]\n    char v1[2];  // [bp-0x20]\n\n    if (ptr)\n    {"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-pkcs11-helper",
+    "func": "hpdelim",
+    "cached_src_nodes": 1,
+    "snippet": "char [2] hpdelim(char *a0[2])\n{\n    char flag;  // [bp-0x19]\n    char v1[2];  // [bp-0x18]\n\n    flag = 0;\n    v1 = sub_42f8ac(a0, &flag);\n    if (flag == 47)\n        v1 = NULL;\n    [D] PutI(904:F64x8)[t30,0] = t33()\n    [D] PutI(968:I8x8)[t30,0] = 0x01()\n    [D] PutI(904:F64x8)[t40,0] = t43()\n    [D] PutI(968:I8x8)[t40,0] = 0x01()\n    [D] PutI(904:F64x8)[t50,0] = t53()"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-pkcs11-helper",
+    "func": "colon",
+    "cached_src_nodes": 1,
+    "snippet": "char [2] colon(char *a0)\n{\n    char cur[2];  // [bp-0x20]\n    unsigned int v1;  // [bp-0xc]\n\n    cur = a0;\n    v1 = 0;\n    if (cur[0] == 58)\n    {\n        cur = NULL;\n    }\n    else\n    {\n        if (cur[0] == 91)"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-pkcs11-helper",
+    "func": "iptos2str",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_479020[4];\nextern unsigned int g_479028[4];\nextern unsigned long long g_47a2ec[4];\n\nunsigned long long [4] iptos2str(unsigned int *a0)\n{\n    unsigned long long v2[4];  // rax\n    unsigned int v0;  // [bp-0xc]\n\n    v0 = 0;\n    while (true)\n    {\n        if (!g_479020[2 * v0])\n        {"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-pkcs11-helper",
+    "func": "chachapoly_new",
+    "cached_src_nodes": 12,
+    "snippet": "long long [2] chachapoly_new(long long a0, unsigned int a1)\n{\n    long long v2[2];  // rax\n    long long v3;  // rax\n    long long v4;  // rax\n    long long ptr[2];  // [bp-0x20]\n\n    if (a1 != 64)\n    {\n        v2 = NULL;\n    }\n    else\n    {\n        ptr = calloc(1, 16);"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-pkcs11-helper",
+    "func": "ssh_digest_alg_by_name",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned int g_4793c0[4];\nextern unsigned long long g_4793c8[4];\n\nunsigned int [4] ssh_digest_alg_by_name(char *a0)\n{\n    unsigned int v2[4];  // eax\n    unsigned int v0;  // [bp-0xc]\n\n    v0 = 0;\n    while (true)\n    {\n        if (g_4793c0[8 * v0] == 0xffffffff)\n        {\n            v2 = 0xffffffff;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "status_to_message",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_434740[4];\n\nunsigned long long [4] status_to_message(unsigned int a0)\n{\n    unsigned int v1;  // eax\n\n    v1 = a0;\n    if (8 < v1)\n        v1 = 8;\n    [D] PutI(904:F64x8)[t44,0] = t47()\n    [D] PutI(968:I8x8)[t44,0] = 0x01()\n    [D] PutI(904:F64x8)[t54,0] = t57()\n    [D] PutI(968:I8x8)[t54,0] = 0x01()\n    [D] PutI(904:F64x8)[t64,0] = t67()"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "log_facility_number",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_435040[4];\nextern unsigned int g_435048[4];\n\nunsigned int [4] log_facility_number(char *a0)\n{\n    unsigned int v2[4];  // eax\n    unsigned int v0;  // [bp-0xc]\n\n    if (a0)\n    {\n        v0 = 0;\n        while (g_435040[2 * v0])\n        {\n            if (!strcasecmp(g_435040[2 * v0], a0))"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "log_facility_name",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_435040[4];\nextern unsigned int g_435048[4];\n\nunsigned long long [4] log_facility_name(unsigned int *a0)\n{\n    unsigned long long v2[4];  // rax\n    unsigned int v0;  // [bp-0xc]\n\n    v0 = 0;\n    while (true)\n    {\n        if (!g_435040[2 * v0])\n        {\n            v2 = NULL;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "log_level_number",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_435120[4];\nextern unsigned int g_435128[4];\n\nunsigned int [4] log_level_number(char *a0)\n{\n    unsigned int v2[4];  // eax\n    unsigned int v0;  // [bp-0xc]\n\n    if (a0)\n    {\n        v0 = 0;\n        while (g_435120[2 * v0])\n        {\n            if (!strcasecmp(g_435120[2 * v0], a0))"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "log_level_name",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_435120[4];\nextern unsigned int g_435128[4];\n\nunsigned long long [4] log_level_name(unsigned int *a0)\n{\n    unsigned long long v2[4];  // rax\n    unsigned int v0;  // [bp-0xc]\n\n    v0 = 0;\n    while (true)\n    {\n        if (!g_435120[2 * v0])\n        {\n            v2 = NULL;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "hpdelim2",
+    "cached_src_nodes": 1,
+    "snippet": "typedef struct struct_0 {\n    char field_0;\n    char field_1;\n} struct_0;\n\nchar [2] hpdelim2(struct_0 **ptr, char *p)\n{\n    unsigned long len;  // rax\n    unsigned int v4;  // eax\n    char ptr[2];  // [bp-0x28]\n    char v1[2];  // [bp-0x20]\n\n    if (ptr)\n    {"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "hpdelim",
+    "cached_src_nodes": 1,
+    "snippet": "char [2] hpdelim(char *a0[2])\n{\n    char flag;  // [bp-0x19]\n    char v1[2];  // [bp-0x18]\n\n    flag = 0;\n    v1 = sub_41aada(a0, &flag);\n    if (flag == 47)\n        v1 = NULL;\n    [D] PutI(904:F64x8)[t30,0] = t33()\n    [D] PutI(968:I8x8)[t30,0] = 0x01()\n    [D] PutI(904:F64x8)[t40,0] = t43()\n    [D] PutI(968:I8x8)[t40,0] = 0x01()\n    [D] PutI(904:F64x8)[t50,0] = t53()"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "colon",
+    "cached_src_nodes": 1,
+    "snippet": "char [2] colon(char *a0)\n{\n    char cur[2];  // [bp-0x20]\n    unsigned int v1;  // [bp-0xc]\n\n    cur = a0;\n    v1 = 0;\n    if (cur[0] == 58)\n    {\n        cur = NULL;\n    }\n    else\n    {\n        if (cur[0] == 91)"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "iptos2str",
+    "cached_src_nodes": 1,
+    "snippet": "extern unsigned long long g_4347a0[4];\nextern unsigned int g_4347a8[4];\nextern unsigned long long g_43540c[4];\n\nunsigned long long [4] iptos2str(unsigned int *a0)\n{\n    unsigned long long v2[4];  // rax\n    unsigned int v0;  // [bp-0xc]\n\n    v0 = 0;\n    while (true)\n    {\n        if (!g_4347a0[2 * v0])\n        {"
+   }
+  ],
+  "ghidra": [
+   {
+    "opt": "O0",
+    "project": "gnutls",
+    "binary": "gnutls-serv",
+    "func": "wrap_db_fetch",
+    "cached_src_nodes": 12,
+    "snippet": "\nundefined1  [16] wrap_db_fetch(undefined8 param_1,void *param_2,uint param_3)\n\n{\n  uint uVar1;\n  int iVar2;\n  time_t tVar3;\n  long lVar4;\n  void *__dest;\n  undefined1 auVar5 [16];\n  undefined4 local_24;\n  undefined4 uStack_c;\n  \n  tVar3 = time((time_t *)0x0);"
+   },
+   {
+    "opt": "O0",
+    "project": "coreutils",
+    "binary": "stat",
+    "func": "neg_to_zero",
+    "cached_src_nodes": 3,
+    "snippet": "\nundefined1  [16] neg_to_zero(undefined8 param_1,long param_2)\n\n{\n  undefined1 auVar1 [16];\n  \n  if (param_2 < 0) {\n    param_1 = 0;\n    param_2 = 0;\n  }\n  auVar1._8_8_ = param_2;\n  auVar1._0_8_ = param_1;\n  return auVar1;\n}"
+   },
+   {
+    "opt": "O0",
+    "project": "coreutils",
+    "binary": "dir",
+    "func": "dev_ino_pop",
+    "cached_src_nodes": 3,
+    "snippet": "\nundefined1  [16] dev_ino_pop(void)\n\n{\n  if ((ulong)((long)DAT_0012b5f8 - DAT_0012b5f0) < 0x10) {\n                    /* WARNING: Subroutine does not return */\n    __assert_fail(\"dev_ino_size <= obstack_object_size (&dev_ino_obstack)\",\"src/ls.c\",0x41d,\n                  \"dev_ino_pop\");\n  }\n  DAT_0012b5f8 = (undefined1 (*) [16])((long)DAT_0012b5f8 + -0x10);\n  return *DAT_0012b5f8;\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "coreutils",
+    "binary": "dir",
+    "func": "get_stat_btime",
+    "cached_src_nodes": 1,
+    "snippet": "\nundefined1  [16] get_stat_btime(undefined8 param_1)\n\n{\n  undefined1 auVar1 [16];\n  \n  auVar1 = FUN_0011b491(param_1);\n  return auVar1;\n}\n\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "coreutils",
+    "binary": "ls",
+    "func": "dev_ino_pop",
+    "cached_src_nodes": 3,
+    "snippet": "\nundefined1  [16] dev_ino_pop(void)\n\n{\n  if ((ulong)((long)DAT_0012b5f8 - DAT_0012b5f0) < 0x10) {\n                    /* WARNING: Subroutine does not return */\n    __assert_fail(\"dev_ino_size <= obstack_object_size (&dev_ino_obstack)\",\"src/ls.c\",0x41d,\n                  \"dev_ino_pop\");\n  }\n  DAT_0012b5f8 = (undefined1 (*) [16])((long)DAT_0012b5f8 + -0x10);\n  return *DAT_0012b5f8;\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "coreutils",
+    "binary": "ls",
+    "func": "get_stat_btime",
+    "cached_src_nodes": 1,
+    "snippet": "\nundefined1  [16] get_stat_btime(undefined8 param_1)\n\n{\n  undefined1 auVar1 [16];\n  \n  auVar1 = FUN_0011b491(param_1);\n  return auVar1;\n}\n\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "coreutils",
+    "binary": "make-prime-list",
+    "func": "binvert",
+    "cached_src_nodes": 4,
+    "snippet": "\nundefined1  [16] binvert(ulong param_1,long param_2)\n\n{\n  undefined1 auVar1 [16];\n  undefined1 auVar2 [16];\n  undefined1 auVar3 [16];\n  undefined1 auVar4 [16];\n  undefined1 auVar5 [16];\n  ulong uVar6;\n  ulong uVar7;\n  ulong uVar8;\n  long lVar9;\n  ulong local_38;"
+   },
+   {
+    "opt": "O0",
+    "project": "coreutils",
+    "binary": "vdir",
+    "func": "dev_ino_pop",
+    "cached_src_nodes": 3,
+    "snippet": "\nundefined1  [16] dev_ino_pop(void)\n\n{\n  if ((ulong)((long)DAT_0012b5f8 - DAT_0012b5f0) < 0x10) {\n                    /* WARNING: Subroutine does not return */\n    __assert_fail(\"dev_ino_size <= obstack_object_size (&dev_ino_obstack)\",\"src/ls.c\",0x41d,\n                  \"dev_ino_pop\");\n  }\n  DAT_0012b5f8 = (undefined1 (*) [16])((long)DAT_0012b5f8 + -0x10);\n  return *DAT_0012b5f8;\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "coreutils",
+    "binary": "vdir",
+    "func": "get_stat_btime",
+    "cached_src_nodes": 1,
+    "snippet": "\nundefined1  [16] get_stat_btime(undefined8 param_1)\n\n{\n  undefined1 auVar1 [16];\n  \n  auVar1 = FUN_0011b491(param_1);\n  return auVar1;\n}\n\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "tar",
+    "binary": "tar",
+    "func": "decode_timespec",
+    "cached_src_nodes": 42,
+    "snippet": "\nundefined1  [16] decode_timespec(char *param_1,char **param_2,char param_3)\n\n{\n  undefined1 auVar1 [16];\n  int *piVar2;\n  uintmax_t uVar3;\n  bool bVar4;\n  bool local_42;\n  int local_40;\n  int local_3c;\n  uintmax_t local_38;\n  char *local_30;\n  "
+   },
+   {
+    "opt": "O2",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "concat",
+    "cached_src_nodes": 1,
+    "snippet": "\nundefined1  [16] concat(char *param_1,char *param_2,char *param_3)\n\n{\n  size_t sVar1;\n  size_t sVar2;\n  size_t sVar3;\n  undefined1 auVar4 [16];\n  \n  sVar1 = strlen(param_1);\n  sVar2 = strlen(param_2);\n  sVar3 = strlen(param_3);\n  auVar4._0_8_ = FUN_00116a40(sVar1 + sVar2 + 1 + sVar3);\n  __sprintf_chk(auVar4._0_8_,1,0xffffffffffffffff,\"%s%s%s\",param_1,param_2,param_3);"
+   },
+   {
+    "opt": "O2",
+    "project": "gnutls",
+    "binary": "gnutls-serv",
+    "func": "wrap_db_fetch",
+    "cached_src_nodes": 12,
+    "snippet": "\nundefined1  [16] wrap_db_fetch(undefined8 param_1,void *param_2,uint param_3)\n\n{\n  int iVar1;\n  time_t tVar2;\n  long lVar3;\n  void *__dest;\n  long lVar4;\n  int iVar5;\n  ulong __size;\n  void *pvVar6;\n  undefined1 auVar7 [16];\n  "
+   },
+   {
+    "opt": "O2",
+    "project": "libexpat",
+    "binary": "xmlwf",
+    "func": "metaLocation",
+    "cached_src_nodes": 3,
+    "snippet": "\nundefined1  [16] metaLocation(undefined8 *param_1)\n\n{\n  undefined8 uVar1;\n  undefined1 auVar2 [16];\n  undefined4 uVar3;\n  long lVar4;\n  undefined8 uVar5;\n  undefined8 uVar6;\n  undefined8 uVar7;\n  \n  lVar4 = XML_GetBase();\n  uVar1 = *(undefined8 *)*param_1;"
+   },
+   {
+    "opt": "O2",
+    "project": "coreutils",
+    "binary": "true",
+    "func": "main",
+    "cached_src_nodes": 34,
+    "snippet": "\nundefined1  [16] main(int param_1,undefined8 *param_2,ulong param_3,ulong param_4)\n\n{\n  char *__s1;\n  undefined1 auVar1 [16];\n  undefined1 auVar2 [16];\n  int iVar3;\n  \n  if (param_1 != 2) {\n    auVar1._8_8_ = 0;\n    auVar1._0_8_ = param_3;\n    return auVar1 << 0x40;\n  }"
+   },
+   {
+    "opt": "O2",
+    "project": "coreutils",
+    "binary": "false",
+    "func": "main",
+    "cached_src_nodes": 34,
+    "snippet": "\nundefined1  [16] main(int param_1,undefined8 *param_2,undefined8 param_3,undefined8 param_4)\n\n{\n  char *__s1;\n  int iVar1;\n  undefined1 auVar2 [16];\n  undefined1 auVar3 [16];\n  \n  if (param_1 != 2) {\n    auVar2._8_8_ = param_3;\n    auVar2._0_8_ = 1;\n    return auVar2;\n  }"
+   },
+   {
+    "opt": "O2",
+    "project": "shadow",
+    "binary": "passwd",
+    "func": "main",
+    "cached_src_nodes": 56,
+    "snippet": "\nundefined1  [16] main(int param_1,undefined8 *param_2)\n\n{\n  undefined1 auVar1 [16];\n  FILE *__stream;\n  undefined8 *puVar2;\n  char cVar3;\n  __uid_t _Var4;\n  int iVar5;\n  __uid_t _Var6;\n  undefined8 *puVar7;\n  long lVar8;\n  char *pcVar9;"
+   },
+   {
+    "opt": "O2",
+    "project": "libselinux",
+    "binary": "libselinux.so",
+    "func": "regex_arch_string",
+    "cached_src_nodes": 1,
+    "snippet": "\nundefined1  [16] regex_arch_string(undefined8 param_1,undefined8 param_2,undefined8 param_3)\n\n{\n  undefined1 auVar1 [16];\n  undefined1 auVar2 [16];\n  \n  if (*PTR_DAT_0012c820 != '\\0') {\n    auVar1._8_8_ = param_3;\n    auVar1._0_8_ = PTR_DAT_0012c820;\n    return auVar1;\n  }\n  __snprintf_chk(&DAT_0012dc20,0x20,1,0x20,\"%zu-%zu-%s\",8,8);\n  PTR_DAT_0012c820 = &DAT_0012dc20;"
+   },
+   {
+    "opt": "O2",
+    "project": "tar",
+    "binary": "tar",
+    "func": "tar_checksum",
+    "cached_src_nodes": 15,
+    "snippet": "\nundefined1  [16] tar_checksum(byte *param_1,byte param_2)\n\n{\n  byte bVar1;\n  int iVar2;\n  int iVar3;\n  byte *pbVar4;\n  int iVar5;\n  undefined8 uVar6;\n  undefined1 auVar7 [16];\n  undefined1 auVar8 [16];\n  undefined1 auVar9 [16];\n  "
+   },
+   {
+    "opt": "O2",
+    "project": "tar",
+    "binary": "tar",
+    "func": "decode_timespec",
+    "cached_src_nodes": 42,
+    "snippet": "\nundefined1  [16] decode_timespec(char *param_1,char **param_2,char param_3)\n\n{\n  char cVar1;\n  int iVar2;\n  int iVar3;\n  int *piVar4;\n  uintmax_t uVar5;\n  long lVar6;\n  char *pcVar7;\n  int iVar8;\n  uint uVar9;\n  int iVar10;"
+   },
+   {
+    "opt": "O2",
+    "project": "cronie",
+    "binary": "crond",
+    "func": "load_user",
+    "cached_src_nodes": 1,
+    "snippet": "\nundefined1 (*) [16]\nload_user(int param_1,undefined8 param_2,undefined8 param_3,char *param_4,char *param_5)\n\n{\n  void *pvVar1;\n  undefined8 *puVar2;\n  undefined1 *puVar3;\n  int iVar4;\n  __pid_t _Var5;\n  FILE *__stream;\n  int *piVar6;\n  undefined1 (*__ptr) [16];\n  char *pcVar7;"
+   },
+   {
+    "opt": "O2",
+    "project": "cronie",
+    "binary": "cronnext",
+    "func": "load_user",
+    "cached_src_nodes": 1,
+    "snippet": "\nundefined1 (*) [16]\nload_user(int param_1,undefined8 param_2,undefined8 param_3,char *param_4,char *param_5)\n\n{\n  void *pvVar1;\n  undefined8 *puVar2;\n  undefined1 *puVar3;\n  int iVar4;\n  __pid_t _Var5;\n  FILE *__stream;\n  int *piVar6;\n  undefined1 (*__ptr) [16];\n  char *pcVar7;"
+   },
+   {
+    "opt": "O2-noinline",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "concat",
+    "cached_src_nodes": 1,
+    "snippet": "\nundefined1  [16] concat(char *param_1,char *param_2,char *param_3)\n\n{\n  size_t sVar1;\n  size_t sVar2;\n  size_t sVar3;\n  undefined1 auVar4 [16];\n  \n  sVar1 = strlen(param_1);\n  sVar2 = strlen(param_2);\n  sVar3 = strlen(param_3);\n  auVar4._0_8_ = FUN_00115f50(sVar1 + sVar2 + 1 + sVar3);\n  __sprintf_chk(auVar4._0_8_,1,0xffffffffffffffff,\"%s%s%s\",param_1,param_2,param_3);"
+   },
+   {
+    "opt": "O2-noinline",
+    "project": "gnutls",
+    "binary": "gnutls-serv",
+    "func": "wrap_db_fetch",
+    "cached_src_nodes": 12,
+    "snippet": "\nundefined1  [16] wrap_db_fetch(undefined8 param_1,void *param_2,uint param_3)\n\n{\n  int iVar1;\n  time_t tVar2;\n  long lVar3;\n  void *__dest;\n  long lVar4;\n  int iVar5;\n  ulong __size;\n  void *pvVar6;\n  undefined1 auVar7 [16];\n  "
+   },
+   {
+    "opt": "O2-noinline",
+    "project": "iproute2",
+    "binary": "ip",
+    "func": "tnl_print_stats",
+    "cached_src_nodes": 1,
+    "snippet": "\nundefined1  [16] tnl_print_stats(undefined8 *param_1)\n\n{\n  undefined8 uVar1;\n  undefined1 auVar2 [16];\n  undefined8 uVar3;\n  \n  __printf_chk(1,&DAT_00184f09,_SL_);\n  __printf_chk(1,\"RX: Packets    Bytes        Errors CsumErrs OutOfSeq Mcasts%s\",_SL_);\n  __printf_chk(1,\"    %-10lld %-12lld %-6lld %-8lld %-8lld %-8lld%s\",*param_1,param_1[2],param_1[4],\n               param_1[0xd],param_1[0xe],param_1[8],_SL_);\n  __printf_chk(1,\"TX: Packets    Bytes        Errors DeadLoop NoRoute  NoBufs%s\",_SL_);\n  uVar1 = param_1[7];"
+   },
+   {
+    "opt": "O2-noinline",
+    "project": "iproute2",
+    "binary": "ip",
+    "func": "xfrm_stats_print",
+    "cached_src_nodes": 5,
+    "snippet": "\nundefined1  [16] xfrm_stats_print(undefined4 *param_1,FILE *param_2,char *param_3)\n\n{\n  undefined1 auVar1 [16];\n  undefined *puVar2;\n  \n  fputs(param_3,param_2);\n  __fprintf_chk(param_2,1,\"stats:%s\",_SL_);\n  fputs(param_3,param_2);\n  puVar2 = _SL_;\n  __fprintf_chk(param_2,1,\"  replay-window %u replay %u failed %u%s\",*param_1,param_1[1],param_1[2])\n  ;\n  auVar1._8_8_ = 0x13314d;"
+   },
+   {
+    "opt": "O2-noinline",
+    "project": "libexpat",
+    "binary": "xmlwf",
+    "func": "metaLocation",
+    "cached_src_nodes": 3,
+    "snippet": "\nundefined1  [16] metaLocation(undefined8 *param_1)\n\n{\n  undefined8 uVar1;\n  undefined1 auVar2 [16];\n  undefined4 uVar3;\n  long lVar4;\n  undefined8 uVar5;\n  undefined8 uVar6;\n  undefined8 uVar7;\n  \n  lVar4 = XML_GetBase();\n  uVar1 = *(undefined8 *)*param_1;"
+   },
+   {
+    "opt": "O2-noinline",
+    "project": "coreutils",
+    "binary": "true",
+    "func": "main",
+    "cached_src_nodes": 34,
+    "snippet": "\nundefined1  [16] main(int param_1,undefined8 *param_2,ulong param_3,ulong param_4)\n\n{\n  char *__s1;\n  undefined1 auVar1 [16];\n  undefined1 auVar2 [16];\n  int iVar3;\n  \n  if (param_1 != 2) {\n    auVar1._8_8_ = 0;\n    auVar1._0_8_ = param_3;\n    return auVar1 << 0x40;\n  }"
+   },
+   {
+    "opt": "O2-noinline",
+    "project": "coreutils",
+    "binary": "stat",
+    "func": "neg_to_zero",
+    "cached_src_nodes": 3,
+    "snippet": "\nundefined1  [16] neg_to_zero(long param_1,long param_2)\n\n{\n  long lVar1;\n  long lVar2;\n  undefined1 auVar3 [16];\n  \n  lVar2 = 0;\n  lVar1 = lVar2;\n  if (-1 < param_2) {\n    lVar2 = param_2;\n    lVar1 = param_1;\n  }"
+   },
+   {
+    "opt": "O2-noinline",
+    "project": "coreutils",
+    "binary": "sort",
+    "func": "key_init",
+    "cached_src_nodes": 1,
+    "snippet": "\nundefined1 (*) [16] key_init(undefined1 (*param_1) [16])\n\n{\n  *(undefined8 *)param_1[4] = 0;\n  param_1[1] = (undefined1  [16])0x0;\n  *param_1 = (undefined1  [16])0x0;\n  *(undefined8 *)param_1[1] = 0xffffffffffffffff;\n  param_1[2] = (undefined1  [16])0x0;\n  param_1[3] = (undefined1  [16])0x0;\n  return param_1;\n}\n\n"
+   },
+   {
+    "opt": "O2-noinline",
+    "project": "coreutils",
+    "binary": "dir",
+    "func": "dev_ino_pop",
+    "cached_src_nodes": 3,
+    "snippet": "\n/* WARNING: Globals starting with '_' overlap smaller symbols at the same address */\n\nundefined1  [16] dev_ino_pop(void)\n\n{\n  long lVar1;\n  \n  lVar1 = DAT_001270f8;\n  if (0xf < (ulong)(DAT_001270f8 - _DAT_001270f0)) {\n    DAT_001270f8 = DAT_001270f8 + -0x10;\n    return *(undefined1 (*) [16])(lVar1 + -0x10);\n  }\n                    /* WARNING: Subroutine does not return */"
+   }
+  ],
+  "ida": [
+   {
+    "opt": "O0",
+    "project": "libedit",
+    "binary": "libedit.so.0.0",
+    "func": "_el_fn_complete",
+    "cached_src_nodes": 1,
+    "snippet": "long long el_fn_complete(long long a1)\n{\n  return fn_complete(a1, 0, 0, U\" \\t\\n\\\"\\\\'`@$><=;|&{(\", 0, 0, 0x64u, 0, 0, 0, 0);\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "libedit",
+    "binary": "libedit.so.0.0",
+    "func": "_rl_abort_internal",
+    "cached_src_nodes": 1,
+    "snippet": "void rl_abort_internal()\n{\n  el_beep(qword_478E0);\n  longjmp(env, 1);\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "libedit",
+    "binary": "libedit.so.0.0",
+    "func": "_rl_qsort_string_compare",
+    "cached_src_nodes": 1,
+    "snippet": "int rl_qsort_string_compare(const char **a1, const char **a2)\n{\n  return strcoll(*a1, *a2);\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "libedit",
+    "binary": "libedit.so.0.0",
+    "func": "_rl_erase_entire_line",
+    "cached_src_nodes": 1,
+    "snippet": "void rl_erase_entire_line()\n{\n  ;\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "iproute2",
+    "binary": "ip",
+    "func": "__print_rta_gateway",
+    "cached_src_nodes": 1,
+    "snippet": "long long _print_rta_gateway(FILE *a1, unsigned char a2, const char *a3)\n{\n  unsigned int v4; // eax\n\n  if ( (unsigned char)is_json_context(a1) )\n    return sub_19642(2, \"gateway\", 0, a3);\n  fprintf(a1, \"via \");\n  v4 = ifa_family_color(a2);\n  return print_color_string(1, v4, 0, \"%s \", a3);\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "coreutils",
+    "binary": "make-prime-list",
+    "func": "print_wide_uint",
+    "cached_src_nodes": 9,
+    "snippet": "int print_wide_uint(unsigned __int128 a1, int a2, unsigned int a3)\n{\n  unsigned int v6; // [rsp+20h] [rbp-10h]\n\n  v6 = 7;\n  if ( *((long long *)&a1 + 1) | (unsigned long long)a1 ^ a1 & 0xFFFFFFF )\n  {\n    if ( a1 >> 56 != 0 )\n      printf(\"(\");\n    print_wide_uint(a1 >> 28, a1 >> 28 >> 64, (unsigned int)(a2 + 1), a3, a1 >> 28, a1 >> 28 >> 64);\n    if ( a1 >> 56 != 0 )\n      printf(\")\\n%*s\", a2 + 3, (const char *)&unk_200A);\n    printf(\" << %d | \", 28);\n  }"
+   },
+   {
+    "opt": "O0",
+    "project": "libbsd",
+    "binary": "libbsd.so.0.11",
+    "func": "__fdnlist",
+    "cached_src_nodes": 59,
+    "snippet": "// bad sp value at call has been detected, the output may be wrong!\nlong long _fdnlist(int a1, const char **a2)\n{\n  int v3; // eax\n  unsigned int v4; // [rsp+18h] [rbp-6138h]\n  unsigned int nbytes; // [rsp+1Ch] [rbp-6134h]\n  int nbytes_4; // [rsp+20h] [rbp-6130h]\n  int i; // [rsp+24h] [rbp-612Ch]\n  int v8; // [rsp+28h] [rbp-6128h]\n  unsigned int size; // [rsp+2Ch] [rbp-6124h]\n  unsigned int size_4; // [rsp+30h] [rbp-6120h]\n  int v11; // [rsp+34h] [rbp-611Ch]\n  const char **j; // [rsp+38h] [rbp-6118h]\n  const char **k; // [rsp+38h] [rbp-6118h]"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_getenv",
+    "cached_src_nodes": 1,
+    "snippet": "char *getenv(const char *name)\n{\n  return (char *)getenv(name);\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_internal_char_cleanup",
+    "cached_src_nodes": 1,
+    "snippet": "long long rl_internal_char_cleanup()\n{\n  long long result; // rax\n\n  if ( rl_keep_mark_active )\n  {\n    rl_keep_mark_active = 0;\n  }\n  else if ( (unsigned int)rl_mark_active_p() )\n  {\n    rl_deactivate_mark();\n  }\n  if ( !rl_editing_mode && rl_keymap == &vi_movement_keymap )\n    rl_vi_check();"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_init_line_state",
+    "cached_src_nodes": 1,
+    "snippet": "char *rl_init_line_state()\n{\n  char *result; // rax\n\n  rl_mark = 0;\n  rl_end = 0;\n  rl_point = 0;\n  qword_17BD38 = rl_line_buffer;\n  result = rl_line_buffer;\n  *rl_line_buffer = 0;\n  return result;\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_set_the_line",
+    "cached_src_nodes": 1,
+    "snippet": "char *rl_set_the_line()\n{\n  qword_17BD38 = rl_line_buffer;\n  return rl_line_buffer;\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_keyseq_cxt_alloc",
+    "cached_src_nodes": 1,
+    "snippet": "long long rl_keyseq_cxt_alloc()\n{\n  long long result; // rax\n\n  result = xmalloc(48);\n  *(int *)(result + 8) = 0;\n  *(int *)(result + 4) = *(int *)(result + 8);\n  *(int *)result = *(int *)(result + 4);\n  *(int *)(result + 12) = 0;\n  *(long long *)(result + 32) = rl_kscxt;\n  *(int *)(result + 40) = 42;\n  return result;\n}\n"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_keyseq_cxt_dispose",
+    "cached_src_nodes": 1,
+    "snippet": "long long rl_keyseq_cxt_dispose(long long a1)\n{\n  return xfree(a1);\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_keyseq_chain_dispose",
+    "cached_src_nodes": 1,
+    "snippet": "long long rl_keyseq_chain_dispose()\n{\n  long long result; // rax\n  long long v1; // [rsp+8h] [rbp-8h]\n\n  while ( 1 )\n  {\n    result = rl_kscxt;\n    if ( !rl_kscxt )\n      break;\n    v1 = rl_kscxt;\n    rl_kscxt = *(long long *)(rl_kscxt + 32);\n    rl_keyseq_cxt_dispose(v1);\n  }"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_dispatch_callback",
+    "cached_src_nodes": 1,
+    "snippet": "long long rl_dispatch_callback(long long a1)\n{\n  unsigned int v2; // [rsp+18h] [rbp-8h]\n  int v3; // [rsp+1Ch] [rbp-4h]\n\n  if ( (*(int *)a1 & 1) != 0 )\n  {\n    v2 = *(int *)(a1 + 40);\n  }\n  else\n  {\n    v3 = sub_F818C(*(int *)(a1 + 12));\n    if ( v3 < 0 )\n      rl_abort_internal();"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_dispatch",
+    "cached_src_nodes": 1,
+    "snippet": "long long rl_dispatch(unsigned int a1, long long a2)\n{\n  rl_dispatching_keymap = a2;\n  return rl_dispatch_subseq(a1, a2, 0);\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_dispatch_subseq",
+    "cached_src_nodes": 1,
+    "snippet": "long long rl_dispatch_subseq(int a1, long long a2, unsigned int a3)\n{\n  unsigned int v3; // ebx\n  int v4; // eax\n  int v6; // eax\n  unsigned int v7; // eax\n  int v8; // eax\n  unsigned int v9; // eax\n  unsigned int v10; // eax\n  int v11; // eax\n  int v12; // eax\n  int v13; // edx\n  long long v14; // rdx\n  const char *v15; // r12"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_init_executing_keyseq",
+    "cached_src_nodes": 1,
+    "snippet": "long long rl_init_executing_keyseq()\n{\n  long long result; // rax\n\n  rl_key_sequence_length = 0;\n  result = rl_executing_keyseq;\n  *(char *)rl_executing_keyseq = 0;\n  return result;\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_term_executing_keyseq",
+    "cached_src_nodes": 1,
+    "snippet": "char *rl_term_executing_keyseq()\n{\n  char *result; // rax\n\n  result = (char *)(rl_executing_keyseq + rl_key_sequence_length);\n  *result = 0;\n  return result;\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_end_executing_keyseq",
+    "cached_src_nodes": 1,
+    "snippet": "long long rl_end_executing_keyseq()\n{\n  long long result; // rax\n\n  result = (unsigned int)rl_key_sequence_length;\n  if ( rl_key_sequence_length > 0 )\n  {\n    result = rl_executing_keyseq + --rl_key_sequence_length;\n    *(char *)result = 0;\n  }\n  return result;\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_add_executing_keyseq",
+    "cached_src_nodes": 1,
+    "snippet": "char *rl_add_executing_keyseq(char a1)\n{\n  int v1; // eax\n  char *result; // rax\n\n  if ( rl_key_sequence_length + 2 >= rl_executing_keyseq_size )\n  {\n    rl_executing_keyseq_size += 16;\n    rl_executing_keyseq = xrealloc(rl_executing_keyseq, rl_executing_keyseq_size);\n  }\n  v1 = rl_key_sequence_length++;\n  result = (char *)(rl_executing_keyseq + v1);\n  *result = a1;\n  return result;"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_del_executing_keyseq",
+    "cached_src_nodes": 1,
+    "snippet": "long long rl_del_executing_keyseq()\n{\n  long long result; // rax\n\n  result = (unsigned int)rl_key_sequence_length;\n  if ( rl_key_sequence_length > 0 )\n    return (unsigned int)--rl_key_sequence_length;\n  return result;\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_vi_initialize_line",
+    "cached_src_nodes": 4,
+    "snippet": "unsigned long long rl_vi_initialize_line()\n{\n  int i; // ebx\n  unsigned long long result; // rax\n\n  for ( i = 0; i < 26; ++i )\n    dword_17BDE0[i] = -1;\n  result = rl_readline_state & 0xFFFFFFFFFFBFFFFFLL;\n  rl_readline_state &= ~0x400000uLL;\n  return result;\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_vi_reset_last",
+    "cached_src_nodes": 1,
+    "snippet": "void rl_vi_reset_last()\n{\n  rl_vi_last_command = 105;\n  dword_16CC9C = 1;\n  dword_16CCA0 = 1;\n  dword_17BD8C = 0;\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_vi_set_last",
+    "cached_src_nodes": 1,
+    "snippet": "long long rl_vi_set_last(int a1, int a2, unsigned int a3)\n{\n  rl_vi_last_command = a1;\n  dword_16CC9C = a2;\n  dword_16CCA0 = a3;\n  return a3;\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_vi_textmod_command",
+    "cached_src_nodes": 3,
+    "snippet": "long long rl_vi_textmod_command(int a1)\n{\n  return a1 && strchr(\"_*\\\\AaIiCcDdPpYyRrSsXx~\", a1);\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_vi_motion_command",
+    "cached_src_nodes": 3,
+    "snippet": "long long rl_vi_motion_command(int a1)\n{\n  return a1 && strchr(\" hl^$0ftFT;,%wbeWBE|`\", a1);\n}\n\n"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_vi_done_inserting",
+    "cached_src_nodes": 19,
+    "snippet": "long long rl_vi_done_inserting()\n{\n  long long result; // rax\n\n  if ( dword_17BD6C )\n  {\n    rl_end_undo_group();\n    dword_17BD6C = 0;\n    if ( dword_17BDC4 == 82 )\n      sub_FAFF2();\n    else\n      sub_FB08C(*(int **)rl_undo_list);\n    if ( rl_undo_group_level <= 0 )\n      goto LABEL_15;"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_vi_domove_motion_cleanup",
+    "cached_src_nodes": 55,
+    "snippet": "long long rl_vi_domove_motion_cleanup(int a1, long long a2)\n{\n  bool v2; // al\n  bool v4; // al\n  int v6; // [rsp+18h] [rbp-8h]\n\n  rl_end = *(int *)(a2 + 24);\n  rl_line_buffer[rl_end] = 0;\n  rl_fix_point(0);\n  if ( rl_mark == rl_point )\n  {\n    if ( ((*__ctype_b_loc())[(unsigned char)*(int *)(a2 + 28)] & 0x200) != 0 )\n      v2 = toupper((unsigned char)*(int *)(a2 + 28)) == 67;\n    else"
+   },
+   {
+    "opt": "O0",
+    "project": "bash",
+    "binary": "bash",
+    "func": "_rl_vi_domove_callback",
+    "cached_src_nodes": 3,
+    "snippet": "long long rl_vi_domove_callback(long long a1)\n{\n  int v2; // [rsp+18h] [rbp-8h]\n\n  v2 = sub_FC029();\n  *(int *)(a1 + 32) = v2;\n  return v2 < 0 || (unsigned int)sub_FBDB1(a1) != 0;\n}\n\n"
+   }
+  ],
+  "binja": [
+   {
+    "opt": "O0",
+    "project": "gzip",
+    "binary": "gzip",
+    "func": "rpl_fcntl",
+    "cached_src_nodes": 1,
+    "snippet": "uint64_t rpl_fcntl(int32_t arg1, int32_t arg2, char arg3 @ rax)\n\n{\n    int64_t rdx;\n    int64_t var_a8 = rdx;\n    int64_t rcx;\n    int64_t var_a0 = rcx;\n    int64_t r8;\n    int64_t var_98 = r8;\n    int64_t r9;\n    int64_t var_90 = r9;\n    if (arg3 != 0)\n    {\n        int128_t zmm0;"
+   },
+   {
+    "opt": "O0",
+    "project": "gzip",
+    "binary": "gzip",
+    "func": "open_safer",
+    "cached_src_nodes": 1,
+    "snippet": "uint64_t open_safer(char* arg1, int32_t arg2, char arg3 @ rax)\n\n{\n    int64_t rdx;\n    int64_t var_a8 = rdx;\n    int64_t rcx;\n    int64_t var_a0 = rcx;\n    int64_t r8;\n    int64_t var_98 = r8;\n    int64_t r9;\n    int64_t var_90 = r9;\n    if (arg3 != 0)\n    {\n        int128_t zmm0;"
+   },
+   {
+    "opt": "O0",
+    "project": "gzip",
+    "binary": "gzip",
+    "func": "openat_safer",
+    "cached_src_nodes": 1,
+    "snippet": "uint64_t openat_safer(int32_t arg1, char* arg2, int32_t arg3, char arg4 @ rax)\n\n{\n    int64_t rcx;\n    int64_t var_a0 = rcx;\n    int64_t r8;\n    int64_t var_98 = r8;\n    int64_t r9;\n    int64_t var_90 = r9;\n    if (arg4 != 0)\n    {\n        int128_t zmm0;\n        int128_t var_88_1 = zmm0;\n        int128_t zmm1;"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "print_context_script",
+    "cached_src_nodes": 1,
+    "snippet": "int64_t* print_context_script(int64_t* arg1, char arg2)\n\n{\n    if ((data_2d1ec != 0 || (data_2d1ec == 0 && data_2d280 != 0)))\n    {\n        sub_8c9d(arg1);\n    }\n    if ((data_2d1ec == 0 && data_2d280 == 0))\n    {\n        for (int64_t* var_10_1 = arg1; var_10_1 != 0; var_10_1 = *(int64_t*)var_10_1)\n        {\n            var_10_1[5] = 0;\n        }\n    }"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "find_function",
+    "cached_src_nodes": 7,
+    "snippet": "char* find_function(void* arg1, int64_t arg2)\n\n{\n    int64_t var_28 = arg2;\n    int64_t rax_1 = data_2d1b0;\n    data_2d1b0 = var_28;\n    char* rax_18;\n    while (true)\n    {\n        var_28 = (var_28 - 1);\n        if (var_28 < rax_1)\n        {\n            if (data_2d1b8 == 0x7fffffffffffffff)\n            {"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "compare_names_for_qsort",
+    "cached_src_nodes": 4,
+    "snippet": "uint64_t compare_names_for_qsort(int64_t* arg1, int64_t* arg2)\n\n{\n    char* rax_3 = *(int64_t*)arg1;\n    char* rax_5 = *(int64_t*)arg2;\n    int32_t rax_8;\n    uint64_t rax_9;\n    if (data_2d660 != 0)\n    {\n        rax_8 = sub_c084(rax_3, rax_5);\n        if (rax_8 != 0)\n        {\n            rax_9 = ((uint64_t)rax_8);\n        }"
+   },
+   {
+    "opt": "O0",
+    "project": "diffutils",
+    "binary": "diff",
+    "func": "print_ed_script",
+    "cached_src_nodes": 1,
+    "snippet": "int64_t* print_ed_script(int64_t* arg1)\n\n{\n    return sub_1245b(arg1, sub_12449, sub_cbb5);\n}\n"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-keyscan",
+    "func": "key_print_wrapper",
+    "cached_src_nodes": 3,
+    "snippet": "int64_t key_print_wrapper(int32_t* arg1, void* arg2)\n\n{\n    void* rax_1;\n    int512_t zmm0;\n    int512_t zmm1;\n    int512_t zmm2;\n    int512_t zmm3;\n    int512_t zmm4;\n    int512_t zmm5;\n    int512_t zmm6;\n    int512_t zmm7;\n    int512_t zmm8;\n    int512_t zmm9;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-keyscan",
+    "func": "keygrab_ssh2",
+    "cached_src_nodes": 12,
+    "snippet": "int64_t keygrab_ssh2(void* arg1)\n\n{\n    void* fsbase;\n    int64_t rax = *(int64_t*)((char*)fsbase + 0x28);\n    char const* const var_68 = \"sntrup761x25519-sha512@openssh.c\u2026\";\n    char const* const var_60 = \"ssh-ed25519-cert-v01@openssh.com\u2026\";\n    char const* const var_58 = \"chacha20-poly1305@openssh.com,ae\u2026\";\n    char const* const var_50 = \"chacha20-poly1305@openssh.com,ae\u2026\";\n    char const* const var_48 = \"umac-64-etm@openssh.com,umac-128\u2026\";\n    char const* const var_40 = \"umac-64-etm@openssh.com,umac-128\u2026\";\n    char const* const var_38 = \"none,zlib@openssh.com\";\n    char const* const var_30 = \"none,zlib@openssh.com\";\n    void* const var_28 = &data_7b444;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-keyscan",
+    "func": "keyprint",
+    "cached_src_nodes": 14,
+    "snippet": "int64_t keyprint(void* arg1, int32_t* arg2)\n\n{\n    void* fsbase;\n    int64_t rax = *(int64_t*)((char*)fsbase + 0x28);\n    char* rax_4;\n    if (*(int64_t*)((char*)arg1 + 0x38) == 0)\n    {\n        rax_4 = *(int64_t*)((char*)arg1 + 0x28);\n    }\n    else\n    {\n        rax_4 = *(int64_t*)((char*)arg1 + 0x38);\n    }"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-keyscan",
+    "func": "ssh_init",
+    "cached_src_nodes": 13,
+    "snippet": "uint64_t ssh_init(int32_t*** arg1, int32_t arg2, char** arg3)\n\n{\n    void* fsbase;\n    int64_t rax = *(int64_t*)((char*)fsbase + 0x28);\n    char const* const var_68 = \"sntrup761x25519-sha512@openssh.c\u2026\";\n    char const* const var_60 = \"ssh-ed25519-cert-v01@openssh.com\u2026\";\n    char const* const var_58 = \"chacha20-poly1305@openssh.com,ae\u2026\";\n    char const* const var_50 = \"chacha20-poly1305@openssh.com,ae\u2026\";\n    char const* const var_48 = \"umac-64-etm@openssh.com,umac-128\u2026\";\n    char const* const var_40 = \"umac-64-etm@openssh.com,umac-128\u2026\";\n    char const* const var_38 = \"none,zlib@openssh.com\";\n    char const* const var_30 = \"none,zlib@openssh.com\";\n    void* const var_28 = &data_7c36c;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-keyscan",
+    "func": "_ssh_verify_host_key",
+    "cached_src_nodes": 6,
+    "snippet": "int64_t _ssh_verify_host_key(int32_t* arg1, void* arg2)\n\n{\n    void* var_30 = sub_1269b(arg1);\n    int512_t zmm0;\n    int512_t zmm1;\n    int512_t zmm2;\n    int512_t zmm3;\n    int512_t zmm4;\n    int512_t zmm5;\n    int512_t zmm6;\n    int512_t zmm7;\n    int512_t zmm8;\n    int512_t zmm9;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-keyscan",
+    "func": "_ssh_host_key_sign",
+    "cached_src_nodes": 1,
+    "snippet": "uint64_t _ssh_host_key_sign(void* arg1, int32_t* arg2, int64_t arg3, int64_t* arg4, \n    int64_t* arg5, int64_t arg6, uint64_t arg7, char* arg8)\n\n{\n    int64_t var_20 = arg3;\n    uint64_t rax_3;\n    int512_t zmm0;\n    int512_t zmm1;\n    int512_t zmm2;\n    int512_t zmm3;\n    int512_t zmm4;\n    int512_t zmm5;\n    int512_t zmm6;\n    int512_t zmm7;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-keyscan",
+    "func": "kexgex_hash",
+    "cached_src_nodes": 1,
+    "snippet": "uint64_t kexgex_hash(int32_t arg1, int64_t* arg2, int64_t* arg3, int64_t* arg4, \n    int64_t* arg5, int64_t* arg6, int32_t arg7, int32_t arg8, int32_t arg9, \n    int64_t arg10, int64_t arg11, int64_t arg12, int64_t arg13, int64_t arg14, \n    uint64_t arg15, int64_t arg16, int64_t* arg17)\n\nLoading...\n"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sshd",
+    "func": "grace_alarm_handler",
+    "cached_src_nodes": 3,
+    "snippet": "int64_t grace_alarm_handler() __noreturn\n\n{\n    int32_t rdi;\n    int32_t var_1c = rdi;\n    if (getpgid(0) == getpid())\n    {\n        sub_b4fca(0xf, 1);\n        kill(0, 0xf);\n    }\n    uint64_t var_38 = ((uint64_t)sub_9a061(data_141ef0));\n    int64_t var_40 = sub_99f12(data_141ef0);\n    sub_95692(\"sshd.c\", \"grace_alarm_handler\", 0x172, 0, 2, 0, 0, \"Timeout before authentication fo\u2026\");\n    /* no return */"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sshd",
+    "func": "main",
+    "cached_src_nodes": 275,
+    "snippet": "int32_t main(int32_t argc, char** argv, char** envp) __noreturn\n\n{\n    void* fsbase;\n    int64_t rax = *(int64_t*)((char*)fsbase + 0x28);\n    int64_t var_30 = rax;\n    int32_t var_174 = 1;\n    int32_t var_170 = 0xffffffff;\n    int32_t var_16c = 0xffffffff;\n    int32_t var_168 = 0xffffffff;\n    char* var_120 = nullptr;\n    int32_t var_d0 = 0xffffffff;\n    int32_t var_cc = 0xffffffff;\n    int64_t* var_118 = nullptr;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "attrib_to_stat",
+    "cached_src_nodes": 1,
+    "snippet": "int64_t attrib_to_stat(int32_t* arg1, void* arg2)\n\n{\n    memset(arg2, 0, 0x90);\n    if ((*(int32_t*)arg1 & 1) != 0)\n    {\n        *(int64_t*)((char*)arg2 + 0x30) = *(int64_t*)((char*)arg1 + 8);\n    }\n    if ((*(int32_t*)arg1 & 2) != 0)\n    {\n        *(int32_t*)((char*)arg2 + 0x1c) = arg1[4];\n        *(int32_t*)((char*)arg2 + 0x20) = arg1[5];\n    }\n    if ((*(int32_t*)arg1 & 4) != 0)"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp-server",
+    "func": "fx2txt",
+    "cached_src_nodes": 1,
+    "snippet": "void* const fx2txt(int32_t arg1)\n\n{\n    void* const rax_4;\n    if (arg1 > 8)\n    {\n        rax_4 = \"Unknown status\";\n    }\n    else\n    {\n        switch (arg1)\n        {\n            case 0:\n            {"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp",
+    "func": "sdirent_comp",
+    "cached_src_nodes": 17,
+    "snippet": "uint64_t sdirent_comp(int64_t* arg1, int64_t* arg2)\n\n{\n    int64_t* rax_1 = *(int64_t*)arg1;\n    int64_t* rax_3 = *(int64_t*)arg2;\n    int32_t rax_6;\n    if ((data_4b324 & 0x40) == 0)\n    {\n        rax_6 = 1;\n    }\n    else\n    {\n        rax_6 = -1;\n    }"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp",
+    "func": "parse_args",
+    "cached_src_nodes": 85,
+    "snippet": "uint64_t parse_args(int64_t* arg1, int32_t* arg2, int32_t* arg3, int32_t* arg4, \n    int32_t* arg5, int32_t* arg6, int32_t* arg7, int32_t* arg8, int32_t* arg9, \n    int32_t* arg10, int32_t* arg11, int64_t* arg12, int64_t* arg13, \n    int64_t* arg14)\n\nLoading...\n"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "sftp",
+    "func": "connect_to_server",
+    "cached_src_nodes": 11,
+    "snippet": "int64_t connect_to_server(char* arg1, char** arg2, int32_t* arg3, int32_t* arg4)\n\n{\n    void* fsbase;\n    int64_t rax = *(int64_t*)((char*)fsbase + 0x28);\n    int32_t var_18;\n    if (socketpair(1, 1, 0, &var_18) == 0xffffffff)\n    {\n        char* var_50 = strerror(*(int32_t*)__errno_location());\n        sub_23b81(\"sftp.c\", \"connect_to_server\", 0x938, 0, 1, 0, 0, \"socketpair: %s\");\n        /* no return */\n    }\n    *(int32_t*)arg4 = var_18;\n    *(int32_t*)arg3 = *(int32_t*)arg4;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-keysign",
+    "func": "kex_default_pk_alg",
+    "cached_src_nodes": 1,
+    "snippet": "int64_t kex_default_pk_alg()\n\n{\n    int512_t zmm0;\n    int512_t zmm1;\n    int512_t zmm2;\n    int512_t zmm3;\n    int512_t zmm4;\n    int512_t zmm5;\n    int512_t zmm6;\n    int512_t zmm7;\n    int512_t zmm8;\n    int512_t zmm9;\n    int512_t zmm10;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-sk-helper",
+    "func": "sshbuf_alloc",
+    "cached_src_nodes": 1,
+    "snippet": "int64_t sshbuf_alloc(void* arg1)\n\n{\n    int512_t zmm0;\n    zmm0 = 0;\n    int512_t zmm1;\n    zmm1 = 0;\n    int512_t zmm2;\n    zmm2 = 0;\n    int512_t zmm3;\n    zmm3 = 0;\n    int512_t zmm4;\n    zmm4 = 0;\n    int512_t zmm5;"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-keygen",
+    "func": "known_hosts_find_delete",
+    "cached_src_nodes": 29,
+    "snippet": "int64_t known_hosts_find_delete(int64_t* arg1, int64_t* arg2)\n\n{\n    int64_t var_28 = 0;\n    int64_t var_20 = 0;\n    int32_t rax_2;\n    if (data_b124c != 0)\n    {\n        rax_2 = 1;\n    }\n    else\n    {\n        rax_2 = data_b1010;\n    }"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-keygen",
+    "func": "cert_ext_cmp",
+    "cached_src_nodes": 15,
+    "snippet": "uint64_t cert_ext_cmp(int64_t* arg1, int64_t* arg2)\n\n{\n    uint64_t rax_8;\n    if (arg1[2] == arg2[2])\n    {\n        int32_t rax_12;\n        char rdx_3;\n        rax_12 = strcmp(*(int64_t*)arg1, *(int64_t*)arg2);\n        if (rax_12 != 0)\n        {\n            rax_8 = ((uint64_t)rax_12);\n        }\n        else"
+   },
+   {
+    "opt": "O0",
+    "project": "openssh-portable",
+    "binary": "ssh-keygen",
+    "func": "finalise_cert_exts",
+    "cached_src_nodes": 20,
+    "snippet": "int64_t finalise_cert_exts()\n\n{\n    int512_t zmm0;\n    int512_t zmm1;\n    int512_t zmm2;\n    int512_t zmm3;\n    int512_t zmm4;\n    int512_t zmm5;\n    int512_t zmm6;\n    int512_t zmm7;\n    int512_t zmm8;\n    int512_t zmm9;\n    int512_t zmm10;"
+   },
+   {
+    "opt": "O0",
+    "project": "gnutls",
+    "binary": "certtool",
+    "func": "tls_log_func",
+    "cached_src_nodes": 1,
+    "snippet": "int64_t tls_log_func(int32_t arg1, int64_t arg2)\n\n{\n    return fprintf(stderr, \"|<%d>| %s\", ((uint64_t)arg1), arg2);\n}\n"
+   },
+   {
+    "opt": "O0",
+    "project": "gnutls",
+    "binary": "certtool",
+    "func": "cmd_parser",
+    "cached_src_nodes": 49,
+    "snippet": "int64_t cmd_parser(int32_t arg1, char** arg2)\n\n{\n    void* fsbase;\n    int64_t rax = *(int64_t*)((char*)fsbase + 0x28);\n    int32_t var_104 = 0;\n    sub_20172(arg1, arg2);\n    if (data_57bee == 0)\n    {\n        data_56520 = stderr;\n    }\n    else\n    {\n        data_56520 = stdout;"
+   },
+   {
+    "opt": "O0",
+    "project": "gnutls",
+    "binary": "gnutls-cli",
+    "func": "try_save_ocsp_status",
+    "cached_src_nodes": 25,
+    "snippet": "int64_t try_save_ocsp_status(int64_t arg1)\n\n{\n    void* fsbase;\n    int64_t rax = *(int64_t*)((char*)fsbase + 0x28);\n    int32_t var_5c = 0;\n    gnutls_certificate_get_peers(arg1, &var_5c, &var_5c);\n    if (var_5c == 0)\n    {\n        fprintf(stderr, \"no certificates sent by server, \u2026\", \"no certificates sent by server, \u2026\");\n    }\n    else\n    {\n        int32_t var_58_1;"
+   },
+   {
+    "opt": "O0",
+    "project": "gnutls",
+    "binary": "gnutls-cli",
+    "func": "main",
+    "cached_src_nodes": 91,
+    "snippet": "int32_t main(int32_t argc, char** argv, char** envp)\n\n{\n    int64_t var_1008;\n    int64_t var_1008_1 = var_1008;\n    void* fsbase;\n    int64_t rax = *(int64_t*)((char*)fsbase + 0x28);\n    int32_t var_1260 = 0;\n    int32_t var_125c = 0;\n    int32_t var_1258 = 0x40;\n    FILE* var_1238 = nullptr;\n    FILE* var_1230 = nullptr;\n    FILE* var_1228 = nullptr;\n    sub_cc3f(argc, argv);"
+   }
+  ]
+ },
+ "recoverable_degenerate_count": 2579,
+ "recoverable_by_project": {
+  "e2fsprogs": 112,
+  "iproute2": 104,
+  "bzip2": 28,
+  "dpkg": 67,
+  "grep": 16,
+  "diffutils": 7,
+  "gzip": 36,
+  "zlib": 59,
+  "coreutils": 85,
+  "gnutls": 74,
+  "openssh-portable": 654,
+  "bash": 673,
+  "libedit": 174,
+  "tar": 156,
+  "libacl": 50,
+  "cronie": 34,
+  "sysvinit": 11,
+  "libselinux": 184,
+  "rsyslog": 12,
+  "findutils": 29,
+  "shadow": 4,
+  "libexpat": 6,
+  "kmod": 1,
+  "base-passwd": 1,
+  "libbsd": 2
+ },
+ "recoverable_worst": [
+  {
+   "project": "e2fsprogs",
+   "func": "e2fsck_pass1",
+   "cached_nodes": 1,
+   "ghidra_branches": 394
+  },
+  {
+   "project": "iproute2",
+   "func": "iplink_parse",
+   "cached_nodes": 1,
+   "ghidra_branches": 337
+  },
+  {
+   "project": "bzip2",
+   "func": "BZ2_compressBlock",
+   "cached_nodes": 1,
+   "ghidra_branches": 259
+  },
+  {
+   "project": "iproute2",
+   "func": "print_route",
+   "cached_nodes": 1,
+   "ghidra_branches": 256
+  },
+  {
+   "project": "dpkg",
+   "func": "tarobject",
+   "cached_nodes": 1,
+   "ghidra_branches": 200
+  },
+  {
+   "project": "grep",
+   "func": "kwsprep",
+   "cached_nodes": 1,
+   "ghidra_branches": 198
+  },
+  {
+   "project": "e2fsprogs",
+   "func": "check_super_block",
+   "cached_nodes": 1,
+   "ghidra_branches": 190
+  },
+  {
+   "project": "bzip2",
+   "func": "BZ2_bzDecompress",
+   "cached_nodes": 1,
+   "ghidra_branches": 180
+  },
+  {
+   "project": "iproute2",
+   "func": "do_iplink",
+   "cached_nodes": 1,
+   "ghidra_branches": 170
+  },
+  {
+   "project": "diffutils",
+   "func": "diff_2_files",
+   "cached_nodes": 1,
+   "ghidra_branches": 169
+  },
+  {
+   "project": "e2fsprogs",
+   "func": "e2fsck_pass5",
+   "cached_nodes": 1,
+   "ghidra_branches": 169
+  },
+  {
+   "project": "gzip",
+   "func": "printf_parse",
+   "cached_nodes": 1,
+   "ghidra_branches": 169
+  },
+  {
+   "project": "iproute2",
+   "func": "print_linkinfo",
+   "cached_nodes": 1,
+   "ghidra_branches": 168
+  },
+  {
+   "project": "zlib",
+   "func": "deflate",
+   "cached_nodes": 1,
+   "ghidra_branches": 166
+  },
+  {
+   "project": "coreutils",
+   "func": "chown_files",
+   "cached_nodes": 1,
+   "ghidra_branches": 151
+  },
+  {
+   "project": "gnutls",
+   "func": "process_options",
+   "cached_nodes": 1,
+   "ghidra_branches": 150
+  },
+  {
+   "project": "openssh-portable",
+   "func": "muxclient",
+   "cached_nodes": 1,
+   "ghidra_branches": 149
+  },
+  {
+   "project": "diffutils",
+   "func": "read_files",
+   "cached_nodes": 1,
+   "ghidra_branches": 145
+  },
+  {
+   "project": "openssh-portable",
+   "func": "ssh_krl_to_blob",
+   "cached_nodes": 1,
+   "ghidra_branches": 143
+  },
+  {
+   "project": "bash",
+   "func": "glob_filename",
+   "cached_nodes": 1,
+   "ghidra_branches": 139
+  },
+  {
+   "project": "openssh-portable",
+   "func": "dump_client_config",
+   "cached_nodes": 1,
+   "ghidra_branches": 135
+  },
+  {
+   "project": "libedit",
+   "func": "re_refresh",
+   "cached_nodes": 1,
+   "ghidra_branches": 130
+  },
+  {
+   "project": "dpkg",
+   "func": "depisok",
+   "cached_nodes": 1,
+   "ghidra_branches": 130
+  },
+  {
+   "project": "bash",
+   "func": "execute_command_internal",
+   "cached_nodes": 1,
+   "ghidra_branches": 129
+  },
+  {
+   "project": "bash",
+   "func": "brace_expand",
+   "cached_nodes": 1,
+   "ghidra_branches": 129
+  },
+  {
+   "project": "openssh-portable",
+   "func": "copy_set_server_options",
+   "cached_nodes": 1,
+   "ghidra_branches": 128
+  },
+  {
+   "project": "tar",
+   "func": "read_and",
+   "cached_nodes": 1,
+   "ghidra_branches": 126
+  },
+  {
+   "project": "libacl",
+   "func": "__acl_to_any_text",
+   "cached_nodes": 1,
+   "ghidra_branches": 125
+  },
+  {
+   "project": "libacl",
+   "func": "do_set",
+   "cached_nodes": 1,
+   "ghidra_branches": 122
+  },
+  {
+   "project": "e2fsprogs",
+   "func": "e2fsck_rehash_dir",
+   "cached_nodes": 1,
+   "ghidra_branches": 122
+  },
+  {
+   "project": "coreutils",
+   "func": "find_mount_point",
+   "cached_nodes": 1,
+   "ghidra_branches": 121
+  },
+  {
+   "project": "openssh-portable",
+   "func": "ssh_krl_from_blob",
+   "cached_nodes": 1,
+   "ghidra_branches": 119
+  },
+  {
+   "project": "zlib",
+   "func": "inflateBack",
+   "cached_nodes": 1,
+   "ghidra_branches": 116
+  },
+  {
+   "project": "bash",
+   "func": "wait_for",
+   "cached_nodes": 1,
+   "ghidra_branches": 115
+  },
+  {
+   "project": "e2fsprogs",
+   "func": "print_e2fsck_message",
+   "cached_nodes": 1,
+   "ghidra_branches": 114
+  },
+  {
+   "project": "openssh-portable",
+   "func": "dump_config",
+   "cached_nodes": 1,
+   "ghidra_branches": 112
+  },
+  {
+   "project": "bash",
+   "func": "command_word_completion_function",
+   "cached_nodes": 1,
+   "ghidra_branches": 110
+  },
+  {
+   "project": "bash",
+   "func": "glob_vector",
+   "cached_nodes": 1,
+   "ghidra_branches": 110
+  },
+  {
+   "project": "bash",
+   "func": "sh_modcase",
+   "cached_nodes": 1,
+   "ghidra_branches": 110
+  },
+  {
+   "project": "openssh-portable",
+   "func": "sftp_server_main",
+   "cached_nodes": 1,
+   "ghidra_branches": 109
+  },
+  {
+   "project": "dpkg",
+   "func": "removal_bulk",
+   "cached_nodes": 1,
+   "ghidra_branches": 104
+  },
+  {
+   "project": "bash",
+   "func": "list_string",
+   "cached_nodes": 1,
+   "ghidra_branches": 104
+  },
+  {
+   "project": "libedit",
+   "func": "history_w",
+   "cached_nodes": 1,
+   "ghidra_branches": 101
+  },
+  {
+   "project": "libedit",
+   "func": "history",
+   "cached_nodes": 1,
+   "ghidra_branches": 101
+  },
+  {
+   "project": "libacl",
+   "func": "acl_from_text",
+   "cached_nodes": 1,
+   "ghidra_branches": 101
+  },
+  {
+   "project": "gnutls",
+   "func": "cfg_load",
+   "cached_nodes": 1,
+   "ghidra_branches": 100
+  },
+  {
+   "project": "tar",
+   "func": "open_archive",
+   "cached_nodes": 1,
+   "ghidra_branches": 100
+  },
+  {
+   "project": "openssh-portable",
+   "func": "session_input_channel_req",
+   "cached_nodes": 1,
+   "ghidra_branches": 98
+  },
+  {
+   "project": "cronie",
+   "func": "load_entry",
+   "cached_nodes": 1,
+   "ghidra_branches": 98
+  },
+  {
+   "project": "libedit",
+   "func": "ce_inc_search",
+   "cached_nodes": 1,
+   "ghidra_branches": 96
+  },
+  {
+   "project": "openssh-portable",
+   "func": "kex_input_kexinit",
+   "cached_nodes": 1,
+   "ghidra_branches": 95
+  },
+  {
+   "project": "bash",
+   "func": "skip_to_delim",
+   "cached_nodes": 1,
+   "ghidra_branches": 95
+  },
+  {
+   "project": "openssh-portable",
+   "func": "fill_default_server_options",
+   "cached_nodes": 1,
+   "ghidra_branches": 94
+  },
+  {
+   "project": "libedit",
+   "func": "tok_line",
+   "cached_nodes": 1,
+   "ghidra_branches": 92
+  },
+  {
+   "project": "e2fsprogs",
+   "func": "fix_problem",
+   "cached_nodes": 1,
+   "ghidra_branches": 92
+  },
+  {
+   "project": "libedit",
+   "func": "tok_wline",
+   "cached_nodes": 1,
+   "ghidra_branches": 90
+  },
+  {
+   "project": "libedit",
+   "func": "unvis",
+   "cached_nodes": 1,
+   "ghidra_branches": 90
+  },
+  {
+   "project": "libedit",
+   "func": "terminal_echotc",
+   "cached_nodes": 1,
+   "ghidra_branches": 89
+  },
+  {
+   "project": "bash",
+   "func": "initialize_shell_variables",
+   "cached_nodes": 1,
+   "ghidra_branches": 89
+  },
+  {
+   "project": "openssh-portable",
+   "func": "fill_default_options",
+   "cached_nodes": 1,
+   "ghidra_branches": 88
+  },
+  {
+   "project": "iproute2",
+   "func": "lwt_parse_encap",
+   "cached_nodes": 1,
+   "ghidra_branches": 88
+  },
+  {
+   "project": "openssh-portable",
+   "func": "user_key_allowed",
+   "cached_nodes": 1,
+   "ghidra_branches": 86
+  },
+  {
+   "project": "openssh-portable",
+   "func": "client_loop",
+   "cached_nodes": 1,
+   "ghidra_branches": 86
+  },
+  {
+   "project": "bash",
+   "func": "stop_pipeline",
+   "cached_nodes": 1,
+   "ghidra_branches": 86
+  },
+  {
+   "project": "libedit",
+   "func": "fn_complete2",
+   "cached_nodes": 1,
+   "ghidra_branches": 85
+  },
+  {
+   "project": "tar",
+   "func": "diff_archive",
+   "cached_nodes": 1,
+   "ghidra_branches": 85
+  },
+  {
+   "project": "openssh-portable",
+   "func": "ssh_packet_read_poll2",
+   "cached_nodes": 1,
+   "ghidra_branches": 84
+  },
+  {
+   "project": "e2fsprogs",
+   "func": "e2fsck_pass1_dupblocks",
+   "cached_nodes": 1,
+   "ghidra_branches": 83
+  },
+  {
+   "project": "bash",
+   "func": "unary_test",
+   "cached_nodes": 1,
+   "ghidra_branches": 83
+  },
+  {
+   "project": "iproute2",
+   "func": "lwt_print_encap",
+   "cached_nodes": 1,
+   "ghidra_branches": 81
+  },
+  {
+   "project": "iproute2",
+   "func": "do_xfrm_policy",
+   "cached_nodes": 1,
+   "ghidra_branches": 80
+  },
+  {
+   "project": "openssh-portable",
+   "func": "krl_dump",
+   "cached_nodes": 1,
+   "ghidra_branches": 78
+  },
+  {
+   "project": "bash",
+   "func": "assign_compound_array_list",
+   "cached_nodes": 1,
+   "ghidra_branches": 78
+  },
+  {
+   "project": "openssh-portable",
+   "func": "pkcs11_add_provider",
+   "cached_nodes": 1,
+   "ghidra_branches": 77
+  },
+  {
+   "project": "iproute2",
+   "func": "xfrm_selector_parse",
+   "cached_nodes": 1,
+   "ghidra_branches": 77
+  },
+  {
+   "project": "iproute2",
+   "func": "do_ipmonitor",
+   "cached_nodes": 1,
+   "ghidra_branches": 76
+  },
+  {
+   "project": "iproute2",
+   "func": "xfrm_xfrma_print",
+   "cached_nodes": 1,
+   "ghidra_branches": 76
+  },
+  {
+   "project": "libacl",
+   "func": "parse_acl_cmd",
+   "cached_nodes": 1,
+   "ghidra_branches": 76
+  },
+  {
+   "project": "bash",
+   "func": "gen_compspec_completions",
+   "cached_nodes": 1,
+   "ghidra_branches": 76
+  },
+  {
+   "project": "gnutls",
+   "func": "print_list",
+   "cached_nodes": 1,
+   "ghidra_branches": 74
+  },
+  {
+   "project": "sysvinit",
+   "func": "detect_consoles",
+   "cached_nodes": 1,
+   "ghidra_branches": 74
+  },
+  {
+   "project": "bash",
+   "func": "rl_vi_match",
+   "cached_nodes": 1,
+   "ghidra_branches": 74
+  },
+  {
+   "project": "bash",
+   "func": "rl_filename_completion_function",
+   "cached_nodes": 1,
+   "ghidra_branches": 74
+  },
+  {
+   "project": "openssh-portable",
+   "func": "ssh_userauth2",
+   "cached_nodes": 1,
+   "ghidra_branches": 73
+  },
+  {
+   "project": "libacl",
+   "func": "read_acl_comments",
+   "cached_nodes": 1,
+   "ghidra_branches": 72
+  },
+  {
+   "project": "bash",
+   "func": "expand_string_dollar_quote",
+   "cached_nodes": 1,
+   "ghidra_branches": 72
+  },
+  {
+   "project": "grep",
+   "func": "EGexecute",
+   "cached_nodes": 1,
+   "ghidra_branches": 71
+  },
+  {
+   "project": "openssh-portable",
+   "func": "do_crossload",
+   "cached_nodes": 1,
+   "ghidra_branches": 69
+  },
+  {
+   "project": "bash",
+   "func": "alias_expand",
+   "cached_nodes": 1,
+   "ghidra_branches": 69
+  },
+  {
+   "project": "iproute2",
+   "func": "do_netns",
+   "cached_nodes": 1,
+   "ghidra_branches": 68
+  },
+  {
+   "project": "gnutls",
+   "func": "socket_open2",
+   "cached_nodes": 1,
+   "ghidra_branches": 67
+  },
+  {
+   "project": "gzip",
+   "func": "deflate",
+   "cached_nodes": 1,
+   "ghidra_branches": 66
+  },
+  {
+   "project": "openssh-portable",
+   "func": "parse_forward",
+   "cached_nodes": 1,
+   "ghidra_branches": 66
+  },
+  {
+   "project": "e2fsprogs",
+   "func": "e2fsck_process_bad_inode",
+   "cached_nodes": 1,
+   "ghidra_branches": 66
+  },
+  {
+   "project": "openssh-portable",
+   "func": "channel_prepare_poll",
+   "cached_nodes": 1,
+   "ghidra_branches": 65
+  },
+  {
+   "project": "tar",
+   "func": "purge_directory",
+   "cached_nodes": 1,
+   "ghidra_branches": 65
+  },
+  {
+   "project": "bash",
+   "func": "char_is_quoted",
+   "cached_nodes": 1,
+   "ghidra_branches": 65
+  },
+  {
+   "project": "bash",
+   "func": "pat_subst",
+   "cached_nodes": 1,
+   "ghidra_branches": 65
+  },
+  {
+   "project": "bash",
+   "func": "rl_display_match_list",
+   "cached_nodes": 1,
+   "ghidra_branches": 65
+  },
+  {
+   "project": "bash",
+   "func": "quote_string_for_globbing",
+   "cached_nodes": 1,
+   "ghidra_branches": 64
+  },
+  {
+   "project": "openssh-portable",
+   "func": "ssh_err",
+   "cached_nodes": 1,
+   "ghidra_branches": 63
+  },
+  {
+   "project": "openssh-portable",
+   "func": "getrrsetbyname",
+   "cached_nodes": 1,
+   "ghidra_branches": 63
+  },
+  {
+   "project": "e2fsprogs",
+   "func": "e2fsck_pass4",
+   "cached_nodes": 1,
+   "ghidra_branches": 63
+  },
+  {
+   "project": "tar",
+   "func": "read_directory_file",
+   "cached_nodes": 1,
+   "ghidra_branches": 62
+  },
+  {
+   "project": "bash",
+   "func": "get_word_from_string",
+   "cached_nodes": 1,
+   "ghidra_branches": 62
+  },
+  {
+   "project": "iproute2",
+   "func": "do_ipnh",
+   "cached_nodes": 1,
+   "ghidra_branches": 61
+  },
+  {
+   "project": "openssh-portable",
+   "func": "kex_exchange_identification",
+   "cached_nodes": 1,
+   "ghidra_branches": 60
+  },
+  {
+   "project": "libedit",
+   "func": "el_wgets",
+   "cached_nodes": 1,
+   "ghidra_branches": 60
+  },
+  {
+   "project": "bash",
+   "func": "skip_to_histexp",
+   "cached_nodes": 1,
+   "ghidra_branches": 60
+  },
+  {
+   "project": "openssh-portable",
+   "func": "do_upload",
+   "cached_nodes": 1,
+   "ghidra_branches": 59
+  },
+  {
+   "project": "cronie",
+   "func": "load_env",
+   "cached_nodes": 1,
+   "ghidra_branches": 59
+  },
+  {
+   "project": "openssh-portable",
+   "func": "sftp_realpath",
+   "cached_nodes": 1,
+   "ghidra_branches": 58
+  },
+  {
+   "project": "iproute2",
+   "func": "print_rule",
+   "cached_nodes": 1,
+   "ghidra_branches": 58
+  },
+  {
+   "project": "tar",
+   "func": "sys_exec_command",
+   "cached_nodes": 1,
+   "ghidra_branches": 58
+  },
+  {
+   "project": "openssh-portable",
+   "func": "hostfile_replace_entries",
+   "cached_nodes": 1,
+   "ghidra_branches": 57
+  },
+  {
+   "project": "e2fsprogs",
+   "func": "e2fsck_get_lost_and_found",
+   "cached_nodes": 1,
+   "ghidra_branches": 57
+  },
+  {
+   "project": "openssh-portable",
+   "func": "hostkeys_foreach_file",
+   "cached_nodes": 1,
+   "ghidra_branches": 56
+  },
+  {
+   "project": "gnutls",
+   "func": "print_info",
+   "cached_nodes": 1,
+   "ghidra_branches": 56
+  },
+  {
+   "project": "iproute2",
+   "func": "do_iproute",
+   "cached_nodes": 1,
+   "ghidra_branches": 56
+  },
+  {
+   "project": "iproute2",
+   "func": "do_iptunnel",
+   "cached_nodes": 1,
+   "ghidra_branches": 56
+  },
+  {
+   "project": "openssh-portable",
+   "func": "prime_test",
+   "cached_nodes": 1,
+   "ghidra_branches": 55
+  },
+  {
+   "project": "tar",
+   "func": "extract_archive",
+   "cached_nodes": 1,
+   "ghidra_branches": 55
+  },
+  {
+   "project": "bash",
+   "func": "split_at_delims",
+   "cached_nodes": 1,
+   "ghidra_branches": 55
+  },
+  {
+   "project": "libedit",
+   "func": "map_bind",
+   "cached_nodes": 1,
+   "ghidra_branches": 54
+  },
+  {
+   "project": "iproute2",
+   "func": "do_ioam6",
+   "cached_nodes": 1,
+   "ghidra_branches": 54
+  },
+  {
+   "project": "cronie",
+   "func": "load_database",
+   "cached_nodes": 1,
+   "ghidra_branches": 54
+  },
+  {
+   "project": "gzip",
+   "func": "unlzw",
+   "cached_nodes": 1,
+   "ghidra_branches": 53
+  },
+  {
+   "project": "bash",
+   "func": "_rl_dispatch_subseq",
+   "cached_nodes": 1,
+   "ghidra_branches": 53
+  },
+  {
+   "project": "iproute2",
+   "func": "print_neigh",
+   "cached_nodes": 1,
+   "ghidra_branches": 52
+  },
+  {
+   "project": "bash",
+   "func": "fmtulong",
+   "cached_nodes": 1,
+   "ghidra_branches": 52
+  },
+  {
+   "project": "bash",
+   "func": "fmtumax",
+   "cached_nodes": 1,
+   "ghidra_branches": 52
+  },
+  {
+   "project": "openssh-portable",
+   "func": "subprocess",
+   "cached_nodes": 1,
+   "ghidra_branches": 51
+  },
+  {
+   "project": "openssh-portable",
+   "func": "scan_scaled",
+   "cached_nodes": 1,
+   "ghidra_branches": 51
+  },
+  {
+   "project": "openssh-portable",
+   "func": "channel_output_poll",
+   "cached_nodes": 1,
+   "ghidra_branches": 51
+  },
+  {
+   "project": "gnutls",
+   "func": "pin_callback",
+   "cached_nodes": 1,
+   "ghidra_branches": 51
+  },
+  {
+   "project": "e2fsprogs",
+   "func": "e2fsck_pass3",
+   "cached_nodes": 1,
+   "ghidra_branches": 51
+  },
+  {
+   "project": "tar",
+   "func": "delete_archive_members",
+   "cached_nodes": 1,
+   "ghidra_branches": 51
+  },
+  {
+   "project": "bash",
+   "func": "xdupmbstowcs",
+   "cached_nodes": 1,
+   "ghidra_branches": 51
+  },
+  {
+   "project": "gzip",
+   "func": "unpack",
+   "cached_nodes": 1,
+   "ghidra_branches": 50
+  },
+  {
+   "project": "libselinux",
+   "func": "getseuserbyname",
+   "cached_nodes": 1,
+   "ghidra_branches": 50
+  },
+  {
+   "project": "libedit",
+   "func": "el_wset",
+   "cached_nodes": 1,
+   "ghidra_branches": 49
+  },
+  {
+   "project": "zlib",
+   "func": "inflate_table",
+   "cached_nodes": 1,
+   "ghidra_branches": 49
+  },
+  {
+   "project": "openssh-portable",
+   "func": "do_copy",
+   "cached_nodes": 1,
+   "ghidra_branches": 48
+  },
+  {
+   "project": "openssh-portable",
+   "func": "dump_cfg_fmtint",
+   "cached_nodes": 1,
+   "ghidra_branches": 48
+  },
+  {
+   "project": "bash",
+   "func": "spname",
+   "cached_nodes": 1,
+   "ghidra_branches": 48
+  },
+  {
+   "project": "openssh-portable",
+   "func": "channel_proxy_downstream",
+   "cached_nodes": 1,
+   "ghidra_branches": 47
+  },
+  {
+   "project": "iproute2",
+   "func": "print_addrinfo",
+   "cached_nodes": 1,
+   "ghidra_branches": 47
+  },
+  {
+   "project": "e2fsprogs",
+   "func": "add_encrypted_file",
+   "cached_nodes": 1,
+   "ghidra_branches": 47
+  },
+  {
+   "project": "tar",
+   "func": "transform_name_fp",
+   "cached_nodes": 1,
+   "ghidra_branches": 47
+  },
+  {
+   "project": "tar",
+   "func": "update_archive",
+   "cached_nodes": 1,
+   "ghidra_branches": 47
+  },
+  {
+   "project": "openssh-portable",
+   "func": "vis",
+   "cached_nodes": 1,
+   "ghidra_branches": 46
+  },
+  {
+   "project": "libselinux",
+   "func": "selinux_mkload_policy",
+   "cached_nodes": 1,
+   "ghidra_branches": 46
+  },
+  {
+   "project": "gzip",
+   "func": "unlzh",
+   "cached_nodes": 1,
+   "ghidra_branches": 45
+  },
+  {
+   "project": "gzip",
+   "func": "unzip",
+   "cached_nodes": 1,
+   "ghidra_branches": 45
+  },
+  {
+   "project": "openssh-portable",
+   "func": "do_get_users_groups_by_id",
+   "cached_nodes": 1,
+   "ghidra_branches": 45
+  },
+  {
+   "project": "e2fsprogs",
+   "func": "e2fsck_check_ext3_journal",
+   "cached_nodes": 1,
+   "ghidra_branches": 45
+  },
+  {
+   "project": "bash",
+   "func": "assoc_to_kvpair",
+   "cached_nodes": 1,
+   "ghidra_branches": 45
+  },
+  {
+   "project": "bash",
+   "func": "assoc_to_assign",
+   "cached_nodes": 1,
+   "ghidra_branches": 45
+  },
+  {
+   "project": "openssh-portable",
+   "func": "read_passphrase",
+   "cached_nodes": 1,
+   "ghidra_branches": 44
+  },
+  {
+   "project": "openssh-portable",
+   "func": "client_x11_get_proto",
+   "cached_nodes": 1,
+   "ghidra_branches": 44
+  },
+  {
+   "project": "gnutls",
+   "func": "get_other_name_set",
+   "cached_nodes": 1,
+   "ghidra_branches": 44
+  },
+  {
+   "project": "sysvinit",
+   "func": "wall",
+   "cached_nodes": 1,
+   "ghidra_branches": 44
+  },
+  {
+   "project": "libselinux",
+   "func": "selabel_x_init",
+   "cached_nodes": 1,
+   "ghidra_branches": 44
+  },
+  {
+   "project": "tar",
+   "func": "gnu_flush_write",
+   "cached_nodes": 1,
+   "ghidra_branches": 44
+  },
+  {
+   "project": "tar",
+   "func": "collect_and_sort_names",
+   "cached_nodes": 1,
+   "ghidra_branches": 44
+  },
+  {
+   "project": "bash",
+   "func": "make_variable_value",
+   "cached_nodes": 1,
+   "ghidra_branches": 44
+  },
+  {
+   "project": "openssh-portable",
+   "func": "strmode",
+   "cached_nodes": 1,
+   "ghidra_branches": 43
+  },
+  {
+   "project": "e2fsprogs",
+   "func": "region_allocate",
+   "cached_nodes": 1,
+   "ghidra_branches": 43
+  },
+  {
+   "project": "grep",
+   "func": "kwsincr",
+   "cached_nodes": 1,
+   "ghidra_branches": 43
+  },
+  {
+   "project": "bash",
+   "func": "_rl_find_completion_word",
+   "cached_nodes": 1,
+   "ghidra_branches": 43
+  },
+  {
+   "project": "openssh-portable",
+   "func": "BSDgetopt",
+   "cached_nodes": 1,
+   "ghidra_branches": 42
+  },
+  {
+   "project": "openssh-portable",
+   "func": "server_loop2",
+   "cached_nodes": 1,
+   "ghidra_branches": 42
+  },
+  {
+   "project": "openssh-portable",
+   "func": "gen_candidates",
+   "cached_nodes": 1,
+   "ghidra_branches": 42
+  },
+  {
+   "project": "zlib",
+   "func": "inflate_fast",
+   "cached_nodes": 1,
+   "ghidra_branches": 42
+  },
+  {
+   "project": "bash",
+   "func": "make_child",
+   "cached_nodes": 1,
+   "ghidra_branches": 41
+  },
+  {
+   "project": "bash",
+   "func": "rl_vi_bword",
+   "cached_nodes": 1,
+   "ghidra_branches": 41
+  },
+  {
+   "project": "libedit",
+   "func": "el_set",
+   "cached_nodes": 1,
+   "ghidra_branches": 40
+  },
+  {
+   "project": "dpkg",
+   "func": "process_queue",
+   "cached_nodes": 1,
+   "ghidra_branches": 40
+  },
+  {
+   "project": "e2fsprogs",
+   "func": "check_resize_inode",
+   "cached_nodes": 1,
+   "ghidra_branches": 40
+  },
+  {
+   "project": "libselinux",
+   "func": "selabel_db_init",
+   "cached_nodes": 1,
+   "ghidra_branches": 40
+  },
+  {
+   "project": "tar",
+   "func": "sys_child_open_for_compress",
+   "cached_nodes": 1,
+   "ghidra_branches": 40
+  },
+  {
+   "project": "openssh-portable",
+   "func": "ssh_ecdsa_sk_verify",
+   "cached_nodes": 1,
+   "ghidra_branches": 39
+  },
+  {
+   "project": "openssh-portable",
+   "func": "ssh_packet_send2_wrapped",
+   "cached_nodes": 1,
+   "ghidra_branches": 39
+  },
+  {
+   "project": "openssh-portable",
+   "func": "ssh_krl_revoke_cert_by_key_id",
+   "cached_nodes": 1,
+   "ghidra_branches": 39
+  },
+  {
+   "project": "iproute2",
+   "func": "xfrm_policy_print",
+   "cached_nodes": 1,
+   "ghidra_branches": 39
+  },
+  {
+   "project": "bash",
+   "func": "decode_signal",
+   "cached_nodes": 1,
+   "ghidra_branches": 39
+  },
+  {
+   "project": "bash",
+   "func": "unquoted_glob_pattern_p",
+   "cached_nodes": 1,
+   "ghidra_branches": 39
+  },
+  {
+   "project": "bash",
+   "func": "bash_default_completion",
+   "cached_nodes": 1,
+   "ghidra_branches": 39
+  },
+  {
+   "project": "bash",
+   "func": "redirection_error",
+   "cached_nodes": 1,
+   "ghidra_branches": 39
+  },
+  {
+   "project": "openssh-portable",
+   "func": "channel_post_open",
+   "cached_nodes": 1,
+   "ghidra_branches": 38
+  },
+  {
+   "project": "iproute2",
+   "func": "do_ipstats",
+   "cached_nodes": 1,
+   "ghidra_branches": 38
+  },
+  {
+   "project": "tar",
+   "func": "xattrs_xattrs_get",
+   "cached_nodes": 1,
+   "ghidra_branches": 38
+  },
+  {
+   "project": "bash",
+   "func": "command_substitute",
+   "cached_nodes": 1,
+   "ghidra_branches": 38
+  },
+  {
+   "project": "bash",
+   "func": "assign_array_element",
+   "cached_nodes": 1,
+   "ghidra_branches": 38
+  },
+  {
+   "project": "openssh-portable",
+   "func": "allowed_user",
+   "cached_nodes": 1,
+   "ghidra_branches": 37
+  },
+  {
+   "project": "e2fsprogs",
+   "func": "e2fsck_pass2",
+   "cached_nodes": 1,
+   "ghidra_branches": 37
+  },
+  {
+   "project": "bash",
+   "func": "bind_variable",
+   "cached_nodes": 1,
+   "ghidra_branches": 37
+  },
+  {
+   "project": "bash",
+   "func": "unclosed_pair",
+   "cached_nodes": 1,
+   "ghidra_branches": 37
+  },
+  {
+   "project": "bash",
+   "func": "parse_and_execute",
+   "cached_nodes": 1,
+   "ghidra_branches": 37
+  },
+  {
+   "project": "bash",
+   "func": "sh_physpath",
+   "cached_nodes": 1,
+   "ghidra_branches": 37
+  }
+ ]
+}

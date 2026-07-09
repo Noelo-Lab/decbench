@@ -51,6 +51,12 @@ class GEDMetric(Metric):
     requires_source_cfg = True
     requires_decompiled_cfg = True
 
+    # v2: exclude only EMPTY-prototype source CFGs (all-Nop single block), not
+    # every <=1-node source, so genuine straight-line functions are scored; the
+    # non-finite (degenerate/error) result is dropped from the denominator at the
+    # recording layer (metrics/base.py) instead of counting as a failure.
+    cache_version = "2"
+
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
         self._vj_ged = None
@@ -80,18 +86,22 @@ class GEDMetric(Metric):
                 metadata={"error": "Missing CFG"},
             )
 
-        # Degenerate source CFG (see GED_MIN_SOURCE_NODES above): there is no
-        # source structure to compare against, so exclude the function (same
-        # treatment as a missing CFG) rather than hand a perfect 0 to whichever
-        # decompiler emitted the least output. Checked BEFORE the cache so
+        # EMPTY-prototype source CFG (see is_degenerate_source_cfg): Joern only
+        # saw a declaration (an all-Nop single block) because the function's
+        # defining translation unit wasn't captured, so there is no structure to
+        # compare against. Return non-finite so the recording layer DROPS it from
+        # GED's denominator (unmeasurable for everyone, uniformly), rather than
+        # counting it as a per-decompiler failure. Genuine single-block functions
+        # (real straight-line bodies) are NOT degenerate and ARE scored — a
+        # correct 1-block decompilation earns GED 0. Checked BEFORE the cache so
         # entries recorded under the old (rewarding) semantics are never served.
-        # NOTE: this covers the degenerate-SOURCE half only. A truncated
-        # decompilation (e.g. angr's CFGFast mis-splitting a function at a
-        # function_prologs byte pattern and emitting a prologue-only stub) can
-        # still score well against a genuinely tiny source function; detecting
-        # that needs decompiler-side signals and is left as future work.
+        # NOTE: a truncated decompilation (e.g. angr's CFGFast emitting a
+        # prologue-only stub) can still score well against a genuinely tiny source
+        # function; detecting that needs decompiler-side signals (future work).
+        from decbench.utils.cfg import is_degenerate_source_cfg
+
         s_nodes = source_cfg.number_of_nodes()
-        if s_nodes <= GED_MIN_SOURCE_NODES:
+        if is_degenerate_source_cfg(source_cfg):
             return MetricValue(
                 value=float("inf"),
                 metadata={

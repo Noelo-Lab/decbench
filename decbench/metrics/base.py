@@ -105,6 +105,7 @@ class Metric(ABC):
         **kwargs: Any,
     ) -> MetricResult:
         """Compute this metric for all functions in a binary."""
+        import math
         import time
 
         start_time = time.time()
@@ -130,6 +131,12 @@ class Metric(ABC):
                     decompiled_cfg=decompiled_cfg,
                     **kwargs,
                 )
+                # A non-finite value means "unmeasurable for everyone" (e.g. GED
+                # with an empty-prototype/degenerate source CFG). ABSTAIN — don't
+                # record it — so it's excluded from this metric's denominator
+                # uniformly for all decompilers, rather than counted as a failure.
+                if not math.isfinite(value.value):
+                    continue
                 function_results[func_name] = value
 
             except Exception as e:

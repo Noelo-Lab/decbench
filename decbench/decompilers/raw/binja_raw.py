@@ -76,15 +76,27 @@ class RawBinjaDecompiler(Decompiler):
             return "unknown"
 
     def _load(self, binary_path: Path) -> Any:
-        """Open + analyze a binary, returning a BinaryView."""
+        """Open + analyze a binary, returning a BinaryView.
+
+        CRITICAL: always ``update_analysis_and_wait()`` before rendering. Even
+        though ``binaryninja.load()`` kicks off analysis, it can return before
+        per-function HLIL / the linear language-representation view is ready, so
+        the Pseudo-C render emits the literal ``Loading...`` placeholder instead
+        of code (previously ~73% of binja function bodies on large binaries —
+        the dominant cause of binja's near-zero GED/byte scores). Waiting here
+        forces analysis to completion first.
+        """
         import binaryninja
 
         # ``load`` runs analysis and is the modern entry point; fall back to the
         # older BinaryViewType API if ``load`` is unavailable.
         if hasattr(binaryninja, "load"):
-            return binaryninja.load(str(binary_path))
-        bv = binaryninja.BinaryViewType.get_view_of_file(str(binary_path))
-        bv.update_analysis_and_wait()
+            bv = binaryninja.load(str(binary_path))
+        else:
+            bv = binaryninja.BinaryViewType.get_view_of_file(str(binary_path))
+        if bv is not None:
+            with contextlib.suppress(Exception):
+                bv.update_analysis_and_wait()
         return bv
 
     def discover_functions(self, binary_path: Path) -> list[tuple[str, int]]:
@@ -284,19 +296,30 @@ class RawBinjaDecompiler(Decompiler):
         try:
             import binaryninja as bn
 
-            settings = bn.DisassemblySettings()
-            lvo = bn.LinearViewObject.single_function_language_representation(func, settings)
-            cursor = bn.LinearViewCursor(lvo)
-            cursor.seek_to_begin()
-            lines: list[str] = []
-            # Bound the walk so a pathological function can't spin forever.
-            for _ in range(100000):
-                for ln in cursor.lines:
-                    lines.append(str(ln))
-                if not cursor.next():
-                    break
-            text = "\n".join(lines).strip("\n")
-            if text.strip():
+            def _walk() -> str:
+                settings = bn.DisassemblySettings()
+                lvo = bn.LinearViewObject.single_function_language_representation(func, settings)
+                cursor = bn.LinearViewCursor(lvo)
+                cursor.seek_to_begin()
+                lines: list[str] = []
+                # Bound the walk so a pathological function can't spin forever.
+                for _ in range(100000):
+                    for ln in cursor.lines:
+                        lines.append(str(ln))
+                    if not cursor.next():
+                        break
+                return "\n".join(lines).strip("\n")
+
+            text = _walk()
+            # If analysis wasn't ready the body is the literal 'Loading...'
+            # placeholder (not C). Force this function's analysis and re-render
+            # once; a still-placeholder body is treated as a FAILURE (return "")
+            # rather than emitting junk that pollutes GED/byte_match.
+            if not text.strip() or "Loading..." in text:
+                with contextlib.suppress(Exception):
+                    func.view.update_analysis_and_wait()
+                text = _walk()
+            if text.strip() and "Loading..." not in text:
                 return text
         except Exception:  # noqa: BLE001
             pass

@@ -61,6 +61,75 @@ def strip_system_headers(preprocessed: str) -> str:
     return "\n".join(keep) + "\n"
 
 
+def is_degenerate_source_cfg(cfg: DiGraph) -> bool:  # type: ignore
+    """True when a source CFG has no real structure to compare GED against.
+
+    Two cases, both meaning "there is nothing to score": zero nodes, or a single
+    block whose statements are ALL ``Nop`` (``FUNCTION_START``/``FUNCTION_END``) —
+    an *empty prototype* Joern emitted from a declaration-only view of a function
+    whose defining translation unit wasn't captured. A genuine single-block
+    function (a straight-line ``return foo(...);``) has real statements and is NOT
+    degenerate, so it stays scorable (a correct 1-block decompilation → GED 0).
+    """
+    n = cfg.number_of_nodes()
+    if n == 0:
+        return True
+    if n >= 2:
+        return False
+    for node in cfg.nodes():
+        for stmt in getattr(node, "statements", None) or []:
+            if type(stmt).__name__ != "Nop":
+                return False
+    return True
+
+
+def _source_rank(cfg: DiGraph) -> tuple[int, int]:  # type: ignore
+    """Sort key preferring a non-degenerate, then larger, source CFG."""
+    return (0 if is_degenerate_source_cfg(cfg) else 1, cfg.number_of_nodes())
+
+
+def best_source_by_name(
+    source_cfgs_by_binary: dict[str, dict[str, DiGraph]],
+) -> dict[str, DiGraph]:  # type: ignore
+    """Collapse per-TU source CFGs to one-per-name, preferring the real body.
+
+    A function name that appears in several translation units (``main``, ``usage``,
+    gnulib helpers) is reduced to its **non-degenerate, largest** CFG. Used as the
+    cross-TU FALLBACK when a binary's own TU doesn't define a function (e.g. a
+    statically-linked gnulib helper) — see :func:`resolved_source_for_binary`.
+    """
+    best: dict[str, DiGraph] = {}
+    for cfgs in source_cfgs_by_binary.values():
+        for name, cfg in (cfgs or {}).items():
+            cur = best.get(name)
+            if cur is None or _source_rank(cfg) > _source_rank(cur):
+                best[name] = cfg
+    return best
+
+
+def resolved_source_for_binary(
+    binary_stem: str,
+    source_cfgs_by_binary: dict[str, dict[str, DiGraph]],
+    best_by_name: dict[str, DiGraph],
+) -> dict[str, DiGraph]:  # type: ignore
+    """Source CFGs to score ONE binary against, TU-aware (fixes name collisions).
+
+    Prefers the binary's **own translation unit** (``nologin`` binary ↔
+    ``nologin.i``) for each function so per-program functions (``main``, ``usage``,
+    static helpers) are compared against the RIGHT body — not an arbitrary
+    same-named function from another binary of the project (the old project-wide,
+    name-keyed, last-writer-wins union scored ``nologin``'s 5-node ``main`` against
+    another binary's 56-node ``main``). Falls back to the cross-TU
+    :func:`best_source_by_name` for functions the own TU doesn't define
+    (statically-linked library code) or defines only as an empty prototype.
+    """
+    resolved = dict(best_by_name)
+    for name, cfg in (source_cfgs_by_binary.get(binary_stem) or {}).items():
+        if not is_degenerate_source_cfg(cfg):
+            resolved[name] = cfg
+    return resolved
+
+
 def extract_cfgs_from_source(source_path: Path) -> dict[str, DiGraph]:
     """Extract CFGs from a C source file using pyjoern.
 

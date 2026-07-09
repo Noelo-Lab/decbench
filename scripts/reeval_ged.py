@@ -75,32 +75,59 @@ def build_source_cfgs(root: Path, projects: list[str], workers: int) -> Path:
         f"{len(todo)} projects, {workers} workers",
         flush=True,
     )
+    # proj -> {translation-unit stem -> {function name -> CFG}}. Keeping source
+    # CFGs PER-TU (not a project-wide name-keyed union) lets stage B pair each
+    # binary against its OWN translation unit, so per-program functions
+    # (main/usage/static helpers) are scored against the right body instead of an
+    # arbitrary same-named function from another binary (the collision bug).
     acc: dict[str, dict] = {proj: {} for proj in todo}
     ctx = mp.get_context("spawn")
     done = 0
     with ctx.Pool(processes=workers) as pool:
         for ipath, cfgs in pool.imap_unordered(src_cfgs_for_i, all_paths):
-            acc[owner[ipath]].update(cfgs)
+            acc[owner[ipath]][Path(ipath).stem] = cfgs
             done += 1
             if done % 50 == 0 or done == len(all_paths):
                 print(f"[ged/src] {done}/{len(all_paths)} source files", flush=True)
-    for proj, cfgs in acc.items():
-        (src_dir / f"{proj}.pkl").write_bytes(pickle.dumps(cfgs))
-        print(f"[ged/src] {proj}: {len(cfgs)} source functions cached", flush=True)
+    for proj, per_stem in acc.items():
+        (src_dir / f"{proj}.pkl").write_bytes(pickle.dumps(per_stem))
+        nfun = sum(len(c) for c in per_stem.values())
+        print(f"[ged/src] {proj}: {len(per_stem)} TUs, {nfun} source functions cached", flush=True)
     return src_dir
 
 
 # ---- Stage B: GED per (opt, project, binary, dec) -------------------------
+# Per-worker cache: src_pkl path -> (per_stem_dict, best_source_by_name). A pool
+# worker handles many (binary, dec) tasks for the same project, so the cross-TU
+# best-by-name fallback is computed once per project pickle, not per task.
+_SRC_CACHE: dict[str, tuple[dict, dict]] = {}
+
+
+def _load_src(src_pkl: str) -> tuple[dict, dict]:
+    if src_pkl not in _SRC_CACHE:
+        from decbench.utils.cfg import best_source_by_name
+
+        per_stem = pickle.loads(Path(src_pkl).read_bytes())
+        _SRC_CACHE[src_pkl] = (per_stem, best_source_by_name(per_stem))
+    return _SRC_CACHE[src_pkl]
+
+
 def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
     """Worker: recompute GED for every function of one (binary, dec).
 
     ``task`` = (opt, project, stem, dec, decompiled_c_path, src_pkl_path).
+    Resolves each function's source CFG TU-aware (own TU first, cross-TU fallback)
+    and DROPS non-finite (empty-prototype/degenerate source) results so they are
+    excluded from GED's denominator instead of counting as failures.
     """
+    import math
+
     opt, project, stem, dec, c_path, src_pkl = task
     from decbench.metrics.ged import GEDMetric
-    from decbench.utils.cfg import extract_cfgs_from_source
+    from decbench.utils.cfg import extract_cfgs_from_source, resolved_source_for_binary
 
-    src_cfgs = pickle.loads(Path(src_pkl).read_bytes())
+    per_stem, best_by_name = _load_src(src_pkl)
+    src_cfgs = resolved_source_for_binary(stem, per_stem, best_by_name)
     try:
         dec_cfgs = extract_cfgs_from_source(Path(c_path)) or {}
     except Exception:  # noqa: BLE001
@@ -115,6 +142,8 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
         try:
             mv = metric.compute_for_function(None, source_cfg=scfg, decompiled_cfg=dcfg)
         except Exception:  # noqa: BLE001
+            continue
+        if not math.isfinite(mv.value):
             continue
         out[fn] = {"value": float(mv.value), "perfect": bool(mv.value == perfect_val)}
     key = f"{opt}::{project}::{stem}::{dec}"

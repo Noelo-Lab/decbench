@@ -1,0 +1,60 @@
+{
+ "total_evals": 225753,
+ "finite": 105236,
+ "inf": 120517,
+ "inf_by_opt": {
+  "O2": 34409,
+  "O0": 43643,
+  "O2-noinline": 42465
+ },
+ "inf_kind": {
+  "straightline": 24023,
+  "empty_proto": 96494
+ },
+ "inf_by_dec": {
+  "kuna": 22499,
+  "ida": 28381,
+  "phoenix": 18553,
+  "angr": 17933,
+  "ghidra": 28681,
+  "binja": 4470
+ },
+ "fin_by_dec": {
+  "kuna": 19375,
+  "ida": 23442,
+  "phoenix": 16758,
+  "angr": 16452,
+  "binja": 6138,
+  "ghidra": 23071
+ },
+ "inf_by_project": {
+  "sysvinit": 817,
+  "coreutils": 12542,
+  "diffutils": 474,
+  "zlib": 6136,
+  "shadow": 976,
+  "rsyslog": 617,
+  "e2fsprogs": 1823,
+  "gnutls": 5186,
+  "openssh-portable": 57111,
+  "libacl": 1438,
+  "bzip2": 784,
+  "bash": 8181,
+  "cronie": 2064,
+  "libexpat": 474,
+  "dpkg": 2901,
+  "base-passwd": 138,
+  "iproute2": 2345,
+  "findutils": 1775,
+  "libedit": 4707,
+  "gzip": 1192,
+  "libbsd": 260,
+  "kmod": 173,
+  "grep": 407,
+  "libselinux": 4053,
+  "tar": 3943
+ },
+ "distinct_only_inf": 14016,
+ "distinct_ever_finite": 14508,
+ "distinct_mixed": 0
+}

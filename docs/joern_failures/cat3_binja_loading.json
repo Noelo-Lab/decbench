@@ -1,0 +1,350 @@
+{
+ "by_opt": {
+  "O0": {
+   "functions": 24757,
+   "loading": 18018
+  },
+  "O2": {
+   "functions": 18167,
+   "loading": 14162
+  },
+  "O2-noinline": {
+   "functions": 23571,
+   "loading": 17809
+  }
+ },
+ "grand": {
+  "functions": 66495,
+  "loading": 49989,
+  "pct": 75.2
+ },
+ "o0_per_project": {
+  "gzip": {
+   "total": 150,
+   "loading": 0
+  },
+  "diffutils": {
+   "total": 172,
+   "loading": 85
+  },
+  "mirai": {
+   "total": 68,
+   "loading": 0
+  },
+  "openssh-portable": {
+   "total": 7554,
+   "loading": 7524
+  },
+  "gnutls": {
+   "total": 871,
+   "loading": 574
+  },
+  "bzip2": {
+   "total": 120,
+   "loading": 44
+  },
+  "libedit": {
+   "total": 513,
+   "loading": 467
+  },
+  "mydoom": {
+   "total": 168,
+   "loading": 0
+  },
+  "iproute2": {
+   "total": 762,
+   "loading": 757
+  },
+  "libexpat": {
+   "total": 58,
+   "loading": 13
+  },
+  "coreutils": {
+   "total": 2845,
+   "loading": 1448
+  },
+  "x0r-usb": {
+   "total": 34,
+   "loading": 0
+  },
+  "shadow": {
+   "total": 312,
+   "loading": 0
+  },
+  "cleanflight": {
+   "total": 1915,
+   "loading": 1911
+  },
+  "libacl": {
+   "total": 144,
+   "loading": 0
+  },
+  "zlib": {
+   "total": 779,
+   "loading": 0
+  },
+  "dpkg": {
+   "total": 354,
+   "loading": 238
+  },
+  "riot-os": {
+   "total": 66,
+   "loading": 0
+  },
+  "e2fsprogs": {
+   "total": 409,
+   "loading": 409
+  },
+  "sysvinit": {
+   "total": 195,
+   "loading": 0
+  },
+  "libselinux": {
+   "total": 418,
+   "loading": 0
+  },
+  "chibios": {
+   "total": 415,
+   "loading": 0
+  },
+  "mirai-win": {
+   "total": 54,
+   "loading": 0
+  },
+  "freertos": {
+   "total": 38,
+   "loading": 0
+  },
+  "tar": {
+   "total": 654,
+   "loading": 646
+  },
+  "base-passwd": {
+   "total": 48,
+   "loading": 0
+  },
+  "libbsd": {
+   "total": 67,
+   "loading": 0
+  },
+  "grep": {
+   "total": 109,
+   "loading": 100
+  },
+  "kmod": {
+   "total": 129,
+   "loading": 101
+  },
+  "crazyflie": {
+   "total": 179,
+   "loading": 1
+  },
+  "cronie": {
+   "total": 203,
+   "loading": 0
+  },
+  "libopencm3": {
+   "total": 1024,
+   "loading": 117
+  },
+  "nuttx": {
+   "total": 399,
+   "loading": 379
+  },
+  "minipig": {
+   "total": 74,
+   "loading": 0
+  },
+  "dexter": {
+   "total": 114,
+   "loading": 0
+  },
+  "betaflight": {
+   "total": 1737,
+   "loading": 1736
+  },
+  "bash": {
+   "total": 1153,
+   "loading": 1056
+  },
+  "findutils": {
+   "total": 313,
+   "loading": 274
+  },
+  "rsyslog": {
+   "total": 140,
+   "loading": 138
+  }
+ },
+ "full_loading_binaries": [
+  {
+   "opt": "O0",
+   "project": "openssh-portable",
+   "binary": "ssh",
+   "n": 742
+  },
+  {
+   "opt": "O0",
+   "project": "openssh-portable",
+   "binary": "scp",
+   "n": 399
+  },
+  {
+   "opt": "O0",
+   "project": "openssh-portable",
+   "binary": "ssh-add",
+   "n": 693
+  },
+  {
+   "opt": "O0",
+   "project": "openssh-portable",
+   "binary": "ssh-agent",
+   "n": 587
+  },
+  {
+   "opt": "O0",
+   "project": "openssh-portable",
+   "binary": "ssh-pkcs11-helper",
+   "n": 567
+  },
+  {
+   "opt": "O0",
+   "project": "iproute2",
+   "binary": "ip",
+   "n": 757
+  },
+  {
+   "opt": "O0",
+   "project": "coreutils",
+   "binary": "ls",
+   "n": 216
+  },
+  {
+   "opt": "O0",
+   "project": "dpkg",
+   "binary": "dpkg",
+   "n": 238
+  },
+  {
+   "opt": "O0",
+   "project": "e2fsprogs",
+   "binary": "e2fsck",
+   "n": 409
+  },
+  {
+   "opt": "O0",
+   "project": "crazyflie",
+   "binary": "CMSIS_DAP",
+   "n": 1
+  },
+  {
+   "opt": "O0",
+   "project": "bash",
+   "binary": "bash",
+   "n": 1053
+  },
+  {
+   "opt": "O2",
+   "project": "openssh-portable",
+   "binary": "ssh",
+   "n": 673
+  },
+  {
+   "opt": "O2",
+   "project": "openssh-portable",
+   "binary": "ssh-keysign",
+   "n": 628
+  },
+  {
+   "opt": "O2",
+   "project": "crazyflie",
+   "binary": "CMSIS_DAP",
+   "n": 1
+  },
+  {
+   "opt": "O2",
+   "project": "bash",
+   "binary": "bash",
+   "n": 965
+  },
+  {
+   "opt": "O2-noinline",
+   "project": "openssh-portable",
+   "binary": "ssh",
+   "n": 735
+  },
+  {
+   "opt": "O2-noinline",
+   "project": "openssh-portable",
+   "binary": "ssh-keysign",
+   "n": 826
+  },
+  {
+   "opt": "O2-noinline",
+   "project": "openssh-portable",
+   "binary": "ssh-add",
+   "n": 658
+  },
+  {
+   "opt": "O2-noinline",
+   "project": "openssh-portable",
+   "binary": "ssh-agent",
+   "n": 566
+  },
+  {
+   "opt": "O2-noinline",
+   "project": "openssh-portable",
+   "binary": "ssh-pkcs11-helper",
+   "n": 544
+  },
+  {
+   "opt": "O2-noinline",
+   "project": "iproute2",
+   "binary": "ip",
+   "n": 637
+  },
+  {
+   "opt": "O2-noinline",
+   "project": "coreutils",
+   "binary": "[",
+   "n": 19
+  },
+  {
+   "opt": "O2-noinline",
+   "project": "coreutils",
+   "binary": "who",
+   "n": 14
+  },
+  {
+   "opt": "O2-noinline",
+   "project": "coreutils",
+   "binary": "rmdir",
+   "n": 7
+  },
+  {
+   "opt": "O2-noinline",
+   "project": "cleanflight",
+   "binary": "cleanflight_DALRCF405",
+   "n": 1865
+  },
+  {
+   "opt": "O2-noinline",
+   "project": "e2fsprogs",
+   "binary": "e2fsck",
+   "n": 379
+  },
+  {
+   "opt": "O2-noinline",
+   "project": "crazyflie",
+   "binary": "CMSIS_DAP",
+   "n": 1
+  },
+  {
+   "opt": "O2-noinline",
+   "project": "bash",
+   "binary": "bash",
+   "n": 1025
+  }
+ ],
+ "num_full_loading_binaries": 28
+}
