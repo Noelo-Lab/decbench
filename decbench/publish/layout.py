@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # Normative constants from the publishing contract.
 DATASET_NAME = "decbench-dataset"
 DATASET_REPO_ID = "noelo-lab/decbench-dataset"
-DEFAULT_CONFIGS = ["tiny", "hard", "hard-inlined", "full"]
+DEFAULT_CONFIGS = ["tiny", "hard", "hard-inlined", "unoptimized", "full"]
 _FULL = "full"
 
 Logger = Callable[[str], None]
