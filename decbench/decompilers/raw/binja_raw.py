@@ -310,11 +310,22 @@ class RawBinjaDecompiler(Decompiler):
                         break
                 return "\n".join(lines).strip("\n")
 
+            # Force HLIL (and thus pseudo-C) generation for THIS function before
+            # rendering. Even after full binary analysis, binja 3.1's linear-view
+            # language representation returns the literal 'Loading...' placeholder
+            # until the function's HLIL is generated (it's lazy per-function).
+            # Touching func.hlil forces that computation so the render yields real
+            # C — without this, ~all functions in large binaries (e.g. bash: 2486
+            # of 2499) render as Loading and get dropped.
+            with contextlib.suppress(Exception):
+                _ = func.hlil
+                _ = len(list(func.hlil.instructions))
+
             text = _walk()
-            # If analysis wasn't ready the body is the literal 'Loading...'
-            # placeholder (not C). Force this function's analysis and re-render
-            # once; a still-placeholder body is treated as a FAILURE (return "")
-            # rather than emitting junk that pollutes GED/byte_match.
+            # If the body is STILL the 'Loading...' placeholder (not C), force
+            # this function's analysis and re-render once; a still-placeholder
+            # body is treated as a FAILURE (return "") rather than emitting junk
+            # that pollutes GED/byte_match.
             if not text.strip() or "Loading..." in text:
                 with contextlib.suppress(Exception):
                     func.view.update_analysis_and_wait()
