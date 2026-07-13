@@ -52,7 +52,11 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
             out[name] = {"value": 0.0, "compilable": False, "error": str(e)[:120]}
             continue
         md = mv.metadata or {}
-        out[name] = {"value": float(mv.value), "compilable": bool(md.get("compilable", False))}
+        out[name] = {
+            "value": float(mv.value),
+            "compilable": bool(md.get("compilable", False)),
+            "dist": md.get("changed_lines"),  # changed asm lines (distance view)
+        }
     key = f"{opt}::{project}::{stem}::{dec}"
     return key, out
 

@@ -72,7 +72,12 @@ for proj in projects:
                     elif n < o - 1e-9:
                         a["wor"] += 1
                     if emit:
-                        new_scores.setdefault(dname, {})[f"{proj}::{optn}::{binn}::{fn}"] = n
+                        md = mv.metadata or {}
+                        dist = int(md.get("fp", 0)) + int(md.get("fn", 0))
+                        new_scores.setdefault(dname, {})[f"{proj}::{optn}::{binn}::{fn}"] = {
+                            "value": n,
+                            "dist": dist,
+                        }
 
 print(f"\n{'dec':9} {'n':>7} {'OLD mean':>9} {'NEW mean':>9} {'improved':>9} {'worse':>7}")
 for d in sorted(agg):

@@ -132,6 +132,104 @@ def normalize_type(type_str: str) -> set[str]:
     return forms
 
 
+# --- Uncommitted (width-only) decompiler types --------------------------------
+# A decompiler often recovers a variable's SIZE but not a committed C type
+# (Ghidra ``undefined8``, IDA ``__int64``/``_QWORD``, kuna ``int8``). Crediting
+# such an uncommitted N-byte type against a ground-truth scalar of the same width
+# is fair ("it knew it was 8 bytes"); crediting it against a POINTER or an
+# aggregate is NOT — recovering a ``char *`` as a bare 8-byte scalar is a real
+# type miss (and ``struct *`` -> ``void *`` stays a miss too, handled by exact
+# name matching, not here).
+_UNCOMMITTED_TYPES = re.compile(
+    r"^\s*(?:"
+    r"undefined\d*"  # Ghidra: undefined, undefined1..8
+    r"|__u?int(?:8|16|32|64)"  # IDA: __int64 / __uint32 / ...
+    r"|_(?:BYTE|WORD|DWORD|QWORD)"  # IDA: _QWORD / _DWORD / ...
+    r"|u?int[1-8]"  # kuna: int4 / uint8 (sized in BYTES)
+    r"|byte|word|dword|qword"  # Ghidra: byte / word / dword / qword
+    r"|uchar"
+    r")\s*$"
+)
+# Byte width implied by an uncommitted spelling when ``VariableInfo.size`` is
+# absent (angr/ghidra usually populate ``size``, so this is a fallback).
+_UNCOMMITTED_WIDTH: dict[str, int] = {
+    "undefined": 1,
+    "undefined1": 1,
+    "byte": 1,
+    "uchar": 1,
+    "_BYTE": 1,
+    "int1": 1,
+    "uint1": 1,
+    "__int8": 1,
+    "__uint8": 1,
+    "undefined2": 2,
+    "word": 2,
+    "_WORD": 2,
+    "int2": 2,
+    "uint2": 2,
+    "__int16": 2,
+    "__uint16": 2,
+    "undefined4": 4,
+    "dword": 4,
+    "_DWORD": 4,
+    "int4": 4,
+    "uint4": 4,
+    "__int32": 4,
+    "__uint32": 4,
+    "undefined8": 8,
+    "qword": 8,
+    "_QWORD": 8,
+    "int8": 8,
+    "uint8": 8,
+    "__int64": 8,
+    "__uint64": 8,
+}
+# Normalized ground-truth scalar names of each byte width. An uncommitted N-byte
+# decompiler var matches a GT var whose normalized type set intersects this.
+# Integer + bool only (a committed ``float``/``double`` is a type the decompiler
+# demonstrably failed to recover, so it stays a miss); pointers/aggregates never
+# appear here, so scalar<->pointer and struct*->void* correctly stay misses.
+_SIZE_SCALARS: dict[int, set[str]] = {
+    1: {"char", "bool"},
+    2: {"short"},
+    4: {"int"},
+    8: {"long long"},
+}
+
+# Ghidra/IDA encode a stack slot's frame offset in the variable NAME
+# (``local_28``, ``var_28``) but sometimes leave ``stack_offset`` unset. These
+# names are unambiguously frame-negative locals; the per-binary/-function
+# calibration absorbs the constant base difference vs DWARF, and its "needs >=2
+# aligned" guard means a wrongly-parsed offset simply fails to calibrate (no
+# harm). Deliberately excludes ``*Stack_*`` names (mixed sign conventions).
+_NAME_OFFSET = re.compile(r"^(?:local|var)_([0-9a-fA-F]+)$")
+
+
+def _uncommitted_size(var: Any) -> int | None:
+    """Byte width of an uncommitted (width-only) decompiler type, else ``None``.
+
+    A pointer spelling (contains ``*``) is a committed type, never uncommitted.
+    """
+    t = (getattr(var, "type", "") or "").strip()
+    if "*" in t or not _UNCOMMITTED_TYPES.match(t):
+        return None
+    size = getattr(var, "size", None)
+    if size in _SIZE_SCALARS:
+        return int(size)
+    return _UNCOMMITTED_WIDTH.get(t)
+
+
+def _effective_offset(var: Any) -> int | None:
+    """Stack offset for a decompiled var, recovering it from ``local_``/``var_``
+    names when ``stack_offset`` is unset (Ghidra register-SSA vars stay ``None``)."""
+    if getattr(var, "stack_offset", None) is not None:
+        return var.stack_offset
+    m = _NAME_OFFSET.match(getattr(var, "name", "") or "")
+    if m:
+        return -int(m.group(1), 16)
+    return None
+
+
 def extract_ground_truth_types(binary_path: Path) -> dict[str, list[dict[str, Any]]]:
     """Extract ground truth variable types from DWARF debug info.
 
@@ -613,7 +711,9 @@ class TypeMatchMetric(Metric):
     # v2: per-function, adaptive (uncapped) stack-offset calibration so IDA's
     # frame-bottom-relative offsets align with DWARF (the old binary-wide ±32
     # shift silently failed for IDA, scoring most of its stack vars as misses).
-    cache_version = "2"
+    # v3: uncommitted (width-only) types match a same-width GT scalar; recover
+    # local_/var_ name-encoded stack offsets; pointers/aggregates stay strict.
+    cache_version = "3"
 
     weight = 1.0
     lower_is_better = False
@@ -699,7 +799,7 @@ class TypeMatchMetric(Metric):
         calibration_shift: int | None,
     ) -> MetricValue:
         gt_stack_vars = sum(1 for gv in ground_truth_vars if gv.get("rbp_offset"))
-        decomp_stack_vars = sum(1 for v in decompiled.variables if v.stack_offset is not None)
+        decomp_stack_vars = sum(1 for v in decompiled.variables if _effective_offset(v) is not None)
 
         if decompiled.variables:
             return self._match_structured(
@@ -762,9 +862,10 @@ class TypeMatchMetric(Metric):
         gt_offsets: list[int] = []
         for gv in ground_truth_vars:
             gt_offsets.extend(gv.get("rbp_offset", []))
-        decomp_offsets = [
-            v.stack_offset for v in decompiled.variables if v.stack_offset is not None
-        ]
+        # Effective offsets recover ``local_``/``var_`` name-encoded slots that
+        # some backends leave with ``stack_offset=None`` (see _effective_offset).
+        var_offsets: list[int | None] = [_effective_offset(v) for v in decompiled.variables]
+        decomp_offsets = [o for o in var_offsets if o is not None]
         gt_off_set = set(gt_offsets)
 
         def _aligned(kk: int | None) -> int:
@@ -795,16 +896,32 @@ class TypeMatchMetric(Metric):
         k = shift if shift is not None else 0
 
         var_types: list[set[str]] = [normalize_type(v.type) for v in decompiled.variables]
+        # Width of each decompiled var's uncommitted (undefinedN/__intN/...) type,
+        # else None. An uncommitted N-byte var matches a GT scalar of that width.
+        var_unc: list[int | None] = [_uncommitted_size(v) for v in decompiled.variables]
         by_arg_index: dict[int, int] = {}
         by_off: dict[int, list[int]] = {}
         by_name: dict[str, list[int]] = {}
         for i, v in enumerate(decompiled.variables):
             if v.arg_index is not None and v.arg_index not in by_arg_index:
                 by_arg_index[v.arg_index] = i
-            if v.stack_offset is not None:
-                by_off.setdefault(v.stack_offset + k, []).append(i)
+            if var_offsets[i] is not None:
+                by_off.setdefault(var_offsets[i] + k, []).append(i)
             if v.name:
                 by_name.setdefault(v.name, []).append(i)
+
+        def _matches(gt_forms: set[str], i: int) -> bool:
+            """Does decompiled var ``i`` type-match a GT var with these forms?
+
+            True on an exact normalized-name intersection OR when the decompiled
+            var is an uncommitted (width-only) type and the GT var is a scalar of
+            the same width. Pointers/aggregates never enter ``_SIZE_SCALARS``, so
+            scalar<->pointer and struct*->void* stay misses.
+            """
+            if gt_forms & var_types[i]:
+                return True
+            sz = var_unc[i]
+            return sz is not None and bool(_SIZE_SCALARS.get(sz, set()) & gt_forms)
 
         used: set[int] = set()
 
@@ -813,7 +930,7 @@ class TypeMatchMetric(Metric):
             avail = [i for i in candidates if i not in used]
             if not avail:
                 return None
-            hit = next((i for i in avail if gt_types & var_types[i]), None)
+            hit = next((i for i in avail if _matches(gt_types, i)), None)
             if hit is not None:
                 used.add(hit)
                 return True
@@ -836,7 +953,7 @@ class TypeMatchMetric(Metric):
                 continue
             used.add(di)
             decided[gi] = True
-            verdicts[gi] = bool(set(gv.get("type", [])) & var_types[di])
+            verdicts[gi] = _matches(set(gv.get("type", [])), di)
             pass_counts["arg"] += 1
 
         # Pass 2: stack variables by calibrated offset (any-of across the
@@ -1050,7 +1167,9 @@ class TypeMatchMetric(Metric):
             if not gt_vars:
                 continue
             func_gt = [o for gv in gt_vars for o in gv.get("rbp_offset", [])]
-            func_dec = [v.stack_offset for v in func_decomp.variables if v.stack_offset is not None]
+            func_dec = [
+                o for o in (_effective_offset(v) for v in func_decomp.variables) if o is not None
+            ]
             if func_gt and func_dec:
                 pairs.append((func_gt, func_dec))
 

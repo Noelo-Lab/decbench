@@ -1,0 +1,34 @@
+{
+ "cat4_total": {
+  "angr": 525,
+  "phoenix": 541,
+  "ghidra": 40,
+  "ida": 452,
+  "binja": 826
+ },
+ "construct": {
+  "angr": {
+   "aggregate/array_return_type": 524,
+   "empty_or_oneliner": 1
+  },
+  "phoenix": {
+   "aggregate/array_return_type": 540,
+   "empty_or_oneliner": 1
+  },
+  "ghidra": {
+   "aggregate/array_return_type": 36,
+   "other": 4
+  },
+  "ida": {
+   "empty_or_oneliner": 75,
+   "other": 377
+  },
+  "binja": {
+   "register_annotation(@reg)": 182,
+   "other": 538,
+   "empty_or_oneliner": 105,
+   "aggregate/array_return_type": 1
+  },
+  "kuna": {}
+ }
+}

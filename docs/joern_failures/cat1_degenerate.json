@@ -1,0 +1,966 @@
+{
+ "per_project": {
+  "base-passwd": {
+   "total": 48,
+   "degenerate": 11,
+   "empty_proto": 0,
+   "straightline_body": 11,
+   "pct_degen": 22.9
+  },
+  "bash": {
+   "total": 2962,
+   "degenerate": 1948,
+   "empty_proto": 1671,
+   "straightline_body": 277,
+   "pct_degen": 65.8
+  },
+  "bzip2": {
+   "total": 117,
+   "degenerate": 52,
+   "empty_proto": 32,
+   "straightline_body": 20,
+   "pct_degen": 44.4
+  },
+  "coreutils": {
+   "total": 1735,
+   "degenerate": 768,
+   "empty_proto": 458,
+   "straightline_body": 310,
+   "pct_degen": 44.3
+  },
+  "cronie": {
+   "total": 112,
+   "degenerate": 63,
+   "empty_proto": 53,
+   "straightline_body": 10,
+   "pct_degen": 56.2
+  },
+  "diffutils": {
+   "total": 306,
+   "degenerate": 162,
+   "empty_proto": 121,
+   "straightline_body": 41,
+   "pct_degen": 52.9
+  },
+  "dpkg": {
+   "total": 622,
+   "degenerate": 467,
+   "empty_proto": 421,
+   "straightline_body": 46,
+   "pct_degen": 75.1
+  },
+  "e2fsprogs": {
+   "total": 1327,
+   "degenerate": 1048,
+   "empty_proto": 801,
+   "straightline_body": 247,
+   "pct_degen": 79.0
+  },
+  "findutils": {
+   "total": 523,
+   "degenerate": 338,
+   "empty_proto": 241,
+   "straightline_body": 97,
+   "pct_degen": 64.6
+  },
+  "gnutls": {
+   "total": 1972,
+   "degenerate": 1520,
+   "empty_proto": 1388,
+   "straightline_body": 132,
+   "pct_degen": 77.1
+  },
+  "grep": {
+   "total": 279,
+   "degenerate": 180,
+   "empty_proto": 168,
+   "straightline_body": 12,
+   "pct_degen": 64.5
+  },
+  "gzip": {
+   "total": 241,
+   "degenerate": 143,
+   "empty_proto": 105,
+   "straightline_body": 38,
+   "pct_degen": 59.3
+  },
+  "iproute2": {
+   "total": 1101,
+   "degenerate": 552,
+   "empty_proto": 399,
+   "straightline_body": 153,
+   "pct_degen": 50.1
+  },
+  "kmod": {
+   "total": 288,
+   "degenerate": 173,
+   "empty_proto": 156,
+   "straightline_body": 17,
+   "pct_degen": 60.1
+  },
+  "libacl": {
+   "total": 121,
+   "degenerate": 78,
+   "empty_proto": 73,
+   "straightline_body": 5,
+   "pct_degen": 64.5
+  },
+  "libbsd": {
+   "total": 176,
+   "degenerate": 94,
+   "empty_proto": 57,
+   "straightline_body": 37,
+   "pct_degen": 53.4
+  },
+  "libedit": {
+   "total": 516,
+   "degenerate": 325,
+   "empty_proto": 236,
+   "straightline_body": 89,
+   "pct_degen": 63.0
+  },
+  "libexpat": {
+   "total": 122,
+   "degenerate": 96,
+   "empty_proto": 68,
+   "straightline_body": 28,
+   "pct_degen": 78.7
+  },
+  "libselinux": {
+   "total": 442,
+   "degenerate": 269,
+   "empty_proto": 244,
+   "straightline_body": 25,
+   "pct_degen": 60.9
+  },
+  "openssh-portable": {
+   "total": 2389,
+   "degenerate": 1191,
+   "empty_proto": 1017,
+   "straightline_body": 174,
+   "pct_degen": 49.9
+  },
+  "rsyslog": {
+   "total": 713,
+   "degenerate": 615,
+   "empty_proto": 573,
+   "straightline_body": 42,
+   "pct_degen": 86.3
+  },
+  "shadow": {
+   "total": 363,
+   "degenerate": 243,
+   "empty_proto": 229,
+   "straightline_body": 14,
+   "pct_degen": 66.9
+  },
+  "sysvinit": {
+   "total": 158,
+   "degenerate": 30,
+   "empty_proto": 10,
+   "straightline_body": 20,
+   "pct_degen": 19.0
+  },
+  "tar": {
+   "total": 946,
+   "degenerate": 574,
+   "empty_proto": 463,
+   "straightline_body": 111,
+   "pct_degen": 60.7
+  },
+  "zlib": {
+   "total": 166,
+   "degenerate": 83,
+   "empty_proto": 76,
+   "straightline_body": 7,
+   "pct_degen": 50.0
+  }
+ },
+ "totals": {
+  "total_funcs": 17745,
+  "degenerate": 11023,
+  "empty_proto": 9060,
+  "straightline_body": 1963
+ },
+ "top_empty_proto_names": [
+  [
+   "xmalloc",
+   8
+  ],
+  [
+   "xrealloc",
+   7
+  ],
+  [
+   "error_at_line",
+   7
+  ],
+  [
+   "xstrdup",
+   7
+  ],
+  [
+   "xalloc_die",
+   7
+  ],
+  [
+   "last_component",
+   7
+  ],
+  [
+   "error",
+   7
+  ],
+  [
+   "gettime",
+   7
+  ],
+  [
+   "rpl_fcntl",
+   7
+  ],
+  [
+   "base_len",
+   7
+  ],
+  [
+   "xcalloc",
+   6
+  ],
+  [
+   "mdir_name",
+   6
+  ],
+  [
+   "strip_trailing_slashes",
+   6
+  ],
+  [
+   "xmemdup",
+   6
+  ],
+  [
+   "dir_len",
+   6
+  ],
+  [
+   "x2realloc",
+   6
+  ],
+  [
+   "xzalloc",
+   6
+  ],
+  [
+   "settime",
+   6
+  ],
+  [
+   "hash_remove",
+   5
+  ],
+  [
+   "hash_string",
+   5
+  ],
+  [
+   "mbscasecmp",
+   5
+  ],
+  [
+   "fpurge",
+   5
+  ],
+  [
+   "setlocale_null",
+   5
+  ],
+  [
+   "xstrtoull",
+   5
+  ],
+  [
+   "ximalloc",
+   5
+  ],
+  [
+   "xreallocarray",
+   5
+  ],
+  [
+   "ximemdup",
+   5
+  ],
+  [
+   "quote_n",
+   5
+  ],
+  [
+   "quote_n_mem",
+   5
+  ],
+  [
+   "xicalloc",
+   5
+  ],
+  [
+   "xizalloc",
+   5
+  ],
+  [
+   "xstrtoll",
+   5
+  ],
+  [
+   "setlocale_null_r",
+   5
+  ],
+  [
+   "mktime_z",
+   5
+  ],
+  [
+   "quote",
+   5
+  ],
+  [
+   "xstrtoimax",
+   5
+  ],
+  [
+   "xirealloc",
+   5
+  ],
+  [
+   "xstrtol",
+   5
+  ],
+  [
+   "xstrtoul",
+   5
+  ],
+  [
+   "tzfree",
+   5
+  ],
+  [
+   "ximemdup0",
+   5
+  ],
+  [
+   "tzalloc",
+   5
+  ],
+  [
+   "xpalloc",
+   5
+  ],
+  [
+   "xstrtoumax",
+   5
+  ],
+  [
+   "x2nrealloc",
+   5
+  ],
+  [
+   "quote_mem",
+   5
+  ],
+  [
+   "xireallocarray",
+   5
+  ],
+  [
+   "hash_free",
+   5
+  ],
+  [
+   "hash_xinsert",
+   5
+  ],
+  [
+   "wcsdup",
+   5
+  ],
+  [
+   "malloc",
+   4
+  ],
+  [
+   "strdup",
+   4
+  ],
+  [
+   "realloc",
+   4
+  ],
+  [
+   "calloc",
+   4
+  ],
+  [
+   "aligned_alloc",
+   4
+  ],
+  [
+   "mbsstr",
+   4
+  ],
+  [
+   "fopen",
+   4
+  ],
+  [
+   "mbslen",
+   4
+  ],
+  [
+   "free",
+   4
+  ],
+  [
+   "canonicalize_file_name",
+   4
+  ]
+ ],
+ "top_body1_names": [
+  [
+   "usage",
+   12
+  ],
+  [
+   "__builtin_va_arg",
+   10
+  ],
+  [
+   "__builtin_offsetof",
+   10
+  ],
+  [
+   "get_stat_atime_ns",
+   7
+  ],
+  [
+   "get_stat_ctime_ns",
+   7
+  ],
+  [
+   "get_stat_mtime_ns",
+   7
+  ],
+  [
+   "get_stat_atime",
+   7
+  ],
+  [
+   "get_stat_ctime",
+   7
+  ],
+  [
+   "get_stat_mtime",
+   7
+  ],
+  [
+   "make_timespec",
+   6
+  ],
+  [
+   "timespec_cmp",
+   6
+  ],
+  [
+   "timespec_sign",
+   6
+  ],
+  [
+   "timespectod",
+   6
+  ],
+  [
+   "xnrealloc",
+   6
+  ],
+  [
+   "get_stat_birthtime_ns",
+   4
+  ],
+  [
+   "get_stat_birthtime",
+   4
+  ],
+  [
+   "to_uchar",
+   3
+  ],
+  [
+   "set_binary_mode",
+   3
+  ],
+  [
+   "stat_time_normalize",
+   3
+  ],
+  [
+   "signal_handler",
+   3
+  ],
+  [
+   "handler",
+   3
+  ],
+  [
+   "version",
+   2
+  ],
+  [
+   "is_basic",
+   2
+  ],
+  [
+   "filename_completion_function",
+   2
+  ],
+  [
+   "restore_default_color",
+   2
+  ],
+  [
+   "beyond",
+   2
+  ],
+  [
+   "ptr_align",
+   2
+  ],
+  [
+   "rotr32",
+   2
+  ],
+  [
+   "rotr64",
+   2
+  ],
+  [
+   "lutimensat",
+   2
+  ],
+  [
+   "priv_set_remove_linkdir",
+   2
+  ],
+  [
+   "priv_set_restore_linkdir",
+   2
+  ],
+  [
+   "sighup_handler",
+   2
+  ],
+  [
+   "xnmalloc",
+   2
+  ],
+  [
+   "__list_add",
+   2
+  ],
+  [
+   "list_add",
+   2
+  ],
+  [
+   "list_add_tail",
+   2
+  ],
+  [
+   "__list_del",
+   2
+  ],
+  [
+   "list_del",
+   2
+  ],
+  [
+   "list_empty",
+   2
+  ]
+ ],
+ "degen_body_samples": [
+  {
+   "project": "base-passwd",
+   "function": "create_node",
+   "stmts": [
+    "<UnsupportedStmt: UNKNOWN,struct_node*,struct_node*>",
+    "<UnsupportedStmt: ['sizeOf', 'sizeof(struct_node)']>",
+    "xmalloc(sizeof(struct_node))",
+    "<UnsupportedStmt: ['cast', '(struct_node*)xmalloc(sizeof(struct_node))']>",
+    "newnode = (struct_node*)xmalloc(sizeof(struct_n...",
+    "<UnsupportedStmt: FIELD_IDENTIFIER,name,name>"
+   ]
+  },
+  {
+   "project": "base-passwd",
+   "function": "copy_passwd",
+   "stmts": [
+    "<UnsupportedStmt: FIELD_IDENTIFIER,d,d>",
+    "<UnsupportedStmt: ['indirectFieldAccess', 'newnode-&gt;d']>",
+    "<UnsupportedStmt: FIELD_IDENTIFIER,pw,pw>",
+    "<UnsupportedStmt: ['fieldAccess', 'newnode-&gt;d.pw']>",
+    "<UnsupportedStmt: ['indirection', '*pw']>",
+    "newnode-&gt;d.pw = *pw"
+   ]
+  },
+  {
+   "project": "base-passwd",
+   "function": "copy_shadow",
+   "stmts": [
+    "<UnsupportedStmt: FIELD_IDENTIFIER,d,d>",
+    "<UnsupportedStmt: ['indirectFieldAccess', 'newnode-&gt;d']>",
+    "<UnsupportedStmt: FIELD_IDENTIFIER,sp,sp>",
+    "<UnsupportedStmt: ['fieldAccess', 'newnode-&gt;d.sp']>",
+    "<UnsupportedStmt: ['indirection', '*sp']>",
+    "newnode-&gt;d.sp = *sp"
+   ]
+  },
+  {
+   "project": "base-passwd",
+   "function": "keephome",
+   "stmts": [
+    "scan_infos()",
+    "return scan_infos(lst,id,0x0001);,returnscan_infos(lst,id,0x0001);"
+   ]
+  },
+  {
+   "project": "base-passwd",
+   "function": "keepshell",
+   "stmts": [
+    "scan_infos()",
+    "return scan_infos(lst,id,0x0002);,returnscan_infos(lst,id,0x0002);"
+   ]
+  },
+  {
+   "project": "base-passwd",
+   "function": "keepgecos",
+   "stmts": [
+    "scan_infos()",
+    "return scan_infos(lst,id,0x0004);,returnscan_infos(lst,id,0x0004);"
+   ]
+  },
+  {
+   "project": "base-passwd",
+   "function": "noautoremove",
+   "stmts": [
+    "scan_infos()",
+    "return scan_infos(lst,id,0x0010);,returnscan_infos(lst,id,0x0010);"
+   ]
+  },
+  {
+   "project": "base-passwd",
+   "function": "noautoadd",
+   "stmts": [
+    "scan_infos()",
+    "return scan_infos(lst,id,0x0020);,returnscan_infos(lst,id,0x0020);"
+   ]
+  },
+  {
+   "project": "base-passwd",
+   "function": "usage",
+   "stmts": [
+    "<UnsupportedStmt: >",
+    "<UnsupportedStmt: >",
+    "<UnsupportedStmt: >"
+   ]
+  },
+  {
+   "project": "base-passwd",
+   "function": "version",
+   "stmts": [
+    "printf()"
+   ]
+  },
+  {
+   "project": "base-passwd",
+   "function": "ask_debconf",
+   "stmts": [
+    "return 0;,return0;"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "usage",
+   "stmts": [
+    "<UnsupportedStmt: >",
+    "<UnsupportedStmt: >",
+    "<UnsupportedStmt: >"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "is_basic",
+   "stmts": [
+    "<UnsupportedStmt: UNKNOWN,unsignedchar,unsignedchar>",
+    "<UnsupportedStmt: ['cast', '(unsignedchar)c']>",
+    "<UnsupportedStmt: ['arithmeticShiftRight', '(unsignedchar)c&gt;&gt;5']>",
+    "<UnsupportedStmt: ['indirectIndexAccess', 'is_basic_table[(unsignedchar)c&gt;&gt;5]']>",
+    "<UnsupportedStmt: UNKNOWN,unsignedchar,unsignedchar>",
+    "<UnsupportedStmt: ['cast', '(unsignedchar)c']>"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "sort_aliases",
+   "stmts": [
+    "<UnsupportedStmt: UNKNOWN,char**,char**>",
+    "<UnsupportedStmt: ['cast', '(char**)array']>",
+    "strvec_len((char**)array)",
+    "<UnsupportedStmt: ['sizeOf', 'sizeof(alias_t*)']>",
+    "<UnsupportedStmt: UNKNOWN,QSFUNC*,QSFUNC*>",
+    "<UnsupportedStmt: ['cast', '(QSFUNC*)qsort_alias_compare']>"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "_rl_vi_set_last",
+   "stmts": [
+    "_rl_vi_last_command = key",
+    "_rl_vi_last_repeat = repeat",
+    "_rl_vi_last_arg_sign = sign"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "_rl_vi_reset_last",
+   "stmts": [
+    "_rl_vi_last_command = 'i'",
+    "_rl_vi_last_repeat = 1",
+    "_rl_vi_last_arg_sign = 1",
+    "_rl_vi_last_motion = 0"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "cdxattr",
+   "stmts": [
+    "-1 - ",
+    "return -1;,return-1;"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "resetxattr",
+   "stmts": [
+    "-1 - ",
+    "xattrfd = -1"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "really_add_history",
+   "stmts": [
+    "hist_last_line_added = 1",
+    "hist_last_line_pushed = 0",
+    "add_history(line)",
+    "<UnsupportedStmt: ['postIncrement', 'history_lines_this_session++']>"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "last_history_entry",
+   "stmts": [
+    "using_history()",
+    "previous_history()",
+    "he = previous_history()",
+    "using_history()",
+    "return he;,returnhe;"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "sv_region_start_color",
+   "stmts": [
+    "_rl_reset_region_color()",
+    "return (_rl_reset_region_color(0,value));,return(_rl_reset_region_color(0,value));"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "sv_region_end_color",
+   "stmts": [
+    "_rl_reset_region_color()",
+    "return (_rl_reset_region_color(1,value));,return(_rl_reset_region_color(1,value));"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "display_shell_version",
+   "stmts": [
+    "rl_crlf()",
+    "show_shell_version(0)",
+    "putc()",
+    "fflush(rl_outstream)",
+    "rl_on_new_line()",
+    "rl_redisplay()"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "emacs_edit_and_execute_command",
+   "stmts": [
+    "edit_and_execute_command()",
+    "return (edit_and_execute_command(count,c,1,...,return(edit_and_execute_command(count,c,1,..."
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "find_cmd_end",
+   "stmts": [
+    "<UnsupportedStmt: ['or', '0x001|0x100']>",
+    "skip_to_delim()",
+    "e = skip_to_delim(rl_line_buffer,end,&quot;;|&amp;{(`...",
+    "return e;,returne;"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "test_for_directory",
+   "stmts": [
+    "bash_tilde_expand()",
+    "fn = bash_tilde_expand(name,0)",
+    "file_isdir(fn)",
+    "r = file_isdir(fn)",
+    "sh_xfree((fn)",
+    "return (r);,return(r);"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "bash_ignore_filenames",
+   "stmts": [
+    "_ignore_completion_names()",
+    "return 0;,return0;"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "bash_progcomp_ignore_filenames",
+   "stmts": [
+    "_ignore_completion_names()",
+    "return 0;,return0;"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "return_zero",
+   "stmts": [
+    "return 0;,return0;"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "bash_ignore_everything",
+   "stmts": [
+    "_ignore_completion_names()",
+    "return 0;,return0;"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "bash_complete_username",
+   "stmts": [
+    "rl_completion_mode(bash_complete_username)",
+    "bash_complete_username_internal()",
+    "return bash_complete_username_internal(rl_comp...,returnbash_complete_username_internal(rl_comp..."
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "bash_possible_username_completions",
+   "stmts": [
+    "bash_complete_username_internal('?')",
+    "return bash_complete_username_internal('?');,returnbash_complete_username_internal('?');"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "bash_complete_username_internal",
+   "stmts": [
+    "bash_specific_completion()",
+    "return bash_specific_completion(what_to_do,rl...,returnbash_specific_completion(what_to_do,rl..."
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "bash_complete_filename",
+   "stmts": [
+    "rl_completion_mode(bash_complete_filename)",
+    "bash_complete_filename_internal()",
+    "return bash_complete_filename_internal(rl_comp...,returnbash_complete_filename_internal(rl_comp..."
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "bash_possible_filename_completions",
+   "stmts": [
+    "bash_complete_filename_internal('?')",
+    "return bash_complete_filename_internal('?');,returnbash_complete_filename_internal('?');"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "bash_complete_filename_internal",
+   "stmts": [
+    "orig_func = rl_completion_entry_function",
+    "orig_attempt_func = rl_attempted_completion_fun...",
+    "orig_ignore_func = rl_ignore_some_completions_f...",
+    "orig_rl_completer_word_break_characters = rl_co...",
+    "save_directory_hook()",
+    "orig_dir_func = save_directory_hook()"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "bash_complete_hostname",
+   "stmts": [
+    "rl_completion_mode(bash_complete_hostname)",
+    "bash_complete_hostname_internal()",
+    "return bash_complete_hostname_internal(rl_comp...,returnbash_complete_hostname_internal(rl_comp..."
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "bash_possible_hostname_completions",
+   "stmts": [
+    "bash_complete_hostname_internal('?')",
+    "return bash_complete_hostname_internal('?');,returnbash_complete_hostname_internal('?');"
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "bash_complete_variable",
+   "stmts": [
+    "rl_completion_mode(bash_complete_variable)",
+    "bash_complete_variable_internal()",
+    "return bash_complete_variable_internal(rl_comp...,returnbash_complete_variable_internal(rl_comp..."
+   ]
+  },
+  {
+   "project": "bash",
+   "function": "bash_possible_variable_completions",
+   "stmts": [
+    "bash_complete_variable_internal('?')",
+    "return bash_complete_variable_internal('?');,returnbash_complete_variable_internal('?');"
+   ]
+  }
+ ],
+ "marker_kinds": {
+  "Nop": 22176,
+  "UnsupportedStmt": 12192,
+  "Call": 2242,
+  "Assignment": 1397,
+  "Return": 1040,
+  "Compare": 177,
+  "BinOp": 108,
+  "Ternary": 25
+ }
+}

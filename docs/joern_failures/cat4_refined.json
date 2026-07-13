@@ -1,0 +1,263 @@
+{
+ "cat4_refined": {
+  "angr": 525,
+  "phoenix": 541,
+  "ghidra": 40,
+  "ida": 452,
+  "binja": 826
+ },
+ "underscore_fp": {
+  "ida": 18,
+  "angr": 2,
+  "phoenix": 2
+ },
+ "cat4_construct": {
+  "angr": {
+   "other": 282,
+   "aggregate/array_return_type": 237,
+   "empty_or_oneliner": 6
+  },
+  "phoenix": {
+   "other": 291,
+   "aggregate/array_return_type": 244,
+   "empty_or_oneliner": 6
+  },
+  "ghidra": {
+   "aggregate/array_return_type": 33,
+   "other": 7
+  },
+  "ida": {
+   "empty_or_oneliner": 75,
+   "other": 377
+  },
+  "binja": {
+   "binja_reg_annotation(@reg)": 183,
+   "other": 537,
+   "empty_or_oneliner": 105,
+   "aggregate/array_return_type": 1
+  },
+  "kuna": {}
+ },
+ "samples": {
+  "angr": [
+   {
+    "proj": "gzip",
+    "bin": "gzip",
+    "func": "pqdownheap",
+    "construct": "other",
+    "sig": "extern unsigned int g_4df200[1277633];"
+   },
+   {
+    "proj": "gzip",
+    "bin": "gzip",
+    "func": "read_tree",
+    "construct": "other",
+    "sig": "extern unsigned long long g_4e13e0;"
+   },
+   {
+    "proj": "diffutils",
+    "bin": "sdiff",
+    "func": "lf_skip",
+    "construct": "aggregate/array_return_type",
+    "sig": "void* [4] lf_skip(void* *p, unsigned long long a1)"
+   },
+   {
+    "proj": "diffutils",
+    "bin": "cmp",
+    "func": "file_position",
+    "construct": "other",
+    "sig": "extern unsigned int g_4100b0[4];"
+   },
+   {
+    "proj": "diffutils",
+    "bin": "diff3",
+    "func": "scan_diff_line",
+    "construct": "other",
+    "sig": "typedef struct struct_0 {"
+   },
+   {
+    "proj": "diffutils",
+    "bin": "diff",
+    "func": "add_change",
+    "construct": "aggregate/array_return_type",
+    "sig": "unsigned long long [5] add_change(unsigned long a0, unsigned long a1, unsigned long a2, unsigned long a3, unsigned long a4)"
+   }
+  ],
+  "phoenix": [
+   {
+    "proj": "gzip",
+    "bin": "gzip",
+    "func": "pqdownheap",
+    "construct": "other",
+    "sig": "extern unsigned int g_4df200[1277633];"
+   },
+   {
+    "proj": "gzip",
+    "bin": "gzip",
+    "func": "read_tree",
+    "construct": "other",
+    "sig": "extern unsigned long long g_4e13e0;"
+   },
+   {
+    "proj": "diffutils",
+    "bin": "diff3",
+    "func": "scan_diff_line",
+    "construct": "other",
+    "sig": "typedef struct struct_0 {"
+   },
+   {
+    "proj": "diffutils",
+    "bin": "diff",
+    "func": "add_change",
+    "construct": "aggregate/array_return_type",
+    "sig": "unsigned long long [5] add_change(unsigned long a0, unsigned long a1, unsigned long a2, unsigned long a3, unsigned long a4)"
+   },
+   {
+    "proj": "diffutils",
+    "bin": "diff",
+    "func": "build_reverse_script",
+    "construct": "other",
+    "sig": "typedef struct struct_0 {"
+   },
+   {
+    "proj": "diffutils",
+    "bin": "diff",
+    "func": "build_script",
+    "construct": "aggregate/array_return_type",
+    "sig": "unsigned long long [5] build_script(unsigned long long *ptr)"
+   }
+  ],
+  "ghidra": [
+   {
+    "proj": "gnutls",
+    "bin": "gnutls-serv",
+    "func": "wrap_db_fetch",
+    "construct": "aggregate/array_return_type",
+    "sig": "undefined1  [16] wrap_db_fetch(undefined8 param_1,void *param_2,uint param_3)"
+   },
+   {
+    "proj": "coreutils",
+    "bin": "stat",
+    "func": "neg_to_zero",
+    "construct": "aggregate/array_return_type",
+    "sig": "undefined1  [16] neg_to_zero(undefined8 param_1,long param_2)"
+   },
+   {
+    "proj": "coreutils",
+    "bin": "dir",
+    "func": "dev_ino_pop",
+    "construct": "aggregate/array_return_type",
+    "sig": "undefined1  [16] dev_ino_pop(void)"
+   },
+   {
+    "proj": "coreutils",
+    "bin": "dir",
+    "func": "get_stat_btime",
+    "construct": "aggregate/array_return_type",
+    "sig": "undefined1  [16] get_stat_btime(undefined8 param_1)"
+   },
+   {
+    "proj": "coreutils",
+    "bin": "ls",
+    "func": "dev_ino_pop",
+    "construct": "aggregate/array_return_type",
+    "sig": "undefined1  [16] dev_ino_pop(void)"
+   },
+   {
+    "proj": "coreutils",
+    "bin": "ls",
+    "func": "get_stat_btime",
+    "construct": "aggregate/array_return_type",
+    "sig": "undefined1  [16] get_stat_btime(undefined8 param_1)"
+   }
+  ],
+  "ida": [
+   {
+    "proj": "coreutils",
+    "bin": "make-prime-list",
+    "func": "print_wide_uint",
+    "construct": "other",
+    "sig": "int print_wide_uint(unsigned __int128 a1, int a2, unsigned int a3)"
+   },
+   {
+    "proj": "libbsd",
+    "bin": "libbsd.so.0.11",
+    "func": "__fdnlist",
+    "construct": "other",
+    "sig": "// bad sp value at call has been detected, the output may be wrong!"
+   },
+   {
+    "proj": "bash",
+    "bin": "bash",
+    "func": "_rl_internal_char_cleanup",
+    "construct": "other",
+    "sig": "long long rl_internal_char_cleanup()"
+   },
+   {
+    "proj": "bash",
+    "bin": "bash",
+    "func": "_rl_init_line_state",
+    "construct": "other",
+    "sig": "char *rl_init_line_state()"
+   },
+   {
+    "proj": "bash",
+    "bin": "bash",
+    "func": "_rl_keyseq_cxt_alloc",
+    "construct": "other",
+    "sig": "long long rl_keyseq_cxt_alloc()"
+   },
+   {
+    "proj": "bash",
+    "bin": "bash",
+    "func": "_rl_keyseq_chain_dispose",
+    "construct": "other",
+    "sig": "long long rl_keyseq_chain_dispose()"
+   }
+  ],
+  "binja": [
+   {
+    "proj": "gzip",
+    "bin": "gzip",
+    "func": "rpl_fcntl",
+    "construct": "binja_reg_annotation(@reg)",
+    "sig": "uint64_t rpl_fcntl(int32_t arg1, int32_t arg2, char arg3 @ rax)"
+   },
+   {
+    "proj": "gzip",
+    "bin": "gzip",
+    "func": "open_safer",
+    "construct": "binja_reg_annotation(@reg)",
+    "sig": "uint64_t open_safer(char* arg1, int32_t arg2, char arg3 @ rax)"
+   },
+   {
+    "proj": "gzip",
+    "bin": "gzip",
+    "func": "openat_safer",
+    "construct": "binja_reg_annotation(@reg)",
+    "sig": "uint64_t openat_safer(int32_t arg1, char* arg2, int32_t arg3, char arg4 @ rax)"
+   },
+   {
+    "proj": "diffutils",
+    "bin": "diff",
+    "func": "print_context_script",
+    "construct": "other",
+    "sig": "int64_t* print_context_script(int64_t* arg1, char arg2)"
+   },
+   {
+    "proj": "diffutils",
+    "bin": "diff",
+    "func": "find_function",
+    "construct": "other",
+    "sig": "char* find_function(void* arg1, int64_t arg2)"
+   },
+   {
+    "proj": "diffutils",
+    "bin": "diff",
+    "func": "compare_names_for_qsort",
+    "construct": "other",
+    "sig": "uint64_t compare_names_for_qsort(int64_t* arg1, int64_t* arg2)"
+   }
+  ]
+ }
+}

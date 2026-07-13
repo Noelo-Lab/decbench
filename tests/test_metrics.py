@@ -298,10 +298,22 @@ int main() {
         )
         # Register-resident args at -O2: names differ, no stack offsets.
         gt_vars = [
-            {"name": "count", "type": ["int"], "rbp_offset": [], "size": 4,
-             "is_arg": True, "arg_index": 0},
-            {"name": "buf", "type": ["char*"], "rbp_offset": [], "size": 8,
-             "is_arg": True, "arg_index": 1},
+            {
+                "name": "count",
+                "type": ["int"],
+                "rbp_offset": [],
+                "size": 4,
+                "is_arg": True,
+                "arg_index": 0,
+            },
+            {
+                "name": "buf",
+                "type": ["char*"],
+                "rbp_offset": [],
+                "size": 8,
+                "is_arg": True,
+                "arg_index": 1,
+            },
         ]
 
         metric = TypeMatchMetric()
@@ -323,8 +335,14 @@ int main() {
             ],
         )
         gt_vars = [
-            {"name": "n", "type": ["long long"], "rbp_offset": [], "size": 8,
-             "is_arg": True, "arg_index": 0},
+            {
+                "name": "n",
+                "type": ["long long"],
+                "rbp_offset": [],
+                "size": 8,
+                "is_arg": True,
+                "arg_index": 0,
+            },
         ]
 
         metric = TypeMatchMetric()
@@ -417,9 +435,9 @@ int main() {
 
         gt_forms = normalize_type("short int")
         for decompiler_spelling in ("short", "__int16", "_WORD", "ushort"):
-            assert gt_forms & normalize_type(decompiler_spelling), (
-                f"'short int' does not match {decompiler_spelling!r}"
-            )
+            assert gt_forms & normalize_type(
+                decompiler_spelling
+            ), f"'short int' does not match {decompiler_spelling!r}"
 
     def test_binary_calibration_ignores_single_slot_coincidences(self) -> None:
         """All-single-var functions must not elect a spurious nonzero shift."""
@@ -600,20 +618,23 @@ class TestByteMatchMetric:
     def test_jaccard_similarity(self) -> None:
         from decbench.metrics.byte_match import _compute_jaccard_similarity
 
-        # Identical
+        # Returns (similarity, changed_lines). Identical -> perfect, 0 changes.
         lines = ["mov rax, rbx", "add rax, 1", "ret"]
-        sim = _compute_jaccard_similarity(lines, lines)
+        sim, changed = _compute_jaccard_similarity(lines, lines)
         assert sim == 1.0
+        assert changed == 0
 
-        # Completely different
+        # Completely different -> 0 similarity, every line changed on both sides.
         lines_a = ["mov rax, rbx", "ret"]
         lines_b = ["push rbp", "pop rbp"]
-        sim = _compute_jaccard_similarity(lines_a, lines_b)
+        sim, changed = _compute_jaccard_similarity(lines_a, lines_b)
         assert sim == 0.0
+        assert changed == len(lines_a) + len(lines_b)
 
         # Empty
-        sim = _compute_jaccard_similarity([], [])
+        sim, changed = _compute_jaccard_similarity([], [])
         assert sim == 1.0
+        assert changed == 0
 
 
 class TestMetricConfig:

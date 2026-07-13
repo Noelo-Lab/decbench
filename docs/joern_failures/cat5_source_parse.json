@@ -1,0 +1,350 @@
+{
+ "probed": 49,
+ "exceptions": [],
+ "empty": [],
+ "results": [
+  {
+   "file": "libwc_avx2_a-wc_avx2.i",
+   "size": 1453656,
+   "funcs": 143,
+   "degen_in_file": 125,
+   "err": null
+  },
+  {
+   "file": "crontab.i",
+   "size": 179913,
+   "funcs": 72,
+   "degen_in_file": 58,
+   "err": null
+  },
+  {
+   "file": "bzip2.i",
+   "size": 211212,
+   "funcs": 68,
+   "degen_in_file": 36,
+   "err": null
+  },
+  {
+   "file": "libcksum_pclmul_a-cksum_pclmul.i",
+   "size": 1456815,
+   "funcs": 140,
+   "degen_in_file": 122,
+   "err": null
+  },
+  {
+   "file": "update-passwd.i",
+   "size": 185570,
+   "funcs": 48,
+   "degen_in_file": 11,
+   "err": null
+  },
+  {
+   "file": "bzlib.i",
+   "size": 127186,
+   "funcs": 48,
+   "degen_in_file": 14,
+   "err": null
+  },
+  {
+   "file": "y.tab.i",
+   "size": 490799,
+   "funcs": 1405,
+   "degen_in_file": 1403,
+   "err": null
+  },
+  {
+   "file": "cron.i",
+   "size": 172424,
+   "funcs": 68,
+   "degen_in_file": 59,
+   "err": null
+  },
+  {
+   "file": "util.i",
+   "size": 235187,
+   "funcs": 121,
+   "degen_in_file": 93,
+   "err": null
+  },
+  {
+   "file": "diff.i",
+   "size": 258270,
+   "funcs": 148,
+   "degen_in_file": 131,
+   "err": null
+  },
+  {
+   "file": "unpack.i",
+   "size": 258411,
+   "funcs": 406,
+   "degen_in_file": 381,
+   "err": null
+  },
+  {
+   "file": "archives.i",
+   "size": 242400,
+   "funcs": 408,
+   "degen_in_file": 378,
+   "err": null
+  },
+  {
+   "file": "subst.i",
+   "size": 559704,
+   "funcs": 1160,
+   "degen_in_file": 1019,
+   "err": null
+  },
+  {
+   "file": "unix.i",
+   "size": 390757,
+   "funcs": 987,
+   "degen_in_file": 936,
+   "err": null
+  },
+  {
+   "file": "pass1.i",
+   "size": 389963,
+   "funcs": 961,
+   "degen_in_file": 886,
+   "err": null
+  },
+  {
+   "file": "pred.i",
+   "size": 443355,
+   "funcs": 232,
+   "degen_in_file": 189,
+   "err": null
+  },
+  {
+   "file": "pcresearch.i",
+   "size": 243917,
+   "funcs": 101,
+   "degen_in_file": 92,
+   "err": null
+  },
+  {
+   "file": "parser.i",
+   "size": 514255,
+   "funcs": 310,
+   "degen_in_file": 240,
+   "err": null
+  },
+  {
+   "file": "grep.i",
+   "size": 364323,
+   "funcs": 252,
+   "degen_in_file": 172,
+   "err": null
+  },
+  {
+   "file": "cli.i",
+   "size": 502939,
+   "funcs": 1278,
+   "degen_in_file": 1231,
+   "err": null
+  },
+  {
+   "file": "certtool.i",
+   "size": 546106,
+   "funcs": 1323,
+   "degen_in_file": 1255,
+   "err": null
+  },
+  {
+   "file": "gzip.i",
+   "size": 239527,
+   "funcs": 139,
+   "degen_in_file": 112,
+   "err": null
+  },
+  {
+   "file": "libgzip_a-printf-frexpl.i",
+   "size": 168312,
+   "funcs": 1,
+   "degen_in_file": 0,
+   "err": null
+  },
+  {
+   "file": "iproute_lwtunnel.i",
+   "size": 362476,
+   "funcs": 458,
+   "degen_in_file": 401,
+   "err": null
+  },
+  {
+   "file": "depmod.i",
+   "size": 298532,
+   "funcs": 248,
+   "degen_in_file": 174,
+   "err": null
+  },
+  {
+   "file": "getfacl.i",
+   "size": 151265,
+   "funcs": 62,
+   "degen_in_file": 49,
+   "err": null
+  },
+  {
+   "file": "ipaddress.i",
+   "size": 357344,
+   "funcs": 431,
+   "degen_in_file": 377,
+   "err": null
+  },
+  {
+   "file": "modprobe.i",
+   "size": 190476,
+   "funcs": 111,
+   "degen_in_file": 93,
+   "err": null
+  },
+  {
+   "file": "setfacl.i",
+   "size": 142413,
+   "funcs": 53,
+   "degen_in_file": 47,
+   "err": null
+  },
+  {
+   "file": "getentropy.i",
+   "size": 234561,
+   "funcs": 48,
+   "degen_in_file": 42,
+   "err": null
+  },
+  {
+   "file": "arc4random.i",
+   "size": 193150,
+   "funcs": 56,
+   "degen_in_file": 46,
+   "err": null
+  },
+  {
+   "file": "xmlwf-xmlfile.i",
+   "size": 106886,
+   "funcs": 72,
+   "degen_in_file": 66,
+   "err": null
+  },
+  {
+   "file": "readline.i",
+   "size": 267565,
+   "funcs": 305,
+   "degen_in_file": 249,
+   "err": null
+  },
+  {
+   "file": "xmlwf-xmlwf.i",
+   "size": 156079,
+   "funcs": 115,
+   "degen_in_file": 94,
+   "err": null
+  },
+  {
+   "file": "terminal.i",
+   "size": 231409,
+   "funcs": 188,
+   "degen_in_file": 158,
+   "err": null
+  },
+  {
+   "file": "selinux_restorecon.i",
+   "size": 305501,
+   "funcs": 241,
+   "degen_in_file": 211,
+   "err": null
+  },
+  {
+   "file": "label_file.i",
+   "size": 260875,
+   "funcs": 232,
+   "degen_in_file": 196,
+   "err": null
+  },
+  {
+   "file": "ssh-keygen.i",
+   "size": 972910,
+   "funcs": 545,
+   "degen_in_file": 483,
+   "err": null
+  },
+  {
+   "file": "sshkey.i",
+   "size": 939066,
+   "funcs": 421,
+   "degen_in_file": 329,
+   "err": null
+  },
+  {
+   "file": "rsyslogd-rsyslogd.i",
+   "size": 376206,
+   "funcs": 598,
+   "degen_in_file": 562,
+   "err": null
+  },
+  {
+   "file": "last.i",
+   "size": 192008,
+   "funcs": 12,
+   "degen_in_file": 5,
+   "err": null
+  },
+  {
+   "file": "usermod.i",
+   "size": 297841,
+   "funcs": 241,
+   "degen_in_file": 222,
+   "err": null
+  },
+  {
+   "file": "useradd.i",
+   "size": 304886,
+   "funcs": 252,
+   "degen_in_file": 226,
+   "err": null
+  },
+  {
+   "file": "rsyslogd-omfwd.i",
+   "size": 400795,
+   "funcs": 536,
+   "degen_in_file": 500,
+   "err": null
+  },
+  {
+   "file": "init.i",
+   "size": 246728,
+   "funcs": 55,
+   "degen_in_file": 11,
+   "err": null
+  },
+  {
+   "file": "tar.i",
+   "size": 355659,
+   "funcs": 491,
+   "degen_in_file": 441,
+   "err": null
+  },
+  {
+   "file": "extract.i",
+   "size": 319154,
+   "funcs": 427,
+   "degen_in_file": 382,
+   "err": null
+  },
+  {
+   "file": "crc32.i",
+   "size": 165809,
+   "funcs": 95,
+   "degen_in_file": 90,
+   "err": null
+  },
+  {
+   "file": "deflate.i",
+   "size": 131355,
+   "funcs": 109,
+   "degen_in_file": 83,
+   "err": null
+  }
+ ]
+}

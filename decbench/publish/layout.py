@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # Normative constants from the publishing contract.
 DATASET_NAME = "decbench-dataset"
 DATASET_REPO_ID = "noelo-lab/decbench-dataset"
-DEFAULT_CONFIGS = ["tiny", "hard", "hard-inlined", "full"]
+DEFAULT_CONFIGS = ["tiny", "hard", "hard-inlined", "unoptimized", "full"]
 _FULL = "full"
 
 Logger = Callable[[str], None]
@@ -529,6 +529,9 @@ _GITATTRIBUTES_LINES = [
     "binaries/** filter=lfs diff=lfs merge=lfs -text",
     "results/**/*.c -filter -diff -merge text",
     "results/function_results.json filter=lfs diff=lfs merge=lfs -text",
+    # Per-config filtered scores are large for broad configs (e.g. 'unoptimized' =
+    # every O0 function, ~tens of MB) — LFS-track them too.
+    "configs/**/function_results.json filter=lfs diff=lfs merge=lfs -text",
 ]
 
 

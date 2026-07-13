@@ -80,6 +80,7 @@ def _build_html(scoreboard: Scoreboard, function_data: FunctionData | None) -> s
     nav_items = [
         ("leaderboard", "leaderboard", True),
         ("metrics", "metrics", True),
+        ("distance", "distance", has_data),
         ("dataset", "dataset", has_data),
         ("compare", "compare", has_data),
         ("hardest", "hardest", has_data),
@@ -98,6 +99,7 @@ def _build_html(scoreboard: Scoreboard, function_data: FunctionData | None) -> s
 
     leaderboard = _build_leaderboard_section(scoreboard, function_data)
     metrics_view = _build_metrics_section(scoreboard, function_data)
+    distance_view = _build_distance_section(function_data) if has_data else ""
     dataset_view = _build_dataset_overview_section(function_data) if has_data else ""
     compare_view = _build_compare_section(function_data) if has_data else ""
     hardest_view = _build_hardest_section(function_data) if has_data else ""
@@ -149,6 +151,7 @@ def _build_html(scoreboard: Scoreboard, function_data: FunctionData | None) -> s
             {banner}
             {leaderboard}
             {metrics_view}
+            {distance_view}
             {dataset_view}
             {compare_view}
             {hardest_view}
@@ -553,6 +556,32 @@ def _static_metrics_table(scoreboard: Scoreboard) -> str:
     return f"<table><thead><tr>{headers}</tr></thead><tbody>{rows}</tbody></table>"
 
 
+def _build_distance_section(function_data: FunctionData) -> str:
+    """The 'distance' page: raw per-metric edit distance instead of perfect-rate.
+
+    Rendered client-side from ``FunctionRecord.distances`` so it tracks the
+    dataset selector / normalize toggle like every other view.
+    """
+    return """
+    <section class="view" id="view-distance" data-view="distance">
+        <h2 class="view-title">distance</h2>
+        <p class="view-desc">
+            The raw <em>edit distance</em> to a perfect result for each metric
+            (lower is better) — a finer signal than the perfect / not-perfect rate
+            on the leaderboard. <strong>GED</strong> = the graph edit distance
+            itself; <strong>types</strong> = number of type-flips to reach the
+            ground truth (false-typed + missing vars); <strong>byte</strong> =
+            number of changed assembly lines after recompiling. Each cell shows the
+            <em>mean</em>, the <em>median</em>, and how many functions are already
+            at distance 0 (perfect). Averaged over the functions each decompiler was
+            scored on.
+        </p>
+        <p class="view-desc" id="distance-table-note">over the selected dataset
+            (mean &middot; median &middot; #at-0 / #measured).</p>
+        <table id="distance-table"><thead><tr></tr></thead><tbody></tbody></table>
+    </section>"""
+
+
 def _build_dataset_overview_section(function_data: FunctionData) -> str:
     """The Dataset/About page: software types, projects, total LOC, Joern health.
 
@@ -737,11 +766,29 @@ _JS_TEMPLATE = """
     // tooling stat on the Dataset page.
     function hasGed(func, d) {
         const v = func.values[d];
-        return !!(v && ("ged" in v));
+        // A finite GED only: a non-finite/degenerate-source result is unmeasurable
+        // (our source front-end had no real CFG), not a decompiler miss.
+        return !!(v && ("ged" in v) && isFinite(v.ged));
     }
     function sourceParsed(func) {
         if (DATA.metrics.indexOf("ged") < 0) return true;
         for (const d of DATA.decompilers) if (hasGed(func, d)) return true;
+        return false;
+    }
+    // Is metric m measurable for this function AT ALL (for anyone)? This is the
+    // per-metric universe filter: a function where NO decompiler could be scored
+    // on m for reasons outside any decompiler's control — GED with no/degenerate
+    // source CFG, byte_match abstained (no recompile toolchain), type_match with
+    // no DWARF ground truth — is excluded from m's denominator UNIFORMLY for every
+    // decompiler (so denominators stay identical across decompilers). A function
+    // that IS measurable but which a given decompiler simply failed on counts as
+    // that decompiler's not-perfect miss (see recompute()).
+    function metricMeasurable(func, m) {
+        if (m === "ged") return sourceParsed(func);
+        for (const d of DATA.decompilers) {
+            const v = func.values[d];
+            if (v && (m in v) && isFinite(v[m])) return true;
+        }
         return false;
     }
 
@@ -764,6 +811,11 @@ _JS_TEMPLATE = """
                 if (!isActive(group, func)) continue;
                 activeFunctions += 1; groupActive = true;
                 const srcOk = sourceParsed(func);
+                // Per-metric measurability for THIS function (identical for every
+                // decompiler) — the shared per-metric denominator universe.
+                const meas = {};
+                for (const m of metrics) meas[m] = metricMeasurable(func, m);
+                const allMeas = metrics.every(m => meas[m]);
                 for (const d of decs) {
                     // Errors: a function is "in scope" for d if d attempted it
                     // (present in the decompiled map); errored if it didn't
@@ -773,28 +825,30 @@ _JS_TEMPLATE = """
                         errors[d].scope += 1;
                         if (!dd[d]) errors[d].errored += 1;
                     }
-                    // DENOMINATOR = functions d decompiled (one denominator for
-                    // every metric). A metric not computed on a decompiled
-                    // function counts as not-perfect (it still counts in total) —
-                    // EXCEPT GED excludes functions where our source parser (Joern)
-                    // failed on the source, since that's not the decompiler's fault.
-                    if (!decompiledBy(func, d)) continue;
+                    // DENOMINATOR = the shared per-metric universe: EVERY decompiler
+                    // is scored over the SAME set of functions for a metric (those
+                    // where the metric is measurable for anyone). A decompiler that
+                    // failed to decompile the function, or was decompiled but has no
+                    // value for a measurable metric, counts as a NOT-PERFECT miss —
+                    // it is NOT dropped from the denominator. Only metrics that are
+                    // unmeasurable for everyone (excluded uniformly) leave the denom.
                     const fperf = func.perfects[d] || {};
                     for (const m of metrics) {
-                        if (m === "ged" && !srcOk) continue;  // source-parse fail: exclude
+                        if (!meas[m]) continue;  // unmeasurable for all: exclude uniformly
                         perMetric[d][m].total += 1;
                         if (fperf[m]) perMetric[d][m].perfect += 1;
                     }
                     // Per-decompiler Joern-on-output failure (source parsed but
                     // Joern couldn't parse THIS decompiler's output) — a tooling
-                    // diagnostic surfaced on the Dataset page, not a score.
-                    if (srcOk) {
+                    // diagnostic surfaced on the Dataset page, not a score. Scoped
+                    // to functions d actually decompiled.
+                    if (srcOk && decompiledBy(func, d)) {
                         joernOutFail[d].scope += 1;
                         if (!hasGed(func, d)) joernOutFail[d].failed += 1;
                     }
-                    // Overall (perfect on ALL metrics) needs GED, so it too
-                    // excludes source-parse failures from its denominator.
-                    if (srcOk) {
+                    // Overall (perfect on ALL metrics), over functions where every
+                    // metric is measurable — same denominator for every decompiler.
+                    if (allMeas) {
                         overall[d].total += 1;
                         let allPerfect = true;
                         for (const m of metrics) { if (!fperf[m]) { allPerfect = false; break; } }
@@ -1058,7 +1112,68 @@ _JS_TEMPLATE = """
         lastResult = recompute();
         buildLeaderboard(lastResult);
         buildMetricsTable(lastResult);
+        buildDistance();
         updateStats(lastResult);
+    }
+
+    // ---- Distance view (raw edit distance per metric; lower is better) ----
+    function buildDistance() {
+        const tbl = document.getElementById("distance-table");
+        if (!tbl) return;
+        const decs = DATA.decompilers, metrics = orderedMetrics();
+        const arr = {};
+        for (const d of decs) { arr[d] = {}; for (const m of metrics) arr[d][m] = []; }
+        for (const group of DATA.groups) {
+            for (const func of group.functions) {
+                if (!isActive(group, func)) continue;
+                const dd = func.distances || {};
+                for (const d of decs) {
+                    const dm = dd[d]; if (!dm) continue;
+                    for (const m of metrics) {
+                        const v = dm[m];
+                        if (v != null && isFinite(v)) arr[d][m].push(v);
+                    }
+                }
+            }
+        }
+        function stat(a) {
+            if (!a.length) return null;
+            const s = a.slice().sort((x, y) => x - y);
+            const mean = a.reduce((p, c) => p + c, 0) / a.length;
+            const median = s[Math.floor(s.length / 2)];
+            const perfect = a.filter(x => x === 0).length;
+            return {mean, median, n: a.length, perfect};
+        }
+        let head = "<th>decompiler</th>";
+        for (const m of metrics) head += "<th>" + escapeHtml(METRIC_SHORT[m] || m) + " dist</th>";
+        tbl.querySelector("thead tr").innerHTML = head;
+        // Best (lowest) mean per metric -> highlight; sort rows by mean GED.
+        const rows = decs.map(d => ({d, cells: metrics.map(m => stat(arr[d][m]))}));
+        const best = {};
+        metrics.forEach((m, i) => {
+            best[m] = Math.min.apply(null, rows.map(r => r.cells[i] ? r.cells[i].mean : Infinity));
+        });
+        rows.sort((a, b) => {
+            const av = a.cells[0] ? a.cells[0].mean : Infinity;
+            const bv = b.cells[0] ? b.cells[0].mean : Infinity;
+            return av - bv;
+        });
+        let body = "";
+        for (const r of rows) {
+            let row = '<tr class="binrow"><td class="lb-name">' + escapeHtml(r.d) + '</td>';
+            r.cells.forEach((st, i) => {
+                if (!st) { row += '<td class="metric-cell">&mdash;</td>'; return; }
+                const isBest = st.mean <= best[metrics[i]] + 1e-9;
+                row += '<td class="metric-cell">' +
+                    '<span class="cell-pct ' + (isBest ? 'pct-high' : '') + '">' +
+                    st.mean.toFixed(1) + '</span> ' +
+                    '<span class="cell-count">med ' + st.median + ' &middot; ' +
+                    st.perfect + '/' + st.n + ' at 0</span></td>';
+            });
+            row += '</tr>';
+            body += row;
+        }
+        tbl.querySelector("tbody").innerHTML = body;
     }
 
     // ---- Compare view ----
