@@ -59,10 +59,23 @@ for proj in projects:
                     continue
                 for fn, mv in mr.function_results.items():
                     key = (proj, optn, binn, fn, dname)
+                    n = mv.value
+                    # Emit EVERY freshly computed value (not only those already in
+                    # function_results.json), so newly-recovered functions — e.g.
+                    # angr/phoenix ARM functions that were previously misnamed
+                    # sub_* and had no type_match — are captured. The OLD-vs-NEW
+                    # comparison stats below still only cover functions present in
+                    # `old` (there is nothing to compare against otherwise).
+                    if emit:
+                        md = mv.metadata or {}
+                        dist = int(md.get("fp", 0)) + int(md.get("fn", 0))
+                        new_scores.setdefault(dname, {})[f"{proj}::{optn}::{binn}::{fn}"] = {
+                            "value": n,
+                            "dist": dist,
+                        }
                     if key not in old:
                         continue
                     o = old[key]
-                    n = mv.value
                     a = agg[dname]
                     a["o"] += o
                     a["n"] += n
@@ -71,13 +84,6 @@ for proj in projects:
                         a["imp"] += 1
                     elif n < o - 1e-9:
                         a["wor"] += 1
-                    if emit:
-                        md = mv.metadata or {}
-                        dist = int(md.get("fp", 0)) + int(md.get("fn", 0))
-                        new_scores.setdefault(dname, {})[f"{proj}::{optn}::{binn}::{fn}"] = {
-                            "value": n,
-                            "dist": dist,
-                        }
 
 print(f"\n{'dec':9} {'n':>7} {'OLD mean':>9} {'NEW mean':>9} {'improved':>9} {'worse':>7}")
 for d in sorted(agg):
