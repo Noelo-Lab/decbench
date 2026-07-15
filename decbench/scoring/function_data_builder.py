@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from decbench.metrics.registry import MetricRegistry
@@ -16,6 +17,21 @@ if TYPE_CHECKING:
     from decbench.models.decompilation import DecompilationResult
     from decbench.models.metrics import MetricResult
     from decbench.models.project import OptimizationLevel, Project
+
+
+# Placeholder names a decompiler assigns to an address it could not resolve to a
+# real symbol (stripped binary). A universe row under such a name is a PHANTOM:
+# either a non-source function pulled in by a narrow-to-source miss, or a real
+# source function whose address failed to relabel (ARM Thumb T-bit / PE
+# ImageBase). Once _relabel_to_dwarf has run (with the Thumb + PE fixes), any
+# name still matching this and scoring NO metric for anyone is genuinely
+# non-source and must not become its own universe key that every other
+# decompiler is marked "failed" on.
+_UNRESOLVED_NAME = re.compile(r"^(sub|FUN|fcn|loc|nullsub|unk|off|byte|word|dword|j)_[0-9a-fA-F]+$")
+
+
+def _is_unresolved_name(name: str) -> bool:
+    return bool(_UNRESOLVED_NAME.match(name))
 
 
 def _perfect_value_for(metric_name: str) -> float:
@@ -188,6 +204,15 @@ def build_function_data(
                     names = list(dr.functions.keys()) + [f for f in ff if f != "all"]
                     for fn in names:
                         if fn not in records:
+                            # Don't mint a phantom universe row for an unresolved
+                            # placeholder name that scored no metric for anyone
+                            # (records already holds everything that scored a
+                            # metric, since the metric loop above ran first).
+                            # These are non-source functions (narrow miss) or
+                            # unrelabeled addresses; a real source function is
+                            # relabeled to its DWARF name before this point.
+                            if _is_unresolved_name(fn):
+                                continue
                             records[fn] = FunctionRecord(function=fn)
                             func_order.append(fn)
                 for fn in func_order:

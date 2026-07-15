@@ -230,6 +230,23 @@ class RawKunaDecompiler(Decompiler):
         kuna = self._kuna_bin()
         assert kuna is not None
         cmd = [kuna, "decompile-all", str(binary_path), "--json"]
+        # Per-FUNCTION watchdog: kuna decompile-all is load-once/decompile-many
+        # and emits its JSON only at the very end, so a single hanging function
+        # would otherwise stall the whole binary until the per-binary wall-clock
+        # SIGKILLs the process (losing EVERY function). --max-fn-seconds caps one
+        # function's decompile; an over-budget function becomes its own error
+        # record and the batch continues, so the per-binary budget can be generous
+        # (see DECOMPILER_TIMEOUT in run_benchmark.py). Default matches kuna's own
+        # default (120s); DECBENCH_KUNA_MAX_FN_SECONDS overrides ('0' disables).
+        max_fn = os.environ.get("DECBENCH_KUNA_MAX_FN_SECONDS", "120")
+        if max_fn:
+            cmd += ["--max-fn-seconds", str(int(max_fn))]
+        # Optional decompiler mode (reliable|aggressive). Default (reliable) is the
+        # honest baseline; expose aggressive only as an explicit opt-in so kuna is
+        # not benchmarked with speculative passes the other backends don't get.
+        mode = os.environ.get("DECBENCH_KUNA_MODE")
+        if mode:
+            cmd += ["--mode", mode]
         # Any kuna stage-model `--option NAME VALUE` flags passed through config.
         for key, value in (self.config.extra_options or {}).items():
             cmd += ["--option", str(key), str(value)]

@@ -133,11 +133,16 @@ class RawBinjaDecompiler(Decompiler):
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
         failed_functions: list[str] = []
+        # Count of DWARF targets we force-created because auto-analysis missed
+        # them (surfaced in metadata). Read as a closure free variable by _meta.
+        forced_functions = 0
 
         def _meta(partial: bool) -> DecompilerMetadata:
             extra: dict[str, Any] = {"backend": "binja", "via": "raw"}
             if partial:
                 extra["partial"] = True
+            if forced_functions:
+                extra["forced_functions"] = forced_functions
             return DecompilerMetadata(
                 decompiler_name=self.id,
                 decompiler_version=self.get_version(),
@@ -173,6 +178,36 @@ class RawBinjaDecompiler(Decompiler):
             )
             load_base = self._binja_load_base(bv)
             by_addr = {int(f.start): f for f in bv.functions}
+
+            # Force-create DWARF targets binja's auto-analysis missed. On
+            # stripped Cortex-M firmware these are vector/pointer-table functions
+            # binja never auto-promotes; force-creating them isolates
+            # decompilation quality from boundary discovery (every backend gets
+            # the same DWARF target list). Only reached on the normal path.
+            covered = {(int(f.start) - load_base) + elf_base for f in bv.functions}
+            missing = common.missing_targets(covered, function_names, text_range)
+            if missing:
+                plat = self._force_platform(bv)
+                for file_addr in missing:
+                    binja_addr = (file_addr - elf_base) + load_base
+                    try:
+                        if plat is not None:
+                            bv.add_function(binja_addr, plat)
+                        else:
+                            bv.add_function(binja_addr)
+                    except Exception as e:  # noqa: BLE001
+                        _l.debug("binja-raw: add_function at %#x failed: %s", file_addr, e)
+                with contextlib.suppress(Exception):
+                    bv.update_analysis_and_wait()
+                by_addr = {int(f.start): f for f in bv.functions}
+                for file_addr in missing:
+                    binja_addr = (file_addr - elf_base) + load_base
+                    func = by_addr.get(binja_addr)
+                    if func is None:
+                        continue
+                    name = str(getattr(func, "name", "") or "") or f"sub_{binja_addr:x}"
+                    enumerated.append((name, file_addr))
+                    forced_functions += 1
 
             for func_name, file_addr in enumerated:
                 func_result = None
@@ -233,6 +268,28 @@ class RawBinjaDecompiler(Decompiler):
             return int(bv.start)
         except Exception:  # noqa: BLE001
             return 0
+
+    @staticmethod
+    def _force_platform(bv: Any) -> Any:
+        """Platform to force-create functions with, or ``None`` for binja's own.
+
+        Cortex-M firmware is entirely Thumb, but binja can load such an ELF as
+        plain ``armv7`` (ARM mode), in which case ``add_function`` would decode
+        the Thumb bytes as ARM garbage that scores ~0. For any ARM-family view we
+        therefore pin the ``thumb2`` platform. Non-ARM binaries use binja's
+        default platform (return ``None``).
+        """
+        try:
+            import binaryninja as bn
+
+            arch_name = str(getattr(bv.arch, "name", "") or "").lower()
+            if "thumb" in arch_name or "arm" in arch_name:
+                with contextlib.suppress(Exception):
+                    return bn.Platform["thumb2"]
+                return getattr(bv, "platform", None)
+        except Exception:  # noqa: BLE001
+            pass
+        return None
 
     def _enumerate(
         self,

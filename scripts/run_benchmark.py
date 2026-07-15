@@ -76,12 +76,27 @@ WORKERS = int(os.environ.get("DECBENCH_WORKERS") or "40")
 # dominate the whole run. Binaries that exceed it are recorded as decompiler
 # timeouts (no functions credited) — an honest data point about decompiler speed.
 DECOMPILE_TIMEOUT = int(os.environ.get("DECBENCH_DECOMPILE_TIMEOUT") or "300")
-# Per-decompiler wall-clock override (seconds). kuna is a Ghidra port and is
-# normally seconds-per-binary, so a long run means it has HUNG — it has been
-# observed spinning at 100% CPU for HOURS on some stripped binaries (see the
-# kuna repo's tests/hang-repro/). Kill it much sooner than the global budget.
+# Per-decompiler wall-clock budget (seconds). FAIRNESS PRINCIPLE: every backend
+# gets a budget large enough to finish the largest source-function set, so a
+# slow-but-working backend is not truncated (and counted as thousands of
+# failures) while a faster one finishes. Small binaries finish in seconds, so the
+# large defaults only bite the ~10 big binaries (bash, openssh, coreutils, big
+# ARM firmware).
+#   - angr/phoenix: the angr engine runs ~15-20s/function; a big binary legit
+#     needs up to ~1h. angr previously got 3600s only via a one-off scoped rerun;
+#     phoenix (same engine) was left at 300s and truncated on 50/806 binaries.
+#   - ghidra/binja: fast per function but a few large binaries still overrun 300s.
+#   - kuna: a Ghidra port that emits its JSON only at the very end (a kill yields
+#     ZERO functions), so it needs a budget above its slowest binary (~450s on
+#     bash) — 900s. Its per-FUNCTION hang guard is now --max-fn-seconds (passed by
+#     the backend), so a pathological function can't hang the batch; the
+#     process-group SIGKILL stays as a belt-and-suspenders leak guard.
 DECOMPILER_TIMEOUT = {
-    "kuna": int(os.environ.get("DECBENCH_KUNA_TIMEOUT") or "120"),
+    "kuna": int(os.environ.get("DECBENCH_KUNA_TIMEOUT") or "900"),
+    "angr": int(os.environ.get("DECBENCH_ANGR_TIMEOUT") or "3600"),
+    "phoenix": int(os.environ.get("DECBENCH_PHOENIX_TIMEOUT") or "3600"),
+    "ghidra": int(os.environ.get("DECBENCH_GHIDRA_TIMEOUT") or "1800"),
+    "binja": int(os.environ.get("DECBENCH_BINJA_TIMEOUT") or "1800"),
 }
 _HERE = Path(__file__).resolve().parent
 _DECOMPILE_ONE = _HERE / "decompile_one.py"
@@ -250,13 +265,35 @@ def _relabel_to_dwarf(
     This is pure bookkeeping so name-based eval/GED line up; the decompiler got no
     help (its analysis ran on the stripped binary).
     """
+    from decbench.decompilers.raw import common
+
+    # PE: pre-fix decompiles stored function addresses as bare RVAs (0x1110)
+    # because elf_min_vaddr returned 0 for PE; DWARF low_pc is the linked VA
+    # (ImageBase + RVA). Adding the ImageBase recovers the DWARF key. For ELF the
+    # base is the min PT_LOAD vaddr, which is already folded into fd.address, so
+    # ``addr + base`` is just a harmless non-matching candidate.
+    base = common.elf_min_vaddr(unstripped)
     new_funcs: dict[str, object] = {}
     for fd in list(result.functions.values()):
-        dn = addr2name.get(int(fd.address))
+        # Resolve the DWARF name, tolerating two address-space mismatches:
+        #  - ARM/Thumb: angr/phoenix report a Thumb entry with the LSB set (odd),
+        #    while DWARF low_pc is even (0x8008001 vs 0x8008000).
+        #  - PE ImageBase: an RVA-based address needs + base to reach the VA.
+        addr = int(fd.address)
+        dn = (
+            addr2name.get(addr)
+            or addr2name.get(addr & ~1)
+            or addr2name.get(addr + base)
+            or addr2name.get((addr + base) & ~1)
+        )
         if dn and dn != fd.name:
             fd.decompiled_code = re.sub(r"\b" + re.escape(fd.name) + r"\b", dn, fd.decompiled_code)
             fd.name = dn
-        new_funcs[fd.name] = fd
+        # Keep the larger body if two addresses collapse to one DWARF name
+        # (duplicate low_pc), so a real body is not clobbered by a trivial stub.
+        prev = new_funcs.get(fd.name)
+        if prev is None or len(fd.decompiled_code or "") >= len(getattr(prev, "decompiled_code", "") or ""):
+            new_funcs[fd.name] = fd
     result.functions = new_funcs  # type: ignore[assignment]
     result.binary_path = unstripped
 
@@ -459,6 +496,17 @@ def _present_decompilers(decompile_data: dict) -> set[str]:
 
 def main() -> int:
     args = sys.argv[1:]
+    if args and args[0] in ("-h", "--help"):
+        print(
+            "Usage: run_benchmark.py [RESULTS_DIR] [-- project ...]\n\n"
+            "Decompile + evaluate + report over a compiled results tree.\n"
+            "  RESULTS_DIR   output tree (default results/sailr_full)\n"
+            "  -- project    limit to the named projects\n\n"
+            "Env: DECBENCH_DECOMPILERS, DECBENCH_REDO_DECOMPILERS, DECBENCH_WORKERS,\n"
+            "     DECBENCH_DECOMPILE_TIMEOUT, DECBENCH_{KUNA,ANGR,PHOENIX,GHIDRA,BINJA}_TIMEOUT,\n"
+            "     DECBENCH_KUNA_MAX_FN_SECONDS, DECBENCH_DECOMPILE_ONLY, GHIDRA_INSTALL_DIR."
+        )
+        return 0
     out_dir = Path(args[0]) if args else Path("results/sailr_full")
     only = set(args[2:]) if len(args) > 2 and args[1] == "--" else set()
 

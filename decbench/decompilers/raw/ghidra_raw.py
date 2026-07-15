@@ -160,11 +160,17 @@ class RawGhidraDecompiler(Decompiler):
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
         failed_functions: list[str] = []
+        # Count of DWARF targets we force-created because auto-analysis missed
+        # them (surfaced in metadata so discovery stays observable). Read as a
+        # closure free variable by ``_meta`` below.
+        forced_functions = 0
 
         def _meta(partial: bool) -> DecompilerMetadata:
             extra: dict[str, Any] = {"backend": "ghidra", "via": "raw"}
             if partial:
                 extra["partial"] = True
+            if forced_functions:
+                extra["forced_functions"] = forced_functions
             return DecompilerMetadata(
                 decompiler_name=self.id,
                 decompiler_version=self.get_version(),
@@ -214,6 +220,24 @@ class RawGhidraDecompiler(Decompiler):
                 timeout_s = int(self.config.function_timeout_seconds)
                 # Map name -> ghidra Function for the enumerated set.
                 by_name = self._functions_by_name(program)
+
+                # Force-create DWARF targets Ghidra's auto-analysis missed (on
+                # stripped firmware these are vector/pointer-table functions that
+                # are never auto-promoted). This isolates decompilation quality
+                # from boundary discovery: every backend gets the identical DWARF
+                # target list. Only reached on the normal (non-timeout) path.
+                covered = {a for (_n, a) in enumerated}
+                for file_addr in common.missing_targets(covered, function_names, text_range):
+                    try:
+                        g_forced = self._force_create(program, file_addr, elf_base, image_base)
+                    except Exception as e:  # noqa: BLE001
+                        _l.debug("ghidra-raw: force-create at %#x failed: %s", file_addr, e)
+                        continue
+                    if g_forced is not None:
+                        forced_name = str(g_forced.getName())
+                        enumerated.append((forced_name, file_addr))
+                        by_name[forced_name] = g_forced
+                        forced_functions += 1
 
                 for func_name, file_addr in enumerated:
                     func_result = None
@@ -305,6 +329,40 @@ class RawGhidraDecompiler(Decompiler):
         for g_func in fm.getFunctions(True):
             out[g_func.getName()] = g_func
         return out
+
+    @staticmethod
+    def _force_create(
+        program: Any,
+        file_addr: int,
+        elf_base: int,
+        image_base: int,
+    ) -> Any:
+        """Disassemble + create a function at a DWARF target Ghidra missed.
+
+        Returns the newly-created Ghidra ``Function`` (or ``None`` if creation
+        failed). Runs inside a program transaction; on ARM it disassembles Thumb
+        first (correct for Cortex-M firmware) and falls back to plain ARM.
+        """
+        from ghidra.app.cmd.disassemble import ArmDisassembleCommand, DisassembleCommand
+        from ghidra.app.cmd.function import CreateFunctionCmd
+
+        addr = program.getAddressFactory().getDefaultAddressSpace().getAddress(
+            (file_addr - elf_base) + image_base
+        )
+        listing = program.getListing()
+        txid = program.startTransaction("decbench-force-decompile")
+        try:
+            if listing.getInstructionAt(addr) is None:
+                if "ARM" in str(program.getLanguage().getProcessor()):
+                    ArmDisassembleCommand(addr, None, True).applyTo(program)
+                    if listing.getInstructionAt(addr) is None:
+                        ArmDisassembleCommand(addr, None, False).applyTo(program)
+                else:
+                    DisassembleCommand(addr, None, True).applyTo(program)
+            CreateFunctionCmd(addr).applyTo(program)
+        finally:
+            program.endTransaction(txid, True)
+        return program.getFunctionManager().getFunctionAt(addr)
 
     def _decompile_one(
         self,

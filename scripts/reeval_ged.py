@@ -129,7 +129,10 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
     per_stem, best_by_name = _load_src(src_pkl)
     src_cfgs = resolved_source_for_binary(stem, per_stem, best_by_name)
     try:
-        dec_cfgs = extract_cfgs_from_source(Path(c_path)) or {}
+        # sanitize_decompiled=True mirrors the live pipeline: clean decompiler-
+        # specific C quirks (array-return types, binja @reg, ida __int128) so
+        # Joern parses functions it would otherwise drop from GED coverage.
+        dec_cfgs = extract_cfgs_from_source(Path(c_path), sanitize_decompiled=True) or {}
     except Exception:  # noqa: BLE001
         dec_cfgs = {}
     metric = GEDMetric()

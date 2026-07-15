@@ -18,6 +18,38 @@ if TYPE_CHECKING:
 
 _LINE_MARKER = re.compile(r'^#\s+\d+\s+"([^"]*)"')
 
+# Aggregate/array return type: ``unsigned int [4] name(`` -> ``unsigned int name(``.
+# angr/phoenix/ghidra render a by-value aggregate/array return as ``T [N] name(...)``
+# which is not valid C, so Joern parses NOTHING for such a function and it silently
+# drops out of GED's denominator. Anchored at line start (re.M) so it only ever
+# rewrites a top-level function SIGNATURE, never an in-body array declaration such as
+# ``char buf[16];`` (which is indented and/or not followed by an identifier + ``(``).
+_AGG_RETURN = re.compile(r"^([A-Za-z_][\w ]*?)\s*\[\d+\]\s+([A-Za-z_]\w*\s*\()", re.M)
+
+# Binary Ninja register annotations: ``char arg3 @ rax`` -> ``char arg3``. ``@`` is
+# not legal C, so its presence breaks Joern's parse for the whole function.
+_REG_ANNOTATION = re.compile(r"\s*@\s*[a-z]\w+\b")
+
+
+def sanitize_decompiled_c(text: str) -> str:
+    """Clean decompiler-specific C quirks that break Joern's parser.
+
+    GED only cares about CFG *structure*, so these edits are purely to make the
+    body parseable — they never touch control flow. Three tool-specific quirks:
+
+    * **Aggregate/array return type** (angr/phoenix/ghidra): ``T [N] name(...)``
+      is rewritten to ``T name(...)``. Anchored to the start of a line so a real
+      in-body array declaration (``char buf[16];``) is never rewritten.
+    * **Register annotation** (binja): `` @ rax`` (and friends) is stripped — ``@``
+      is not valid C.
+    * **128-bit types** (ida): ``__int128`` is widened to ``long long`` (the exact
+      width is irrelevant to the CFG).
+    """
+    text = _AGG_RETURN.sub(r"\1 \2", text)
+    text = _REG_ANNOTATION.sub("", text)
+    text = text.replace("unsigned __int128", "unsigned long long").replace("__int128", "long long")
+    return text
+
 
 def _is_system_header(path: str) -> bool:
     """True if a preprocessor line-marker file is a system/toolchain header.
@@ -130,7 +162,9 @@ def resolved_source_for_binary(
     return resolved
 
 
-def extract_cfgs_from_source(source_path: Path) -> dict[str, DiGraph]:
+def extract_cfgs_from_source(
+    source_path: Path, sanitize_decompiled: bool = False
+) -> dict[str, DiGraph]:
     """Extract CFGs from a C source file using pyjoern.
 
     Args:
@@ -138,6 +172,11 @@ def extract_cfgs_from_source(source_path: Path) -> dict[str, DiGraph]:
             inlined system headers are stripped first (see
             :func:`strip_system_headers`) so Joern parses only the project's own
             (already-preprocessed, correctly-ifdef'd) code — fast and complete.
+        sanitize_decompiled: When True and ``source_path`` is a *decompiled* ``.c``
+            (i.e. NOT a ``.i`` ground-truth source), run its text through
+            :func:`sanitize_decompiled_c` before parsing so decompiler-specific
+            quirks don't drop the function from GED. Never applied to ``.i`` files
+            — sanitizing ground truth would be wrong.
 
     Returns:
         Dictionary mapping function names to CFG DiGraphs
@@ -158,7 +197,10 @@ def extract_cfgs_from_source(source_path: Path) -> dict[str, DiGraph]:
     if source_path.suffix == ".i":
         temp_c_path.write_text(strip_system_headers(source_path.read_text(errors="replace")))
     else:
-        temp_c_path.write_text(source_path.read_text(errors="replace"))
+        text = source_path.read_text(errors="replace")
+        if sanitize_decompiled:
+            text = sanitize_decompiled_c(text)
+        temp_c_path.write_text(text)
     parse_path = temp_c_path
 
     try:
@@ -207,10 +249,11 @@ def extract_cfgs_from_decompilation(
 
     # Write decompiled code to temp file and parse
     with tempfile.NamedTemporaryFile(mode="w", suffix=".c", delete=False) as f:
-        # Write all functions
+        # Write all functions, sanitizing decompiler-specific C quirks that would
+        # otherwise break Joern's parse and drop the function from GED coverage.
         for func in decompilation.functions.values():
             f.write(f"// Function: {func.name}\n")
-            f.write(func.decompiled_code)
+            f.write(sanitize_decompiled_c(func.decompiled_code))
             f.write("\n\n")
 
         temp_path = Path(f.name)
