@@ -34,6 +34,32 @@ def _is_unresolved_name(name: str) -> bool:
     return bool(_UNRESOLVED_NAME.match(name))
 
 
+def _with_decompile_cells(
+    evaluation_results: dict, decompile_results: dict | None
+) -> dict:
+    """Return ``evaluation_results`` augmented with an empty eval cell for every
+    (project, opt, binary) that was decompiled but has no eval section.
+
+    Keeps the universe (decompile-derived) intact for binaries whose inline
+    metrics were skipped (a DECOMPILE_ONLY re-decompile) or otherwise absent, so
+    they are not dropped from the dataset. Builds new outer dicts; the inner
+    ``dec -> {metric: result}`` mappings are shared by reference (never mutated).
+    """
+    if not decompile_results:
+        return evaluation_results
+    merged: dict = {
+        proj: {opt: dict(bins) for opt, bins in opts.items()}
+        for proj, opts in evaluation_results.items()
+    }
+    for proj, opts in decompile_results.items():
+        m_opts = merged.setdefault(proj, {})
+        for opt, bins in opts.items():
+            m_bins = m_opts.setdefault(opt, {})
+            for binary_name in bins:
+                m_bins.setdefault(binary_name, {})
+    return merged
+
+
 def _perfect_value_for(metric_name: str) -> float:
     """Return the perfect value for a metric, mirroring aggregator fallback."""
     try:
@@ -143,6 +169,15 @@ def build_function_data(
         A populated :class:`FunctionData` instance.
     """
     projects_by_name = {p.name: p for p in projects}
+
+    # The universe (which functions each decompiler produced) must be built even
+    # for a (project, opt, binary) that has NO eval section — e.g. a
+    # DECOMPILE_ONLY re-decompile whose inline metrics were skipped, to be layered
+    # back by the reeval scripts. Without this, such a binary/project is driven
+    # only by evaluation_results below and silently vanishes from the dataset
+    # (the historical "coreutils dropped" bug). Add empty eval cells for every
+    # decompiled binary so the loop reaches its decompile-derived universe.
+    evaluation_results = _with_decompile_cells(evaluation_results, decompile_results)
 
     decompilers_seen: set[str] = set()
     metrics_seen: set[str] = set()

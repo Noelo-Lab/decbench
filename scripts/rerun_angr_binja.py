@@ -226,10 +226,18 @@ class Orchestrator:
 
     def stage_rebuild(self) -> None:
         self.start_stage("rebuild")
+        # FIRST rebuild the decompiled universe from the FRESH checkpoints, so a
+        # re-decompile that RECOVERED functions (force-decompile of missed DWARF
+        # targets, a new backend binary) actually shows them as decompiled and the
+        # phantom-row guard is applied. rebuild_function_data only MERGES metric
+        # values into existing rows — it never adds a recovered function or flips
+        # decompiled status — so without this the recovered functions would be
+        # invisible in function_results.json.
+        self.run([PY, str(HERE / "rebuild_dataset_from_checkpoints.py"), str(self.root)])
         rb = str(HERE / "rebuild_function_data.py")
-        # Merge each recomputed metric into function_results.json. byte_match runs
-        # LAST in default mode so it refreshes compile_rates + samples/hardest +
-        # the scoreboard from the fully-updated dataset.
+        # Then merge each recomputed metric into function_results.json. byte_match
+        # runs LAST in default mode so it refreshes compile_rates + samples/hardest
+        # + the scoreboard from the fully-updated dataset.
         self.run([PY, rb, str(self.root), "--ged"])
         self.run([PY, rb, str(self.root), "--type-match"])
         self.run([PY, rb, str(self.root)])
