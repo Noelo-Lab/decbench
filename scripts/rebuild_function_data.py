@@ -20,11 +20,18 @@ from __future__ import annotations
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 from decbench.models.function_data import FunctionData, HardestEntry, SampleEntry
 from decbench.models.scoreboard import Scoreboard
 from decbench.scoring.datasets import assign_datasets
+from decbench.scoring.report_extras import (
+    _log_exclusions,
+    _topup_samples,
+    malware_projects,
+    publish_malware_allowed,
+)
 from decbench.scoring.scoreboard import build_scoreboard_from_function_data
 from decbench.utils.results_tree import resolve_binary
 from decbench.utils.source_extract import function_source
@@ -111,15 +118,31 @@ def update_byte_match(
 
 
 def build_samples(fd: FunctionData, reader: DiskReader) -> list[SampleEntry]:
-    """Curated side-by-side samples (source + each decompiler's output)."""
+    """Curated side-by-side samples (source + each decompiler's output).
+
+    Malware code is excluded (and replaced) exactly as in
+    :func:`decbench.scoring.report_extras.build_samples` — this script is the
+    *other* writer of these payloads, so the filter has to live here too or a
+    rebuild would put the malware straight back.
+    """
     out: list[SampleEntry] = []
     # Prefer the 'tiny' representative slice; fall back to any with code.
-    candidates = [(g, f) for g in fd.groups for f in g.functions if "tiny" in (f.datasets or [])]
-    if not candidates:
-        candidates = [(g, f) for g in fd.groups for f in g.functions]
+    tiny = [(g, f) for g in fd.groups for f in g.functions if "tiny" in (f.datasets or [])]
+    candidates = tiny or [(g, f) for g in fd.groups for f in g.functions]
+    limit = min(MAX_SAMPLES, len(candidates))
+
+    excluded = set() if publish_malware_allowed() else malware_projects(fd)
+    if excluded:
+        kept = [(g, f) for g, f in candidates if g.project not in excluded]
+        removed = [(g, f) for g, f in candidates if g.project in excluded]
+        if removed:
+            _log_exclusions("samples", Counter(g.project for g, _f in removed))
+            if tiny:
+                kept += _topup_samples(fd, removed, kept, excluded)
+        candidates = kept
 
     for g, f in candidates:
-        if len(out) >= MAX_SAMPLES:
+        if len(out) >= limit:
             break
         binary = reader.binary(g.opt_level, g.project, g.binary)
         decompiled: dict[str, str] = {}
@@ -148,9 +171,18 @@ def build_samples(fd: FunctionData, reader: DiskReader) -> list[SampleEntry]:
 
 
 def build_hardest(fd: FunctionData, reader: DiskReader) -> list[HardestEntry]:
-    """Worst N per (metric, decompiler), with decompiled + source code."""
+    """Worst N per (metric, decompiler), with decompiled + source code.
+
+    Malware groups are skipped *before* the worst-N cut, so the next-worst
+    non-malware function takes the slot and the list keeps its length.
+    """
+    excluded = set() if publish_malware_allowed() else malware_projects(fd)
+    dropped: Counter[str] = Counter()
     buckets: dict[tuple[str, str], list] = {}
     for g in fd.groups:
+        if g.project in excluded:
+            dropped[g.project] += len(g.functions)
+            continue
         for f in g.functions:
             for dec, mv in f.values.items():
                 for metric, val in mv.items():
@@ -188,6 +220,7 @@ def build_hardest(fd: FunctionData, reader: DiskReader) -> list[HardestEntry]:
                 )
             )
             kept += 1
+    _log_exclusions("hardest", dropped)
     return out
 
 

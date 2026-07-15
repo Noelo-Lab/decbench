@@ -35,6 +35,9 @@ dependencies = [
     "pyjoern>=1.2.18",
     "click>=8.0",
     "rich>=13.0",
+    # Renders the site's maintainer-editable prose (decbench/rendering/content/*.md).
+    # Pure-Python, no transitive deps.
+    "mistune>=3.0",
     "angr",
     "capstone>=5.0",
     "diff-match-patch>=20230430",
@@ -60,11 +63,17 @@ dev = [
 decbench = "decbench.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/decbench/decbench"
-Repository = "https://github.com/decbench/decbench"
+Homepage = "https://github.com/Noelo-Lab/decbench"
+Repository = "https://github.com/Noelo-Lab/decbench"
 
 [tool.setuptools.packages.find]
 where = ["."]
+
+# The report/site renderer loads its stylesheet, client script, and
+# maintainer-editable prose from disk via importlib.resources, so they must ship
+# in the wheel — otherwise `decbench report` renders an unstyled, textless page.
+[tool.setuptools.package-data]
+"decbench.rendering" = ["assets/*", "assets/fonts/*", "content/*"]
 
 [tool.black]
 line-length = 100
@@ -76,12 +85,6 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-
-[tool.ruff.lint.per-file-ignores]
-# The HTML renderer embeds CSS/JS/HTML as template strings, where the 100-col
-# Python rule produces awkward breaks in foreign-language lines (and unbreakable
-# URLs). Logic-affecting rules still apply; only line length is relaxed here.
-"decbench/rendering/html.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.10"

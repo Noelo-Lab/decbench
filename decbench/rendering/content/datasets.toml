@@ -1,0 +1,39 @@
+# The dataset presets offered by the sidebar selector.
+#
+# Membership per function is computed in decbench/scoring/datasets.py
+# (`assign_datasets`) against the `name` field; this file owns only the
+# *presentation* (label + one-line description) and which preset the report opens
+# with.
+#
+# `default = true` marks the preset selected on load. EXACTLY ONE preset must set
+# it (tests/test_content.py enforces this). It is explicit on purpose: the default
+# used to be positional (the first preset in the list), so reordering this file
+# silently changed which dataset the report opened with.
+#
+# Button order is the order of the tables below.
+
+[[preset]]
+name = "full"
+label = "full"
+description = "everything — O0 + O2 + O2-noinline (per-opt double-count ok)"
+default = true
+
+[[preset]]
+name = "hard"
+label = "hard"
+description = "optimized, no inlining (O2-noinline), large functions only"
+
+[[preset]]
+name = "hard-inlined"
+label = "hard-inlined"
+description = "optimized WITH inlining (O2), large functions only"
+
+[[preset]]
+name = "unoptimized"
+label = "unoptimized"
+description = "unoptimized only (O0) — surfaces simple structural differences"
+
+[[preset]]
+name = "tiny"
+label = "tiny"
+description = "~100 functions evenly sampled across inlined/optimized/unoptimized/large and projects"

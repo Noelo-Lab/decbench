@@ -117,11 +117,19 @@ class DatasetPreset(BaseModel):
     curated views (full / hard / hard-inlined / tiny). Membership per function
     is precomputed server-side (see :mod:`decbench.scoring.datasets`) and stored
     on :attr:`FunctionRecord.datasets`.
+
+    Only :attr:`name` is meaningful for new data: the presentation is owned by
+    ``decbench/rendering/content/datasets.toml`` and joined on at render time.
+    :attr:`label` / :attr:`description` remain so that datasets written before that
+    split still carry their own text and still render (see
+    :func:`decbench.rendering.aggregate.resolve_presets`).
     """
 
     name: str = Field(..., description="Stable id used in FunctionRecord.datasets")
-    label: str = Field(..., description="Display label")
-    description: str = Field(default="", description="One-line description")
+    label: str = Field(default="", description="Display label (legacy; see class docstring)")
+    description: str = Field(
+        default="", description="One-line description (legacy; see class docstring)"
+    )
 
 
 class HistoryPoint(BaseModel):

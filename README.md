@@ -111,24 +111,81 @@ decbench report results/sailr_full/scoreboard.toml -o results/sailr_full/report.
 
 ## Rendering the site
 
+Two commands render the **same page** from the same skeleton and the same
+content; they differ only in how it is delivered.
+
+| Command | Output | Use it when |
+|---------|--------|-------------|
+| `decbench report` | one self-contained `.html` (~7.1 MB) | you want a single file to open locally, email, or archive — CSS, JS, font and all data are inlined, so it works over `file://` |
+| `decbench site build` | a split tree in `site/` (~7.0 MB) | you are publishing to GitHub Pages — assets and data are separate files the browser caches, and only ~0.10 MB loads before first paint |
+
 ```bash
-# Render the interactive HTML report next to a scoreboard. If a sibling
+# Single self-contained file. Takes a SCOREBOARD path; if a sibling
 # function_results.json exists, the report is fully interactive.
-decbench report results/sailr_full/scoreboard.toml -o results/sailr_full/report.html
+decbench report results/full_run/scoreboard.toml -o results/full_run/report.html
+
+# Deployable Pages tree. Takes a RESULTS TREE, and requires its
+# function_results.json — every view is computed from per-function data.
+decbench site build results/full_run -o site/
 ```
 
-The report is a **self-contained single-page app** (no server, no external
-assets beyond a web font) themed in a terminal aesthetic. A left **sidebar**
-switches between views and holds a **dataset selector** (`full` / `hard` /
-`hard-inlined` / `tiny`) that live-recomputes every score client-side:
+### Publishing to GitHub Pages
+
+CI **never builds the site.** Building it needs every decompiler, a ~1.9 GB
+Joern, and ~15 GB of compiled binaries — none of which can live in Actions. The
+maintainer builds locally and commits the tree;
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml) only uploads what is
+already in `site/`.
+
+```bash
+decbench site build results/full_run -o site/      # 1. build locally
+git add site && git commit -m 'site: refresh'      # 2. commit it (site/ is deliberately NOT gitignored)
+git push                                           # 3. Actions deploys it
+```
+
+The workflow triggers on pushes to `main` that touch `site/**`, and fails loudly
+if `site/index.html` or `site/data/aggregates.json` is missing. The data contract
+for the tree is [`docs/SITE_DATA_SCHEMA.md`](docs/SITE_DATA_SCHEMA.md).
+
+### Views
+
+The report is a **single-page app** (no server, no external assets — the web font
+is vendored) themed in a terminal aesthetic. A left **sidebar** switches views and
+holds a **dataset selector** (`full` / `hard` / `hard-inlined` / `unoptimized` /
+`tiny`) plus a normalize-failures toggle. Every aggregate for those selectors is
+precomputed at build time, so switching is a lookup rather than a client-side
+recompute.
 
 | View | What it shows |
 |------|---------------|
-| **Leaderboard** | swebench-style ranked table — one row per decompiler, columns for Overall + each metric's perfect % + compile rate; sortable by any column |
+| **Leaderboard** | swebench-style ranked table — one row per decompiler, columns for Overall + each metric's perfect % + compile rate; sortable by any column. The page the site opens on |
 | **Metrics** | the three decompilation goals, the metric for each, and per-decompiler perfect/compile rates |
+| **Distance** | raw edit distance to a perfect result per metric (lower is better) — mean, median, and how many functions are already at 0; a finer signal than the leaderboard's perfect rate |
+| **Dataset** | the corpus — software types, every project's size, and how much of GED is lost to our own tooling (Joern source-parse failures) rather than to the decompilers |
 | **Compare** | original source side-by-side with each decompiler's output for a curated set of functions, with per-metric scores |
 | **Hardest** | the worst-scoring functions, with decompiled code and source |
 | **Historical** | per-metric perfect % across decompiler versions (e.g. `ghidra@12.0` vs `ghidra@12.1`) |
+| **About** | what the benchmark is and how to read it |
+
+### Editing the site's text
+
+**Every string a maintainer might want to reword lives in
+`decbench/rendering/content/` — not in `html.py`.** Edit a file there, re-render,
+done: no benchmark re-run, no Python.
+
+| File | Holds |
+|------|-------|
+| `<view>.md` | each view's title and prose — `leaderboard.md`, `metrics.md`, `distance.md`, `dataset.md`, `compare.md`, `hardest.md`, `history.md`, `about.md` |
+| `site.toml` | brand block, sidebar, footer, banners, side stats |
+| `views.toml` | the view registry — which views exist, nav order + labels, which is `default`, which need function data |
+| `metrics.toml` | per-metric display name, short column label, order, and the definition of *perfect* |
+| `datasets.toml` | the 5 dataset presets' labels + descriptions, and which is `default` |
+| `categories.toml` | the software-type taxonomy on the Dataset page |
+
+The `.md` conventions are documented in `leaderboard.md`'s header. A view's `id`
+in `views.toml` must match its `<id>.md`. `datasets.toml` owns only preset
+*presentation* — which functions are *in* a preset is scoring logic in
+`decbench/scoring/datasets.py`.
 
 ## Finding improvement cases
 
@@ -289,10 +346,19 @@ decbench/
   compilers/        # gcc plugin
   models/           # Pydantic data models
   scoring/          # aggregation, scoreboard, datasets, report extras
-  rendering/        # html.py — interactive single-page report
+  rendering/        # the report + the deployable site
+    html.py         #   skeleton assembly only — no CSS, no JS, no prose
+    aggregate.py    #   build-time aggregation -> the site's JSON payloads
+    site.py         #   the split GitHub Pages tree (decbench site build)
+    content.py      #   loader for content/
+    content/        #   ALL editable text: *.md per view + site/views/metrics/
+                    #   datasets/categories .toml
+    assets/         #   app.css, app.js, vendored font
   utils/            # binfmt.py, source_extract.py, cfg.py
   cli.py            # Click-based CLI
 scripts/            # scalable run drivers + offline byte-match re-eval/rebuild
+site/               # the built Pages tree, committed (see "Rendering the site")
+docs/               # SITE_DATA_SCHEMA.md — the site's data contract
 ```
 
 ## Dependencies

@@ -21,6 +21,14 @@ metadata on the :class:`FunctionData`:
 "Large" is the upper tail of the function-size bell curve (``mean + k·std`` over
 decompiled line counts), matching :mod:`decbench.scoring.subset`. The majority
 of functions are small, so this surfaces the genuinely hard, large ones.
+
+**Scope**: this module owns preset *names* and *membership rules* only — never how
+a preset is presented. The button label, the one-line description and which preset
+the report opens on live in ``decbench/rendering/content/datasets.toml`` and are
+joined onto these names at render time
+(:func:`decbench.rendering.aggregate.resolve_presets`). Scoring is the lower layer
+and must not import rendering; keeping the text out of here is what lets a
+maintainer reword a preset without re-running a multi-hour benchmark.
 """
 
 from __future__ import annotations
@@ -56,33 +64,16 @@ def _resolve_seed(seed: int | None) -> int:
             pass
     return DEFAULT_TINY_SEED
 
+
+#: The presets this module knows how to assign, in selector order. Names only:
+#: each one's label and description are the renderer's business (see the module
+#: docstring), and duplicating them here is how they drift.
 PRESETS: list[DatasetPreset] = [
-    DatasetPreset(
-        name="full",
-        label="full",
-        description="everything — O0 + O2 + O2-noinline (per-opt double-count ok)",
-    ),
-    DatasetPreset(
-        name="hard",
-        label="hard",
-        description="optimized, no inlining (O2-noinline), large functions only",
-    ),
-    DatasetPreset(
-        name="hard-inlined",
-        label="hard-inlined",
-        description="optimized WITH inlining (O2), large functions only",
-    ),
-    DatasetPreset(
-        name="unoptimized",
-        label="unoptimized",
-        description="unoptimized only (O0) — surfaces simple structural differences",
-    ),
-    DatasetPreset(
-        name="tiny",
-        label="tiny",
-        description="~100 functions evenly sampled across "
-        "inlined/optimized/unoptimized/large and projects",
-    ),
+    DatasetPreset(name="full"),
+    DatasetPreset(name="hard"),
+    DatasetPreset(name="hard-inlined"),
+    DatasetPreset(name="unoptimized"),
+    DatasetPreset(name="tiny"),
 ]
 
 _O2 = "O2"
@@ -96,12 +87,7 @@ def large_threshold(function_data: FunctionData, k: float = 1.0) -> float | None
     Returns ``None`` when no function has a recorded size (then the ``large``
     auto-label is used as a fallback by :func:`assign_datasets`).
     """
-    sizes = [
-        f.size
-        for g in function_data.groups
-        for f in g.functions
-        if f.size is not None
-    ]
+    sizes = [f.size for g in function_data.groups for f in g.functions if f.size is not None]
     if not sizes:
         return None
     mean = statistics.fmean(sizes)

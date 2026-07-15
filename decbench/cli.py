@@ -354,6 +354,83 @@ def report(scoreboard_path, output, function_data) -> None:
     console.print(f"Report generated: [bold]{output}[/bold]")
 
 
+@main.group()
+def site() -> None:
+    """Build the static site (the deployable GitHub Pages tree)."""
+
+
+@site.command("build")
+@click.argument("results_path", type=click.Path(exists=True))
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(),
+    default="site",
+    help="Output directory for the site tree",
+)
+def site_build(results_path, output) -> None:
+    """Build the static site from a RESULTS TREE.
+
+    RESULTS_PATH is a results directory containing scoreboard.toml and
+    function_results.json (a scoreboard.toml path is also accepted).
+    """
+    from rich.console import Console
+
+    from decbench.models.function_data import FunctionData
+    from decbench.models.scoreboard import Scoreboard
+    from decbench.rendering.site import build_site
+
+    console = Console()
+
+    tree = Path(results_path)
+    if tree.is_file():
+        tree = tree.parent
+    scoreboard_path = tree / "scoreboard.toml"
+    fd_path = tree / "function_results.json"
+
+    if not scoreboard_path.exists():
+        raise click.ClickException(f"No scoreboard.toml in {tree} — is this a results tree?")
+    # The site is data-driven: every view is computed from the per-function
+    # dataset, so without it there is nothing to build (unlike `decbench report`,
+    # which can still fall back to static scoreboard tables).
+    if not fd_path.exists():
+        raise click.ClickException(
+            f"No function_results.json in {tree}. The site is built entirely from "
+            "per-function data; re-run the benchmark, or use `decbench report` for "
+            "a static scoreboard-only report."
+        )
+
+    scoreboard = Scoreboard.from_toml(scoreboard_path)
+    fd = FunctionData.from_json(fd_path)
+
+    # Tag dataset presets so the selector works when re-rendering older data.
+    if not fd.dataset_presets:
+        from decbench.scoring.datasets import assign_datasets
+
+        assign_datasets(fd)
+
+    out_dir = Path(output)
+    build_site(scoreboard, fd, out_dir)
+
+    total = 0
+    for path in sorted(p for p in out_dir.rglob("*") if p.is_file()):
+        size = path.stat().st_size
+        total += size
+        console.print(f"  {path.relative_to(out_dir)!s:<32} {_human_size(size):>10}")
+    console.print(f"\nSite written to [bold]{out_dir}[/bold] ({_human_size(total)} total)")
+    console.print("\nNext: [bold]git add site && git commit -m 'site: refresh' && git push[/bold]")
+
+
+def _human_size(num_bytes: int) -> str:
+    """Format a byte count for the build log (binary units, as git/Pages count)."""
+    size = float(num_bytes)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if size < 1024 or unit == "GiB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GiB"
+
+
 @main.command()
 @click.argument("name")
 @click.option(

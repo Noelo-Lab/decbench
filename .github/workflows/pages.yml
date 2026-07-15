@@ -1,0 +1,98 @@
+name: Deploy site to GitHub Pages
+
+# The site is built LOCALLY by a maintainer, not here.
+#
+# Building it requires the full benchmark run: every decompiler (IDA, Ghidra,
+# Binary Ninja, angr), a ~1.9 GB Joern, and ~15 GB of compiled binaries. None of
+# that can live in CI. So the maintainer runs the benchmark on their own machine,
+# renders the site, and commits it:
+#
+#     decbench site build results/full_run -o site/
+#     git add site && git commit -m 'site: refresh' && git push
+#
+# This workflow only uploads the already-built tree. It never generates anything.
+# Using a custom Actions workflow (rather than a branch source) also exempts the
+# repo from the 10-builds/hour Pages limit, and the artifact path never touches
+# git's 100 MiB per-file block.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never cancel an in-flight deploy: a half-published site is worse than a slow one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify the site was actually built
+        run: |
+          if [ ! -f site/index.html ]; then
+            echo "::error::site/index.html is missing — run 'decbench site build' and commit site/."
+            exit 1
+          fi
+          if [ ! -f site/data/aggregates.json ]; then
+            echo "::error::site/data/aggregates.json is missing — the site has no data."
+            exit 1
+          fi
+
+          # Malware code must never be published. Six benchmark targets are REAL
+          # malware (theZoo); the `samples`/`hardest` payloads embed C source, and
+          # GitHub Pages access control is Enterprise-Cloud-only — on Pro/Team this
+          # private repo still publishes a PUBLIC site. decbench filters these out
+          # at build time (scoring/report_extras.py); this is the backstop, so a
+          # regression breaks the deploy instead of shipping.
+          #
+          # Matches a malware project as the OWNER of a payload entry
+          # ("project":"mirai"), which is how samples/hardest tag their code. It
+          # deliberately does NOT match the dataset page's project table, which
+          # uses "name":"mirai" — listing the target names is intended; shipping
+          # their code is not. A bare substring grep would conflate the two (and
+          # trip on any unrelated prose inside 5 MB of decompiled C).
+          #
+          # The [[:space:]]* are load-bearing. site.py writes compact JSON today,
+          # so '"project":"mirai"' would match — but a backstop that silently
+          # stops matching if the serializer ever emits a space is a guard that
+          # fails OPEN, which is the one thing it must never do.
+          malware_re='"project"[[:space:]]*:[[:space:]]*"(mirai|mirai-win|mydoom|x0r-usb|minipig|dexter)"'
+          if grep -rEl "$malware_re" site/data/*.json 2>/dev/null | grep -q .; then
+            echo "::error::Malware code found in site/data — refusing to publish."
+            echo "Offending files (entry counts):"
+            for f in site/data/*.json; do
+              n=$(grep -oE "$malware_re" "$f" | wc -l)
+              [ "$n" -gt 0 ] && echo "  $f: $n entries"
+            done
+            echo "Rebuild the site with a decbench that filters malware payloads"
+            echo "(decbench/scoring/report_extras.py), and do NOT set DECBENCH_PUBLISH_MALWARE."
+            exit 1
+          fi
+          echo "Malware payload check: clean."
+
+          echo "Site tree ($(du -sh site | cut -f1)):"
+          find site -type f | sort | sed 's/^/  /'
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

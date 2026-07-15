@@ -1,0 +1,59 @@
+# The view registry: the ONE source of truth for which views exist, what the
+# sidebar calls them, and whether they need per-function data.
+#
+# Each `id` must have a matching `<id>.md` in this directory (the view's title,
+# prose, and static scaffold). Nav order is the order of the tables below.
+#
+# `requires_function_data = true` means the view is dropped from the nav — and its
+# section is not rendered — when the report has no function_results.json.
+#
+# `default = true` marks the view the site opens on when the URL carries no hash.
+# EXACTLY ONE view must set it (tests/test_content.py enforces this). It is config
+# rather than a hardcoded "leaderboard" in the renderer AND the client.
+
+[[view]]
+id = "leaderboard"
+nav_label = "leaderboard"
+requires_function_data = false
+# People come here for the numbers, so the numbers are the front page.
+default = true
+
+[[view]]
+id = "metrics"
+nav_label = "metrics"
+requires_function_data = false
+
+[[view]]
+id = "distance"
+nav_label = "distance"
+requires_function_data = true
+
+[[view]]
+id = "dataset"
+nav_label = "dataset"
+requires_function_data = true
+
+[[view]]
+id = "compare"
+nav_label = "compare"
+requires_function_data = true
+
+[[view]]
+id = "hardest"
+nav_label = "hardest"
+requires_function_data = true
+
+# The id and the nav label differ here: routing/hash uses "history", the sidebar
+# says "historical".
+[[view]]
+id = "history"
+nav_label = "historical"
+requires_function_data = true
+
+# The explainer page: what the benchmark is and how to read it. Last in the nav —
+# it explains the numbers, so it sits after them, and it needs no data. NOT the
+# page the site opens on; that is the leaderboard above (`default = true`).
+[[view]]
+id = "about"
+nav_label = "about"
+requires_function_data = false
