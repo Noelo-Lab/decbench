@@ -76,12 +76,27 @@ WORKERS = int(os.environ.get("DECBENCH_WORKERS") or "40")
 # dominate the whole run. Binaries that exceed it are recorded as decompiler
 # timeouts (no functions credited) — an honest data point about decompiler speed.
 DECOMPILE_TIMEOUT = int(os.environ.get("DECBENCH_DECOMPILE_TIMEOUT") or "300")
-# Per-decompiler wall-clock override (seconds). kuna is a Ghidra port and is
-# normally seconds-per-binary, so a long run means it has HUNG — it has been
-# observed spinning at 100% CPU for HOURS on some stripped binaries (see the
-# kuna repo's tests/hang-repro/). Kill it much sooner than the global budget.
+# Per-decompiler wall-clock budget (seconds). FAIRNESS PRINCIPLE: every backend
+# gets a budget large enough to finish the largest source-function set, so a
+# slow-but-working backend is not truncated (and counted as thousands of
+# failures) while a faster one finishes. Small binaries finish in seconds, so the
+# large defaults only bite the ~10 big binaries (bash, openssh, coreutils, big
+# ARM firmware).
+#   - angr/phoenix: the angr engine runs ~15-20s/function; a big binary legit
+#     needs up to ~1h. angr previously got 3600s only via a one-off scoped rerun;
+#     phoenix (same engine) was left at 300s and truncated on 50/806 binaries.
+#   - ghidra/binja: fast per function but a few large binaries still overrun 300s.
+#   - kuna: a Ghidra port that emits its JSON only at the very end (a kill yields
+#     ZERO functions), so it needs a budget above its slowest binary (~450s on
+#     bash) — 900s. Its per-FUNCTION hang guard is now --max-fn-seconds (passed by
+#     the backend), so a pathological function can't hang the batch; the
+#     process-group SIGKILL stays as a belt-and-suspenders leak guard.
 DECOMPILER_TIMEOUT = {
-    "kuna": int(os.environ.get("DECBENCH_KUNA_TIMEOUT") or "120"),
+    "kuna": int(os.environ.get("DECBENCH_KUNA_TIMEOUT") or "900"),
+    "angr": int(os.environ.get("DECBENCH_ANGR_TIMEOUT") or "3600"),
+    "phoenix": int(os.environ.get("DECBENCH_PHOENIX_TIMEOUT") or "3600"),
+    "ghidra": int(os.environ.get("DECBENCH_GHIDRA_TIMEOUT") or "1800"),
+    "binja": int(os.environ.get("DECBENCH_BINJA_TIMEOUT") or "1800"),
 }
 _HERE = Path(__file__).resolve().parent
 _DECOMPILE_ONE = _HERE / "decompile_one.py"
