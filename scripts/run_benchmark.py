@@ -250,13 +250,35 @@ def _relabel_to_dwarf(
     This is pure bookkeeping so name-based eval/GED line up; the decompiler got no
     help (its analysis ran on the stripped binary).
     """
+    from decbench.decompilers.raw import common
+
+    # PE: pre-fix decompiles stored function addresses as bare RVAs (0x1110)
+    # because elf_min_vaddr returned 0 for PE; DWARF low_pc is the linked VA
+    # (ImageBase + RVA). Adding the ImageBase recovers the DWARF key. For ELF the
+    # base is the min PT_LOAD vaddr, which is already folded into fd.address, so
+    # ``addr + base`` is just a harmless non-matching candidate.
+    base = common.elf_min_vaddr(unstripped)
     new_funcs: dict[str, object] = {}
     for fd in list(result.functions.values()):
-        dn = addr2name.get(int(fd.address))
+        # Resolve the DWARF name, tolerating two address-space mismatches:
+        #  - ARM/Thumb: angr/phoenix report a Thumb entry with the LSB set (odd),
+        #    while DWARF low_pc is even (0x8008001 vs 0x8008000).
+        #  - PE ImageBase: an RVA-based address needs + base to reach the VA.
+        addr = int(fd.address)
+        dn = (
+            addr2name.get(addr)
+            or addr2name.get(addr & ~1)
+            or addr2name.get(addr + base)
+            or addr2name.get((addr + base) & ~1)
+        )
         if dn and dn != fd.name:
             fd.decompiled_code = re.sub(r"\b" + re.escape(fd.name) + r"\b", dn, fd.decompiled_code)
             fd.name = dn
-        new_funcs[fd.name] = fd
+        # Keep the larger body if two addresses collapse to one DWARF name
+        # (duplicate low_pc), so a real body is not clobbered by a trivial stub.
+        prev = new_funcs.get(fd.name)
+        if prev is None or len(fd.decompiled_code or "") >= len(getattr(prev, "decompiled_code", "") or ""):
+            new_funcs[fd.name] = fd
     result.functions = new_funcs  # type: ignore[assignment]
     result.binary_path = unstripped
 
