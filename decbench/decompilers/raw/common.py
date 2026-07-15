@@ -61,22 +61,68 @@ SKIP_NAMES = frozenset(
 SKIP_PREFIXES = ("thunk_", "j_", "__imp_", ".plt", "_dl_")
 
 
-def elf_min_vaddr(binary_path: Path) -> int:
-    """Get the lowest ``PT_LOAD`` virtual address of an ELF file.
+def _pe_image_base(binary_path: Path) -> int | None:
+    """Read the ImageBase (linked load VA) from a PE's Optional Header.
 
-    Adding this to a decompiler's lifted (0-based / image-base-relative)
-    addresses yields addresses in the ELF file's own address space, matching
-    DWARF debug info regardless of where the decompiler loaded the binary.
+    Returns ``None`` for non-PE files. DWARF ``low_pc`` in a PE is the linked
+    virtual address (``ImageBase + RVA``), but the decompilers load the image at
+    its ImageBase and report ``ImageBase + RVA`` too, so their ``tool_addr -
+    load_base`` yields the bare RVA. Feeding this ImageBase back as the "min
+    vaddr" makes ``(tool_addr - load_base) + base`` reconstruct the full VA that
+    matches DWARF (exactly as ``elf_min_vaddr`` does for ELF).
+    """
+    try:
+        with open(binary_path, "rb") as f:
+            head = f.read(0x40)
+            if head[:2] != b"MZ":
+                return None
+            pe_off = int.from_bytes(head[0x3C:0x40], "little")
+            f.seek(pe_off)
+            sig = f.read(4)
+            if sig != b"PE\x00\x00":
+                return None
+            # COFF header is 20 bytes; the Optional Header magic follows it.
+            opt = pe_off + 4 + 20
+            f.seek(opt)
+            magic = int.from_bytes(f.read(2), "little")
+            if magic == 0x10B:  # PE32: ImageBase is a u32 at opt+28
+                f.seek(opt + 28)
+                return int.from_bytes(f.read(4), "little")
+            if magic == 0x20B:  # PE32+: ImageBase is a u64 at opt+24
+                f.seek(opt + 24)
+                return int.from_bytes(f.read(8), "little")
+            return None
+    except Exception as e:  # noqa: BLE001
+        _l.debug("Failed to read PE ImageBase for %s: %s", binary_path, e)
+        return None
+
+
+def elf_min_vaddr(binary_path: Path) -> int:
+    """Get the base virtual address to lift a decompiler's addresses into.
+
+    For an ELF this is the lowest ``PT_LOAD`` virtual address; for a PE it is the
+    ImageBase. Adding this to a decompiler's lifted (load-base-relative)
+    addresses yields addresses in the binary's own link/file address space,
+    matching DWARF debug info regardless of where the decompiler loaded it.
+    (Named ``elf_*`` historically; it is format-aware — a PE returns its
+    ImageBase, not 0, so PE function addresses line up with DWARF ``low_pc``.)
     """
     try:
         from elftools.elf.elffile import ELFFile
 
         with open(binary_path, "rb") as f:
+            magic = f.read(4)
+        if magic[:2] == b"MZ":
+            base = _pe_image_base(binary_path)
+            if base is not None:
+                return base
+            return 0
+        with open(binary_path, "rb") as f:
             elf = ELFFile(f)
             vaddrs = [seg["p_vaddr"] for seg in elf.iter_segments() if seg["p_type"] == "PT_LOAD"]
             return min(vaddrs) if vaddrs else 0
     except Exception as e:  # noqa: BLE001
-        _l.debug("Failed to read ELF min vaddr for %s: %s", binary_path, e)
+        _l.debug("Failed to read min vaddr for %s: %s", binary_path, e)
         return 0
 
 
@@ -159,7 +205,7 @@ def narrow_to_source(
     """
     if not target_addrs:
         return target_funcs
-    filtered = [(n, a) for (n, a) in target_funcs if a in target_addrs]
+    filtered = [(n, a) for (n, a) in target_funcs if _addr_matches(a, target_addrs)]
     if filtered:
         _l.debug(
             "raw/%s: filtered %d/%d functions to source set for %s",
@@ -170,6 +216,49 @@ def narrow_to_source(
         )
         return filtered
     return target_funcs
+
+
+def _addr_matches(addr: int, target_addrs: set[int]) -> bool:
+    """Whether ``addr`` corresponds to a DWARF target, tolerating the ARM Thumb
+    T-bit. DWARF ``low_pc`` is even; angr/phoenix report a Thumb function's entry
+    with the LSB set (odd). Match the address as-is or with the Thumb bit cleared
+    (and set, for the rare inverse) so Thumb functions narrow correctly instead
+    of falling through to "decompile everything" and polluting the result with
+    non-source ``sub_*`` bodies."""
+    return addr in target_addrs or (addr & ~1) in target_addrs or (addr | 1) in target_addrs
+
+
+def missing_targets(
+    enumerated_addrs: Iterable[int],
+    target_addrs: set[int] | None,
+    text_range: tuple[int, int] | None,
+) -> list[int]:
+    """DWARF target addresses that a backend's auto-analysis did NOT discover.
+
+    Used by the raw backends to *force-create* functions at addresses the tool
+    missed on stripped firmware (vector/pointer-table functions), so DecBench
+    measures decompilation quality rather than boundary discovery. Covered
+    addresses are compared with Thumb even/odd normalization; results are the
+    canonical (DWARF, even) target addresses, filtered to ``.text`` and to
+    plausible code (drops a bogus ``low_pc`` of 0 seen in some DWARF).
+    """
+    if not target_addrs:
+        return []
+    covered: set[int] = set()
+    for a in enumerated_addrs:
+        covered.add(a)
+        covered.add(a & ~1)
+        covered.add(a | 1)
+    out: list[int] = []
+    for t in sorted(target_addrs):
+        if t == 0:
+            continue
+        if t in covered or (t & ~1) in covered:
+            continue
+        if not in_text(t, text_range):
+            continue
+        out.append(t)
+    return out
 
 
 def extract_metrics(code: str) -> dict[str, Any]:
