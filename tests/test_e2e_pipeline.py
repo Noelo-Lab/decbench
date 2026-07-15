@@ -19,6 +19,7 @@ MISSING_DEPS = []
 
 try:
     import angr
+
     HAVE_ANGR = True
 except ImportError:
     HAVE_ANGR = False
@@ -26,6 +27,7 @@ except ImportError:
 
 try:
     from pyjoern import parse_source
+
     HAVE_PYJOERN = True
 except ImportError:
     HAVE_PYJOERN = False
@@ -33,6 +35,7 @@ except ImportError:
 
 try:
     from cfgutils.similarity import vj_ged
+
     HAVE_CFGUTILS = True
 except ImportError:
     HAVE_CFGUTILS = False
@@ -68,6 +71,7 @@ class TestMetricImports:
 
     def test_all_metrics_registered(self) -> None:
         from decbench.metrics import MetricRegistry
+
         registered = MetricRegistry.list_registered()
         assert "ged" in registered
         assert "type_match" in registered
@@ -148,6 +152,7 @@ class TestScoringPipeline:
                     for dec_results in bin_results.values():
                         for metric_name, result in dec_results.items():
                             from decbench.metrics import MetricRegistry
+
                             metric = MetricRegistry.get(metric_name)
                             result.compute_aggregates(perfect_value=metric.perfect_value)
 
@@ -196,38 +201,58 @@ class TestScoringPipeline:
                     name="angr",
                     metric_scores={
                         "ged": MetricScore(
-                            metric_name="ged", decompiler_name="angr",
-                            perfect_count=50, total_count=100, perfect_percentage=50.0,
+                            metric_name="ged",
+                            decompiler_name="angr",
+                            perfect_count=50,
+                            total_count=100,
+                            perfect_percentage=50.0,
                         ),
                         "type_match": MetricScore(
-                            metric_name="type_match", decompiler_name="angr",
-                            perfect_count=30, total_count=100, perfect_percentage=30.0,
+                            metric_name="type_match",
+                            decompiler_name="angr",
+                            perfect_count=30,
+                            total_count=100,
+                            perfect_percentage=30.0,
                         ),
                         "byte_match": MetricScore(
-                            metric_name="byte_match", decompiler_name="angr",
-                            perfect_count=10, total_count=100, perfect_percentage=10.0,
+                            metric_name="byte_match",
+                            decompiler_name="angr",
+                            perfect_count=10,
+                            total_count=100,
+                            perfect_percentage=10.0,
                         ),
                     },
-                    overall_perfect_count=5, overall_total_count=100,
+                    overall_perfect_count=5,
+                    overall_total_count=100,
                     overall_perfect_percentage=5.0,
                 ),
                 "ghidra": DecompilerScore(
                     name="ghidra",
                     metric_scores={
                         "ged": MetricScore(
-                            metric_name="ged", decompiler_name="ghidra",
-                            perfect_count=60, total_count=100, perfect_percentage=60.0,
+                            metric_name="ged",
+                            decompiler_name="ghidra",
+                            perfect_count=60,
+                            total_count=100,
+                            perfect_percentage=60.0,
                         ),
                         "type_match": MetricScore(
-                            metric_name="type_match", decompiler_name="ghidra",
-                            perfect_count=40, total_count=100, perfect_percentage=40.0,
+                            metric_name="type_match",
+                            decompiler_name="ghidra",
+                            perfect_count=40,
+                            total_count=100,
+                            perfect_percentage=40.0,
                         ),
                         "byte_match": MetricScore(
-                            metric_name="byte_match", decompiler_name="ghidra",
-                            perfect_count=15, total_count=100, perfect_percentage=15.0,
+                            metric_name="byte_match",
+                            decompiler_name="ghidra",
+                            perfect_count=15,
+                            total_count=100,
+                            perfect_percentage=15.0,
                         ),
                     },
-                    overall_perfect_count=8, overall_total_count=100,
+                    overall_perfect_count=8,
+                    overall_total_count=100,
                     overall_perfect_percentage=8.0,
                 ),
             },
@@ -248,7 +273,7 @@ class TestScoringPipeline:
             assert "Overall" in content
             # No function data -> banner present, no embedded data.
             assert "interactive views unavailable" in content.lower()
-            assert "const DATA" not in content
+            assert "__DECBENCH_INLINE__" not in content
 
     def test_html_report_with_function_data(self) -> None:
         from decbench.models.function_data import (
@@ -274,17 +299,22 @@ class TestScoringPipeline:
                     name="angr",
                     metric_scores={
                         "ged": MetricScore(
-                            metric_name="ged", decompiler_name="angr",
-                            perfect_count=1, total_count=2,
+                            metric_name="ged",
+                            decompiler_name="angr",
+                            perfect_count=1,
+                            total_count=2,
                             perfect_percentage=50.0,
                         ),
                         "type_match": MetricScore(
-                            metric_name="type_match", decompiler_name="angr",
-                            perfect_count=1, total_count=2,
+                            metric_name="type_match",
+                            decompiler_name="angr",
+                            perfect_count=1,
+                            total_count=2,
                             perfect_percentage=50.0,
                         ),
                     },
-                    overall_perfect_count=1, overall_total_count=2,
+                    overall_perfect_count=1,
+                    overall_total_count=2,
                     overall_perfect_percentage=50.0,
                 ),
             },
@@ -300,23 +330,17 @@ class TestScoringPipeline:
                     opt_level="O2",
                     binary="bin1",
                     labels=["O2", "optimized"],
-                    # Use a value that contains a "</script>" substring to
-                    # confirm the embedded JSON escapes "<" characters.
                     functions=[
                         FunctionRecord(
-                            function="</script>_func",
+                            function="plain_func",
                             values={"angr": {"ged": 0.0, "type_match": 1.0}},
-                            perfects={
-                                "angr": {"ged": True, "type_match": True}
-                            },
+                            perfects={"angr": {"ged": True, "type_match": True}},
                             labels=["O2", "optimized"],
                         ),
                         FunctionRecord(
                             function="func2",
                             values={"angr": {"ged": 2.0, "type_match": 0.5}},
-                            perfects={
-                                "angr": {"ged": False, "type_match": False}
-                            },
+                            perfects={"angr": {"ged": False, "type_match": False}},
                             labels=["O2", "optimized", "large"],
                         ),
                     ],
@@ -331,19 +355,15 @@ class TestScoringPipeline:
             assert output_path.exists()
             content = output_path.read_text()
 
-            # Embedded data + interactive sections present.
-            assert "const DATA" in content
+            # Embedded (precomputed) data + interactive sections present.
+            assert "window.__DECBENCH_INLINE__" in content
             # Sidebar layout: nav + JS-driven leaderboard + view routing.
             assert 'class="sidebar"' in content
             assert 'id="leaderboard-table"' in content
             assert 'data-view="metrics"' in content
-
-            # The raw "</script>" sequence must NOT appear inside the
-            # embedded JSON. The script tag itself closes with "</script>",
-            # so check that the function name was escaped via <.
-            assert "\\u003c/script>_func" in content
-            # And the literal unescaped function name must be absent.
-            assert "</script>_func" not in content
+            # The precomputed combos the client looks up instead of recomputing.
+            assert '"combos"' in content
+            # `</script>` escaping in the inline payload: see tests/test_site.py.
 
 
 class TestLabels:
@@ -354,9 +374,7 @@ class TestLabels:
 
         assert opt_level_labels("O0") == ["O0", "unoptimized"]
         assert opt_level_labels("O2") == ["O2", "optimized"]
-        assert opt_level_labels("O2-noinline") == [
-            "O2-noinline", "optimized", "noinline"
-        ]
+        assert opt_level_labels("O2-noinline") == ["O2-noinline", "optimized", "noinline"]
 
     def test_binary_labels_for_merge_and_dedup(self) -> None:
         from decbench.models.project import ProjectConfig
@@ -392,13 +410,9 @@ class TestLabels:
         # Below threshold -> no "large".
         assert function_labels_for(base, 50, large_threshold=100) == base
         # At threshold -> "large" appended.
-        assert function_labels_for(base, 100, large_threshold=100) == [
-            "O2", "optimized", "large"
-        ]
+        assert function_labels_for(base, 100, large_threshold=100) == ["O2", "optimized", "large"]
         # Above threshold -> "large" appended.
-        assert function_labels_for(base, 250, large_threshold=100) == [
-            "O2", "optimized", "large"
-        ]
+        assert function_labels_for(base, 250, large_threshold=100) == ["O2", "optimized", "large"]
         # Unknown line count -> no "large".
         assert function_labels_for(base, None, large_threshold=100) == base
 
@@ -444,9 +458,7 @@ class TestFunctionData:
         from decbench.scoring.function_data_builder import build_function_data
 
         eval_results = self._eval_results()
-        project = Project(
-            config=ProjectConfig(name="test_project", labels=["firmware"])
-        )
+        project = Project(config=ProjectConfig(name="test_project", labels=["firmware"]))
 
         fd = build_function_data(eval_results, [project])
 
@@ -492,14 +504,12 @@ class TestFunctionData:
         assert loaded.metrics == fd.metrics
         assert loaded.perfect_values == fd.perfect_values
         assert len(loaded.groups) == len(fd.groups)
-        assert loaded.groups[0].functions[0].perfects == (
-            fd.groups[0].functions[0].perfects
-        )
+        assert loaded.groups[0].functions[0].perfects == (fd.groups[0].functions[0].perfects)
 
 
 @pytest.mark.skipif(
     not (HAVE_ANGR and HAVE_PYJOERN and HAVE_CFGUTILS),
-    reason=f"Missing dependencies: {MISSING_DEPS}"
+    reason=f"Missing dependencies: {MISSING_DEPS}",
 )
 class TestFullPipelineIntegration:
     """Test real GED pipeline with example project."""

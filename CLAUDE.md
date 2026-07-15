@@ -274,31 +274,74 @@ type_match and byte_match use it, so they work on the PE (MinGW) malware targets
 - `function_data_builder.py` - Builds the per-function `FunctionData` dataset persisted
   as `function_results.json`
 
-**Results Rendering** (`decbench/rendering/`):
-- `html.py` - Self-contained **single-page app** with a left **sidebar** that
-  switches views, themed after mahaloz.re (terminal aesthetic: black bg, Source
-  Code Pro mono, dashed rules, ASCII bars). All views are driven client-side from
-  the embedded per-function dataset; the sidebar **dataset selector** (`full` /
-  `hard` / `hard-inlined` / `tiny`) live-recomputes every aggregate. Views:
-  - **Leaderboard** — swebench.com-style ranked table: one row per decompiler,
-    columns = Overall (perfect on all 3 metrics) + each metric's perfect % +
-    Compiles (compile rate); **sortable** by any column.
-  - **Metrics** — explains the three decompilation goals (control-flow structure
-    → GED, types → type_match, recompilation → byte_match), what "perfect" means
-    for each, and a per-decompiler perfect-rate + compile-rate table.
-  - **Compare** — **side-by-side original source vs each decompiler's output** for
-    a curated set of functions (the `tiny` slice), with per-metric scores. Source
-    comes from `decbench/utils/source_extract.py` (DWARF decl_file/line + brace
-    matching). Filterable.
-  - **Hardest** — worst-scoring functions with decompiled code AND source.
-  - **Historical** — pure-SVG per-metric line charts across decompiler versions
-    (e.g. `ghidra@12.0` vs `ghidra@12.1`).
-  Preset membership is tagged server-side by `scoring/datasets.py`
-  (`assign_datasets`; "large" = upper tail of the size bell curve). The
-  code-carrying extras (`samples`, `hardest`, `compile_rates`) are built by
-  `scoring/report_extras.py` (`build_samples`/`build_hardest`/`compute_compile_rates`,
-  wired in `attach_extras` AFTER datasets are assigned). Models in
-  `models/function_data.py` (`SampleEntry`, `compile_rates`).
+**Results Rendering** (`decbench/rendering/`): themed after mahaloz.re (terminal
+aesthetic: black bg, Source Code Pro mono, dashed rules, ASCII bars). `html.py` is
+**skeleton assembly only** (526 lines) — it holds NO CSS, NO JS, NO prose. Layout:
+- `content/` - **ALL maintainer-editable text.** `<view>.md` per view
+  (leaderboard, metrics, distance, dataset, compare, hardest, history, about) +
+  `site.toml` (brand/footer/banners/sidebar/side_stats), `views.toml` (view
+  registry: id, nav label, `requires_function_data`, which is `default`),
+  `metrics.toml` (display name/short name/order/perfect definition — the ONE
+  source of truth, replacing 4 copies that drifted), `datasets.toml` (the 5
+  presets' label+description+`default`), `categories.toml` (software-type
+  taxonomy). Loaded by `content.py` (`load_content()`) into frozen dataclasses.
+  A view's `id` MUST have a matching `<id>.md`; exactly one view and one preset
+  must set `default = true` (`tests/test_content.py` enforces both).
+- `assets/` - `app.css`, `app.js`, and a **vendored** Source Code Pro woff2 (no
+  Google Fonts CDN — the report must render offline). The scaffold's element ids
+  (`leaderboard-table`, `view-<id>`, ...) are the contract with `app.js`;
+  renaming one silently blanks a view.
+- `aggregate.py` - **precomputes every aggregate at BUILD time.** Every view is a
+  pure function of exactly 2 selectors (dataset preset x normalize-failures
+  toggle) = 5x2 = **10 combos**, keyed `"<preset>|<0|1>"`. Semantics are ported
+  *verbatim* from the old client-side `recompute()`/`buildDistance()`/
+  `buildDataset()` — they are the **fairness contract** (shared denominators),
+  and JS quirks are reproduced on purpose (marked `JS parity`, e.g. global
+  `isFinite(null) === true`). A "fix" here silently moves published numbers.
+- `site.py` - the split Pages tree (`build_site`); its only writer.
+- Two delivery modes share ONE skeleton (`build_page`) — the only difference is
+  the `PageAssets` passed in: **inline** (`decbench report`, everything embedded
+  because `file://` CORS-blocks `fetch()`) vs **split** (`decbench site build`,
+  linked assets + lazy payloads).
+
+Views: **Leaderboard** (default page; swebench.com-style sortable table: Overall +
+per-metric perfect % + Compiles), **Metrics** (the 3 goals + perfect definitions),
+**Distance** (raw edit distance to perfect — mean/median/#at-0; finer than the
+perfect rate), **Dataset** (corpus + software types + Joern pipeline health:
+source-parse failures are OUR tooling and leave GED for everyone), **Compare**
+(side-by-side source vs each decompiler, the `tiny` slice; source via
+`utils/source_extract.py`), **Hardest**, **Historical** (pure-SVG line charts
+across versions; view id is `history`, nav label is "historical"), **About**.
+
+Preset membership is tagged server-side by `scoring/datasets.py`
+(`assign_datasets`; "large" = upper tail of the size bell curve). The
+code-carrying extras (`samples`, `hardest`, `compile_rates`) are built by
+`scoring/report_extras.py` (`build_samples`/`build_hardest`/`compute_compile_rates`,
+wired in `attach_extras` AFTER datasets are assigned). Models in
+`models/function_data.py` (`SampleEntry`, `compile_rates`).
+
+**Why precompute** (measured on `results/full_run`, 91,483 functions x 6
+decompilers x 3 metrics): the old report embedded every `FunctionRecord` —
+**98.5 MB** of JSON — so the browser could re-scan ~1.6M metric cells on every
+click. A fresh single-file report was **117.3 MB (111.8 MiB)**, over GitHub's
+**100 MiB** per-file push limit — it could not be committed at all. Precomputing
+the 10 combos yields a **21.7 KiB** `aggregates.json`; the single file is now
+7.07 MB and the site tree 6.63 MiB with **~0.10 MB first paint** (`hardest.json`
+4.6 MiB + `samples.json` 1.9 MiB are fetched lazily, only when their view opens —
+they are the size floor because those views exist to *show the code*).
+
+**Site build + deploy**: `decbench site build <results-tree> -o site/` (CLI in
+`cli.py`; takes a RESULTS TREE, not a scoreboard — `scoreboard.toml` is also
+accepted and resolved to its parent — and REQUIRES `function_results.json`, since
+the site is entirely data-driven; `decbench report` can still fall back to
+scoreboard-only tables). `data/` and `fonts/` are wiped per build: stale JSON on a
+live site is worse than missing JSON, because nothing reports it. Emits
+`.nojekyll` (Jekyll silently drops `_`-prefixed paths). Contract:
+`docs/SITE_DATA_SCHEMA.md`. **`.github/workflows/pages.yml` is deploy-ONLY** — CI
+CANNOT generate the site (needs the decompilers + ~1.9 GB Joern + ~15 GB of
+binaries); the maintainer builds locally and commits `site/` (no longer gitignored),
+and the workflow only uploads it, failing if `site/index.html` or
+`site/data/aggregates.json` is missing.
 
 **Data Models** (`decbench/models/`):
 - Pydantic-based models for projects, decompilation results, metrics, scoreboards, and
@@ -355,6 +398,16 @@ label for the noinline variants.
 - **Metric caching is deterministic by content.** If you change a metric's
   algorithm, bump its `cache_version` class attr (else stale values are served);
   or run with `DECBENCH_NO_CACHE=1`. Cache root: `DECBENCH_CACHE_DIR`.
+- **The site's prose is NOT in `html.py`** — it is in `decbench/rendering/content/`
+  (`<view>.md` + `site/views/metrics/datasets/categories.toml`), the CSS/JS in
+  `decbench/rendering/assets/`. `html.py` is skeleton assembly only; grepping it
+  for user-visible text finds nothing. Editing `datasets.toml`/`metrics.toml`
+  (preset labels + descriptions, metric names, perfect definitions) takes effect
+  on **re-render alone — no benchmark re-run**: preset *text* is content, while
+  preset *membership* is scoring (`scoring/datasets.py`), joined at render time.
+  Adding a new client-side **filter dimension** is the exception — aggregates are
+  precomputed per (preset x normalize) combo, so that needs a re-render
+  (`decbench site build`), not just a page reload.
 - A second compiled-binary snapshot can be reused without recompiling via
   `decbench dataset save/materialize` then `run --skip-compile`.
 

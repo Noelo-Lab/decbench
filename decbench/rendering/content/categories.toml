@@ -1,0 +1,28 @@
+# The software-type taxonomy shown on the Dataset page.
+#
+# A project belongs to a category when ANY of that category's `labels` appears in
+# the project's binary labels (see ProjectConfig.labels / binary_labels in the
+# project TOMLs). A project can span several categories.
+#
+# Display order — the order of the buttons and of the highlight controls — is the
+# order of the tables below.
+
+[[category]]
+name = "parser"
+labels = ["parsing", "text-processing", "compression", "archiving"]
+
+[[category]]
+name = "webserver"
+labels = ["server", "daemon"]
+
+[[category]]
+name = "cryptography"
+labels = ["crypto", "security"]
+
+[[category]]
+name = "malware"
+labels = ["malware"]
+
+[[category]]
+name = "firmware"
+labels = ["cps"]

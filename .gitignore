@@ -119,8 +119,9 @@ venv.bak/
 # Rope project settings
 .ropeproject
 
-# mkdocs documentation
-/site
+# NOTE: /site is deliberately NOT ignored. It holds the built GitHub Pages site
+# (decbench site build -o site/), which a maintainer commits after a local
+# benchmark run — CI cannot generate it. See .github/workflows/pages.yml.
 
 # mypy
 .mypy_cache/

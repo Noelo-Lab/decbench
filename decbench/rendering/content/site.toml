@@ -1,0 +1,33 @@
+# Report chrome: brand block, sidebar, footer, banners.
+#
+# Every string in this file is emitted as HTML *verbatim* — the renderer does not
+# escape it — so entities (&mdash;, &middot;) and inline tags are intentional and
+# must stay written as HTML.
+
+[brand]
+prompt = "$ decbench"
+title = "DecBench"
+subtitle = "decompiler benchmark"
+
+[footer]
+# {version}  = scoreboard.version
+# {projects} = the comma-joined project list, or `projects_empty` when there are none.
+template = "DecBench v{version} &mdash; decompiler benchmarking suite &middot; projects: {projects}"
+projects_empty = "-"
+
+[banners]
+no_function_data = "[ note ] interactive views unavailable: per-function data (function_results.json) not found next to the scoreboard."
+
+# Sidebar counters. Each label is emitted immediately after the <span> that holds
+# the number, so the LEADING SPACE in every label is significant.
+[side_stats]
+functions = " functions"
+binaries = " binaries"
+decompilers = " decompilers"
+metrics = " metrics"
+
+# Sidebar dataset selector.
+[sidebar]
+dataset_label = "dataset"
+normalize_label = "normalize failures"
+normalize_title = "Only count functions that EVERY decompiler decompiled successfully (apples-to-apples)."
