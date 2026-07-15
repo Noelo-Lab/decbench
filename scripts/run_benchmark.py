@@ -496,6 +496,17 @@ def _present_decompilers(decompile_data: dict) -> set[str]:
 
 def main() -> int:
     args = sys.argv[1:]
+    if args and args[0] in ("-h", "--help"):
+        print(
+            "Usage: run_benchmark.py [RESULTS_DIR] [-- project ...]\n\n"
+            "Decompile + evaluate + report over a compiled results tree.\n"
+            "  RESULTS_DIR   output tree (default results/sailr_full)\n"
+            "  -- project    limit to the named projects\n\n"
+            "Env: DECBENCH_DECOMPILERS, DECBENCH_REDO_DECOMPILERS, DECBENCH_WORKERS,\n"
+            "     DECBENCH_DECOMPILE_TIMEOUT, DECBENCH_{KUNA,ANGR,PHOENIX,GHIDRA,BINJA}_TIMEOUT,\n"
+            "     DECBENCH_KUNA_MAX_FN_SECONDS, DECBENCH_DECOMPILE_ONLY, GHIDRA_INSTALL_DIR."
+        )
+        return 0
     out_dir = Path(args[0]) if args else Path("results/sailr_full")
     only = set(args[2:]) if len(args) > 2 and args[1] == "--" else set()
 
