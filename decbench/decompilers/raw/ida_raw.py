@@ -145,16 +145,11 @@ class RawIDADecompiler(Decompiler):
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
         failed_functions: list[str] = []
-        # Count of DWARF targets we force-created because auto-analysis missed
-        # them (surfaced in metadata). Read as a closure free variable by _meta.
-        forced_functions = 0
 
         def _meta(partial: bool) -> DecompilerMetadata:
             extra: dict[str, Any] = {"backend": "ida", "via": "raw"}
             if partial:
                 extra["partial"] = True
-            if forced_functions:
-                extra["forced_functions"] = forced_functions
             return DecompilerMetadata(
                 decompiler_name=self.id,
                 decompiler_version=self.get_version(),
@@ -188,28 +183,6 @@ class RawIDADecompiler(Decompiler):
                     enumerated, function_names, backend="ida",
                     binary_name=binary_path.name,
                 )
-
-                # Force-create DWARF targets IDA's auto-analysis missed (on
-                # stripped Cortex-M firmware these are vector/pointer-table
-                # functions). Isolates decompilation quality from boundary
-                # discovery so every backend gets the same target list. Only on
-                # the normal (non-timeout) path.
-                covered = {a for (_n, a) in enumerated}
-                missing = common.missing_targets(covered, function_names, text_range)
-                if missing:
-                    image_base = self._ida_image_base()
-                    is_arm = self._is_arm()
-                    for file_addr in missing:
-                        ea = (file_addr - elf_base) + image_base
-                        try:
-                            forced_name = self._force_create(ea, is_arm)
-                        except Exception as e:  # noqa: BLE001
-                            _l.debug("ida-raw: force-create at %#x failed: %s", file_addr, e)
-                            continue
-                        if forced_name is not None:
-                            enumerated.append((forced_name, file_addr))
-                            forced_functions += 1
-
                 for func_name, file_addr in enumerated:
                     func_result = None
                     try:
@@ -268,41 +241,6 @@ class RawIDADecompiler(Decompiler):
             return int(idaapi.get_imagebase())
         except Exception:  # noqa: BLE001
             return 0
-
-    @staticmethod
-    def _is_arm() -> bool:
-        """Whether the loaded database is an ARM target (Cortex-M is Thumb)."""
-        try:
-            import ida_ida
-
-            return "arm" in str(ida_ida.inf_get_procname() or "").lower()
-        except Exception:  # noqa: BLE001
-            try:
-                import idaapi
-
-                return "arm" in str(idaapi.get_inf_structure().procname or "").lower()
-            except Exception:  # noqa: BLE001
-                return False
-
-    @staticmethod
-    def _force_create(ea: int, is_arm: bool) -> str | None:
-        """Create a function at ``ea`` that auto-analysis missed.
-
-        On ARM the Thumb (T) segment register is set at ``ea`` first, so IDA
-        decodes Cortex-M code as Thumb rather than ARM garbage. Returns the new
-        function's name (or a synthesized ``sub_<ea>``) on success, else ``None``.
-        """
-        import ida_funcs
-        import ida_name
-
-        if is_arm:
-            import ida_segregs
-            import idc
-
-            idc.split_sreg_range(ea, "T", 1, ida_segregs.SR_user)
-        if not ida_funcs.add_func(ea):
-            return None
-        return ida_name.get_ea_name(ea) or f"sub_{ea:x}"
 
     def _enumerate(
         self,

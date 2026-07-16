@@ -114,16 +114,11 @@ class RawAngrDecompiler(Decompiler):
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
         failed_functions: list[str] = []
-        # Count of DWARF targets we force-created because CFG recovery missed
-        # them (surfaced in metadata). Read as a closure free variable by _meta.
-        forced_functions = 0
 
         def _meta(partial: bool) -> DecompilerMetadata:
             extra: dict[str, Any] = {"backend": "angr", "via": "raw"}
             if partial:
                 extra["partial"] = True
-            if forced_functions:
-                extra["forced_functions"] = forced_functions
             return DecompilerMetadata(
                 decompiler_name=self.id,
                 decompiler_version=self.get_version(),
@@ -162,44 +157,6 @@ class RawAngrDecompiler(Decompiler):
                 backend="angr",
                 binary_name=binary_path.name,
             )
-
-            # Force-decompile DWARF targets angr's CFG recovery missed (on
-            # stripped Cortex-M firmware, vector/pointer-table functions). Re-seed
-            # a complete scan with the missing addresses as function starts (Thumb
-            # LSB set on ARM), then pick up any function the re-seed actually
-            # recovered so the Decompiler runs on it. Isolates decompilation
-            # quality from boundary discovery. Only on the normal (non-timeout)
-            # path. Targets whose bytes angr already folded into a neighbouring
-            # function's block cannot be split out and remain honest misses.
-            load_base = self._angr_load_base(proj)
-            covered = {(int(f.addr) - load_base) + elf_base for f in proj.kb.functions.values()}
-            missing = common.missing_targets(covered, function_names, text_range)
-            if missing:
-                is_arm = str(getattr(proj.arch, "name", "") or "").upper().startswith("ARM")
-                starts = [
-                    ((file_addr - elf_base) + load_base) | (1 if is_arm else 0)
-                    for file_addr in missing
-                ]
-                try:
-                    cfg = proj.analyses.CFGFast(
-                        normalize=True,
-                        force_complete_scan=True,
-                        function_starts=starts,
-                    )
-                except Exception as e:  # noqa: BLE001
-                    _l.debug("angr-raw: re-seed CFGFast failed: %s", e)
-                existing = {n for (n, _a) in target_funcs}
-                for file_addr in missing:
-                    base_addr = (file_addr - elf_base) + load_base
-                    func = self._recovered_function(proj, base_addr, is_arm)
-                    if func is None:
-                        continue
-                    fname = func.name or f"sub_{file_addr:x}"
-                    if fname in existing:
-                        continue
-                    target_funcs.append((fname, file_addr))
-                    existing.add(fname)
-                    forced_functions += 1
 
             for func_name, file_addr in target_funcs:
                 func_result = None
@@ -281,27 +238,6 @@ class RawAngrDecompiler(Decompiler):
         except Exception:  # noqa: BLE001
             return 0
 
-    @staticmethod
-    def _recovered_function(proj: Any, base_addr: int, is_arm: bool) -> Any:
-        """A function the re-seed actually recovered at ``base_addr``, else None.
-
-        Checks the even address and (on ARM) the Thumb odd address, returning a
-        kb function only when it has at least one recovered block. A target whose
-        bytes angr folded into a neighbouring function has no function object here
-        and is treated as a genuine miss (no empty stub is created).
-        """
-        for cand in ((base_addr | 1, base_addr) if is_arm else (base_addr,)):
-            try:
-                func = proj.kb.functions.get_by_addr(cand)
-            except KeyError:
-                continue
-            try:
-                if func is not None and next(iter(func.blocks), None) is not None:
-                    return func
-            except Exception:  # noqa: BLE001
-                continue
-        return None
-
     def _decompile_one(
         self,
         proj: Any,
@@ -314,28 +250,12 @@ class RawAngrDecompiler(Decompiler):
         load_base = self._angr_load_base(proj)
         # ELF-space -> angr loaded address.
         angr_addr = (file_addr - elf_base) + load_base
-        func = None
-        # Try the even address, then the Thumb (odd) address a force-created
-        # Cortex-M function may be keyed under, then finally by name.
-        for cand in (angr_addr, angr_addr | 1):
-            try:
-                func = proj.kb.functions.get_by_addr(cand)
-                break
-            except KeyError:
-                func = None
-        if func is None:
-            func = proj.kb.functions.function(name=func_name)
-        if func is None:
-            return None
-
-        # angr's Decompiler requires a normalized function graph. Auto-recovered
-        # functions are already normalized, but a force-created one (re-seeded on
-        # a missed target) may not be, so normalize it before decompiling.
         try:
-            if not func.normalized:
-                func.normalize()
-        except Exception:  # noqa: BLE001
-            pass
+            func = proj.kb.functions.get_by_addr(angr_addr)
+        except KeyError:
+            func = proj.kb.functions.function(name=func_name)
+            if func is None:
+                return None
 
         dec_kwargs: dict[str, Any] = {"cfg": cfg.model}
         if self.structurer is not None:
