@@ -57,7 +57,7 @@ class Scoreboard(BaseModel):
 
     name: str = Field(default="DecBench Scoreboard")
     description: str = Field(default="")
-    version: str = Field(default="2.0")
+    version: str = Field(default="1.0")
 
     generated_at: datetime = Field(default_factory=datetime.now)
 

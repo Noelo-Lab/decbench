@@ -22,7 +22,7 @@ def build_scoreboard_from_function_data(
     fd: FunctionData,
     name: str = "DecBench Scoreboard",
     description: str = "",
-    version: str = "2.0",
+    version: str = "1.0",
 ) -> Scoreboard:
     """Build a scoreboard from the per-function dataset — the single source of
     truth shared by the HTML report and ``scoreboard.toml``.

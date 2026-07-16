@@ -7,7 +7,7 @@ Three-metric evaluation:
 - Recompilation Bytematch: Assembly similarity after recompilation
 """
 
-__version__ = "0.2.0"
+__version__ = "1.0.0"
 
 from decbench.models.project import Project
 from decbench.models.decompilation import DecompilationResult, FunctionDecompilation
