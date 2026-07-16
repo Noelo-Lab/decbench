@@ -24,5 +24,5 @@ usually means editing BOTH.
 
 # leaderboard
 
-ranked by Overall &mdash; the share of functions a decompiler recovers
-<em>perfectly on all three metrics</em>. click a column to sort.
+ranked by Union &mdash; the share of functions a decompiler recovers
+<em>perfectly on at least one metric</em>. click a column to sort.

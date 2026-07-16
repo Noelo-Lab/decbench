@@ -143,8 +143,9 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 #        GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 #        python scripts/run_benchmark.py results/full_run
 #   byte_match ABSTAINS (no result, not 0) for ARM/PE on the host (no cross/mingw
-#   recompiler) — GED + type_match carry cps/malware. Overall counts only
-#   functions evaluated on ALL metrics (so abstained byte_match isn't a failure).
+#   recompiler) — GED + type_match carry cps/malware. The summary column is Union
+#   (perfect on ≥1 measurable metric, over functions with ≥1 measurable metric),
+#   so abstained byte_match isn't a failure and ARM/PE still count via GED/types.
 
 # Recompute ONLY byte_match over an existing results tree WITHOUT re-decompiling
 # (uses the stored decompiled/*.c + compiled binaries), then rebuild the report
@@ -267,7 +268,8 @@ type_match and byte_match use it, so they work on the PE (MinGW) malware targets
 **Scoring** (`decbench/scoring/`):
 - `aggregator.py` - Aggregates per-function results (function key:
   `project::opt::binary::function`)
-- `scoreboard.py` - Builds Scoreboard with per-metric rankings and Overall (perfect on all 3 metrics)
+- `scoreboard.py` - Builds Scoreboard with per-metric rankings and Union (perfect on ≥1
+  metric; stored in the legacy `overall_*` fields / `overall` JSON keys)
 - `labels.py` - Label derivation: auto opt-level labels (`O0`/`O2` +
   `optimized`/`unoptimized`), project labels from `ProjectConfig.labels` /
   `binary_labels` (TOML), per-function auto labels (`large` ≥ 100 decompiled lines)

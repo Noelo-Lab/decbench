@@ -176,8 +176,9 @@ class TestScoringPipeline:
         assert len(scoreboard.decompilers) == 1
         assert scoreboard.decompiler_scores["angr"].metric_scores["ged"].perfect_count == 2
 
-        # Overall: func1 is perfect on all 3, func3 is perfect on all 3
-        # func2 fails on ged (2.0 != 0.0), type_match (0.5 != 1.0), byte_match (0.0 != 1.0)
+        # Union: func1 and func3 are perfect on all 3 (so certainly on >=1);
+        # func2 fails every metric — ged (2.0 != 0.0), type_match (0.5 != 1.0),
+        # byte_match (0.0 != 1.0) — so it is counted but never perfect.
         ds = scoreboard.decompiler_scores["angr"]
         assert ds.overall_perfect_count == 2  # func1 and func3
         assert ds.overall_total_count == 3
@@ -270,7 +271,7 @@ class TestScoringPipeline:
             assert "Structural Correctness" in content
             assert "Type Correctness" in content
             assert "Recompilation Bytematch" in content
-            assert "Overall" in content
+            assert "Union" in content
             # No function data -> banner present, no embedded data.
             assert "interactive views unavailable" in content.lower()
             assert "__DECBENCH_INLINE__" not in content

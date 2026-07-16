@@ -105,8 +105,9 @@ def test_metric_unmeasurable_for_everyone_leaves_every_denominator() -> None:
         assert combo["per_metric"][dec]["byte_match"] == [0, 1], "abstained function must drop out"
         assert combo["per_metric"][dec]["ged"] == [0, 2]
         assert combo["per_metric"][dec]["type_match"] == [2, 2]
-    # `overall` only counts functions where EVERY metric is measurable.
-    assert combo["overall"]["alpha"] == [0, 1]
+    # `overall` is the Union column: a function counts once ANY metric is measurable,
+    # and both functions are type_match-perfect, so both land in the numerator.
+    assert combo["overall"]["alpha"] == [2, 2]
 
 
 def test_source_parse_failure_drops_ged_for_everyone() -> None:
@@ -125,7 +126,9 @@ def test_source_parse_failure_drops_ged_for_everyone() -> None:
     for dec in DECS:
         assert combo["per_metric"][dec]["ged"] == [0, 0], "GED denominator must be empty"
         assert combo["per_metric"][dec]["byte_match"] == [1, 1]
-        assert combo["overall"][dec] == [0, 0], "overall needs every metric measurable"
+        # Union: byte_match/type_match are still measurable (and perfect), so the
+        # function stays in and scores despite GED being unmeasurable for everyone.
+        assert combo["overall"][dec] == [1, 1]
 
 
 def test_joern_failing_on_one_decompilers_output_is_that_decompilers_miss() -> None:
@@ -152,7 +155,8 @@ def test_joern_failing_on_one_decompilers_output_is_that_decompilers_miss() -> N
     assert combo["per_metric"]["alpha"]["ged"] == [1, 1]
     assert combo["per_metric"]["beta"]["ged"] == [0, 1], "same denominator, counted as a miss"
     assert combo["overall"]["alpha"] == [1, 1]
-    assert combo["overall"]["beta"] == [0, 1]
+    # Union: beta misses GED but is byte_match/type_match-perfect, so it scores.
+    assert combo["overall"]["beta"] == [1, 1]
 
     # ...and it is reported as a tooling stat on the Dataset page.
     dataset = build_dataset_page(_data([func]))
@@ -177,7 +181,7 @@ def test_measurable_metric_a_decompiler_failed_is_a_miss_not_an_exclusion() -> N
     for metric in METRICS:
         assert combo["per_metric"]["alpha"][metric] == [1, 1]
         assert combo["per_metric"]["beta"][metric] == [0, 1], f"{metric}: miss, not dropped"
-    assert combo["overall"]["beta"] == [0, 1]
+    assert combo["overall"]["beta"] == [0, 1], "union: failed everything, still counted"
     assert combo["errors"]["beta"] == [1, 1], "attempted and produced nothing"
     assert combo["errors"]["alpha"] == [0, 1]
 
@@ -289,8 +293,8 @@ def test_no_presets_still_aggregates_every_function() -> None:
     client rendered everything here (`isActive()` opened `if (!state.dataset) return
     true;`), so this is a fallback, not a new feature.
     """
-    # Values on every metric, so `overall` (perfect on ALL metrics) is a real count
-    # here rather than the empty [0, 0] an unmeasurable metric would force.
+    # Values on every metric, so `overall` (Union: perfect on >=1 metric) is a real
+    # count over both functions.
     everywhere = dict.fromkeys(METRICS, 1.0)
     funcs = [
         _func(
@@ -322,7 +326,7 @@ def test_no_presets_still_aggregates_every_function() -> None:
     assert combo["per_metric"]["alpha"]["ged"] == [1, 2]
     assert combo["per_metric"]["alpha"]["type_match"] == [2, 2]
     assert combo["per_metric"]["beta"]["ged"] == [0, 2]
-    assert combo["overall"]["alpha"] == [1, 2], "f1 perfect everywhere, f2 not"
+    assert combo["overall"]["alpha"] == [2, 2], "f1 perfect everywhere, f2 on two metrics"
     assert combo["overall"]["beta"] == [0, 2]
 
 

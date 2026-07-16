@@ -19,6 +19,12 @@ docstrings below say why each rule exists. Two consequences worth stating up fro
   they leave it for everyone at once.
 * Where the JS is quirky, this port is quirky the same way, on purpose. A "fix" here
   would silently change published numbers. The quirks are marked ``JS parity``.
+
+One deliberate departure from the original port (2026-07): the summary column is now
+**Union** — perfect on at least one measurable metric, over functions with at least
+one measurable metric — replacing the old Overall (perfect on ALL metrics, over
+functions where every metric was measurable). It is still emitted under the
+``overall`` key so the payload schema and older scoreboards keep loading.
 """
 
 from __future__ import annotations
@@ -168,9 +174,9 @@ class _FunctionFacts:
     err_scope: tuple[bool, ...]
     err_errored: tuple[bool, ...]
     measurable: tuple[bool, ...]
-    all_measurable: bool
+    any_measurable: bool
     perfect: tuple[tuple[bool, ...], ...]
-    overall_perfect: tuple[bool, ...]
+    union_perfect: tuple[bool, ...]
     distances: tuple[tuple[float | None, ...], ...]
 
 
@@ -187,7 +193,7 @@ def _function_facts(
     err_scope: list[bool] = []
     err_errored: list[bool] = []
     perfect: list[tuple[bool, ...]] = []
-    overall_perfect: list[bool] = []
+    union_perfect: list[bool] = []
     distances: list[tuple[float | None, ...]] = []
     all_decompiled = True
 
@@ -204,7 +210,10 @@ def _function_facts(
         fperf = func.perfects.get(dec) or {}
         flags = tuple(bool(fperf.get(m)) for m in metrics)
         perfect.append(flags)
-        overall_perfect.append(all(flags))
+        # Union: perfect on AT LEAST ONE measurable metric. Gating each flag on
+        # measurability keeps a stray perfect=True for an unmeasurable metric
+        # (which per_metric would never count) from leaking into the numerator.
+        union_perfect.append(any(f and m for f, m in zip(flags, measurable, strict=True)))
 
         # JS parity: `const dm = dd[d]; if (!dm) continue;` — a missing distances map
         # yields no values, and so does an empty one (every lookup is undefined).
@@ -225,9 +234,9 @@ def _function_facts(
         err_scope=tuple(err_scope),
         err_errored=tuple(err_errored),
         measurable=measurable,
-        all_measurable=all(measurable),
+        any_measurable=any(measurable),
         perfect=tuple(perfect),
-        overall_perfect=tuple(overall_perfect),
+        union_perfect=tuple(union_perfect),
         distances=tuple(distances),
     )
 
@@ -305,9 +314,13 @@ class _ComboAccumulator:
                 dec_total[mi] += 1
                 if dec_perfect[mi]:
                     dec_perfect_counts[mi] += 1
-            if facts.all_measurable:
+            # Union (emitted under the legacy `overall` key): denominator is
+            # any-metric-measurable — the union dual of the old every-metric
+            # gate — so ARM/PE functions whose byte_match abstained still count
+            # through GED/type_match instead of leaving the column entirely.
+            if facts.any_measurable:
                 self._overall_total[di] += 1
-                if facts.overall_perfect[di]:
+                if facts.union_perfect[di]:
                     self._overall_perfect[di] += 1
             dec_distances = self._distances[di]
             for mi, value in enumerate(facts.distances[di]):

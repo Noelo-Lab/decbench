@@ -47,10 +47,10 @@ Does the decompiled code recompile to the same machine code? We run a uniform co
 # [outro]
 
 <div class="recovered">
-    [ = ] When a function is perfect on <strong>all three</strong> metrics,
-    the decompiler has precisely recovered the original source: same control
-    flow, same types, and code that recompiles to the same bytes. That is the
-    Overall column on the leaderboard.
+    [ = ] When a function is perfect on <strong>at least one</strong> metric,
+    the decompiler has exactly recovered that aspect of the original source:
+    the control flow, the types, or code that recompiles to the same bytes.
+    That is the Union column on the leaderboard.
 </div>
 
 ### how often each decompiler is perfect

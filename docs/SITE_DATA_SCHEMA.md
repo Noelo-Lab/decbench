@@ -64,7 +64,7 @@ CORS-blocked. The JS branches on `window.__DECBENCH_INLINE__` and skips fetching
       "per_metric": {              // decompiler -> metric -> [perfect, total]
         "angr": {"ged": [12345, 67890], "type_match": [1, 2], "byte_match": [3, 4]}
       },
-      "overall": {"angr": [111, 222]},   // decompiler -> [perfect, total]
+      "overall": {"angr": [111, 222]},   // Union column: decompiler -> [perfect, total]
       "errors":  {"angr": [5, 1000]},    // decompiler -> [errored, scope]
       "distance": {                      // decompiler -> metric -> stats | null
         "angr": {"ged": {"mean": 3.25, "median": 2, "n": 5000, "at0": 1200}}
@@ -123,7 +123,11 @@ benchmark's fairness contract:
   decompiler's denominator — uniformly.
 * A function that IS measurable but which a given decompiler failed on counts as that
   decompiler's **not-perfect miss**. It is not dropped from the denominator.
-* `overall` counts only functions where *every* metric is measurable.
+* `overall` is the **Union** column (the key name is legacy): a function is in the
+  denominator iff *at least one* metric is measurable for it, and in a decompiler's
+  numerator iff that decompiler is perfect on at least one of those measurable
+  metrics. (Until 2026-07 this key was Overall — perfect on ALL metrics, over
+  functions where every metric was measurable.)
 * `errors.scope` = functions the decompiler attempted (present in `decompiled`);
   `errors.errored` = those where it produced nothing.
 * `normalize=1` additionally restricts to functions **every** decompiler decompiled.

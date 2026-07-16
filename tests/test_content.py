@@ -97,7 +97,7 @@ def test_empty_states_are_parsed(content: Content) -> None:
 def test_inline_html_passes_through_unescaped(content: Content) -> None:
     """The prose is final markup: tags and entities must survive rendering."""
     body = content.view("leaderboard").body_html
-    assert "<em>perfectly on all three metrics</em>" in body
+    assert "<em>perfectly on at least one metric</em>" in body
     assert "&mdash;" in body
     assert "&amp;mdash;" not in body
 

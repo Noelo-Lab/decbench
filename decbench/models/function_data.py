@@ -146,7 +146,11 @@ class HistoryPoint(BaseModel):
         default_factory=dict,
         description="metric -> perfect percentage at this version",
     )
-    overall: float = Field(default=0.0, description="Overall (perfect on all metrics) percentage")
+    overall: float = Field(
+        default=0.0,
+        description="Union (perfect on at least one metric) percentage; points ingested "
+        "from scoreboards older than the Union change carry the old all-metrics Overall",
+    )
 
 
 class BinaryGroup(BaseModel):

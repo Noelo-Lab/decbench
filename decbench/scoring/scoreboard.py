@@ -36,6 +36,11 @@ def build_scoreboard_from_function_data(
     metric). Only metrics unmeasurable for everyone — GED with no/degenerate
     source CFG, byte_match abstained, type_match with no DWARF ground truth — are
     excluded, uniformly. ``mean``/``median`` still summarize the *measured* values.
+
+    The Union column (stored in the ``overall_*`` fields) is the share of
+    functions a decompiler got perfect on AT LEAST ONE measurable metric, over
+    the functions where at least one metric was measurable — the union dual of
+    the old all-metrics-perfect Overall.
     """
     decs, metrics = fd.decompilers, fd.metrics
 
@@ -55,7 +60,7 @@ def build_scoreboard_from_function_data(
     for g in fd.groups:
         for f in g.functions:
             meas = {m: measurable(f, m) for m in metrics}
-            all_meas = bool(metrics) and all(meas.values())
+            any_meas = any(meas.values())
             for d in decs:
                 fp = f.perfects.get(d) or {}
                 fv = f.values.get(d) or {}
@@ -67,9 +72,9 @@ def build_scoreboard_from_function_data(
                         vals[d][m].append(fv[m])
                     if fp.get(m):
                         perf[d][m] += 1
-                if all_meas:
+                if any_meas:
                     overall_tot[d] += 1
-                    if all(fp.get(m) for m in metrics):
+                    if any(fp.get(m) for m in metrics if meas[m]):
                         overall_perf[d] += 1
 
     sb = Scoreboard(
@@ -159,10 +164,10 @@ def build_scoreboard(
             )
             dec_score.metric_scores[metric_name] = ms
 
-        # Compute Overall: functions perfect on ALL metrics, counted ONLY over
-        # functions that were evaluated on every metric. A function missing a
-        # metric (e.g. byte_match abstained for ARM/PE) is EXCLUDED from Overall
-        # rather than counted as a failure — "couldn't measure" != "wrong".
+        # Compute Union: functions perfect on AT LEAST ONE metric, counted over
+        # functions that were evaluated on at least one metric. A function whose
+        # metrics all abstained (nothing measurable) is EXCLUDED rather than
+        # counted as a failure — "couldn't measure" != "wrong".
         per_func = aggregated.per_function.get(dec_name, {})
         all_metric_names = aggregated.metrics
 
@@ -170,10 +175,11 @@ def build_scoreboard(
         overall_total = 0
 
         for metric_perfects in per_func.values():
-            if not all(m in metric_perfects for m in all_metric_names):
+            evaluated = [m for m in all_metric_names if m in metric_perfects]
+            if not evaluated:
                 continue
             overall_total += 1
-            if all(metric_perfects[m] for m in all_metric_names):
+            if any(metric_perfects[m] for m in evaluated):
                 overall_perfect += 1
 
         dec_score.overall_perfect_count = overall_perfect
@@ -224,7 +230,7 @@ def render_scoreboard_markdown(scoreboard: Scoreboard) -> str:
             lines.append(f"| {i} | {dec_name} | {pct:.1f}% |")
         lines.append("")
 
-    lines.append("## Overall (Perfect on All Metrics)")
+    lines.append("## Union (Perfect on At Least One Metric)")
     lines.append("")
     lines.append("| Rank | Decompiler | Perfect % |")
     lines.append("|------|------------|-----------|")

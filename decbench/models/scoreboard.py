@@ -38,14 +38,14 @@ class DecompilerScore(BaseModel):
 
     overall_perfect_count: int = Field(
         default=0,
-        description="Functions perfect on ALL metrics",
+        description="Union: functions perfect on AT LEAST ONE metric",
     )
     overall_total_count: int = Field(default=0, description="Total functions evaluated")
     overall_perfect_percentage: float = Field(
         default=0.0,
-        description="Percentage of functions perfect on all metrics",
+        description="Union: percentage of functions perfect on at least one metric",
     )
-    overall_rank: int | None = Field(default=None, description="Overall rank")
+    overall_rank: int | None = Field(default=None, description="Union rank")
 
     total_functions_evaluated: int = Field(default=0)
     total_binaries_evaluated: int = Field(default=0)
@@ -152,7 +152,7 @@ class Scoreboard(BaseModel):
                 lines.append(f"  {marker} {dec_name:20} {pct:>10.1f}%")
             lines.append("")
 
-        lines.append("OVERALL (perfect on all metrics):")
+        lines.append("UNION (perfect on at least one metric):")
         lines.append("-" * 40)
         for i, (dec_name, pct) in enumerate(self.get_overall_rankings()):
             marker = ">" if i == 0 else " "

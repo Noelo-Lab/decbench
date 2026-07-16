@@ -499,9 +499,9 @@ def _metric_pct(scoreboard: Scoreboard, dec: str, metric: str) -> float:
 
 
 def _static_leaderboard_table(scoreboard: Scoreboard, content: Content) -> str:
-    """No-JS leaderboard, ranked by Overall, straight from the scoreboard."""
+    """No-JS leaderboard, ranked by Union, straight from the scoreboard."""
     metrics, headers = _metric_headers(scoreboard, content)
-    head = f"<th>#</th><th>decompiler</th><th>Overall</th>{headers}"
+    head = f"<th>#</th><th>decompiler</th><th>Union</th>{headers}"
     rows = ""
     for rank, (dec, overall_pct) in enumerate(scoreboard.get_overall_rankings(), 1):
         cells = _pct_cell(overall_pct, "col-overall")
@@ -516,7 +516,7 @@ def _static_leaderboard_table(scoreboard: Scoreboard, content: Content) -> str:
 def _static_metrics_table(scoreboard: Scoreboard, content: Content) -> str:
     """No-JS per-decompiler perfect-rate table, in the scoreboard's own order."""
     metrics, headers = _metric_headers(scoreboard, content)
-    head = f"<th>decompiler</th>{headers}<th>Overall</th>"
+    head = f"<th>decompiler</th>{headers}<th>Union</th>"
     rows = ""
     for dec in scoreboard.decompilers:
         scores = scoreboard.decompiler_scores.get(dec)

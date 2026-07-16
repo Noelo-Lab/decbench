@@ -36,10 +36,11 @@ twice. see <a href="#metrics">metrics</a> for what perfect means, and
 
 ### reading the leaderboard
 
-<strong>Overall</strong> is the column that matters: the share of functions a
-decompiler recovers perfectly on <em>all three</em> metrics at once &mdash; same
-control flow, same types, same bytes. it is a hard bar, and the numbers are low
-on purpose.
+<strong>Union</strong> is the summary column: the share of functions a
+decompiler recovers perfectly on <em>at least one</em> metric &mdash; control
+flow, types, or bytes. a function counts as long as one of its metrics could be
+measured, so it is the broadest read of how often a decompiler gets
+<em>something</em> exactly right.
 
 every metric's denominator is shared: a function only counts if <em>some</em>
 decompiler could be scored on it, so nobody is rewarded for skipping the hard

@@ -8,8 +8,9 @@
  * therefore does no aggregation: it renders what it is handed.
  *
  * The fairness rules that decide those numbers — what makes a metric measurable,
- * which functions land in a decompiler's denominator, what Overall and normalize
- * restrict to — are the benchmark's contract and now live server-side. They are
+ * which functions land in a decompiler's denominator, what Union (the summary
+ * column, still keyed `overall` in the payload) and normalize restrict to — are
+ * the benchmark's contract and now live server-side. They are
  * specified in docs/SITE_DATA_SCHEMA.md ("Denominator semantics"); do not infer
  * them from this file, which can no longer enforce them.
  *
@@ -171,7 +172,7 @@ function buildLeaderboard(result) {
     const decs = AGG.decompilers.slice(), metrics = orderedMetrics();
     // Header. "Errors" = how often the decompiler failed/timed out on a
     // function it was asked to decompile (lower is better).
-    const cols = [["__name__", "decompiler"], ["__overall__", "Overall"]];
+    const cols = [["__name__", "decompiler"], ["__overall__", "Union"]];
     for (const m of metrics) cols.push([m, metricShort(m)]);
     cols.push(["__errors__", "Errors"]);
     let head = "<th>#</th>";
@@ -219,7 +220,7 @@ function buildMetricsTable(result) {
     const decs = AGG.decompilers, metrics = orderedMetrics();
     let head = "<th>decompiler</th>";
     for (const m of metrics) head += "<th>" + escapeHtml(metricShort(m)) + "</th>";
-    head += '<th class="col-overall">Overall</th><th>Errors</th>';
+    head += '<th class="col-overall">Union</th><th>Errors</th>';
     tbl.querySelector("thead tr").innerHTML = head;
     let body = "";
     for (const d of decs) {
@@ -616,7 +617,7 @@ function initHistory(history) {
     if (!container || !(history || []).length) return;
     container.innerHTML = "";
     for (const m of metricList()) buildChart(container, history, m, metricName(m));
-    buildChart(container, history, "__overall__", "Overall (perfect on all metrics)");
+    buildChart(container, history, "__overall__", "Union (perfect on at least one metric)");
 }
 
 // ---- Lazy views ----
