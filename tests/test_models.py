@@ -43,7 +43,7 @@ class TestProjectModels:
 
     def test_project_from_toml(self) -> None:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
-            f.write('''
+            f.write("""
 name = "test"
 version = "1.0"
 source_dir = "src"
@@ -51,7 +51,7 @@ remote_type = "local"
 
 [compilation]
 optimization_levels = ["O2"]
-''')
+""")
             f.flush()
 
             project = Project.from_toml(Path(f.name))
@@ -76,14 +76,14 @@ optimization_levels = ["O2"]
         assert OptimizationLevel("O2-noinline") is OptimizationLevel.O2_NOINLINE
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
-            f.write('''
+            f.write("""
 name = "test"
 source_dir = "src"
 remote_type = "local"
 
 [compilation]
 optimization_levels = ["O0", "O2", "O2-noinline"]
-''')
+""")
             f.flush()
             project = Project.from_toml(Path(f.name))
             assert OptimizationLevel.O2_NOINLINE in project.compilation.optimization_levels

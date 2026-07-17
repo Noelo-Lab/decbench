@@ -31,6 +31,7 @@ _GZIP = Path("results/sailr_full/O0/gzip/compiled/gzip")
 # Registration
 # --------------------------------------------------------------------------- #
 
+
 def test_backends_register() -> None:
     """Importing the module registers reko/retdec/r2dec."""
     import decbench.decompilers.dockerized  # noqa: F401
@@ -55,6 +56,7 @@ def test_registry_get_returns_correct_class(spec: str, cls: type) -> None:
 # is_available() semantics
 # --------------------------------------------------------------------------- #
 
+
 def test_docker_backends_unavailable_without_image() -> None:
     """retdec/reko report available iff their image exists; never auto-build."""
     for cls in (RetDecDecompiler, RekoDecompiler):
@@ -65,9 +67,7 @@ def test_docker_backends_unavailable_without_image() -> None:
 
 def test_is_available_false_when_no_docker(monkeypatch: pytest.MonkeyPatch) -> None:
     """With docker absent, image-only backends are unavailable."""
-    monkeypatch.setattr(
-        "decbench.decompilers.dockerized.shutil.which", lambda _name: None
-    )
+    monkeypatch.setattr("decbench.decompilers.dockerized.shutil.which", lambda _name: None)
     assert RetDecDecompiler().is_available() is False
     assert RekoDecompiler().is_available() is False
 
@@ -146,6 +146,7 @@ def test_split_keeps_first_definition_of_duplicate_name() -> None:
 # ELF symbol enumeration (needs the sample binary)
 # --------------------------------------------------------------------------- #
 
+
 @pytest.mark.skipif(not _GZIP.is_file(), reason="sample gzip binary not present")
 def test_elf_function_symbols_elf_space() -> None:
     syms = elf_function_symbols(_GZIP)
@@ -165,6 +166,7 @@ def test_elf_function_symbols_elf_space() -> None:
 # --------------------------------------------------------------------------- #
 # _build_result mapping (no container; fake combined C)
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.skipif(not _GZIP.is_file(), reason="sample gzip binary not present")
 def test_build_result_maps_snippets_to_elf_addresses() -> None:
@@ -195,6 +197,7 @@ def test_build_result_maps_snippets_to_elf_addresses() -> None:
 # r2dec native smoke (skips if radare2/r2pipe missing)
 # --------------------------------------------------------------------------- #
 
+
 def _native_r2dec_ready() -> bool:
     if shutil.which("r2") is None and shutil.which("radare2") is None:
         return False
@@ -222,6 +225,7 @@ def test_r2dec_native_decompiles_one_function() -> None:
 # --------------------------------------------------------------------------- #
 # Docker-image decompile smoke (skips when image absent)
 # --------------------------------------------------------------------------- #
+
 
 @pytest.mark.parametrize("cls", [RetDecDecompiler, RekoDecompiler])
 def test_docker_decompile_skips_when_image_absent(cls: type) -> None:

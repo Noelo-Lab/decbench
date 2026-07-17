@@ -28,17 +28,17 @@ from decbench.models.scoreboard import Scoreboard
 from decbench.scoring.datasets import assign_datasets
 from decbench.scoring.report_extras import (
     _log_exclusions,
-    _topup_samples,
     malware_projects,
     publish_malware_allowed,
 )
 from decbench.scoring.scoreboard import build_scoreboard_from_function_data
+from decbench.scoring.view_samples import DIFFICULTY_TIERS, select_view_functions
 from decbench.utils.results_tree import resolve_binary
 from decbench.utils.source_extract import function_source
 
 MARKER = re.compile(r"^// Function: (\S+) @ (0x[0-9a-fA-F]+)\s*$", re.M)
 PERFECT = {"ged": 0.0, "type_match": 1.0, "byte_match": 1.0}
-MAX_SAMPLES = 250
+PER_TIER = 100  # View-page samples per difficulty tier
 HARDEST_PER = 12
 
 
@@ -118,57 +118,48 @@ def update_byte_match(
 
 
 def build_samples(fd: FunctionData, reader: DiskReader) -> list[SampleEntry]:
-    """Curated side-by-side samples (source + each decompiler's output).
+    """Difficulty-tiered side-by-side samples for the View page.
 
-    Malware code is excluded (and replaced) exactly as in
-    :func:`decbench.scoring.report_extras.build_samples` — this script is the
-    *other* writer of these payloads, so the filter has to live here too or a
-    rebuild would put the malware straight back.
+    Selection (which functions, which tier) is shared with
+    :func:`decbench.scoring.report_extras.build_samples` via
+    :mod:`decbench.scoring.view_samples`; this script only differs in reading
+    code from the on-disk ``decompiled/*.c`` artifacts. Malware projects never
+    enter a tier pool — this script is the *other* writer of these payloads, so
+    the filter has to hold here too or a rebuild would put the malware back.
     """
     out: list[SampleEntry] = []
-    # Prefer the 'sample-set' representative slice; fall back to any with code.
-    sample_set = [
-        (g, f) for g in fd.groups for f in g.functions if "sample-set" in (f.datasets or [])
-    ]
-    candidates = sample_set or [(g, f) for g in fd.groups for f in g.functions]
-    limit = min(MAX_SAMPLES, len(candidates))
-
     excluded = set() if publish_malware_allowed() else malware_projects(fd)
-    if excluded:
-        kept = [(g, f) for g, f in candidates if g.project not in excluded]
-        removed = [(g, f) for g, f in candidates if g.project in excluded]
-        if removed:
-            _log_exclusions("samples", Counter(g.project for g, _f in removed))
-            if sample_set:
-                kept += _topup_samples(fd, removed, kept, excluded)
-        candidates = kept
-
-    for g, f in candidates:
-        if len(out) >= limit:
-            break
-        binary = reader.binary(g.opt_level, g.project, g.binary)
-        decompiled: dict[str, str] = {}
-        for dec in fd.decompilers:
-            code = reader.decompiled(g.opt_level, g.project, g.binary, dec).get(f.function)
-            if code:
-                decompiled[dec] = code
-        if not decompiled:
-            continue  # nothing to compare
-        source = function_source(binary, f.function) if binary else None
-        out.append(
-            SampleEntry(
-                project=g.project,
-                opt_level=g.opt_level,
-                binary=g.binary,
-                function=f.function,
-                size=f.size,
-                labels=f.labels,
-                source_code=source,
-                decompiled=decompiled,
-                values=f.values,
-                perfects=f.perfects,
+    tiers = select_view_functions(fd, per_tier=PER_TIER, excluded=excluded)
+    for tier in DIFFICULTY_TIERS:
+        built = 0
+        for g, f in tiers.get(tier, []):
+            if built >= PER_TIER:
+                break
+            binary = reader.binary(g.opt_level, g.project, g.binary)
+            decompiled: dict[str, str] = {}
+            for dec in fd.decompilers:
+                code = reader.decompiled(g.opt_level, g.project, g.binary, dec).get(f.function)
+                if code:
+                    decompiled[dec] = code
+            if not decompiled:
+                continue  # nothing to compare
+            source = function_source(binary, f.function) if binary else None
+            out.append(
+                SampleEntry(
+                    project=g.project,
+                    opt_level=g.opt_level,
+                    binary=g.binary,
+                    function=f.function,
+                    size=f.size,
+                    labels=f.labels,
+                    difficulty=tier,
+                    source_code=source,
+                    decompiled=decompiled,
+                    values=f.values,
+                    perfects=f.perfects,
+                )
             )
-        )
+            built += 1
     return out
 
 

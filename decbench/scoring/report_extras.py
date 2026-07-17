@@ -19,8 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
-import random
-from collections import Counter, defaultdict
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -445,151 +444,98 @@ def build_hardest(
     return entries
 
 
-def _large_predicate(function_data: FunctionData) -> Any:
-    """Return ``is_large(record)`` using the same rule as :mod:`decbench.scoring.datasets`."""
-    from decbench.scoring.datasets import large_threshold
-
-    threshold = large_threshold(function_data)
-
-    def is_large(f: FunctionRecord) -> bool:
-        if f.size is not None and threshold is not None:
-            return f.size >= threshold
-        return "large" in (f.labels or [])
-
-    return is_large
-
-
-def _topup_samples(
+def _materialize_sample(
     function_data: FunctionData,
-    removed: list[tuple[BinaryGroup, FunctionRecord]],
-    kept: list[tuple[BinaryGroup, FunctionRecord]],
-    excluded: set[str],
-    headroom: int = 4,
-) -> list[tuple[BinaryGroup, FunctionRecord]]:
-    """Replace excluded ``sample-set`` records with non-excluded ones of the same shape.
+    decompile_results: Any,
+    group: BinaryGroup,
+    record: FunctionRecord,
+    difficulty: str | None,
+) -> Any | None:
+    """Build one SampleEntry (source + every decompiler's code), or None if no code."""
+    from decbench.models.function_data import SampleEntry
 
-    The ``sample-set`` slice is a deliberately even sample (see
-    :mod:`decbench.scoring.datasets`): balanced across the unoptimized /
-    optimized / inlined / large / ARM categories, spread across projects, at
-    most one function per binary. Dropping the malware members without
-    replacing them would both shorten the Compare view and skew that balance,
-    so each dropped record is replaced by one drawn from the same
-    ``(opt_level, is_large)`` bucket, reusing the same even-spread sampler and
-    honouring the binaries already taken.
-
-    ``sample-set`` *membership itself is left untouched* — it feeds the report's
-    client-side aggregates, and re-sampling it would move published numbers.
-    ``headroom`` over-draws so replacements that turn out to have no decompiled
-    code can be skipped without shortening the result.
-    """
-    # Same-package internals: the sample-set slice's own sampler, reused so the
-    # replacements obey the identical spread rules.
-    from decbench.scoring.datasets import _resolve_seed, _sample_even
-
-    is_large = _large_predicate(function_data)
-    want: Counter[tuple[str, bool]] = Counter((g.opt_level, is_large(f)) for g, f in removed)
-
-    chosen_ids: set[int] = {id(f) for _g, f in kept}
-    used_bins: set[tuple[str, str, str]] = {(g.project, g.opt_level, g.binary) for g, _f in kept}
-
-    pools: dict[tuple[str, bool], list[tuple[BinaryGroup, FunctionRecord]]] = defaultdict(list)
-    for g in function_data.groups:
-        if g.project in excluded:
-            continue
-        for f in g.functions:
-            if id(f) in chosen_ids:
-                continue
-            key = (g.opt_level, is_large(f))
-            if key in want:
-                pools[key].append((g, f))
-
-    rng = random.Random(_resolve_seed(None))
-    primary: list[tuple[BinaryGroup, FunctionRecord]] = []
-    extras: list[tuple[BinaryGroup, FunctionRecord]] = []
-    for key, count in sorted(want.items()):
-        drawn = _sample_even(pools.get(key, []), count * headroom, chosen_ids, used_bins, rng)
-        primary.extend(drawn[:count])  # the balanced replacements...
-        extras.extend(drawn[count:])  # ...and spares, used only if code is missing
-    return primary + extras
+    decompiled: dict[str, str] = {}
+    for dec in function_data.decompilers:
+        code = _lookup_decompiled(
+            decompile_results, group.project, group.opt_level, group.binary, dec, record.function
+        )
+        if code:
+            decompiled[dec] = code
+    if not decompiled:
+        return None
+    source = _lookup_source(
+        decompile_results, group.project, group.opt_level, group.binary, record.function
+    )
+    return SampleEntry(
+        project=group.project,
+        opt_level=group.opt_level,
+        binary=group.binary,
+        function=record.function,
+        size=record.size,
+        labels=record.labels,
+        difficulty=difficulty,
+        source_code=source,
+        decompiled=decompiled,
+        values=record.values,
+        perfects=record.perfects,
+    )
 
 
 def build_samples(
     function_data: FunctionData,
     decompile_results: Any,
-    max_samples: int = 250,
+    per_tier: int = 100,
     excluded_projects: Iterable[str] | None = None,
 ) -> list[Any]:
-    """Curated side-by-side samples (source + each decompiler's output).
+    """Difficulty-tiered side-by-side samples for the View page.
 
-    Prefers the ``sample-set`` representative slice (so it spans projects/opt
-    levels at one function per binary); falls back to any function with
-    decompiled code. Requires datasets to be assigned first (see
-    :func:`attach_extras`).
+    Selects ~``per_tier`` functions per difficulty tier (easy / medium / hard —
+    see :mod:`decbench.scoring.view_samples` for the tier rules) and
+    materializes each with the original source and every decompiler's output.
 
     Functions from ``excluded_projects`` (by default the malware targets — see
-    :func:`publish_malware_allowed`) are dropped and *replaced* by equivalent
-    non-malware functions, so the slice keeps its size and spread.
+    :func:`publish_malware_allowed`) never enter a tier pool, so no top-up is
+    needed. Corpora too small to tier (fewer than two decompilers with GED, as
+    in unit tests) fall back to untiered samples of anything with code.
     """
-    from decbench.models.function_data import SampleEntry
-
-    samples: list[SampleEntry] = []
-    groups = function_data.groups
-
-    def opt_key_for(group_opt: str) -> Any:
-        return group_opt  # _lookup_* tolerate string opt keys via _opt_value
-
-    sample_set = [(g, f) for g in groups for f in g.functions if "sample-set" in (f.datasets or [])]
-    candidates = sample_set or [(g, f) for g in groups for f in g.functions]
-    # Publish no more than the unfiltered slice would have — and, thanks to the
-    # top-up below, no fewer.
-    limit = min(max_samples, len(candidates))
+    from decbench.scoring.view_samples import DIFFICULTY_TIERS, select_view_functions
 
     excluded = set(excluded_projects or ()) or malware_projects(function_data)
     if publish_malware_allowed():
         excluded = set()
-    if excluded:
-        kept = [(g, f) for g, f in candidates if g.project not in excluded]
-        removed = [(g, f) for g, f in candidates if g.project in excluded]
-        if removed:
-            _log_exclusions("samples", Counter(g.project for g, _f in removed))
-            if sample_set:
-                kept += _topup_samples(function_data, removed, kept, excluded)
-        candidates = kept
 
-    for g, f in candidates:
+    dropped: Counter[str] = Counter()
+    samples: list[Any] = []
+    tiers = select_view_functions(function_data, per_tier=per_tier, excluded=excluded)
+    for tier in DIFFICULTY_TIERS:
+        built = 0
+        for group, record in tiers.get(tier, []):
+            if built >= per_tier:
+                break
+            entry = _materialize_sample(function_data, decompile_results, group, record, tier)
+            if entry is not None:
+                samples.append(entry)
+                built += 1
+
+    if samples:
+        return samples
+
+    # Fallback for corpora the tiers cannot see (single-decompiler runs, no GED):
+    # untiered samples of any function with decompiled code, bounded like before.
+    limit = per_tier
+    for group in function_data.groups:
         if len(samples) >= limit:
             break
-        decompiled: dict[str, str] = {}
-        for dec in function_data.decompilers:
-            code = _lookup_decompiled(
-                decompile_results,
-                g.project,
-                opt_key_for(g.opt_level),
-                g.binary,
-                dec,
-                f.function,
-            )
-            if code:
-                decompiled[dec] = code
-        if not decompiled:
+        if group.project in excluded:
+            dropped[group.project] += len(group.functions)
             continue
-        source = _lookup_source(
-            decompile_results, g.project, opt_key_for(g.opt_level), g.binary, f.function
-        )
-        samples.append(
-            SampleEntry(
-                project=g.project,
-                opt_level=g.opt_level,
-                binary=g.binary,
-                function=f.function,
-                size=f.size,
-                labels=f.labels,
-                source_code=source,
-                decompiled=decompiled,
-                values=f.values,
-                perfects=f.perfects,
-            )
-        )
+        for record in group.functions:
+            if len(samples) >= limit:
+                break
+            entry = _materialize_sample(function_data, decompile_results, group, record, None)
+            if entry is not None:
+                samples.append(entry)
+    _log_exclusions("samples", dropped)
     return samples
 
 
@@ -716,8 +662,7 @@ def attach_extras(
 
     # Tag each function with its dataset presets (unoptimized/optimized/inlined/
     # large/sample-set) so the report shows a single dataset selector instead of
-    # many toggles. Must run BEFORE build_samples (which prefers the
-    # `sample-set` slice).
+    # many toggles.
     try:
         from decbench.scoring.datasets import assign_datasets
 
@@ -725,9 +670,8 @@ def attach_extras(
     except Exception:
         pass
 
-    # Side-by-side Compare samples (original source vs each decompiler's output).
-    # Runs after assign_datasets so the `sample-set` slice (and its
-    # malware-replacement top-up) is available.
+    # Difficulty-tiered View samples (original source vs each decompiler's
+    # output; easy/medium/hard from cross-decompiler GED agreement).
     try:
         function_data.samples = build_samples(
             function_data, decompile_results, excluded_projects=excluded

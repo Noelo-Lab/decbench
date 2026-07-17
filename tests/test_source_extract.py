@@ -61,11 +61,7 @@ class TestExtractFromText:
 
     def test_function_pointer_parameter_signature(self) -> None:
         # The param list contains parens; the naive "first )" would reject this.
-        src = (
-            "int registerit(void (*cb)(int), int n) {\n"
-            "    return cb ? n : 0;\n"
-            "}\n"
-        )
+        src = "int registerit(void (*cb)(int), int n) {\n" "    return cb ? n : 0;\n" "}\n"
         out = extract_from_text(src, "registerit")
         assert out is not None
         assert out.startswith("int registerit(")

@@ -539,30 +539,30 @@ def build_payloads(function_data: FunctionData, scoreboard: Scoreboard) -> dict[
     ``window.__DECBENCH_INLINE__`` in the single-file report, so both delivery modes
     hand the client one shape and it never learns which it is running under.
 
-    ``samples``/``hardest``/``history`` are serialized straight through: their metric
-    values are what the Compare and Hardest views print, so they are emitted exactly as
-    measured (see the note by ``ALL_PRESET`` for why they are not rounded).
+    ``samples``/``history`` are serialized straight through: their metric values are
+    what the View page prints, so they are emitted exactly as measured (see the note
+    by ``ALL_PRESET`` for why they are not rounded). ``hardest`` entries are still
+    *stored* in ``function_results.json`` but no longer shipped — the View page's
+    ``hard`` difficulty tier (inside ``samples``) replaced the Hardest view.
 
     This is also the last gate before malware code reaches a published payload.
-    ``samples``/``hardest`` are normally filtered where they are *built*
+    ``samples`` is normally filtered where it is *built*
     (:func:`decbench.scoring.report_extras.attach_extras`), but both ``decbench
     report`` and ``decbench site build`` read a ``function_results.json`` straight
     from disk — and a file written before that filter existed still has the malware
     code baked in. Filtering here too means an old results tree cannot republish it.
-    Only the two code-carrying payloads are touched: ``aggregates`` (the
-    leaderboard / metrics / distance numbers) still counts every malware function.
+    Only the code-carrying payload is touched: ``aggregates`` (the leaderboard /
+    metrics / distance numbers) still counts every malware function.
     """
     from decbench.scoring.report_extras import drop_malware_entries, malware_projects
 
     excluded = malware_projects(function_data)
     samples = drop_malware_entries(function_data.samples, excluded, "samples")
-    hardest = drop_malware_entries(function_data.hardest, excluded, "hardest")
 
     return {
         "aggregates": build_aggregates(function_data, scoreboard),
         "dataset": build_dataset_page(function_data),
         "samples": [s.model_dump(mode="json") for s in samples],
-        "hardest": [h.model_dump(mode="json") for h in hardest],
         "history": [h.model_dump(mode="json") for h in function_data.history],
     }
 

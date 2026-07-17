@@ -409,14 +409,13 @@ def _view_section(
 def _is_empty(view_id: str, function_data: FunctionData | None) -> bool:
     """Whether a view has no data to render, and should show its empty state.
 
-    Only the three code/history-carrying views can be legitimately empty: the
+    Only the two code/history-carrying views can be legitimately empty: the
     others either need no data or are dropped from the nav without it.
     """
     if function_data is None:
         return False
     return {
-        "compare": not function_data.samples,
-        "hardest": not function_data.hardest,
+        "view": not function_data.samples,
         "history": not function_data.history,
     }.get(view_id, False)
 
