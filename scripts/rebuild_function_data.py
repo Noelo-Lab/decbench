@@ -38,7 +38,7 @@ from decbench.utils.source_extract import function_source
 
 MARKER = re.compile(r"^// Function: (\S+) @ (0x[0-9a-fA-F]+)\s*$", re.M)
 PERFECT = {"ged": 0.0, "type_match": 1.0, "byte_match": 1.0}
-MAX_SAMPLES = 140
+MAX_SAMPLES = 250
 HARDEST_PER = 12
 
 
@@ -126,9 +126,11 @@ def build_samples(fd: FunctionData, reader: DiskReader) -> list[SampleEntry]:
     rebuild would put the malware straight back.
     """
     out: list[SampleEntry] = []
-    # Prefer the 'tiny' representative slice; fall back to any with code.
-    tiny = [(g, f) for g in fd.groups for f in g.functions if "tiny" in (f.datasets or [])]
-    candidates = tiny or [(g, f) for g in fd.groups for f in g.functions]
+    # Prefer the 'sample-set' representative slice; fall back to any with code.
+    sample_set = [
+        (g, f) for g in fd.groups for f in g.functions if "sample-set" in (f.datasets or [])
+    ]
+    candidates = sample_set or [(g, f) for g in fd.groups for f in g.functions]
     limit = min(MAX_SAMPLES, len(candidates))
 
     excluded = set() if publish_malware_allowed() else malware_projects(fd)
@@ -137,7 +139,7 @@ def build_samples(fd: FunctionData, reader: DiskReader) -> list[SampleEntry]:
         removed = [(g, f) for g, f in candidates if g.project in excluded]
         if removed:
             _log_exclusions("samples", Counter(g.project for g, _f in removed))
-            if tiny:
+            if sample_set:
                 kept += _topup_samples(fd, removed, kept, excluded)
         candidates = kept
 

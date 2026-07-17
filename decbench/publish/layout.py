@@ -45,7 +45,9 @@ logger = logging.getLogger(__name__)
 # Normative constants from the publishing contract.
 DATASET_NAME = "decbench-dataset"
 DATASET_REPO_ID = "noelo-lab/decbench-dataset"
-DEFAULT_CONFIGS = ["tiny", "hard", "hard-inlined", "unoptimized", "full"]
+# `full` is a publisher-only config (the master everything slice); it is no
+# longer a scoring preset, so select_groups/copy_artifacts special-case it.
+DEFAULT_CONFIGS = ["sample-set", "large", "unoptimized", "optimized", "inlined", "full"]
 _FULL = "full"
 
 Logger = Callable[[str], None]
@@ -176,14 +178,17 @@ def select_groups(
 ) -> list[BinaryGroup]:
     """Groups to process: those with >=1 function tagged by a requested config.
 
-    ``full`` tags every record, so requesting it selects every group. The first
-    ``max_binaries`` (in dataset order) are kept for fast, targeted self-tests.
+    ``full`` is the publisher's everything-config (not a scoring preset), so
+    requesting it selects every group. The first ``max_binaries`` (in dataset
+    order) are kept for fast, targeted self-tests.
     """
     wanted = set(configs)
-    selected: list[BinaryGroup] = []
-    for group in fd.groups:
-        if any(wanted.intersection(f.datasets) for f in group.functions):
-            selected.append(group)
+    if _FULL in wanted:
+        selected = list(fd.groups)
+    else:
+        selected = [
+            g for g in fd.groups if any(wanted.intersection(f.datasets) for f in g.functions)
+        ]
     if max_binaries is not None:
         selected = selected[:max_binaries]
     return selected
@@ -303,7 +308,12 @@ def copy_artifacts(
 
         all_fns = [f.function for f in group.functions]
         config_fns = {
-            cfg: [f.function for f in group.functions if cfg in f.datasets] for cfg in configs
+            cfg: (
+                list(all_fns)
+                if cfg == _FULL
+                else [f.function for f in group.functions if cfg in f.datasets]
+            )
+            for cfg in configs
         }
         result.groups.append(
             GroupRecord(

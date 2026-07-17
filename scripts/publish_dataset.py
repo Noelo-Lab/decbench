@@ -15,7 +15,7 @@ Examples::
 
     python scripts/publish_dataset.py results/full_run
     python scripts/publish_dataset.py results/full_run --cfgs --cfg-workers 8
-    python scripts/publish_dataset.py results/full_run --only-config tiny --max-binaries 8
+    python scripts/publish_dataset.py results/full_run --only-config sample-set --max-binaries 8
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--cfgs", action="store_true", help="also build source-CFG JSONs (slow)")
     parser.add_argument("--cfg-workers", type=int, default=1, help="parallel CFG workers")
-    parser.add_argument("--configs", default=None, help="comma list: tiny,hard,hard-inlined,full")
+    parser.add_argument("--configs", default=None, help="comma list: sample-set,large,unoptimized,optimized,inlined,full")
     parser.add_argument("--only-config", default=None, help="build a single config")
     parser.add_argument("--skip-binaries", action="store_true", help="do not copy binaries")
     parser.add_argument("--skip-results", action="store_true", help="do not copy decompiled output")

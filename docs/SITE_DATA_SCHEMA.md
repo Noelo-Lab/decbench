@@ -8,7 +8,7 @@ Nothing per-function is shipped except the two bounded, code-carrying lists
 
 Every aggregate the report renders is a pure function of two selectors:
 
-* the **dataset preset** (`full` / `hard` / `hard-inlined` / `unoptimized` / `tiny`)
+* the **dataset preset** (`unoptimized` / `optimized` / `inlined` / `large` / `sample-set`)
 * the **normalize-failures** toggle (on / off)
 
 That is `5 x 2 = 10` combinations. The old report shipped all 91,483 `FunctionRecord`s

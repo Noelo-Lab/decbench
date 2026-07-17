@@ -172,19 +172,19 @@ def test_exactly_one_default_dataset(content: Content) -> None:
     assert content.default_dataset is defaults[0]
 
 
-def test_default_dataset_is_full_and_not_positional(content: Content) -> None:
+def test_default_dataset_is_unoptimized_and_not_positional(content: Content) -> None:
     """The default is explicit, so reordering datasets.toml cannot change it."""
     assert content.default_dataset is not None
-    assert content.default_dataset.name == "full"
+    assert content.default_dataset.name == "unoptimized"
 
 
 def test_dataset_presets_cover_the_selector(content: Content) -> None:
     assert [p.name for p in content.dataset_presets] == [
-        "full",
-        "hard",
-        "hard-inlined",
         "unoptimized",
-        "tiny",
+        "optimized",
+        "inlined",
+        "large",
+        "sample-set",
     ]
     for preset in content.dataset_presets:
         assert preset.label and preset.description

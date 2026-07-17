@@ -700,7 +700,7 @@ def main() -> int:
         decompilers=DECOMPILERS,
     )
     fd = build_function_data(all_evaluate, projects, all_decompile)
-    # Populate the report's code-carrying extras: dataset tags (full/hard/tiny),
+    # Populate the report's code-carrying extras: dataset tags (unoptimized/optimized/...),
     # side-by-side Compare samples (with source), Hardest functions, and
     # per-decompiler compile rates. Without this the report has no Compare view,
     # no Hardest list, and no dataset selector.

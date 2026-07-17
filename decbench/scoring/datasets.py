@@ -1,22 +1,26 @@
 """Curated dataset *presets* for the report's single dataset selector.
 
-Rather than exposing dozens of label/binary toggles, the report offers four
+Rather than exposing dozens of label/binary toggles, the report offers five
 fixed, meaningful views. This module tags every :class:`FunctionRecord` with the
 presets it belongs to (``FunctionRecord.datasets``) and records the preset
 metadata on the :class:`FunctionData`:
 
-* **full** — everything (O0 + O2 + O2-noinline). The same source function at
-  multiple opt levels counts multiple times; that double-counting is intended.
-* **hard** — optimized, **no inlining** (O2-noinline), **large** functions only.
-* **hard-inlined** — like *hard* but **with** inlining (plain O2), large only.
 * **unoptimized** — O0 functions only, to surface simple structural differences
-  without optimization noise.
-* **tiny** — ~100 functions total, evenly sampled from four categories
-  (inlined=O2, optimized=O2-noinline, unoptimized=O0, large), spread evenly
-  across projects, and — while there are enough distinct binaries — taking **at
-  most one function per binary**, so it is a fast, representative slice. The
-  sample is a **seeded random** selection — stable across runs for a given seed,
-  but changeable via ``DECBENCH_TINY_SEED`` (or ``assign_datasets(seed=...)``).
+  without optimization noise. The selector's default view.
+* **optimized** — optimized **without** inlining (O2-noinline). Inlining is an
+  outlier optimization that destroys function boundaries, so the plain
+  "optimized" view keeps it off.
+* **inlined** — optimized **with** inlining (plain O2).
+* **large** — optimized (no inlining, O2-noinline), **large** functions only.
+  This is the upper tail of the size bell curve — the genuinely hard cases.
+  (Previously named ``hard``; membership is unchanged.)
+* **sample-set** — ~250 functions total, evenly sampled from five categories
+  (unoptimized=O0, optimized=O2-noinline, inlined=O2, large, and
+  ARM-unoptimized=O0 on a non-x86 target), spread evenly across projects,
+  and — while there are enough distinct binaries — taking **at most one
+  function per binary**, so it is a fast, representative slice. The sample is a
+  **seeded random** selection — stable across runs for a given seed, but
+  changeable via ``DECBENCH_SAMPLE_SEED`` (or ``assign_datasets(seed=...)``).
 
 "Large" is the upper tail of the function-size bell curve (``mean + k·std`` over
 decompiled line counts), matching :mod:`decbench.scoring.subset`. The majority
@@ -44,41 +48,59 @@ from decbench.models.function_data import DatasetPreset
 if TYPE_CHECKING:
     from decbench.models.function_data import BinaryGroup, FunctionData, FunctionRecord
 
-__all__ = ["assign_datasets", "large_threshold", "PRESETS", "DEFAULT_TINY_SEED"]
+__all__ = ["assign_datasets", "large_threshold", "PRESETS", "DEFAULT_SAMPLE_SEED"]
 
-# Fixed default seed for the `tiny` sample so the selection is reproducible
-# across runs/machines. Override per call (``assign_datasets(seed=...)``) or via
-# the ``DECBENCH_TINY_SEED`` environment variable to roll a different sample.
-DEFAULT_TINY_SEED = 1337
+# Fixed default seed for the `sample-set` sample so the selection is
+# reproducible across runs/machines. Override per call
+# (``assign_datasets(seed=...)``) or via the ``DECBENCH_SAMPLE_SEED``
+# environment variable to roll a different sample.
+DEFAULT_SAMPLE_SEED = 1337
 
 
 def _resolve_seed(seed: int | None) -> int:
-    """Resolve the tiny-sample seed: explicit arg > env var > default."""
+    """Resolve the sample-set seed: explicit arg > env var > default.
+
+    ``DECBENCH_TINY_SEED`` (the preset's pre-rename spelling) is still honoured
+    so existing run scripts keep reproducing the same slice.
+    """
     if seed is not None:
         return seed
-    env = os.environ.get("DECBENCH_TINY_SEED")
-    if env:
-        try:
-            return int(env)
-        except ValueError:
-            pass
-    return DEFAULT_TINY_SEED
+    for var in ("DECBENCH_SAMPLE_SEED", "DECBENCH_TINY_SEED"):
+        env = os.environ.get(var)
+        if env:
+            try:
+                return int(env)
+            except ValueError:
+                pass
+    return DEFAULT_SAMPLE_SEED
 
 
 #: The presets this module knows how to assign, in selector order. Names only:
 #: each one's label and description are the renderer's business (see the module
 #: docstring), and duplicating them here is how they drift.
 PRESETS: list[DatasetPreset] = [
-    DatasetPreset(name="full"),
-    DatasetPreset(name="hard"),
-    DatasetPreset(name="hard-inlined"),
     DatasetPreset(name="unoptimized"),
-    DatasetPreset(name="tiny"),
+    DatasetPreset(name="optimized"),
+    DatasetPreset(name="inlined"),
+    DatasetPreset(name="large"),
+    DatasetPreset(name="sample-set"),
 ]
 
 _O2 = "O2"
 _O2_NOINLINE = "O2-noinline"
 _O0 = "O0"
+
+#: Binary labels that mark a group as built for a non-x86 (ARM) target. The CPS
+#: firmware projects all carry ``cps`` plus arch labels like ``armv7`` or
+#: ``cortex-m4``; the sailr packages and the malware targets are x86 (ELF or
+#: PE), so none of these labels appear there.
+_ARM_LABELS = frozenset({"cps", "arm", "armv7", "aarch64", "arm64", "bare-metal", "embedded-linux"})
+
+
+def _is_arm(group: BinaryGroup) -> bool:
+    """Whether a binary group was cross-compiled for a non-x86 (ARM) target."""
+    labels = group.labels or []
+    return any(label in _ARM_LABELS or label.startswith("cortex-") for label in labels)
 
 
 def large_threshold(function_data: FunctionData, k: float = 1.0) -> float | None:
@@ -121,8 +143,8 @@ def _sample_even(
     The member order within each project and the project visitation order are
     shuffled with ``rng`` (random but fully reproducible for a given seed).
     ``chosen_fns`` (``id(record)``) and ``used_bins`` (:func:`_binkey`) are
-    shared across the four category buckets and **mutated** here, so the rules
-    hold across the whole ``tiny`` sample, not just within one bucket.
+    shared across the five category buckets and **mutated** here, so the rules
+    hold across the whole ``sample-set`` sample, not just within one bucket.
     """
     by_project: OrderedDict[str, list[tuple[BinaryGroup, FunctionRecord]]] = OrderedDict()
     ordered = sorted(
@@ -171,16 +193,16 @@ def _sample_even(
 
 def assign_datasets(
     function_data: FunctionData,
-    tiny_total: int = 100,
+    sample_total: int = 250,
     k: float = 1.0,
     seed: int | None = None,
 ) -> FunctionData:
     """Tag every record with its dataset presets and set ``dataset_presets``.
 
-    The ``tiny`` sample is a **seeded random** selection: deterministic for a
-    given seed (so the chosen targets are stable across runs), but changeable.
-    Seed resolution: ``seed`` arg > ``DECBENCH_TINY_SEED`` env var >
-    :data:`DEFAULT_TINY_SEED`.
+    The ``sample-set`` sample is a **seeded random** selection: deterministic
+    for a given seed (so the chosen targets are stable across runs), but
+    changeable. Seed resolution: ``seed`` arg > ``DECBENCH_SAMPLE_SEED`` env
+    var > :data:`DEFAULT_SAMPLE_SEED`.
 
     Idempotent: re-running with the same seed re-derives identical membership.
     """
@@ -196,32 +218,34 @@ def assign_datasets(
         (g, f) for g in function_data.groups for f in g.functions
     ]
 
-    # full / hard / hard-inlined / unoptimized are rule-based.
+    # unoptimized / optimized / inlined / large are rule-based.
     for g, f in records:
-        ds = ["full"]
+        ds = []
         if g.opt_level == _O0:
             ds.append("unoptimized")
-        if is_large(f):
-            if g.opt_level == _O2_NOINLINE:
-                ds.append("hard")
-            elif g.opt_level == _O2:
-                ds.append("hard-inlined")
+        elif g.opt_level == _O2_NOINLINE:
+            ds.append("optimized")
+            if is_large(f):
+                ds.append("large")
+        elif g.opt_level == _O2:
+            ds.append("inlined")
         f.datasets = ds
 
-    # tiny: even sample across four categories and across projects.
+    # sample-set: even sample across five categories and across projects.
     buckets: dict[str, list[tuple[BinaryGroup, FunctionRecord]]] = {
-        "inlined": [(g, f) for g, f in records if g.opt_level == _O2],
-        "optimized": [(g, f) for g, f in records if g.opt_level == _O2_NOINLINE],
         "unoptimized": [(g, f) for g, f in records if g.opt_level == _O0],
-        "large": [(g, f) for g, f in records if is_large(f)],
+        "optimized": [(g, f) for g, f in records if g.opt_level == _O2_NOINLINE],
+        "inlined": [(g, f) for g, f in records if g.opt_level == _O2],
+        "large": [(g, f) for g, f in records if g.opt_level == _O2_NOINLINE and is_large(f)],
+        "unoptimized-arm": [(g, f) for g, f in records if g.opt_level == _O0 and _is_arm(g)],
     }
-    per_bucket = max(1, tiny_total // len(buckets))
+    per_bucket = max(1, sample_total // len(buckets))
     chosen: set[int] = set()
     used_bins: set[tuple[str, str, str]] = set()
     for _name, items in buckets.items():
         for _g, f in _sample_even(items, per_bucket, chosen, used_bins, rng):
-            if "tiny" not in f.datasets:
-                f.datasets.append("tiny")
+            if "sample-set" not in f.datasets:
+                f.datasets.append("sample-set")
 
     function_data.dataset_presets = [p.model_copy() for p in PRESETS]
     return function_data
