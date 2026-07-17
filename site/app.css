@@ -105,7 +105,6 @@ a { color: var(--text); text-decoration: none; }
 .main {
     flex: 1;
     min-width: 0;
-    max-width: 1100px;
     padding: 1.8rem 2rem 3rem;
 }
 .view { display: none; }
@@ -117,7 +116,7 @@ a { color: var(--text); text-decoration: none; }
 }
 h2.view-title { font-size: 1.3rem; font-weight: 700; margin-bottom: 0.2rem; }
 h2.view-title:before { content: "## "; color: var(--text-muted); }
-.view-desc { color: var(--text-muted); font-size: 0.88em; margin-bottom: 1.1rem; max-width: 70ch; }
+.view-desc { color: var(--text-muted); font-size: 0.88em; margin-bottom: 1.1rem; }
 h3.sub { font-size: 1rem; font-weight: 700; margin: 1.4rem 0 0.4rem; }
 h3.sub:before { content: "> "; color: var(--text-muted); }
 
@@ -164,6 +163,17 @@ button:hover, select:hover { color: #000; background: var(--text); }
 .controls label { color: var(--text-muted); }
 .counter { color: var(--text-muted); font-size: 0.82em; }
 
+/* ---- Collapsible metric visualizations (about page) ---- */
+details.metric-viz {
+    border: dashed 1px rgba(219, 219, 219, 0.25);
+    padding: 0.45rem 0.8rem; margin: 0.7rem 0;
+}
+details.metric-viz summary {
+    cursor: pointer; color: var(--amber); font-size: 0.85em; user-select: none;
+}
+details.metric-viz summary:hover { color: var(--text); }
+details.metric-viz[open] summary { margin-bottom: 0.7rem; }
+
 /* ---- Metrics cards ---- */
 .goal {
     border: dashed 1px rgba(219,219,219,0.4);
@@ -172,7 +182,7 @@ button:hover, select:hover { color: #000; background: var(--text); }
 .goal-head { font-weight: 700; font-size: 1.02em; margin-bottom: 0.2rem; }
 .goal-head .num { color: var(--green); margin-right: 0.4rem; }
 .goal-metric { color: var(--amber); font-size: 0.82em; margin-bottom: 0.5rem; }
-.goal-body { color: var(--text); font-size: 0.88em; max-width: 75ch; }
+.goal-body { color: var(--text); font-size: 0.88em; }
 .goal-body .perfect { color: var(--text-muted); }
 .formula { color: var(--text-muted); font-size: 0.82em; margin-top: 0.5rem; }
 .recovered {

@@ -14,11 +14,11 @@
                 <div class="brand-title">DecBench</div>
                 <div class="brand-sub">decompiler benchmark</div>
             </div>
-            <nav class="nav"><a class="nav-item" data-view="leaderboard" href="#leaderboard"><span class="nav-bullet">&gt;</span> leaderboard</a><a class="nav-item" data-view="metrics" href="#metrics"><span class="nav-bullet">&gt;</span> metrics</a><a class="nav-item" data-view="distance" href="#distance"><span class="nav-bullet">&gt;</span> distance</a><a class="nav-item" data-view="dataset" href="#dataset"><span class="nav-bullet">&gt;</span> dataset</a><a class="nav-item" data-view="compare" href="#compare"><span class="nav-bullet">&gt;</span> compare</a><a class="nav-item" data-view="hardest" href="#hardest"><span class="nav-bullet">&gt;</span> hardest</a><a class="nav-item" data-view="history" href="#history"><span class="nav-bullet">&gt;</span> historical</a><a class="nav-item" data-view="about" href="#about"><span class="nav-bullet">&gt;</span> about</a></nav>
+            <nav class="nav"><a class="nav-item" data-view="leaderboard" href="#leaderboard"><span class="nav-bullet">&gt;</span> leaderboard</a><a class="nav-item" data-view="distance" href="#distance"><span class="nav-bullet">&gt;</span> distance</a><a class="nav-item" data-view="view" href="#view"><span class="nav-bullet">&gt;</span> view</a><a class="nav-item" data-view="history" href="#history"><span class="nav-bullet">&gt;</span> historical</a><a class="nav-item" data-view="about" href="#about"><span class="nav-bullet">&gt;</span> about</a></nav>
             
         <div class="side-section">
             <div class="side-label">dataset</div>
-            <div class="ds-controls"><button class="ds-btn active" data-dataset="full" title="everything — O0 + O2 + O2-noinline (per-opt double-count ok)">full</button><button class="ds-btn" data-dataset="hard" title="optimized, no inlining (O2-noinline), large functions only">hard</button><button class="ds-btn" data-dataset="hard-inlined" title="optimized WITH inlining (O2), large functions only">hard-inlined</button><button class="ds-btn" data-dataset="unoptimized" title="unoptimized only (O0) — surfaces simple structural differences">unoptimized</button><button class="ds-btn" data-dataset="tiny" title="~100 functions evenly sampled across inlined/optimized/unoptimized/large and projects">tiny</button></div>
+            <div class="ds-controls"><button class="ds-btn active" data-dataset="unoptimized" title="unoptimized builds (O0) — surfaces simple structural differences">unoptimized</button><button class="ds-btn" data-dataset="optimized" title="optimized without inlining (O2-noinline)">optimized</button><button class="ds-btn" data-dataset="inlined" title="optimized WITH inlining (plain O2)">inlined</button><button class="ds-btn" data-dataset="large" title="large functions only (upper size tail), optimized without inlining">large</button><button class="ds-btn" data-dataset="sample-set" title="~250 functions evenly sampled across unoptimized/optimized/inlined/large/ARM-unoptimized and projects">sample-set</button></div>
             <div class="ds-desc" id="dataset-desc"></div>
             <div class="counter" id="function-counter"></div>
             <div class="ds-controls" style="margin-top:0.6rem;">
@@ -28,7 +28,7 @@
                 </button>
             </div>
         </div>
-            <div class="side-stats"><div class="side-stat"><span class="side-num" data-stat="functions">91,483</span> functions</div><div class="side-stat"><span class="side-num" data-stat="binaries">806</span> binaries</div><div class="side-stat"><span class="side-num">6</span> decompilers</div><div class="side-stat"><span class="side-num">3</span> metrics</div></div>
+            <div class="side-stats"><div class="side-stat"><span class="side-num" data-stat="functions">91,483</span> functions</div><div class="side-stat"><span class="side-num" data-stat="binaries">806</span> binaries</div><div class="side-stat"><span class="side-num">5</span> decompilers</div><div class="side-stat"><span class="side-num">3</span> metrics</div></div>
             <div class="side-foot">[ 2026-07-16 14:56 ]</div>
         </aside>
 
@@ -39,34 +39,6 @@
         <h2 class="view-title">leaderboard</h2>
         <p class="view-desc">ranked by Union &mdash; the share of functions a decompiler recovers
 <em>perfectly on at least one metric</em>. click a column to sort.</p><table id="leaderboard-table"><thead><tr></tr></thead><tbody></tbody></table>
-    </section>
-    <section class="view" id="view-metrics" data-view="metrics">
-        <h2 class="view-title">metrics</h2>
-        <p class="view-desc">Decompilation has three goals; DecBench measures each with one metric
-and reports how often a decompiler gets it <em>perfect</em>.</p>
-        <div class="goal">
-            <div class="goal-head"><span class="num">[1]</span>Control-flow structure correctness</div>
-            <div class="goal-metric">metric: Structural Correctness (GED)</div>
-            <div class="goal-body">Does the decompiled code branch and loop the same way the source does? We compare the control-flow graphs of the source and the decompilation with a Graph Edit Distance (GED) &mdash; the number of node/edge insertions, deletions, and substitutions needed to turn one CFG into the other. <span class="perfect">perfect = GED of 0 (graph-isomorphic control flow).</span></div>
-        </div>
-        <div class="goal">
-            <div class="goal-head"><span class="num">[2]</span>Type correctness</div>
-            <div class="goal-metric">metric: Type Correctness</div>
-            <div class="goal-body">Did the decompiler recover the right variable and argument types? We match the decompiled variables against DWARF ground truth (arguments by ABI position, stack variables by calibrated offset, the rest by name) and score the fraction recovered correctly. <span class="perfect">perfect = 1.0 (every recoverable variable typed correctly).</span></div>
-        </div>
-        <div class="goal">
-            <div class="goal-head"><span class="num">[3]</span>Recompilation correctness</div>
-            <div class="goal-metric">metric: Recompilation Bytematch</div>
-            <div class="goal-body">Does the decompiled code recompile to the same machine code? We run a uniform compilability fixup (define decompiler pseudo-types, strip illegal symbol-version tokens, declare missing symbols) so every decompiler gets a fair shot at building, recompile each function with the original toolchain, and compare the resulting assembly &mdash; normalizing link-time-dependent operands (call/jump targets, PC-relative offsets) so only real differences count. <span class="perfect">perfect = 1.0 (recompiled assembly matches the original).</span></div>
-        </div><div class="recovered">
-    [ = ] When a function is perfect on <strong>at least one</strong> metric,
-    the decompiler has exactly recovered that aspect of the original source:
-    the control flow, the types, or code that recompiles to the same bytes.
-    That is the Union column on the leaderboard.
-</div>
-
-<h3 class="sub">how often each decompiler is perfect</h3>
-<p class="view-desc" id="metrics-table-note">over the selected dataset.</p><table id="metrics-perfect-table"><thead><tr></tr></thead><tbody></tbody></table>
     </section>
     <section class="view" id="view-distance" data-view="distance">
         <h2 class="view-title">distance</h2>
@@ -84,56 +56,30 @@ scored on.</p>
 
 <table id="distance-table"><thead><tr></tr></thead><tbody></tbody></table>
     </section>
-    <section class="view" id="view-dataset" data-view="dataset">
-        <h2 class="view-title">dataset</h2>
-        <p class="view-desc">The benchmark corpus: the kinds of software it covers, every project,
-its size, and how much of the GED pipeline is lost to our own tooling
-(Joern source-parse failures) rather than to the decompilers.</p>
-<h3 class="sub">software types</h3>
-<p class="view-desc">click a type to highlight the projects it covers (a
-project can span several).</p>
-<div class="controls" id="category-controls"></div>
-
-<h3 class="sub">summary</h3>
-<div id="dataset-summary" class="goal"></div>
-
-<h3 class="sub">pipeline health (our own tooling)</h3>
-<p class="view-desc">GED depends on Joern parsing both the source and the decompiler output.
-When Joern fails on the <strong>source</strong>, that's our tooling — those
-functions are excluded from GED for every decompiler (never counted against
-them). When Joern fails on a single decompiler's <strong>output</strong>,
-that's reported here (per decompiler), not folded into the headline score.</p>
-<div id="joern-source" class="goal"></div>
-<table id="joern-output-table"><thead><tr></tr></thead><tbody></tbody></table>
-
-<h3 class="sub">projects</h3>
-<table id="dataset-projects"><thead><tr></tr></thead><tbody></tbody></table>
-    </section>
-    <section class="view" id="view-compare" data-view="compare">
-        <h2 class="view-title">compare</h2>
-        <p class="view-desc">original source next to each decompiler's output for a curated set of
-functions, with this function's per-metric scores. pick one below.</p>
+    <section class="view" id="view-view" data-view="view">
+        <h2 class="view-title">view</h2>
+        <p class="view-desc">original source next to a decompiler's output. <strong>difficulty</strong> is
+derived from structural (GED) agreement across decompilers:
+<strong>easy</strong> &mdash; most decompilers recover the control flow
+perfectly; <strong>hard</strong> &mdash; the functions farthest from perfect
+for everyone (the old hall of shame); <strong>medium</strong> &mdash; in
+between. pick a difficulty, a decompiler, and a metric to highlight.</p>
 <div class="controls">
-    <label for="cmp-filter">filter:</label>
-    <input type="text" id="cmp-filter" placeholder="function / project / binary" size="28">
-    <label for="cmp-select">function:</label>
-    <select id="cmp-select"></select>
-    <span class="counter" id="cmp-counter"></span>
+    <label for="view-difficulty">difficulty:</label>
+    <select id="view-difficulty"></select>
+    <label for="view-dec">decompiler:</label>
+    <select id="view-dec"></select>
+    <label for="view-metric">metric:</label>
+    <select id="view-metric"></select>
 </div>
-<div id="compare-body"></div>
-    </section>
-    <section class="view" id="view-hardest" data-view="hardest">
-        <h2 class="view-title">hardest functions &mdash; hall of shame</h2>
-        <p class="view-desc">the functions decompilers struggled with most (farthest from the
-metric's perfect value), with decompiled output and original source.</p>
 <div class="controls">
-    <label for="hard-metric">metric:</label>
-    <select id="hard-metric"><option value="__all__">all</option></select>
-    <label for="hard-dec">decompiler:</label>
-    <select id="hard-dec"><option value="__all__">all</option></select>
-    <span class="counter" id="hard-counter"></span>
+    <label for="view-filter">filter:</label>
+    <input type="text" id="view-filter" placeholder="function / project / binary" size="28">
+    <label for="view-select">function:</label>
+    <select id="view-select"></select>
+    <span class="counter" id="view-counter"></span>
 </div>
-<div id="hardest-list"></div>
+<div id="view-body"></div>
     </section>
     <section class="view" id="view-history" data-view="history">
         <h2 class="view-title">historical</h2>
@@ -146,21 +92,13 @@ appears once &ge;2 versions have been benchmarked
         <p class="view-desc">a benchmark for decompilers. we compile real C projects at several optimization
 levels, decompile every function of the resulting binaries with each decompiler,
 and score the output against the source it came from &mdash; not against taste.</p>
-<h3 class="sub">the three metrics</h3>
-<p class="view-desc">a decompiler is trying to do three separable things, so we measure three things:</p>
-<div class="goal-body">
-    <strong>structure</strong> &mdash; does it branch and loop like the source?
-    graph edit distance between the two control-flow graphs.<br>
-    <strong>types</strong> &mdash; did it recover the right variable and argument
-    types? matched against DWARF ground truth.<br>
-    <strong>recompile</strong> &mdash; does its C build back into the same machine
-    code? recompiled with the original toolchain and diffed.
-</div>
-
-<p class="view-desc">each is reported as how often a decompiler gets it <em>perfect</em>, because a
-decompilation that is <em>nearly</em> right is still a thing you have to read
-twice. see <a href="#metrics">metrics</a> for what perfect means, and
-<a href="#distance">distance</a> for how far off the rest are.</p>
+<h3 class="sub">why it exists</h3>
+<p class="view-desc">decompilers are graded by folklore: people eyeball a function or two and argue.
+decbench was built to replace that with ground truth &mdash; we have the original
+source, the debug info, and the exact toolchain for every binary we hand a
+decompiler, so every claim a decompiler makes can be checked mechanically, at the
+scale of tens of thousands of functions, and re-checked every time a decompiler
+ships a new version.</p>
 <h3 class="sub">reading the leaderboard</h3>
 <p class="view-desc"><strong>Union</strong> is the summary column: the share of functions a
 decompiler recovers perfectly on <em>at least one</em> metric &mdash; control
@@ -171,13 +109,313 @@ measured, so it is the broadest read of how often a decompiler gets
 decompiler could be scored on it, so nobody is rewarded for skipping the hard
 ones. failing a function you attempted is a miss, not an excuse. the
 <strong>Errors</strong> column shows how often a decompiler produced nothing at
-all.</p>
-<h3 class="sub">the corpus</h3>
+all. see <a href="#distance">distance</a> for how far off the imperfect results
+are.</p>
+<h3 class="sub">the three metrics</h3>
+<p class="view-desc">decompilation has three separable goals, so we measure three things and report
+how often a decompiler gets each <em>perfect</em> &mdash; because a
+decompilation that is <em>nearly</em> right is still a thing you have to read
+twice. expand the panel inside each card to see how the metric actually works.</p>
+        <div class="goal">
+            <div class="goal-head"><span class="num">[1]</span>Control-flow structure correctness</div>
+            <div class="goal-metric">metric: Structural Correctness (GED)</div>
+            <div class="goal-body"><p>Does the decompiled code branch and loop the same way the source does? We compare the control-flow graphs of the source and the decompilation with a Graph Edit Distance (GED) &mdash; the number of node/edge insertions, deletions, and substitutions needed to turn one CFG into the other.</p>
+<details class="metric-viz">
+<summary>how GED works: source &rarr; CFG &rarr; graph diff [click to expand]</summary>
+<div style="background:#000;color:#DBDBDB;padding:8px 0;font-family:'Source Code Pro',monospace;">
+<svg viewBox="0 0 760 350" font-family="'Source Code Pro', monospace" style="max-width:100%;height:auto;display:block">
+  <defs>
+    <marker id="ged-p" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#d4a72c"/></marker>
+    <marker id="ged-e" markerWidth="8" markerHeight="8" refX="5.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#8a8a8a"/></marker>
+    <marker id="ged-r" markerWidth="8" markerHeight="8" refX="5.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#c0504d"/></marker>
+  </defs>
+
+<p><text x="16" y="66" font-size="10" fill="#8a8a8a">source.c</text>
+<rect x="12" y="72" width="210" height="188" rx="4" fill="#141414" stroke="#545454" stroke-width="1"/>
+<text x="20" y="92"  font-size="11" fill="#8a8a8a">// sum of |x[i]|</text>
+<text x="20" y="110" font-size="11" fill="#DBDBDB"><tspan fill="#d4a72c">int</tspan> sum(<tspan fill="#d4a72c">int</tspan> *x, <tspan fill="#d4a72c">int</tspan> n) {</text>
+<text x="28" y="128" font-size="11" fill="#DBDBDB"><tspan fill="#d4a72c">int</tspan> i, s = 0;</text>
+<text x="28" y="146" font-size="11" fill="#DBDBDB"><tspan fill="#d4a72c">for</tspan> (i=0; i&lt;n; i++)</text>
+<text x="36" y="164" font-size="11" fill="#DBDBDB"><tspan fill="#d4a72c">if</tspan> (x[i] &lt; 0)</text>
+<text x="44" y="182" font-size="11" fill="#DBDBDB">s -= x[i];</text>
+<text x="36" y="200" font-size="11" fill="#DBDBDB"><tspan fill="#d4a72c">else</tspan> s += x[i];</text>
+<text x="28" y="218" font-size="11" fill="#DBDBDB"><tspan fill="#d4a72c">return</tspan> s;</text>
+<text x="20" y="236" font-size="11" fill="#DBDBDB">}</text></p>
+<p><text x="245" y="147" font-size="10.5" fill="#d4a72c" text-anchor="middle">joern</text>
+<line x1="224" y1="156" x2="263" y2="156" stroke="#8a8a8a" stroke-width="1.5" marker-end="url(#ged-p)"/></p>
+<p><rect x="268" y="72" width="214" height="188" rx="4" fill="none" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="375" y="88" font-size="11" fill="#6ab04c" text-anchor="middle">source CFG</text></p>
+<p><line x1="375" y1="113" x2="375" y2="127" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
+<line x1="364" y1="151" x2="349" y2="170" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
+<line x1="386" y1="151" x2="401" y2="170" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
+<line x1="352" y1="193" x2="366" y2="212" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
+<line x1="398" y1="193" x2="384" y2="212" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
+<path d="M349,222 C300,208 300,150 349,142" fill="none" stroke="#8a8a8a" stroke-width="1.1" stroke-dasharray="3 3" marker-end="url(#ged-e)"/>
+<text x="292" y="185" font-size="9" fill="#8a8a8a" text-anchor="middle">loop</text></p>
+<p><rect x="349" y="91"  width="52" height="22" rx="4" fill="#141414" stroke="#6ab04c" stroke-width="1.3"/><text x="375" y="106" font-size="11" fill="#DBDBDB" text-anchor="middle">entry</text>
+<rect x="349" y="129" width="52" height="22" rx="4" fill="#141414" stroke="#6ab04c" stroke-width="1.3"/><text x="375" y="144" font-size="11" fill="#DBDBDB" text-anchor="middle">cond</text>
+<rect x="315" y="171" width="52" height="22" rx="4" fill="#141414" stroke="#6ab04c" stroke-width="1.3"/><text x="341" y="186" font-size="11" fill="#DBDBDB" text-anchor="middle">then</text>
+<rect x="383" y="171" width="52" height="22" rx="4" fill="#141414" stroke="#6ab04c" stroke-width="1.3"/><text x="409" y="186" font-size="11" fill="#DBDBDB" text-anchor="middle">else</text>
+<rect x="349" y="213" width="52" height="22" rx="4" fill="#141414" stroke="#6ab04c" stroke-width="1.3"/><text x="375" y="228" font-size="11" fill="#DBDBDB" text-anchor="middle">exit</text></p>
+<p><text x="509" y="127" font-size="9.5" fill="#d4a72c" text-anchor="middle">decompiler</text>
+<text x="509" y="139" font-size="9.5" fill="#d4a72c" text-anchor="middle">output &rarr; joern</text>
+<line x1="484" y1="156" x2="533" y2="156" stroke="#8a8a8a" stroke-width="1.5" marker-end="url(#ged-p)"/></p>
+<p><rect x="536" y="72" width="212" height="188" rx="4" fill="none" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="642" y="88" font-size="11" fill="#DBDBDB" text-anchor="middle">decompiled CFG</text></p>
+<p><line x1="642" y1="113" x2="642" y2="127" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
+<line x1="631" y1="151" x2="616" y2="170" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
+<line x1="653" y1="151" x2="668" y2="170" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
+<line x1="619" y1="193" x2="633" y2="212" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
+<line x1="665" y1="193" x2="651" y2="212" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
+<path d="M616,222 C567,208 567,150 616,142" fill="none" stroke="#8a8a8a" stroke-width="1.1" stroke-dasharray="3 3" marker-end="url(#ged-e)"/>
+<text x="559" y="185" font-size="9" fill="#8a8a8a" text-anchor="middle">loop</text></p>
+<p><line x1="668" y1="143" x2="684" y2="149" stroke="#c0504d" stroke-width="1.5" marker-end="url(#ged-r)"/>
+<path d="M709,161 C742,190 722,226 662,222" fill="none" stroke="#c0504d" stroke-width="1.5" marker-end="url(#ged-r)"/>
+<rect x="686" y="139" width="52" height="22" rx="4" fill="#1a0f0f" stroke="#c0504d" stroke-width="1.4"/><text x="712" y="154" font-size="11" fill="#c0504d" text-anchor="middle">blk</text>
+<text x="706" y="198" font-size="9" fill="#c0504d" text-anchor="middle">+1 node</text>
+<text x="706" y="210" font-size="9" fill="#c0504d" text-anchor="middle">+2 edges</text></p>
+<p><rect x="616" y="91"  width="52" height="22" rx="4" fill="#141414" stroke="#545454" stroke-width="1.2"/><text x="642" y="106" font-size="11" fill="#DBDBDB" text-anchor="middle">entry</text>
+<rect x="616" y="129" width="52" height="22" rx="4" fill="#141414" stroke="#545454" stroke-width="1.2"/><text x="642" y="144" font-size="11" fill="#DBDBDB" text-anchor="middle">cond</text>
+<rect x="582" y="171" width="52" height="22" rx="4" fill="#141414" stroke="#545454" stroke-width="1.2"/><text x="608" y="186" font-size="11" fill="#DBDBDB" text-anchor="middle">then</text>
+<rect x="650" y="171" width="52" height="22" rx="4" fill="#141414" stroke="#545454" stroke-width="1.2"/><text x="676" y="186" font-size="11" fill="#DBDBDB" text-anchor="middle">else</text>
+<rect x="616" y="213" width="52" height="22" rx="4" fill="#141414" stroke="#545454" stroke-width="1.2"/><text x="642" y="228" font-size="11" fill="#DBDBDB" text-anchor="middle">exit</text></p>
+<p><rect x="12" y="270" width="736" height="66" rx="4" fill="#141414" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="26" y="298" font-size="11.5"><tspan fill="#c0504d" font-weight="bold">GED = 3</tspan><tspan fill="#8a8a8a">   node &amp; edge insertions + deletions + substitutions to align the two CFGs</tspan></text>
+<text x="26" y="322" font-size="11.5"><tspan fill="#6ab04c" font-weight="bold">GED = 0</tspan><tspan fill="#8a8a8a">   &rarr;  graph-isomorphic control flow = a perfect structural match</tspan></text>
+</svg></p>
+<p style="color:#8a8a8a;font-size:0.85em;margin:6px 4px 0;">Structural Correctness (GED): Joern lifts both the original source and each decompiler's C output to control-flow graphs, then counts the fewest node/edge edits needed to make them isomorphic &mdash; 0 means an identical shape. Only control structure is scored (node labels are ignored), so the signal is fair across decompilers.</p>
+</div>
+</details> <span class="perfect">perfect = GED of 0 (graph-isomorphic control flow).</span></div>
+        </div>
+        <div class="goal">
+            <div class="goal-head"><span class="num">[2]</span>Type correctness</div>
+            <div class="goal-metric">metric: Type Correctness</div>
+            <div class="goal-body"><p>Did the decompiler recover the right variable and argument types? We match the decompiled variables against DWARF ground truth (arguments by ABI position, stack variables by calibrated offset, the rest by name) and score the fraction recovered correctly.</p>
+<details class="metric-viz">
+<summary>how type matching works: DWARF ground truth &harr; decompiled variables [click to expand]</summary>
+<div style="background:#000;padding:8px 0;">
+<svg viewBox="0 0 760 396" style="max-width:100%;height:auto;display:block" xmlns="http://www.w3.org/2000/svg" font-family="Source Code Pro, monospace">
+  <defs>
+    <marker id="tm-arrow-green" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#6ab04c"/></marker>
+    <marker id="tm-arrow-amber" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#d4a72c"/></marker>
+    <marker id="tm-arrow-red" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#c0504d"/></marker>
+  </defs>
+
+<p><text x="380" y="26" text-anchor="middle" font-size="12.5" fill="#DBDBDB">type_match &mdash; recovered variable types vs DWARF ground truth</text></p>
+<p><rect x="16" y="44" width="250" height="256" fill="none" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="24" y="64" font-size="10.5" fill="#DBDBDB">DWARF ground truth <tspan fill="#8a8a8a">(from -g build)</tspan></text>
+<line x1="24" y1="72" x2="258" y2="72" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/></p>
+<p><rect x="24" y="82"  width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/>
+<rect x="24" y="136" width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/>
+<rect x="24" y="190" width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/>
+<rect x="24" y="244" width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/></p>
+<p><text x="32" y="100" font-size="10.5" fill="#8a8a8a">arg 0</text>
+<text x="32" y="119" font-size="12" fill="#DBDBDB">char *<tspan fill="#8a8a8a">path</tspan></text></p>
+<p><text x="32" y="154" font-size="10.5" fill="#8a8a8a">arg 1</text>
+<text x="32" y="173" font-size="12" fill="#DBDBDB">int <tspan fill="#8a8a8a">mode</tspan></text></p>
+<p><text x="32" y="208" font-size="10.5" fill="#8a8a8a">local @ rsp-0x18</text>
+<text x="32" y="227" font-size="12" fill="#DBDBDB">size_t <tspan fill="#8a8a8a">len</tspan></text></p>
+<p><text x="32" y="262" font-size="10.5" fill="#8a8a8a">local @ rsp-0x20</text>
+<text x="32" y="281" font-size="12" fill="#DBDBDB">struct stat <tspan fill="#8a8a8a">st</tspan></text></p>
+<p><rect x="494" y="44" width="250" height="256" fill="none" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="502" y="64" font-size="10.5" fill="#DBDBDB">decompiler output</text>
+<line x1="502" y1="72" x2="736" y2="72" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/></p>
+<p><rect x="502" y="82"  width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/>
+<rect x="502" y="136" width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/>
+<rect x="502" y="190" width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/>
+<rect x="502" y="244" width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/></p>
+<p><text x="510" y="100" font-size="10.5" fill="#8a8a8a">arg a1</text>
+<text x="510" y="119" font-size="12" fill="#6ab04c">char *</text>
+<text x="728" y="120" text-anchor="end" font-size="13" fill="#6ab04c">&#10003;</text></p>
+<p><text x="510" y="154" font-size="10.5" fill="#8a8a8a">arg a2</text>
+<text x="510" y="173" font-size="12" fill="#d4a72c">uint</text>
+<text x="728" y="174" text-anchor="end" font-size="13" fill="#c0504d">&#10007;</text></p>
+<p><text x="510" y="208" font-size="10.5" fill="#8a8a8a">var_18  @ -0x18</text>
+<text x="510" y="227" font-size="12" fill="#6ab04c">unsigned long</text>
+<text x="728" y="228" text-anchor="end" font-size="13" fill="#6ab04c">&#10003;</text></p>
+<p><text x="510" y="262" font-size="10.5" fill="#8a8a8a">var_20</text>
+<text x="510" y="281" font-size="12" fill="#c0504d">undefined8</text>
+<text x="728" y="282" text-anchor="end" font-size="13" fill="#c0504d">&#10007;</text></p>
+<p><line x1="266" y1="106" x2="490" y2="106" stroke="#6ab04c" stroke-width="1.6" marker-end="url(#tm-arrow-green)"/>
+<text x="380" y="98" text-anchor="middle" font-size="9.5" fill="#cfcfcf"><tspan fill="#6ab04c" font-weight="bold">[1]</tspan> arg 0 &harr; by ABI position</text></p>
+<p><line x1="266" y1="160" x2="490" y2="160" stroke="#d4a72c" stroke-width="1.6" marker-end="url(#tm-arrow-amber)"/>
+<text x="380" y="152" text-anchor="middle" font-size="9.5" fill="#cfcfcf"><tspan fill="#d4a72c" font-weight="bold">[1]</tspan> int != uint  (mismatch)</text></p>
+<p><line x1="266" y1="214" x2="490" y2="214" stroke="#6ab04c" stroke-width="1.6" marker-end="url(#tm-arrow-green)"/>
+<text x="380" y="206" text-anchor="middle" font-size="9.5" fill="#cfcfcf"><tspan fill="#6ab04c" font-weight="bold">[2]</tspan> stack offset -0x18, calibrated</text></p>
+<p><line x1="266" y1="268" x2="490" y2="268" stroke="#c0504d" stroke-width="1.6" marker-end="url(#tm-arrow-red)"/>
+<text x="380" y="260" text-anchor="middle" font-size="9.5" fill="#cfcfcf"><tspan fill="#c0504d" font-weight="bold">[2]</tspan> missed struct type</text></p>
+<p><text x="380" y="318" text-anchor="middle" font-size="9.5" fill="#8a8a8a">matching passes: <tspan fill="#DBDBDB" font-weight="bold">[1]</tspan> args by ABI position (name-independent) &#183; <tspan fill="#DBDBDB" font-weight="bold">[2]</tspan> stack vars by calibrated offset &#183; <tspan fill="#DBDBDB" font-weight="bold">[3]</tspan> rest by exact name</text></p>
+<p><rect x="16" y="330" width="728" height="54" fill="#141414" stroke="#545454" stroke-width="1"/>
+<text x="30" y="356" font-size="13.5" fill="#DBDBDB">score = <tspan fill="#8a8a8a">matched-correct / recoverable</tspan> = <tspan fill="#6ab04c" font-weight="bold">2</tspan> / 4 = <tspan fill="#d4a72c" font-weight="bold">0.50</tspan></text>
+<text x="30" y="376" font-size="11" fill="#8a8a8a"><tspan fill="#6ab04c">1.0</tspan> &rarr; every recoverable variable typed correctly = perfect</text>
+</svg></p>
+<p style="color:#8a8a8a;font-size:0.85em;">Only variables carrying a DWARF location count as <em>recoverable</em> &mdash; fully optimized-out vars are dropped for everyone, so the denominator is identical across decompilers. Arguments match by ABI position (name-independent, so angr's <code>a1</code>/<code>a2</code> get fair credit), stack locals by an auto-calibrated frame-offset shift, and the remainder by exact name.</p>
+</div>
+</details> <span class="perfect">perfect = 1.0 (every recoverable variable typed correctly).</span></div>
+        </div>
+        <div class="goal">
+            <div class="goal-head"><span class="num">[3]</span>Recompilation correctness</div>
+            <div class="goal-metric">metric: Recompilation Bytematch</div>
+            <div class="goal-body"><p>Does the decompiled code recompile to the same machine code? We run a uniform compilability fixup (define decompiler pseudo-types, strip illegal symbol-version tokens, declare missing symbols) so every decompiler gets a fair shot at building, recompile each function with the original toolchain, and compare the resulting assembly &mdash; normalizing link-time-dependent operands (call/jump targets, PC-relative offsets) so only real differences count.</p>
+<details class="metric-viz">
+<summary>how bytematch works: fixup &rarr; recompile &rarr; normalized asm diff [click to expand]</summary>
+<div style="background:#000;color:#DBDBDB;font-family:'Source Code Pro',monospace;padding:4px 0;">
+<svg viewBox="0 0 760 374" style="max-width:100%;height:auto;display:block;">
+  <defs>
+    <marker id="bm-arrow" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#8a8a8a"/>
+    </marker>
+  </defs>
+
+  <g font-family="'Source Code Pro',monospace" fill="#DBDBDB">
+
+<pre><code>&lt;text x=&quot;50&quot; y=&quot;22&quot; font-size=&quot;14&quot; fill=&quot;#DBDBDB&quot;&gt;byte_match&lt;/text&gt;
+&lt;text x=&quot;140&quot; y=&quot;22&quot; font-size=&quot;12&quot; fill=&quot;#8a8a8a&quot;&gt;— recompile the decompiled C, then diff the bytes against the original&lt;/text&gt;
+
+
+
+
+&lt;rect x=&quot;50&quot; y=&quot;40&quot; width=&quot;160&quot; height=&quot;84&quot; fill=&quot;#141414&quot; stroke=&quot;#545454&quot; stroke-width=&quot;1&quot;/&gt;
+&lt;text x=&quot;58&quot; y=&quot;57&quot; font-size=&quot;11&quot; fill=&quot;#DBDBDB&quot;&gt;decompiled C&lt;/text&gt;
+&lt;text x=&quot;58&quot; y=&quot;76&quot; font-size=&quot;11&quot;&gt;&lt;tspan fill=&quot;#d4a72c&quot;&gt;undefined4&lt;/tspan&gt;&lt;tspan fill=&quot;#DBDBDB&quot;&gt; f(int a){&lt;/tspan&gt;&lt;/text&gt;
+&lt;text x=&quot;58&quot; y=&quot;92&quot; font-size=&quot;11&quot;&gt;&lt;tspan fill=&quot;#DBDBDB&quot;&gt;  &lt;/tspan&gt;&lt;tspan fill=&quot;#d4a72c&quot;&gt;uint&lt;/tspan&gt;&lt;tspan fill=&quot;#DBDBDB&quot;&gt; x = a*3;&lt;/tspan&gt;&lt;/text&gt;
+&lt;text x=&quot;58&quot; y=&quot;108&quot; font-size=&quot;11&quot; fill=&quot;#DBDBDB&quot;&gt;  return x; }&lt;/text&gt;
+
+
+&lt;line x1=&quot;212&quot; y1=&quot;82&quot; x2=&quot;297&quot; y2=&quot;82&quot; stroke=&quot;#8a8a8a&quot; stroke-width=&quot;1.4&quot; marker-end=&quot;url(#bm-arrow)&quot;/&gt;
+&lt;text x=&quot;255&quot; y=&quot;60&quot; font-size=&quot;11&quot; fill=&quot;#6ab04c&quot; text-anchor=&quot;middle&quot;&gt;compilability&lt;/text&gt;
+&lt;text x=&quot;255&quot; y=&quot;72&quot; font-size=&quot;11&quot; fill=&quot;#6ab04c&quot; text-anchor=&quot;middle&quot;&gt;fixup&lt;/text&gt;
+&lt;text x=&quot;255&quot; y=&quot;98&quot; font-size=&quot;8.5&quot; fill=&quot;#8a8a8a&quot; text-anchor=&quot;middle&quot;&gt;inject only&lt;/text&gt;
+&lt;text x=&quot;255&quot; y=&quot;108&quot; font-size=&quot;8.5&quot; fill=&quot;#8a8a8a&quot; text-anchor=&quot;middle&quot;&gt;what gcc needs;&lt;/text&gt;
+&lt;text x=&quot;255&quot; y=&quot;118&quot; font-size=&quot;8.5&quot; fill=&quot;#8a8a8a&quot; text-anchor=&quot;middle&quot;&gt;never rewrite logic&lt;/text&gt;
+
+
+&lt;rect x=&quot;300&quot; y=&quot;40&quot; width=&quot;150&quot; height=&quot;84&quot; fill=&quot;#141414&quot; stroke=&quot;#545454&quot; stroke-width=&quot;1&quot;/&gt;
+&lt;text x=&quot;308&quot; y=&quot;57&quot; font-size=&quot;11&quot; fill=&quot;#DBDBDB&quot;&gt;buildable .c&lt;/text&gt;
+&lt;text x=&quot;308&quot; y=&quot;74&quot; font-size=&quot;9&quot; fill=&quot;#6ab04c&quot;&gt;+ typedef u32 undefined4;&lt;/text&gt;
+&lt;text x=&quot;308&quot; y=&quot;88&quot; font-size=&quot;9&quot; fill=&quot;#6ab04c&quot;&gt;+ typedef u32 uint;&lt;/text&gt;
+&lt;text x=&quot;308&quot; y=&quot;106&quot; font-size=&quot;9&quot; fill=&quot;#8a8a8a&quot;&gt;undefined4 f(int a){…}&lt;/text&gt;
+
+
+&lt;line x1=&quot;452&quot; y1=&quot;82&quot; x2=&quot;537&quot; y2=&quot;82&quot; stroke=&quot;#8a8a8a&quot; stroke-width=&quot;1.4&quot; marker-end=&quot;url(#bm-arrow)&quot;/&gt;
+&lt;text x=&quot;495&quot; y=&quot;60&quot; font-size=&quot;11&quot; fill=&quot;#d4a72c&quot; text-anchor=&quot;middle&quot;&gt;recompile&lt;/text&gt;
+&lt;text x=&quot;495&quot; y=&quot;72&quot; font-size=&quot;9.5&quot; fill=&quot;#d4a72c&quot; text-anchor=&quot;middle&quot;&gt;same toolchain&lt;/text&gt;
+&lt;text x=&quot;495&quot; y=&quot;98&quot; font-size=&quot;8.5&quot; fill=&quot;#8a8a8a&quot; text-anchor=&quot;middle&quot;&gt;PE→MinGW&lt;/text&gt;
+&lt;text x=&quot;495&quot; y=&quot;108&quot; font-size=&quot;8.5&quot; fill=&quot;#8a8a8a&quot; text-anchor=&quot;middle&quot;&gt;ARM→arm-eabi&lt;/text&gt;
+&lt;text x=&quot;495&quot; y=&quot;118&quot; font-size=&quot;8.5&quot; fill=&quot;#8a8a8a&quot; text-anchor=&quot;middle&quot;&gt;x86→gcc&lt;/text&gt;
+
+
+&lt;rect x=&quot;540&quot; y=&quot;40&quot; width=&quot;170&quot; height=&quot;84&quot; fill=&quot;#141414&quot; stroke=&quot;#545454&quot; stroke-width=&quot;1&quot;/&gt;
+&lt;text x=&quot;548&quot; y=&quot;57&quot; font-size=&quot;11&quot; fill=&quot;#DBDBDB&quot;&gt;.o  (recompiled)&lt;/text&gt;
+&lt;text x=&quot;548&quot; y=&quot;78&quot; font-size=&quot;10&quot; fill=&quot;#8a8a8a&quot;&gt;recompiled the SAME&lt;/text&gt;
+&lt;text x=&quot;548&quot; y=&quot;94&quot; font-size=&quot;10&quot; fill=&quot;#8a8a8a&quot;&gt;way as the source:&lt;/text&gt;
+&lt;text x=&quot;548&quot; y=&quot;110&quot; font-size=&quot;10&quot; fill=&quot;#d4a72c&quot;&gt;-O2 · x86-64&lt;/text&gt;
+
+
+
+
+&lt;line x1=&quot;600&quot; y1=&quot;124&quot; x2=&quot;562&quot; y2=&quot;147&quot; stroke=&quot;#8a8a8a&quot; stroke-width=&quot;1.4&quot; marker-end=&quot;url(#bm-arrow)&quot;/&gt;
+&lt;text x=&quot;606&quot; y=&quot;140&quot; font-size=&quot;9&quot; fill=&quot;#8a8a8a&quot;&gt;recompiled bytes&lt;/text&gt;
+
+
+&lt;rect x=&quot;50&quot; y=&quot;168&quot; width=&quot;150&quot; height=&quot;100&quot; fill=&quot;#141414&quot; stroke=&quot;#545454&quot; stroke-width=&quot;1&quot;/&gt;
+&lt;text x=&quot;58&quot; y=&quot;187&quot; font-size=&quot;11&quot; fill=&quot;#DBDBDB&quot;&gt;original binary&lt;/text&gt;
+&lt;text x=&quot;58&quot; y=&quot;208&quot; font-size=&quot;10&quot; fill=&quot;#8a8a8a&quot;&gt;ground-truth&lt;/text&gt;
+&lt;text x=&quot;58&quot; y=&quot;224&quot; font-size=&quot;10&quot; fill=&quot;#8a8a8a&quot;&gt;func f @ 0x1149&lt;/text&gt;
+&lt;text x=&quot;58&quot; y=&quot;240&quot; font-size=&quot;10&quot; fill=&quot;#8a8a8a&quot;&gt;raw .text bytes&lt;/text&gt;
+&lt;text x=&quot;58&quot; y=&quot;258&quot; font-size=&quot;9&quot; fill=&quot;#6ab04c&quot;&gt;the reference&lt;/text&gt;
+
+
+&lt;line x1=&quot;200&quot; y1=&quot;218&quot; x2=&quot;247&quot; y2=&quot;218&quot; stroke=&quot;#8a8a8a&quot; stroke-width=&quot;1.4&quot; marker-end=&quot;url(#bm-arrow)&quot;/&gt;
+&lt;text x=&quot;224&quot; y=&quot;212&quot; font-size=&quot;9&quot; fill=&quot;#8a8a8a&quot; text-anchor=&quot;middle&quot;&gt;bytes&lt;/text&gt;
+
+
+&lt;rect x=&quot;250&quot; y=&quot;148&quot; width=&quot;340&quot; height=&quot;138&quot; fill=&quot;none&quot; stroke=&quot;rgba(219,219,219,0.4)&quot; stroke-width=&quot;1&quot; stroke-dasharray=&quot;4 3&quot;/&gt;
+&lt;text x=&quot;262&quot; y=&quot;166&quot; font-size=&quot;12&quot; fill=&quot;#DBDBDB&quot;&gt;normalize + diff&lt;/text&gt;
+&lt;text x=&quot;262&quot; y=&quot;179&quot; font-size=&quot;9&quot; fill=&quot;#8a8a8a&quot;&gt;blank link-time operands, then compare asm lines&lt;/text&gt;
+
+
+&lt;rect x=&quot;258&quot; y=&quot;184&quot; width=&quot;324&quot; height=&quot;94&quot; fill=&quot;#141414&quot; stroke=&quot;#545454&quot; stroke-width=&quot;1&quot;/&gt;
+&lt;text x=&quot;340&quot; y=&quot;196&quot; font-size=&quot;10&quot; fill=&quot;#8a8a8a&quot; text-anchor=&quot;middle&quot;&gt;recompiled&lt;/text&gt;
+&lt;text x=&quot;500&quot; y=&quot;196&quot; font-size=&quot;10&quot; fill=&quot;#8a8a8a&quot; text-anchor=&quot;middle&quot;&gt;original&lt;/text&gt;
+&lt;line x1=&quot;420&quot; y1=&quot;186&quot; x2=&quot;420&quot; y2=&quot;276&quot; stroke=&quot;rgba(219,219,219,0.35)&quot; stroke-width=&quot;1&quot; stroke-dasharray=&quot;3 3&quot;/&gt;
+
+
+&lt;rect x=&quot;259&quot; y=&quot;200&quot; width=&quot;322&quot; height=&quot;16&quot; fill=&quot;#6ab04c&quot; fill-opacity=&quot;0.12&quot;/&gt;
+&lt;rect x=&quot;259&quot; y=&quot;216&quot; width=&quot;322&quot; height=&quot;16&quot; fill=&quot;#6ab04c&quot; fill-opacity=&quot;0.12&quot;/&gt;
+&lt;rect x=&quot;259&quot; y=&quot;232&quot; width=&quot;322&quot; height=&quot;16&quot; fill=&quot;#6ab04c&quot; fill-opacity=&quot;0.12&quot;/&gt;
+&lt;rect x=&quot;259&quot; y=&quot;248&quot; width=&quot;322&quot; height=&quot;16&quot; fill=&quot;#c0504d&quot; fill-opacity=&quot;0.16&quot;/&gt;
+
+
+&lt;text x=&quot;270&quot; y=&quot;212&quot; font-size=&quot;11&quot; fill=&quot;#6ab04c&quot;&gt;push rbp&lt;/text&gt;
+&lt;text x=&quot;430&quot; y=&quot;212&quot; font-size=&quot;11&quot; fill=&quot;#6ab04c&quot;&gt;push rbp&lt;/text&gt;
+
+&lt;text x=&quot;270&quot; y=&quot;228&quot; font-size=&quot;11&quot;&gt;&lt;tspan fill=&quot;#6ab04c&quot;&gt;mov eax,[rip+&lt;/tspan&gt;&lt;tspan fill=&quot;#d4a72c&quot;&gt;____&lt;/tspan&gt;&lt;tspan fill=&quot;#6ab04c&quot;&gt;]&lt;/tspan&gt;&lt;/text&gt;
+&lt;text x=&quot;430&quot; y=&quot;228&quot; font-size=&quot;11&quot;&gt;&lt;tspan fill=&quot;#6ab04c&quot;&gt;mov eax,[rip+&lt;/tspan&gt;&lt;tspan fill=&quot;#d4a72c&quot;&gt;____&lt;/tspan&gt;&lt;tspan fill=&quot;#6ab04c&quot;&gt;]&lt;/tspan&gt;&lt;/text&gt;
+
+&lt;text x=&quot;270&quot; y=&quot;244&quot; font-size=&quot;11&quot;&gt;&lt;tspan fill=&quot;#6ab04c&quot;&gt;call &lt;/tspan&gt;&lt;tspan fill=&quot;#d4a72c&quot;&gt;____&lt;/tspan&gt;&lt;/text&gt;
+&lt;text x=&quot;430&quot; y=&quot;244&quot; font-size=&quot;11&quot;&gt;&lt;tspan fill=&quot;#6ab04c&quot;&gt;call &lt;/tspan&gt;&lt;tspan fill=&quot;#d4a72c&quot;&gt;____&lt;/tspan&gt;&lt;/text&gt;
+
+&lt;text x=&quot;270&quot; y=&quot;260&quot; font-size=&quot;11&quot; fill=&quot;#c0504d&quot;&gt;shl eax, 2&lt;/text&gt;
+&lt;text x=&quot;430&quot; y=&quot;260&quot; font-size=&quot;11&quot; fill=&quot;#c0504d&quot;&gt;lea eax,[eax*4]&lt;/text&gt;
+
+&lt;text x=&quot;340&quot; y=&quot;273&quot; font-size=&quot;11&quot; fill=&quot;#8a8a8a&quot; text-anchor=&quot;middle&quot;&gt;⋮&lt;/text&gt;
+&lt;text x=&quot;500&quot; y=&quot;273&quot; font-size=&quot;11&quot; fill=&quot;#8a8a8a&quot; text-anchor=&quot;middle&quot;&gt;⋮&lt;/text&gt;
+
+
+&lt;rect x=&quot;250&quot; y=&quot;294&quot; width=&quot;10&quot; height=&quot;10&quot; fill=&quot;#6ab04c&quot; fill-opacity=&quot;0.55&quot; stroke=&quot;#6ab04c&quot; stroke-width=&quot;0.8&quot;/&gt;
+&lt;text x=&quot;264&quot; y=&quot;303&quot; font-size=&quot;9&quot; fill=&quot;#8a8a8a&quot;&gt;match&lt;/text&gt;
+&lt;rect x=&quot;318&quot; y=&quot;294&quot; width=&quot;10&quot; height=&quot;10&quot; fill=&quot;#d4a72c&quot; fill-opacity=&quot;0.55&quot; stroke=&quot;#d4a72c&quot; stroke-width=&quot;0.8&quot;/&gt;
+&lt;text x=&quot;332&quot; y=&quot;303&quot; font-size=&quot;9&quot; fill=&quot;#8a8a8a&quot;&gt;normalized operand&lt;/text&gt;
+&lt;rect x=&quot;470&quot; y=&quot;294&quot; width=&quot;10&quot; height=&quot;10&quot; fill=&quot;#c0504d&quot; fill-opacity=&quot;0.55&quot; stroke=&quot;#c0504d&quot; stroke-width=&quot;0.8&quot;/&gt;
+&lt;text x=&quot;484&quot; y=&quot;303&quot; font-size=&quot;9&quot; fill=&quot;#8a8a8a&quot;&gt;byte differs&lt;/text&gt;
+
+
+&lt;rect x=&quot;50&quot; y=&quot;314&quot; width=&quot;660&quot; height=&quot;48&quot; fill=&quot;none&quot; stroke=&quot;rgba(219,219,219,0.4)&quot; stroke-width=&quot;1&quot; stroke-dasharray=&quot;4 3&quot;/&gt;
+&lt;text x=&quot;64&quot; y=&quot;337&quot; font-size=&quot;12&quot;&gt;&lt;tspan fill=&quot;#8a8a8a&quot;&gt;byte_match = &lt;/tspan&gt;&lt;tspan fill=&quot;#DBDBDB&quot;&gt;matching asm lines / total&lt;/tspan&gt;&lt;tspan fill=&quot;#8a8a8a&quot;&gt; = &lt;/tspan&gt;&lt;tspan fill=&quot;#6ab04c&quot; font-size=&quot;16&quot;&gt;0.87&lt;/tspan&gt;&lt;/text&gt;
+&lt;text x=&quot;64&quot; y=&quot;354&quot; font-size=&quot;10&quot; fill=&quot;#8a8a8a&quot;&gt;&lt;tspan fill=&quot;#6ab04c&quot;&gt;1.0&lt;/tspan&gt; → recompiled assembly matches the original = perfect&lt;/text&gt;</code></pre>
+  </g>
+</svg>
+<p style="color:#8a8a8a;font-size:0.85em;">Recompilation Bytematch rebuilds the decompiler's own C the SAME way the original was built — toolchain and <code>-O*/-m*</code> flags read from the DWARF producer (PE→MinGW, ARM→arm-none-eabi, x86→gcc) — then compares assembly line by line. A compilability fixup injects <em>only</em> what gcc reports missing (typedefs for pseudo-types like <code>undefined4</code>/<code>uint</code>/<code>code</code>, decls for implicit functions, globals for undeclared ids) and never rewrites logic. Link-time-dependent operands — call/branch targets and <code>[rip±disp]</code> PC-relative displacements — are normalized away, so an unlinked address difference is not a penalty. Type recovery is scored separately (type_match), so fixing types just to compile is fair.</p>
+</div>
+</details> <span class="perfect">perfect = 1.0 (recompiled assembly matches the original).</span></div>
+        </div><div class="recovered">
+    [ = ] When a function is perfect on <strong>at least one</strong> metric,
+    the decompiler has exactly recovered that aspect of the original source:
+    the control flow, the types, or code that recompiles to the same bytes.
+    That is the Union column on the leaderboard.
+</div>
+
+<h3 class="sub">how often each decompiler is perfect</h3>
+<p class="view-desc" id="metrics-table-note">over the selected dataset.</p>
+
+<table id="metrics-perfect-table"><thead><tr></tr></thead><tbody></tbody></table>
+
+<h3 class="sub">the dataset</h3>
 <p class="view-desc">real software, not toy functions: coreutils-scale unix packages, drone and RTOS
-firmware cross-compiled for ARM, and a handful of malware samples. see
-<a href="#dataset">dataset</a> for every project, its size, and how much of the
-pipeline we lose to our own tooling rather than to the decompilers &mdash; we
-count that against ourselves.</p>
+firmware cross-compiled for ARM, and a handful of malware samples &mdash; every
+project, its size, and how much of the GED pipeline is lost to our own tooling
+(Joern source-parse failures) rather than to the decompilers. we count that
+against ourselves.</p>
+<h3 class="sub">software types</h3>
+<p class="view-desc">click a type to highlight the projects it covers (a
+project can span several).</p>
+<div class="controls" id="category-controls"></div>
+
+<h3 class="sub">summary</h3>
+<div id="dataset-summary" class="goal"></div>
+
+<h3 class="sub">pipeline health (our own tooling)</h3>
+<p class="view-desc">GED depends on Joern parsing both the source and the decompiler output.
+When Joern fails on the <strong>source</strong>, that's our tooling &mdash; those
+functions are excluded from GED for every decompiler (never counted against
+them). When Joern fails on a single decompiler's <strong>output</strong>,
+that's reported here (per decompiler), not folded into the headline score.</p>
+<div id="joern-source" class="goal"></div>
+<table id="joern-output-table"><thead><tr></tr></thead><tbody></tbody></table>
+
+<h3 class="sub">projects</h3>
+<table id="dataset-projects"><thead><tr></tr></thead><tbody></tbody></table>
     </section>
             <div class="rule"></div>
             <footer>DecBench v1.0 &mdash; decompiler benchmarking suite &middot; projects: base-passwd, bash, betaflight, bzip2, chibios, cleanflight, coreutils, crazyflie, cronie, dexter, diffutils, dpkg, e2fsprogs, findutils, freertos, gnutls, grep, gzip, iproute2, kmod, libacl, libbsd, libedit, libexpat, libopencm3, libselinux, minipig, mirai, mirai-win, mydoom, nuttx, openssh-portable, riot-os, rsyslog, shadow, sysvinit, tar, u-boot, x0r-usb, zlib</footer>
