@@ -21,19 +21,36 @@ DecBench is a benchmarking suite for evaluating decompiler performance. It imple
   `/home/mahaloz/ctf/tools/binja/binaryninja`; added to the venv via a
   `binaryninja.pth` in site-packages; needs a license at
   `~/.binaryninja/license.dat` — a Commercial/Ultimate license is required for
-  headless use, and it must cover v3.1), and **r2dec** (native radare2 at
-  `/usr/bin`, built-in `pdc`). **RetDec/Reko** are Dockerized (`docker/`).
-  `decbench list-decompilers` shows availability. The 5-decompiler benchmark set
-  is **angr, phoenix, ghidra, ida, binja**.
+  headless use, and it must cover v3.1), **r2dec** (radare2; the benchmark path
+  is the REAL r2dec plugin via the `decbench/r2dec` Docker image — native `pdc`
+  is a fallback whose asm-like output yields no Joern CFG, so `pdd` is required
+  for GED), and **dewolf** (fkie-cad/dewolf, a Binary-Ninja research decompiler
+  run OUT OF PROCESS in its own py3.10 venv at
+  `/home/mahaloz/.virtualenvs/dewolf` with the repo at
+  `/home/mahaloz/ctf/tools/dewolf`; see `raw/dewolf_raw.py` +
+  `raw/dewolf_driver.py`, configured under `[dewolf.versions.default]`).
+  **RetDec/Reko** are Dockerized (`docker/`).
+  `decbench list-decompilers` shows availability. The core benchmark set is
+  **angr, phoenix, ghidra, ida, binja** (+ kuna in the full run); **r2dec** and
+  **dewolf** are the newest additions. NOTE: **phoenix is hidden from the
+  published site** (`content/site.toml` `[decompilers] hidden`) but kept in
+  `function_results.json`.
 - **Phoenix** = `decbench/decompilers/raw/angr_raw.py::RawAngrPhoenixDecompiler`
   (`structurer = "Phoenix"`). The base `RawAngrDecompiler` has a `structurer`
   attr (None = SAILR default); set it via angr's `get_structurer_option()`
   ("SAILR"/"Phoenix"/"DREAM").
-- **Two Ghidra versions** are configured for multi-version benchmarking in
-  `~/.config/decbench/decompilers.toml` (`ghidra@12.0` → ghidra_12.0,
-  `ghidra@12.1` → ghidra_12.1). Run them as distinct specs: `-d ghidra@12.0 -d
-  ghidra@12.1`. They MUST run in separate processes (pyghidra binds one JVM to
-  one install per process) — the run drivers already use per-task subprocesses.
+- **Five Ghidra versions** are configured for multi-version (historical)
+  benchmarking in `~/.config/decbench/decompilers.toml`: `ghidra@12.1`,
+  `ghidra@12.0` (in `/home/mahaloz/bin/ghidra_12.{1,0}`), plus the historical
+  `ghidra@11.4` (11.4.3), `ghidra@11.0` (11.0.3), `ghidra@10.4` (unzipped under
+  `/home/mahaloz/bin/ghidra_*_PUBLIC`). Run as distinct specs (`-d ghidra@11.0
+  ...`). They MUST run in separate processes (one JVM per install per process) —
+  the run drivers already use per-task subprocesses. Launch dispatch is
+  version-aware (`raw/ghidra_raw.py`): pip `pyghidra` (>=12.0), the install's
+  OWN bundled PyGhidra (11.2–11.x), or the predecessor `pyhidra` (<11.2); each
+  version's JDK comes from a per-version `java_home` in the config (<=11.1 → JDK
+  17, >=11.2 → JDK 21). To turn a versioned run into Historical-page points, use
+  `scripts/ingest_history.py <versioned-run> <target-tree>`.
 - Docker **works** here (no sudo needed); used for the RetDec/Reko backends.
 - `declib` (4.0.1, PyPI) is still installed and the `*-declib` backends still
   use it, but the **canonical** `angr`/`ghidra`/`ida`/`binja` backends are now
@@ -119,9 +136,19 @@ GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
   python scripts/run_benchmark.py results/sailr_full     # decompile+evaluate+report
 #   run_benchmark.py knobs (env): DECBENCH_DECOMPILERS (default angr,ghidra),
-#   DECBENCH_DECOMPILE_TIMEOUT (s, default 300), DECBENCH_GED_MAX_NODES (60).
-#   Restart resumes from per-project checkpoints; `... results/sailr_full -- grep`
-#   limits to named projects. Single project: scripts/decompile_one.py.
+#   DECBENCH_DECOMPILE_TIMEOUT (s, default 300), DECBENCH_GED_MAX_NODES (60),
+#   DECBENCH_OPT_LEVELS (comma list, e.g. "O0" to narrow the run), DECBENCH_METRICS
+#   (comma list, e.g. "ged" for a GED-only run). Resume MERGES per project AND per
+#   decompiler: `DECBENCH_DECOMPILERS=r2dec python scripts/run_benchmark.py
+#   results/full_run` ADDS r2dec (or dewolf) to every project's checkpoint without
+#   re-running the others, then regenerates function_results.json with the new
+#   column. Restart resumes from per-project checkpoints; `... results/sailr_full
+#   -- grep` limits to named projects. Single project: scripts/decompile_one.py.
+#   Historical Ghidra example (GED-only over O0, five versions):
+#     DECBENCH_DECOMPILERS=ghidra@12.1,ghidra@12.0,ghidra@11.4,ghidra@11.0,ghidra@10.4 \
+#     DECBENCH_OPT_LEVELS=O0 DECBENCH_METRICS=ged \
+#     python scripts/run_benchmark.py results/ghidra_history -- <sailr stems>
+#   then: python scripts/ingest_history.py results/ghidra_history results/full_run
 
 # FULL run over ALL projects (sailr x86 + cps ARM + malware ARM/PE). Both drivers
 # now gather projects/{sailr,cps,malware}/*.toml (gather_tomls(); cps/disabled/
@@ -280,13 +307,21 @@ type_match and byte_match use it, so they work on the PE (MinGW) malware targets
 aesthetic: black bg, Source Code Pro mono, dashed rules, ASCII bars). `html.py` is
 **skeleton assembly only** (526 lines) — it holds NO CSS, NO JS, NO prose. Layout:
 - `content/` - **ALL maintainer-editable text.** `<view>.md` per view
-  (leaderboard, metrics, distance, dataset, compare, hardest, history, about) +
-  `site.toml` (brand/footer/banners/sidebar/side_stats), `views.toml` (view
-  registry: id, nav label, `requires_function_data`, which is `default`),
-  `metrics.toml` (display name/short name/order/perfect definition — the ONE
-  source of truth, replacing 4 copies that drifted), `datasets.toml` (the 5
-  presets' label+description+`default`), `categories.toml` (software-type
-  taxonomy). Loaded by `content.py` (`load_content()`) into frozen dataclasses.
+  (leaderboard, distance, **view**, history, **about**) + `site.toml`
+  (brand/footer/banners/sidebar/side_stats, and `[decompilers] hidden` = the
+  site-hidden decompilers) `views.toml` (view registry: id, nav label,
+  `requires_function_data`, which is `default`), `metrics.toml` (display
+  name/short name/order/perfect definition — the ONE source of truth),
+  `datasets.toml` (the 5 presets' label+description+`default`), `categories.toml`
+  (software-type taxonomy). Loaded by `content.py` (`load_content()`) into frozen
+  dataclasses. NOTE the view set was consolidated: the old `metrics` + `dataset`
+  views merged into **about** (which now carries the metric goal cards with
+  collapsible SVG visualizations AND the dataset tables), and `compare` +
+  `hardest` merged into **view** (source vs one decompiler across easy/medium/hard
+  difficulty tiers — `scoring/view_samples.py`; ~100 samples/tier in
+  `samples.json`, and `hardest.json` is no longer shipped). The 5 presets are
+  now `unoptimized` (default) / `optimized` (O2-noinline) / `inlined` (O2) /
+  `large` / `sample-set` (250 fns; `scoring/datasets.py`).
   A view's `id` MUST have a matching `<id>.md`; exactly one view and one preset
   must set `default = true` (`tests/test_content.py` enforces both).
 - `assets/` - `app.css`, `app.js`, and a **vendored** Source Code Pro woff2 (no
