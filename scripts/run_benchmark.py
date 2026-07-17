@@ -69,6 +69,18 @@ OPT_LEVELS = [
     OptimizationLevel.O2,
     OptimizationLevel.O2_NOINLINE,
 ]
+# Scoped-run knobs. DECBENCH_OPT_LEVELS narrows which opt levels are discovered/
+# run (e.g. "O0" for the historical Ghidra pass); DECBENCH_METRICS narrows which
+# metrics evaluate (e.g. "ged"). Defaults: all three levels, all metrics.
+if os.environ.get("DECBENCH_OPT_LEVELS"):
+    OPT_LEVELS = [
+        OptimizationLevel(v.strip())
+        for v in os.environ["DECBENCH_OPT_LEVELS"].split(",")
+        if v.strip()
+    ]
+METRICS = [
+    m.strip() for m in (os.environ.get("DECBENCH_METRICS") or "").split(",") if m.strip()
+] or None
 DECOMPILERS = (os.environ.get("DECBENCH_DECOMPILERS") or "angr,ghidra").split(",")
 WORKERS = int(os.environ.get("DECBENCH_WORKERS") or "40")
 # Hard per-(binary, decompiler) wall-clock budget. angr's decompiler can spin at
@@ -292,7 +304,9 @@ def _relabel_to_dwarf(
         # Keep the larger body if two addresses collapse to one DWARF name
         # (duplicate low_pc), so a real body is not clobbered by a trivial stub.
         prev = new_funcs.get(fd.name)
-        if prev is None or len(fd.decompiled_code or "") >= len(getattr(prev, "decompiled_code", "") or ""):
+        if prev is None or len(fd.decompiled_code or "") >= len(
+            getattr(prev, "decompiled_code", "") or ""
+        ):
             new_funcs[fd.name] = fd
     result.functions = new_funcs  # type: ignore[assignment]
     result.binary_path = unstripped
@@ -317,7 +331,10 @@ def _timed_decompile(
         str(pkl),
         names_file,
     ]
-    timeout_s = DECOMPILER_TIMEOUT.get(dec_name, DECOMPILE_TIMEOUT)
+    # Versioned specs (e.g. "ghidra@11.4") share their base tool's budget.
+    timeout_s = DECOMPILER_TIMEOUT.get(
+        dec_name, DECOMPILER_TIMEOUT.get(dec_name.split("@", 1)[0], DECOMPILE_TIMEOUT)
+    )
     failure = ""
     timed_out = False
     proc = None
@@ -659,7 +676,7 @@ def main() -> int:
                         dec,
                         out_dir,
                         opt,
-                        None,
+                        METRICS,
                         parallel=True,
                         workers=WORKERS,
                         precomputed_source_cfgs=src_cfgs,

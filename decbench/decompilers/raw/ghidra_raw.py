@@ -12,19 +12,24 @@ Drives Ghidra's headless decompiler directly:
   instruction address).
 
 Multi-version support: ``version_settings('ghidra', self.requested_version)``
-supplies an ``install_dir`` (set into ``GHIDRA_INSTALL_DIR`` before
-``pyghidra.start()``), so ``ghidra@11.3`` vs ``ghidra@12.1`` launch different
-installs.
+supplies an ``install_dir`` (set into ``GHIDRA_INSTALL_DIR`` before the JVM
+starts) and optionally a ``java_home``, so ``ghidra@10.4`` vs ``ghidra@12.1``
+launch different installs on the right JDK. Installs older than 12.0 are
+launched via the predecessor ``pyhidra`` package (pip ``pyghidra`` 3.x refuses
+anything < 12.0); the two expose the same API surface.
 
-Note: ``pyghidra.start()`` boots a single JVM per process and cannot switch
-installs afterwards, so each *process* handles one Ghidra version / binary.
+Note: the launcher boots a single JVM per process and cannot switch installs
+afterwards, so each *process* handles one Ghidra version / binary.
 The run driver already spawns a fresh process per decompile task.
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
+import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -57,46 +62,137 @@ class RawGhidraDecompiler(Decompiler):
     # Version / install-dir resolution
     #
 
+    def _settings(self) -> dict:
+        """Per-version settings from ``decompilers.toml`` (may be empty)."""
+        from decbench.decompilers.spec import version_settings
+
+        return version_settings("ghidra", self.requested_version)
+
     def _install_dir(self) -> str | None:
         """Resolve which Ghidra install to launch.
 
         Prefers the per-version config (``decompilers.toml``), falls back to
         ``GHIDRA_INSTALL_DIR``.
         """
-        from decbench.decompilers.spec import version_settings
-
-        settings = version_settings("ghidra", self.requested_version)
-        install = settings.get("install_dir")
+        install = self._settings().get("install_dir")
         if install:
             return str(install)
         return os.environ.get("GHIDRA_INSTALL_DIR")
 
-    def _ensure_started(self) -> None:
+    def _version_tuple(self) -> tuple[int, ...] | None:
+        """The resolved install's (major, minor) version, or None if unreadable."""
+        version = self.get_version()
+        try:
+            return tuple(int(part) for part in str(version).split(".")[:2])
+        except (TypeError, ValueError):
+            return None
+
+    def _launcher(self) -> Any:
+        """The launcher module matching the resolved install's version.
+
+        pip ``pyghidra`` (3.x) refuses to launch Ghidra < 12.0, and no pip
+        release of it ever supported < 11.2, so historical installs need a
+        version-matched launcher:
+
+        * ``>= 12.0`` — the pip ``pyghidra`` in the venv.
+        * ``11.2 .. 11.x`` — the install's own bundled PyGhidra
+          (``Ghidra/Features/PyGhidra/pypkg/src``), imported ahead of the pip
+          one. (``pyhidra`` nominally launches these too, but its project
+          handling breaks on 11.4: "Project marker file not found".)
+        * ``< 11.2`` — the predecessor package ``pyhidra`` (same project
+          pre-rename; identical ``start``/``started``/``open_program``).
+
+        All bind ONE JVM per process, which the per-task subprocess model
+        already accommodates.
+        """
+        version = self._version_tuple()
+        if version is None or version >= (12,):
+            import pyghidra
+
+            return pyghidra
+        if version >= (11, 2):
+            bundled = Path(self._install_dir() or "") / "Ghidra/Features/PyGhidra/pypkg/src"
+            if bundled.is_dir():
+                import sys
+
+                if "pyghidra" in sys.modules:
+                    loaded = getattr(sys.modules["pyghidra"], "__file__", "") or ""
+                    if not loaded.startswith(str(bundled)):
+                        raise RuntimeError(
+                            "pip pyghidra already imported in this process; a "
+                            f"Ghidra {version} install needs its bundled PyGhidra "
+                            "and must run in a fresh process"
+                        )
+                elif str(bundled) not in sys.path:
+                    sys.path.insert(0, str(bundled))
+                import pyghidra
+
+                return pyghidra
+        import pyhidra
+
+        return pyhidra
+
+    def _ensure_started(self) -> Any:
         """Point ``GHIDRA_INSTALL_DIR`` at the resolved install, then start JVM.
+
+        Honours a per-version ``java_home`` from ``decompilers.toml`` (older
+        Ghidra lines need older JDKs: <= 11.1 wants JDK 17, >= 11.2 wants 21),
+        exported before the JVM boots so JPype picks the right libjvm.
 
         Forces Java AWT headless mode: when ``DISPLAY`` is set but no usable X
         server is reachable, ``GhidraProject.createProject`` otherwise dies with
         an ``AWTError``. Setting ``-Djava.awt.headless=true`` (and clearing
         ``DISPLAY``) makes Ghidra run headless regardless of the environment.
+
+        Returns the launcher module (``pyghidra`` or ``pyhidra``) so callers
+        use the same module they were started with.
         """
         install = self._install_dir()
         if install:
             os.environ["GHIDRA_INSTALL_DIR"] = install
 
+        java_home = self._settings().get("java_home")
+        if java_home:
+            os.environ["JAVA_HOME"] = str(java_home)
+            os.environ["PATH"] = (
+                str(Path(java_home) / "bin") + os.pathsep + os.environ.get("PATH", "")
+            )
+
         # Make Java run headless before the JVM boots.
         opts = os.environ.get("_JAVA_OPTIONS", "")
         if "java.awt.headless" not in opts:
-            os.environ["_JAVA_OPTIONS"] = (
-                opts + " -Djava.awt.headless=true"
-            ).strip()
+            os.environ["_JAVA_OPTIONS"] = (opts + " -Djava.awt.headless=true").strip()
         # A stale DISPLAY (e.g. an old SSH X-forward) triggers the AWT error
         # even in "headless" Ghidra; drop it for this process.
         os.environ.pop("DISPLAY", None)
 
-        import pyghidra
+        launcher = self._launcher()
+        if not launcher.started():
+            launcher.start()
+        return launcher
 
-        if not pyghidra.started():
-            pyghidra.start()
+    @contextlib.contextmanager
+    def _open_program(self, launcher: Any, binary_path: Path) -> Any:
+        """``open_program`` with an isolated, throwaway Ghidra project.
+
+        The launcher's default project location is the BINARY's own directory
+        (``<binary>_ghidra``), which (a) litters the results tree and (b) is
+        shared state: two processes analyzing the same binary — exactly what a
+        multi-version run does — race on the project files and die with
+        ``Failed to overwrite existing project file`` / ``File error during
+        save``. A per-process temp dir removes both problems.
+        """
+        project_dir = Path(tempfile.mkdtemp(prefix="decbench_ghidra_"))
+        try:
+            with launcher.open_program(
+                str(binary_path),
+                project_location=str(project_dir),
+                project_name=f"{binary_path.name}_decbench",
+                analyze=True,
+            ) as flat:
+                yield flat
+        finally:
+            shutil.rmtree(project_dir, ignore_errors=True)
 
     #
     # Decompiler interface
@@ -106,8 +202,7 @@ class RawGhidraDecompiler(Decompiler):
         if self._install_dir() is None:
             return False
         try:
-            import pyghidra  # noqa: F401
-
+            self._launcher()
             return True
         except ImportError:
             return False
@@ -132,10 +227,9 @@ class RawGhidraDecompiler(Decompiler):
         elf_base = common.elf_min_vaddr(binary_path)
         text_range = common.elf_text_range(binary_path)
         try:
-            self._ensure_started()
-            import pyghidra
+            launcher = self._ensure_started()
 
-            with pyghidra.open_program(str(binary_path), analyze=True) as flat:
+            with self._open_program(launcher, binary_path) as flat:
                 program = flat.getCurrentProgram()
                 return self._enumerate(program, elf_base, text_range)
         except Exception as e:  # noqa: BLE001
@@ -186,25 +280,24 @@ class RawGhidraDecompiler(Decompiler):
             common.dump_progress(progress_path, partial)
 
         try:
-            self._ensure_started()
-            import pyghidra
+            launcher = self._ensure_started()
             from ghidra.app.decompiler import DecompInterface
             from ghidra.util.task import ConsoleTaskMonitor
 
-            with pyghidra.open_program(str(binary_path), analyze=True) as flat:
+            with self._open_program(launcher, binary_path) as flat:
                 program = flat.getCurrentProgram()
                 image_base = int(program.getImageBase().getOffset())
 
-                requested = (
-                    {n for (n, _a) in functions} if functions is not None else None
-                )
+                requested = {n for (n, _a) in functions} if functions is not None else None
 
                 enumerated = self._enumerate(program, elf_base, text_range)
                 if requested is not None:
                     enumerated = [(n, a) for (n, a) in enumerated if n in requested]
 
                 enumerated = common.narrow_to_source(
-                    enumerated, function_names, backend="ghidra",
+                    enumerated,
+                    function_names,
+                    backend="ghidra",
                     binary_name=binary_path.name,
                 )
 
@@ -221,13 +314,20 @@ class RawGhidraDecompiler(Decompiler):
                     if g_func is not None:
                         try:
                             func_result = self._decompile_one(
-                                ifc, g_func, func_name, file_addr,
-                                elf_base, image_base, timeout_s, monitor,
+                                ifc,
+                                g_func,
+                                func_name,
+                                file_addr,
+                                elf_base,
+                                image_base,
+                                timeout_s,
+                                monitor,
                             )
                         except Exception as e:  # noqa: BLE001
                             _l.debug(
                                 "ghidra-raw: failed to decompile %s: %s",
-                                func_name, e,
+                                func_name,
+                                e,
                             )
                     if func_result is not None:
                         decompiled_functions[func_name] = func_result
@@ -330,9 +430,7 @@ class RawGhidraDecompiler(Decompiler):
 
         high = res.getHighFunction()
         variables = self._extract_variables(high)
-        line_mappings = self._extract_line_mappings(
-            res, code, elf_base, image_base
-        )
+        line_mappings = self._extract_line_mappings(res, code, elf_base, image_base)
         metadata = common.extract_metrics(code)
 
         return FunctionDecompilation(
@@ -377,9 +475,7 @@ class RawGhidraDecompiler(Decompiler):
                 size = int(sym.getSize()) if sym.getSize() is not None else None
                 storage = sym.getStorage()
                 is_stack = bool(storage is not None and storage.isStackStorage())
-                stack_offset = (
-                    int(storage.getStackOffset()) if is_stack else None
-                )
+                stack_offset = int(storage.getStackOffset()) if is_stack else None
             except Exception:  # noqa: BLE001
                 continue
 
@@ -392,17 +488,19 @@ class RawGhidraDecompiler(Decompiler):
                     ordinal = int(ci) if ci is not None and ci >= 0 else 0
                 except Exception:  # noqa: BLE001
                     ordinal = 0
-                params.append((
-                    ordinal,
-                    VariableInfo(
-                        name=name,
-                        type=type_str,
-                        stack_offset=None,
-                        size=size,
-                        kind="arg",
-                        arg_index=ordinal,
-                    ),
-                ))
+                params.append(
+                    (
+                        ordinal,
+                        VariableInfo(
+                            name=name,
+                            type=type_str,
+                            stack_offset=None,
+                            size=size,
+                            kind="arg",
+                            arg_index=ordinal,
+                        ),
+                    )
+                )
             else:
                 locals_.append(
                     VariableInfo(
