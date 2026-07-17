@@ -141,7 +141,10 @@ def test_goal_cards_are_fully_populated(content: Content) -> None:
     for card in content.view("about").goals:
         assert card.title
         assert card.metric_display_name
-        assert card.body_html and not card.body_html.startswith("<p")
+        assert card.body_html
+        # Every metric card carries its collapsible how-it-works visualization.
+        assert 'class="metric-viz"' in card.body_html
+        assert "<svg" in card.body_html
         assert card.perfect.startswith("perfect = ")
 
 
