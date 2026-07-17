@@ -103,12 +103,19 @@ DECOMPILE_TIMEOUT = int(os.environ.get("DECBENCH_DECOMPILE_TIMEOUT") or "300")
 #     bash) — 900s. Its per-FUNCTION hang guard is now --max-fn-seconds (passed by
 #     the backend), so a pathological function can't hang the batch; the
 #     process-group SIGKILL stays as a belt-and-suspenders leak guard.
+#   - dewolf: Binary Ninja frontend + a z3/sympy logic-simplification pipeline
+#     that can blow up on complex control flow (the paper's main timeout source);
+#     runs out-of-process in its own venv. Give it a Ghidra-class budget.
+#   - r2dec: radare2 `aaa` analysis then per-function pseudo-C; `aaa` on a big
+#     binary can run minutes, so budget like ghidra/binja.
 DECOMPILER_TIMEOUT = {
     "kuna": int(os.environ.get("DECBENCH_KUNA_TIMEOUT") or "900"),
     "angr": int(os.environ.get("DECBENCH_ANGR_TIMEOUT") or "3600"),
     "phoenix": int(os.environ.get("DECBENCH_PHOENIX_TIMEOUT") or "3600"),
     "ghidra": int(os.environ.get("DECBENCH_GHIDRA_TIMEOUT") or "1800"),
     "binja": int(os.environ.get("DECBENCH_BINJA_TIMEOUT") or "1800"),
+    "dewolf": int(os.environ.get("DECBENCH_DEWOLF_TIMEOUT") or "1800"),
+    "r2dec": int(os.environ.get("DECBENCH_R2DEC_TIMEOUT") or "1800"),
 }
 _HERE = Path(__file__).resolve().parent
 _DECOMPILE_ONE = _HERE / "decompile_one.py"
