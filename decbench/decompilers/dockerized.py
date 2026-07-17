@@ -5,10 +5,18 @@ because they ship as standalone CLIs rather than Python libraries:
 
 - **Reko** (``reko``) — .NET decompiler, run inside a Docker image.
 - **RetDec** (``retdec``) — LLVM-based decompiler, run inside a Docker image.
-- **r2dec** (``r2dec``) — radare2's pseudo-decompiler. radare2 is installed on
-  this machine, so r2dec prefers a **native** run via ``r2pipe`` and only falls
-  back to a Docker image when neither the native r2dec plugin nor the built-in
-  ``pdc`` pseudo-decompiler is usable.
+- **r2dec** (``r2dec``) — radare2's r2dec decompiler. Discovers functions from
+  radare2's OWN analysis (``aaa`` + ``aflj``, so it works on fully STRIPPED
+  ELF/PE and ARM firmware), normalizes addresses to ELF-file space, and
+  decompiles each function with the r2dec ``pdd`` command — falling back to the
+  built-in ``pdc`` pseudo-decompiler when the r2dec plugin is absent. It picks,
+  in order, native-with-plugin > the ``decbench/r2dec`` Docker image (real
+  r2dec built from source; the host's packaged r2 usually lacks the dev headers
+  to build the plugin natively) > native ``pdc``. Unlike the whole-program
+  RetDec/Reko path, r2dec does NOT go through the ELF symbol table or
+  ``split_c_functions`` — its discovery and per-function decompile are
+  symbol-free and address-keyed, matching how the benchmark driver hands it a
+  stripped binary + a set of DWARF ``low_pc`` addresses.
 
 Common design (:class:`DockerizedDecompiler`):
     The container is run with the target binary bind-mounted **read-only**; the
@@ -30,15 +38,20 @@ already exists locally; build it explicitly with ``decbench decompiler-build
 from __future__ import annotations
 
 import contextlib
+import glob
+import json
 import logging
+import os
 import re
 import shutil
 import subprocess
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 from decbench.decompilers.base import Decompiler, DecompilerConfig
+from decbench.decompilers.raw import common as raw_common
 from decbench.decompilers.registry import register_decompiler
 from decbench.models.decompilation import (
     DecompilationResult,
@@ -53,12 +66,24 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DOCKER_DIR = _REPO_ROOT / "docker"
 
 # CRT/compiler-generated functions that are not user code (mirrors declib_dec).
-_SKIP_NAMES = frozenset({
-    "_start", "__libc_start_main", "__libc_csu_init", "__libc_csu_fini",
-    "_init", "_fini", "__do_global_dtors_aux", "register_tm_clones",
-    "deregister_tm_clones", "frame_dummy", "__libc_start_call_main",
-    "_dl_relocate_static_pie", "__gmon_start__", "__stack_chk_fail",
-})
+_SKIP_NAMES = frozenset(
+    {
+        "_start",
+        "__libc_start_main",
+        "__libc_csu_init",
+        "__libc_csu_fini",
+        "_init",
+        "_fini",
+        "__do_global_dtors_aux",
+        "register_tm_clones",
+        "deregister_tm_clones",
+        "frame_dummy",
+        "__libc_start_call_main",
+        "_dl_relocate_static_pie",
+        "__gmon_start__",
+        "__stack_chk_fail",
+    }
+)
 
 # Name prefixes for thunks/imports that should not be benchmarked.
 _SKIP_PREFIXES = ("thunk_", "j_", "__imp_", ".plt", "_dl_")
@@ -67,6 +92,7 @@ _SKIP_PREFIXES = ("thunk_", "j_", "__imp_", ".plt", "_dl_")
 # --------------------------------------------------------------------------- #
 # ELF helpers (symbol table -> ELF-file-space function addresses)
 # --------------------------------------------------------------------------- #
+
 
 def _elf_text_range(binary_path: Path) -> tuple[int, int] | None:
     """[start, end) virtual-address range of the ``.text`` section, or None."""
@@ -207,6 +233,7 @@ def _strip_c_literals(line: str) -> str:
 # Dockerized base
 # --------------------------------------------------------------------------- #
 
+
 class DockerizedDecompiler(Decompiler):
     """Base for decompilers run inside a Docker container.
 
@@ -279,9 +306,12 @@ class DockerizedDecompiler(Decompiler):
             raise FileNotFoundError(f"Dockerfile not found: {dockerfile_path}")
 
         cmd = [
-            docker, "build",
-            "-f", str(dockerfile_path),
-            "-t", cls.image,
+            docker,
+            "build",
+            "-f",
+            str(dockerfile_path),
+            "-t",
+            cls.image,
         ]
         if no_cache:
             cmd.append("--no-cache")
@@ -324,9 +354,13 @@ class DockerizedDecompiler(Decompiler):
         if not docker:
             raise RuntimeError("docker binary not found on PATH")
         cmd = [
-            docker, "run", "--rm",
-            "-v", f"{binary_path.resolve()}:/in/{binary_path.name}:ro",
-            "-v", f"{work_dir.resolve()}:/work",
+            docker,
+            "run",
+            "--rm",
+            "-v",
+            f"{binary_path.resolve()}:/in/{binary_path.name}:ro",
+            "-v",
+            f"{work_dir.resolve()}:/work",
             self.image,
             *args,
         ]
@@ -421,9 +455,7 @@ class DockerizedDecompiler(Decompiler):
             name_to_addr = dict(elf_function_symbols(binary_path))
 
         if function_names:
-            filtered = {
-                n: a for n, a in name_to_addr.items() if n in function_names
-            }
+            filtered = {n: a for n, a in name_to_addr.items() if n in function_names}
             if filtered:
                 name_to_addr = filtered
 
@@ -485,6 +517,7 @@ class DockerizedDecompiler(Decompiler):
 # RetDec
 # --------------------------------------------------------------------------- #
 
+
 @register_decompiler("retdec")
 class RetDecDecompiler(DockerizedDecompiler):
     """RetDec via a Docker image (``retdec-decompiler <binary> -o out.c``).
@@ -519,6 +552,7 @@ class RetDecDecompiler(DockerizedDecompiler):
 # Reko
 # --------------------------------------------------------------------------- #
 
+
 @register_decompiler("reko")
 class RekoDecompiler(DockerizedDecompiler):
     """Reko via a Docker image (.NET CLI ``reko --c <binary>``).
@@ -551,28 +585,98 @@ class RekoDecompiler(DockerizedDecompiler):
 
 
 # --------------------------------------------------------------------------- #
-# r2dec (native-first, Docker fallback)
+# r2dec (radare2's r2dec decompiler)
 # --------------------------------------------------------------------------- #
+
+# r2 flag names that are NOT user code (the ELF/PE entrypoint aliases). Imports
+# and PLT/reloc stubs are dropped by ``_r2_is_import``; the .text-range + CRT
+# filter (raw_common.should_skip_function) handles the rest.
+_R2_ENTRY_NAMES = frozenset({"entry0", "entry1", "entry.init0", "entry.fini0", "entry.preinit0"})
+
+# C keywords that would spuriously match the definition regex (``if (x) {``).
+_C_KEYWORDS = frozenset({"if", "while", "for", "switch", "return", "do", "else", "sizeof", "case"})
+
+# A C function *definition* opener. Tolerates r2's dotted pseudo-names
+# (``fcn.00003bed``, which the built-in ``pdc`` emits verbatim) as well as the
+# sanitized ``fcn_00003bed`` r2dec's ``pdd`` uses. The captured identifier is the
+# one that actually appears in the emitted code — we key each function by it so
+# the run driver's address-relabel (which rewrites the name in the code AND the
+# key) lines the decompiled CFG up with the source for GED. The parameter list is
+# matched **non-greedily** so an ``ident (...)`` inside a comment cannot swallow
+# text up to the real function's ``) {``.
+_R2_DEF_RE = re.compile(r"\b([A-Za-z_][\w.]*)\s*\([^;{}]*?\)\s*\{")
+
+
+def _r2_is_import(name: str) -> bool:
+    """Whether an r2 function flag names an import / PLT / reloc stub."""
+    return (
+        name.startswith("sym.imp.")
+        or name.startswith("imp.")
+        or name.startswith("reloc.")
+        or ".imp." in name
+    )
+
+
+def _r2_bare_name(name: str) -> str:
+    """Strip r2's flag namespace (``sym.``/``fcn.``/``loc.``) to a bare ident."""
+    return name.rsplit(".", 1)[-1] if name else name
+
+
+def _func_ident_in_code(code: str) -> str | None:
+    """The identifier of the first top-level function definition in ``code``.
+
+    Block comments (``/* ... */`` — r2dec prefixes its output with a
+    ``/* r2dec pseudo code output ... */`` banner), line comments, and
+    preprocessor lines (r2dec emits ``#include`` / ``#define`` macros) are
+    stripped first so none of them is mistaken for the signature, and C keywords
+    are skipped so a leading ``if (...) {`` is not either. Returns ``None`` when
+    no definition opener is found.
+    """
+    stripped = re.sub(r"/\*.*?\*/", "", code, flags=re.DOTALL)
+    stripped = re.sub(r"//.*", "", stripped)
+    stripped = re.sub(r"(?m)^[ \t]*#.*$", "", stripped)
+    for m in _R2_DEF_RE.finditer(stripped):
+        ident = m.group(1)
+        if ident not in _C_KEYWORDS:
+            return ident
+    return None
+
 
 @register_decompiler("r2dec")
 class R2DecDecompiler(DockerizedDecompiler):
-    """radare2's pseudo-decompiler.
+    """radare2's r2dec decompiler (address-keyed, stripped-binary ready).
 
-    radare2 is installed on this machine, so this backend prefers a **native**
-    run via ``r2pipe``:
+    Function discovery comes from radare2's OWN analysis (``aaa`` + ``aflj``),
+    not the ELF symbol table, so it works on fully STRIPPED ELF/PE and on ARM
+    firmware. Each function's start is normalized to ELF-file space
+    (``r2_addr - r2_baddr + elf_min_vaddr``) so it matches DWARF ``low_pc`` and
+    the benchmark driver's address-based function filter — radare2 loads a binary
+    at its own ``baddr`` (the ELF min PT_LOAD vaddr / PE ImageBase), which equals
+    ``elf_min_vaddr``, so an r2 function address is already ELF-file space.
 
-    * It tries the real r2dec plugin commands (``pd:d`` / ``pdd``) per function;
-    * if the plugin is not installed, it falls back to radare2's **built-in**
-      ``pdc`` pseudo-decompiler so the backend is still useful.
+    Three execution paths, tried in this order:
 
-    Only if r2pipe / radare2 are unavailable does it fall back to the Docker
-    image (``docker/r2dec.Dockerfile``), which builds radare2 + the r2dec plugin.
+    1. **native pdd** — radare2 + the r2dec plugin installed on the host;
+    2. **docker pdd** — the ``decbench/r2dec`` image (real r2dec built from
+       source; the host's packaged r2 usually lacks the dev headers to build the
+       plugin natively);
+    3. **native pdc** — radare2's built-in pseudo-decompiler (always available
+       when r2 is installed, but its asm-like output rarely parses for GED).
+
+    The ``function_names`` filter accepts a set of **ints** (ELF-file-space
+    addresses — the benchmark driver's DWARF ``low_pc`` set, matched Thumb-bit
+    tolerant) or a set of **strs** (legacy name matching).
     """
 
     name = "r2dec"
     display_name = "r2dec"
     image = "decbench/r2dec:latest"
     dockerfile = "r2dec.Dockerfile"
+
+    # r2pipe open flags: -2 silences stderr; apply relocs; no ANSI color.
+    _R2_FLAGS = ["-2", "-e", "bin.relocs.apply=true", "-e", "scr.color=0"]
+
+    # -- availability / path selection ---------------------------------- #
 
     @staticmethod
     def _native_available() -> bool:
@@ -584,9 +688,56 @@ class R2DecDecompiler(DockerizedDecompiler):
             return False
         return True
 
+    @staticmethod
+    def _native_plugin_available() -> bool:
+        """True iff radare2's r2dec plugin (``pdd``) is installed natively.
+
+        Scans the user + system radare2 plugin dirs for the r2dec core plugin
+        (``*pdd*`` / ``*r2dec*``) so the real decompiler can be preferred over the
+        built-in ``pdc`` without opening r2. A false negative is harmless: the
+        native path's command probe still upgrades to ``pdd`` if it is present.
+        """
+        dirs = [os.path.expanduser("~/.local/share/radare2/plugins")]
+        try:
+            proc = subprocess.run(
+                [shutil.which("r2") or "radare2", "-H", "R2_LIBR_PLUGINS"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            )
+            sysdir = (proc.stdout or "").strip()
+            if sysdir:
+                dirs.append(sysdir)
+        except Exception:  # noqa: BLE001
+            dirs.extend(["/usr/lib/radare2", "/usr/local/lib/radare2"])
+        for d in dirs:
+            if not d or not os.path.isdir(d):
+                continue
+            for pat in ("*pdd*", "*r2dec*"):
+                if glob.glob(os.path.join(d, "**", pat), recursive=True):
+                    return True
+        return False
+
     def is_available(self) -> bool:
         """Available if native radare2+r2pipe OR the Docker image is present."""
         return self._native_available() or self._image_present(self.image)
+
+    def _select_path(self) -> str:
+        """Choose the execution path: ``"native"`` or ``"docker"``.
+
+        Preference: native-with-plugin (real r2dec, no container overhead) >
+        docker (real r2dec in a container) > native-without-plugin (``pdc``). The
+        native path probes ``pdd``/``pdc`` itself, so this only decides host vs
+        container.
+        """
+        native = self._native_available()
+        if native and self._native_plugin_available():
+            return "native"
+        if self._image_present(self.image):
+            return "docker"
+        if native:
+            return "native"
+        return "docker"
 
     def get_version(self) -> str | None:
         if self._native_available():
@@ -607,29 +758,191 @@ class R2DecDecompiler(DockerizedDecompiler):
             return "native"
         return super().get_version()
 
+    # -- entry point ---------------------------------------------------- #
+
     def decompile_binary(
         self,
         binary_path: Path,
         functions: list[tuple[str, int]] | None = None,
         output_dir: Path | None = None,
-        function_names: set[str] | None = None,
+        function_names: set[int] | set[str] | None = None,
         progress_path: Path | None = None,
     ) -> DecompilationResult:
-        """Decompile natively via r2pipe when possible; else use the container."""
-        if self._native_available():
-            return self._decompile_native(
-                binary_path,
-                functions=functions,
-                output_dir=output_dir,
-                function_names=function_names,
+        """Decompile a binary via the real r2dec (native or docker) or ``pdc``."""
+        if self._select_path() == "docker":
+            return self._decompile_docker(
+                binary_path, functions, output_dir, function_names, progress_path
             )
-        return super().decompile_binary(
-            binary_path,
-            functions=functions,
-            output_dir=output_dir,
-            function_names=function_names,
-            progress_path=progress_path,
+        return self._decompile_native(
+            binary_path, functions, output_dir, function_names, progress_path
         )
+
+    # -- shared discovery / narrowing / assembly ------------------------ #
+
+    @staticmethod
+    def _discover(
+        r: Any,
+        elf_base: int,
+        text_range: tuple[int, int] | None,
+        baddr: int,
+    ) -> list[tuple[str, int, int]]:
+        """``(r2_flag_name, file_addr, r2_addr)`` for benchmarkable functions.
+
+        Uses radare2's ``aflj`` (function list). ``file_addr`` is ELF-file space
+        (``r2_addr - baddr + elf_base``). Imports/PLT/reloc stubs, the entrypoint
+        alias, CRT helpers, and anything outside ``.text`` are dropped.
+        """
+        funcs = r.cmdj("aflj") or []
+        out: list[tuple[str, int, int]] = []
+        for fn in funcs:
+            name = fn.get("name") or ""
+            raw = fn.get("addr")
+            if raw is None:
+                raw = fn.get("offset")  # older r2 aflj schema
+            if not name or raw is None:
+                continue
+            if _r2_is_import(name) or name in _R2_ENTRY_NAMES:
+                continue
+            raw = int(raw)
+            file_addr = raw - baddr + elf_base
+            if raw_common.should_skip_function(_r2_bare_name(name), file_addr, text_range):
+                continue
+            out.append((name, file_addr, raw))
+        out.sort(key=lambda t: t[1])
+        return out
+
+    @staticmethod
+    def _narrow(
+        discovered: list[tuple[str, int, int]],
+        function_names: set[int] | set[str] | None,
+        binary_name: str,
+    ) -> list[tuple[str | None, int, int, str]]:
+        """Restrict discovered functions to the requested set.
+
+        ``function_names`` may hold ELF-file-space ADDRESSES (ints — the driver's
+        DWARF ``low_pc`` filter, matched Thumb-bit tolerant) or NAMES (strs,
+        legacy). Returns ``(label, file_addr, r2_addr, r2_flag)`` tuples where
+        ``label`` is the requested name for the str path (so the result keys by
+        it) and ``None`` otherwise (the code identifier becomes the key). Falls
+        back to everything if nothing matched, so a filter mismatch never yields
+        an empty result.
+        """
+        all_targets: list[tuple[str | None, int, int, str]] = [
+            (None, fa, raw, nm) for (nm, fa, raw) in discovered
+        ]
+        if not function_names:
+            return all_targets
+        addr_targets = {
+            int(x) for x in function_names if isinstance(x, int) and not isinstance(x, bool)
+        }
+        name_targets = {str(x) for x in function_names if isinstance(x, str)}
+        if addr_targets:
+            kept: list[tuple[str | None, int, int, str]] = [
+                (None, fa, raw, nm)
+                for (nm, fa, raw) in discovered
+                if raw_common._addr_matches(fa, addr_targets)
+            ]
+            if kept:
+                _l.debug(
+                    "r2dec: narrowed %d/%d functions to source set for %s",
+                    len(kept),
+                    len(discovered),
+                    binary_name,
+                )
+                return kept
+            return all_targets
+        if name_targets:
+            named: list[tuple[str | None, int, int, str]] = []
+            for nm, fa, raw in discovered:
+                bare = _r2_bare_name(nm)
+                match = nm if nm in name_targets else (bare if bare in name_targets else None)
+                if match is not None:
+                    named.append((match, fa, raw, nm))
+            return named or all_targets
+        return all_targets
+
+    @staticmethod
+    def _make_function(
+        r2_flag: str,
+        file_addr: int,
+        code: str,
+        label: str | None,
+    ) -> FunctionDecompilation | None:
+        """Build a :class:`FunctionDecompilation`, keeping ``.name`` equal to the
+        identifier that appears in ``decompiled_code``.
+
+        The run driver relabels a stripped-binary decompilation by address,
+        rewriting ``fd.name`` in BOTH the code and the function key to the DWARF
+        name — which only works if ``fd.name`` is the identifier actually used in
+        the code. So we adopt the code's own identifier (or, on the legacy name
+        path, rewrite the code to the requested ``label``).
+        """
+        code = (code or "").strip()
+        if not code:
+            return None
+        code_ident = _func_ident_in_code(code)
+        final = label or code_ident or r2_flag
+        if code_ident and code_ident != final:
+            code = re.sub(r"\b" + re.escape(code_ident) + r"\b", final, code)
+        return FunctionDecompilation(
+            name=final,
+            address=file_addr,
+            decompiled_code=code,
+            line_count=code.count("\n") + 1,
+            line_mappings=[],
+            variables=[],
+            metadata=raw_common.extract_metrics(code),
+        )
+
+    def _make_result(
+        self,
+        binary_path: Path,
+        decompiled: dict[str, FunctionDecompilation],
+        failed: list[str],
+        elapsed: float,
+        via: str,
+        cmd: str,
+        output_dir: Path | None,
+        *,
+        partial: bool = False,
+        timed_out: bool = False,
+        error: str | None = None,
+    ) -> DecompilationResult:
+        extra: dict[str, Any] = {"via": via, "command": cmd}
+        if via == "docker":
+            extra["image"] = self.image
+        if partial:
+            extra["partial"] = True
+        if error:
+            extra["error"] = error
+        return DecompilationResult(
+            binary_path=binary_path,
+            binary_name=binary_path.stem,
+            decompiler=DecompilerMetadata(
+                decompiler_name=self.id,
+                decompiler_version=self.get_version(),
+                total_time_seconds=elapsed,
+                timeout_occurred=timed_out,
+                failed_functions=list(failed),
+                extra=extra,
+            ),
+            functions=dict(decompiled),
+            output_dir=output_dir,
+        )
+
+    def _write_artifacts(
+        self,
+        result: DecompilationResult,
+        output_dir: Path | None,
+        binary_path: Path,
+    ) -> None:
+        if output_dir is None:
+            return
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with contextlib.suppress(Exception):
+            result.to_c_file(output_dir / f"{self.name}_{binary_path.stem}.c")
+        with contextlib.suppress(Exception):
+            result.to_toml(output_dir / f"{self.name}_{binary_path.stem}.toml")
 
     # -- native r2pipe path --------------------------------------------- #
 
@@ -638,107 +951,219 @@ class R2DecDecompiler(DockerizedDecompiler):
         binary_path: Path,
         functions: list[tuple[str, int]] | None,
         output_dir: Path | None,
-        function_names: set[str] | None,
+        function_names: set[int] | set[str] | None,
+        progress_path: Path | None,
     ) -> DecompilationResult:
         import r2pipe
 
         start = time.time()
-
-        if functions is not None:
-            name_to_addr = {n: a for n, a in functions}
-        else:
-            name_to_addr = dict(elf_function_symbols(binary_path))
-        if function_names:
-            filtered = {
-                n: a for n, a in name_to_addr.items() if n in function_names
-            }
-            if filtered:
-                name_to_addr = filtered
-
+        elf_base = raw_common.elf_min_vaddr(binary_path)
+        text_range = raw_common.elf_text_range(binary_path)
         decompiled: dict[str, FunctionDecompilation] = {}
         failed: list[str] = []
         used_cmd = "pdc"
+        targets: list[tuple[str | None, int, int, str]] = []
+
+        def _dump() -> None:
+            common_res = self._make_result(
+                binary_path,
+                decompiled,
+                failed,
+                time.time() - start,
+                "native",
+                used_cmd,
+                output_dir,
+                partial=True,
+            )
+            raw_common.dump_progress(progress_path, common_res)
 
         r = None
         try:
-            r = r2pipe.open(
-                str(binary_path),
-                flags=["-2", "-e", "bin.relocs.apply=true", "-e", "scr.color=0"],
-            )
+            r = r2pipe.open(str(binary_path), flags=self._R2_FLAGS)
             r.cmd("aaa")
+            baddr = self._r2_baddr(r)
             used_cmd = self._probe_decompile_cmd(r)
-            for name, addr in name_to_addr.items():
-                try:
-                    code = self._decompile_one_native(r, used_cmd, addr)
-                except Exception as e:  # noqa: BLE001
-                    _l.debug("r2dec failed on %s: %s", name, e)
-                    code = None
-                if not code:
-                    failed.append(name)
-                    continue
-                decompiled[name] = FunctionDecompilation(
-                    name=name,
-                    address=addr,
-                    decompiled_code=code,
-                    line_count=code.count("\n") + 1,
-                    line_mappings=[],
-                    variables=[],
-                    metadata={
-                        "gotos": code.count("goto "),
-                        "bools": code.count(" && ") + code.count(" || "),
-                    },
+            if functions is not None:
+                # Explicit (name, ELF-addr) allowlist: define + decompile each.
+                for name, fa in functions:
+                    raw = int(fa) - elf_base + baddr
+                    with contextlib.suppress(Exception):
+                        r.cmd(f"af @ {raw}")
+                    targets.append((name, int(fa), raw, name))
+            else:
+                targets = self._narrow(
+                    self._discover(r, elf_base, text_range, baddr),
+                    function_names,
+                    binary_path.name,
                 )
+            for label, file_addr, raw, r2_flag in targets:
+                try:
+                    code = self._decompile_one_native(r, used_cmd, raw)
+                except Exception as e:  # noqa: BLE001
+                    _l.debug("r2dec failed on %s@%#x: %s", r2_flag, raw, e)
+                    code = None
+                fd = self._make_function(r2_flag, file_addr, code or "", label)
+                if fd is None:
+                    failed.append(label or _r2_bare_name(r2_flag))
+                else:
+                    decompiled[fd.name] = fd
+                _dump()
         except Exception as e:  # noqa: BLE001
             _l.error("r2dec native run failed on %s: %s", binary_path, e)
-            failed = list(name_to_addr.keys()) or ["all"]
+            if not decompiled:
+                failed = [t[0] or _r2_bare_name(t[3]) for t in targets] or ["all"]
         finally:
             if r is not None:
                 with contextlib.suppress(Exception):
                     r.quit()
 
-        result = DecompilationResult(
-            binary_path=binary_path,
-            binary_name=binary_path.stem,
-            decompiler=DecompilerMetadata(
-                decompiler_name=self.id,
-                decompiler_version=self.get_version(),
-                total_time_seconds=time.time() - start,
-                failed_functions=failed,
-                extra={"via": "native", "command": used_cmd},
-            ),
-            functions=decompiled,
-            output_dir=output_dir,
+        result = self._make_result(
+            binary_path, decompiled, failed, time.time() - start, "native", used_cmd, output_dir
         )
-        if output_dir is not None:
-            output_dir.mkdir(parents=True, exist_ok=True)
-            result.to_c_file(output_dir / f"{self.name}_{binary_path.stem}.c")
-            with contextlib.suppress(Exception):
-                result.to_toml(output_dir / f"{self.name}_{binary_path.stem}.toml")
+        self._write_artifacts(result, output_dir, binary_path)
         return result
 
-    @staticmethod
-    def _probe_decompile_cmd(r: object) -> str:
-        """Pick the best available r2 decompile command.
+    # -- docker (real r2dec) path --------------------------------------- #
 
-        Prefers the real r2dec plugin (``pd:d``/``pdd``); falls back to the
-        built-in ``pdc`` pseudo-decompiler when the plugin is absent.
-        """
-        for cmd in ("pd:d", "pdd"):
+    def _decompile_docker(
+        self,
+        binary_path: Path,
+        functions: list[tuple[str, int]] | None,
+        output_dir: Path | None,
+        function_names: set[int] | set[str] | None,
+        progress_path: Path | None,
+    ) -> DecompilationResult:
+        if not self._image_present(self.image):
+            raise RuntimeError(
+                f"Decompiler '{self.name}' docker image '{self.image}' missing — "
+                f"run `decbench decompiler-build {self.name}`"
+            )
+        start = time.time()
+        elf_base = raw_common.elf_min_vaddr(binary_path)
+        text_range = raw_common.elf_text_range(binary_path)
+
+        # Address filter the container applies (DWARF low_pc / ELF-file space).
+        # From the int address set the driver passes, or an explicit (name, addr)
+        # allowlist — so a filtered call never decompiles the whole binary.
+        addr_targets: list[int] | None = None
+        ints: set[int] = set()
+        if function_names:
+            ints |= {
+                int(x) for x in function_names if isinstance(x, int) and not isinstance(x, bool)
+            }
+        if functions:
+            ints |= {int(a) for (_n, a) in functions}
+        if ints:
+            addr_targets = sorted(ints)
+
+        entries: list[dict[str, Any]] = []
+        error: str | None = None
+        timed_out = False
+        with tempfile.TemporaryDirectory(prefix=f"decbench_{self.name}_") as td:
+            work_dir = Path(td)
+            targets_arg = "NONE"
+            if addr_targets is not None:
+                (work_dir / "targets.json").write_text(json.dumps(addr_targets))
+                targets_arg = "/work/targets.json"
             try:
-                out = r.cmd(f"{cmd} @ entry0")  # type: ignore[attr-defined]
-            except Exception:  # noqa: BLE001
-                out = ""
-            if out and "install the plugin" not in out and "Cannot" not in out:
-                return cmd
+                proc = self._run_docker(
+                    args=[f"/in/{binary_path.name}", "/work/out.json", targets_arg],
+                    binary_path=binary_path,
+                    work_dir=work_dir,
+                )
+                out_json = work_dir / "out.json"
+                if out_json.is_file():
+                    entries = json.loads(out_json.read_text() or "[]")
+                else:
+                    error = (
+                        f"container produced no out.json (rc={proc.returncode}): "
+                        f"{(proc.stderr or '')[-400:]}"
+                    )
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                error = f"timeout after {self.container_timeout}s"
+                _l.warning("%s docker timed out on %s", self.name, binary_path)
+            except Exception as e:  # noqa: BLE001
+                error = str(e)
+                _l.error("%s docker failed on %s: %s", self.name, binary_path, e)
+
+        # Normalize container entries -> discovered triples, then narrow (the
+        # container already filtered by address, so this is a defensive re-check).
+        by_addr: dict[int, tuple[str, str]] = {}
+        discovered: list[tuple[str, int, int]] = []
+        for entry in entries:
+            raw = entry.get("addr")
+            if raw is None:
+                continue
+            b = int(entry.get("baddr") or 0)
+            file_addr = int(raw) - b + elf_base
+            nm = entry.get("name") or ""
+            if _r2_is_import(nm) or nm in _R2_ENTRY_NAMES:
+                continue
+            if raw_common.should_skip_function(_r2_bare_name(nm), file_addr, text_range):
+                continue
+            by_addr[file_addr] = (nm, entry.get("code") or "")
+            discovered.append((nm, file_addr, int(raw)))
+        discovered.sort(key=lambda t: t[1])
+        targets = self._narrow(discovered, function_names, binary_path.name)
+
+        decompiled: dict[str, FunctionDecompilation] = {}
+        failed: list[str] = []
+        for label, file_addr, _raw, r2_flag in targets:
+            _nm, code = by_addr.get(file_addr, (r2_flag, ""))
+            fd = self._make_function(r2_flag, file_addr, code, label)
+            if fd is None:
+                failed.append(label or _r2_bare_name(r2_flag))
+            else:
+                decompiled[fd.name] = fd
+        if not entries and not decompiled:
+            failed = failed or ["all"]
+
+        result = self._make_result(
+            binary_path,
+            decompiled,
+            failed,
+            time.time() - start,
+            "docker",
+            "pdd",
+            output_dir,
+            timed_out=timed_out,
+            error=error,
+        )
+        # Whole-container run is atomic, so this is a single best-effort checkpoint.
+        raw_common.dump_progress(progress_path, result)
+        self._write_artifacts(result, output_dir, binary_path)
+        return result
+
+    # -- r2 helpers ----------------------------------------------------- #
+
+    @staticmethod
+    def _r2_baddr(r: Any) -> int:
+        """radare2's load base address (``baddr``) for the open binary."""
+        try:
+            info = r.cmdj("ij") or {}
+            return int((info.get("bin") or {}).get("baddr") or 0)
+        except Exception:  # noqa: BLE001
+            return 0
+
+    @staticmethod
+    def _probe_decompile_cmd(r: Any) -> str:
+        """Pick the decompile command: the real r2dec ``pdd`` or built-in ``pdc``."""
+        try:
+            out = r.cmd("pdd @ entry0")
+        except Exception:  # noqa: BLE001
+            out = ""
+        if out and "install the plugin" not in out and "Cannot find" not in out:
+            return "pdd"
         return "pdc"
 
     @staticmethod
-    def _decompile_one_native(r: object, cmd: str, addr: int) -> str | None:
-        """Decompile one function at ``addr`` and return cleaned pseudo-C."""
-        out = r.cmd(f"{cmd} @ {addr}")  # type: ignore[attr-defined]
-        if not out:
+    def _decompile_one_native(r: Any, cmd: str, addr: int) -> str | None:
+        """Decompile one function at ``addr`` (r2 load space) and return its C."""
+        raw = r.cmd(f"{cmd} @ {addr}")
+        if not raw:
             return None
-        out = out.strip()
+        out = str(raw).strip()
         if not out or "install the plugin" in out:
             return None
         return out

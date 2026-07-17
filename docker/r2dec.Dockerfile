@@ -32,17 +32,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Build radare2 from source so the dev headers exist and the r2dec plugin can
-# compile against them (the host's packaged r2 lacks /usr/include/libr).
-ARG R2_REF=master
+# compile against them (the host's packaged r2 lacks /usr/include/libr). Pin to
+# a released tag (matches the host's r2 6.0.8) so the r2dec plugin builds against
+# a stable API rather than a drifting master.
+ARG R2_REF=6.0.8
 RUN git clone --depth=1 --branch "${R2_REF}" https://github.com/radareorg/radare2 /opt/radare2 \
     && /opt/radare2/sys/install.sh
 
 # r2pipe for the in-container driver.
-RUN pip3 install --no-cache-dir --break-system-packages r2pipe
+RUN pip3 install --no-cache-dir r2pipe
 
-# Install the r2dec plugin via r2pm (needs the dev headers built above).
-RUN r2pm -U \
-    && r2pm -ci r2dec
+# Install the r2dec plugin (provides the `pdd` command). We build it by hand
+# rather than via `r2pm -ci r2dec`: that recipe runs `meson setup ... --wipe`,
+# which errors on a not-yet-existent build dir with this meson ("Directory does
+# not contain a valid build tree"). A plain `meson setup` + `ninja install`
+# against the just-built radare2 dev headers works and drops libcore_pdd.so into
+# the SYSTEM plugin dir, so `pdd` is available for any user/HOME the container
+# runs as.
+RUN git clone --depth=1 --recursive https://github.com/wargio/r2dec-js /opt/r2dec-js \
+    && cd /opt/r2dec-js \
+    && meson setup -Dr2_plugdir="$(r2 -H R2_LIBR_PLUGINS)" b --backend=ninja \
+    && ninja -C b \
+    && ninja -C b install \
+    && r2 -qc "pdd?" -- /bin/ls | grep -qi "decompile"
 
 # In-container driver: decompiles every function to /work/out.c.
 COPY r2dec-decompile.py /opt/r2dec-decompile.py
