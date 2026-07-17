@@ -83,13 +83,13 @@ class HardestEntry(BaseModel):
 
 
 class SampleEntry(BaseModel):
-    """A curated function shown in the report's side-by-side 'Compare' view.
+    """A curated function shown in the report's side-by-side 'View' page.
 
     Carries the original source next to each decompiler's output (plus per-metric
     scores) so a reader can eyeball, e.g., Ghidra's recovery against the truth.
-    Bounded server-side to a representative slice (see
-    :func:`decbench.scoring.report_extras.build_samples`) to keep the embedded
-    report small.
+    Bounded server-side to three difficulty tiers of ~100 functions (see
+    :func:`decbench.scoring.report_extras.build_samples` and
+    :mod:`decbench.scoring.view_samples`) to keep the embedded report small.
     """
 
     project: str = Field(...)
@@ -98,6 +98,12 @@ class SampleEntry(BaseModel):
     function: str = Field(...)
     size: int | None = Field(default=None, description="Decompiled line count")
     labels: list[str] = Field(default_factory=list)
+    difficulty: str | None = Field(
+        default=None,
+        description="Difficulty tier (easy/medium/hard) derived from cross-"
+        "decompiler GED agreement; None on samples written before the tiers "
+        "existed (the View page then shows them untiered)",
+    )
     source_code: str | None = Field(default=None, description="Original source C")
     decompiled: dict[str, str] = Field(
         default_factory=dict, description="decompiler id -> decompiled C"

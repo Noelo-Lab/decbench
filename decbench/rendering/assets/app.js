@@ -16,13 +16,13 @@
  *
  * Two delivery modes, one code path (see loadData):
  *
- *   split   a Pages tree. data/aggregates.json is fetched eagerly; the three
- *           code-carrying payloads (samples/hardest/history) and dataset.json
- *           are fetched on first navigation to their view.
+ *   split   a Pages tree. data/aggregates.json is fetched eagerly; the
+ *           code-carrying payloads (samples/history) and dataset.json are
+ *           fetched on first navigation to their view.
  *   inline  a single-file `decbench report`, opened over file:// where fetch()
  *           is CORS-blocked. The renderer sets window.__DECBENCH_INLINE__ to a
  *           map keyed by data-file stem — {aggregates, dataset, samples,
- *           hardest, history} — and we read it directly, never fetching.
+ *           history} — and we read it directly, never fetching.
  */
 
 // The inline payload, or null in split mode. Set before this script runs.
@@ -394,139 +394,131 @@ function buildDataset(ds) {
     }
 }
 
-// ---- Compare view ----
-let SAMPLES = [];
+// ---- View page (source vs one decompiler, by difficulty tier) ----
+// Replaced the old Compare and Hardest views. samples.json entries carry a
+// `difficulty` tag (easy/medium/hard, assigned server-side from cross-decompiler
+// GED agreement); the three dropdowns pick the tier, the decompiler whose output
+// is shown, and the metric whose score is highlighted.
+let VIEW_SAMPLES = [];
+const DIFFICULTIES = ["easy", "medium", "hard"];
 function sampleLabel(s) {
     return s.project + "/" + s.opt_level + "/" + s.binary + " :: " + s.function;
 }
-function renderCompare() {
-    const sel = document.getElementById("cmp-select");
-    const body = document.getElementById("compare-body");
-    if (!sel || !body) return;
-    const idx = parseInt(sel.value, 10);
-    const s = SAMPLES[idx];
-    if (!s) { body.innerHTML = '<p class="view-desc">no sample selected.</p>'; return; }
-    const decs = Object.keys(s.decompiled || {});
-    const cols = (s.source_code ? 1 : 0) + decs.length;
+function viewControls() {
+    return {
+        tier: document.getElementById("view-difficulty"),
+        dec: document.getElementById("view-dec"),
+        metric: document.getElementById("view-metric"),
+        fn: document.getElementById("view-select"),
+        filter: document.getElementById("view-filter"),
+        counter: document.getElementById("view-counter"),
+        body: document.getElementById("view-body")
+    };
+}
+function renderViewEntry() {
+    const c = viewControls();
+    if (!c.fn || !c.body) return;
+    const s = VIEW_SAMPLES[parseInt(c.fn.value, 10)];
+    if (!s) { c.body.innerHTML = '<p class="view-desc">no function selected.</p>'; return; }
+    const dec = c.dec ? c.dec.value : "";
+    const selMetric = c.metric ? c.metric.value : "";
     let html = '<div class="cmp-meta">' + escapeHtml(s.project) + '/' +
         escapeHtml(s.opt_level) + '/' + escapeHtml(s.binary) +
         ' &middot; ' + escapeHtml(s.function) +
         (s.size != null ? (' &middot; ' + s.size + ' lines') : '') +
-        (s.labels && s.labels.length ? (' &middot; ' + escapeHtml(s.labels.join(", "))) : '') +
+        (s.difficulty ? (' &middot; <span class="tag score-bad">' +
+            escapeHtml(s.difficulty) + '</span>') : '') +
         '</div>';
+    // Scores strip: the chosen decompiler's per-metric values, chosen metric first.
+    const vals = (s.values && s.values[dec]) || {};
+    const perf = (s.perfects && s.perfects[dec]) || {};
+    let scores = "";
+    const ms = orderedMetrics().slice();
+    ms.sort((a, b) => (a === selMetric ? -1 : 0) - (b === selMetric ? -1 : 0));
+    for (const m of ms) {
+        if (!(m in vals)) continue;
+        const ok = perf[m] ? "pct-high" : "pct-low";
+        const strong = m === selMetric;
+        scores += '<span class="sc ' + ok + '"' +
+            (strong ? ' style="font-weight:700;text-decoration:underline;"' : '') + '>' +
+            metricShort(m) + ' ' + Number(vals[m]).toFixed(2) + '</span>';
+    }
+    html += '<div class="cmp-scores">' + escapeHtml(dec) + ': ' + (scores || '&mdash;') + '</div>';
+    const code = (s.decompiled || {})[dec];
+    const cols = (s.source_code ? 1 : 0) + 1;
     html += '<div class="cmp-grid" style="grid-template-columns:repeat(' +
         Math.max(1, cols) + ',minmax(0,1fr));">';
     if (s.source_code) {
         html += '<div class="cmp-col src"><h4>source (ground truth)</h4>' +
             '<pre><code>' + escapeHtml(s.source_code) + '</code></pre></div>';
     }
-    for (const d of decs) {
-        const vals = (s.values && s.values[d]) || {};
-        const perf = (s.perfects && s.perfects[d]) || {};
-        let scores = "";
-        for (const m of metricList()) {
-            if (!(m in vals)) continue;
-            const ok = perf[m] ? "pct-high" : "pct-low";
-            scores += '<span class="sc ' + ok + '">' + metricShort(m) +
-                ' ' + Number(vals[m]).toFixed(2) + '</span>';
-        }
-        html += '<div class="cmp-col"><h4>' + escapeHtml(d) + '</h4>' +
-            '<div class="cmp-scores">' + (scores || '&mdash;') + '</div>' +
-            '<pre><code>' + escapeHtml(s.decompiled[d]) + '</code></pre></div>';
-    }
+    html += '<div class="cmp-col"><h4>' + escapeHtml(dec) + '</h4>' +
+        (code ? ('<pre><code>' + escapeHtml(code) + '</code></pre>')
+              : ('<p class="view-desc">no output from ' + escapeHtml(dec) +
+                 ' for this function.</p>')) +
+        '</div>';
     html += '</div>';
-    body.innerHTML = html;
+    c.body.innerHTML = html;
 }
-function initCompare(samples) {
-    SAMPLES = samples || [];
-    const sel = document.getElementById("cmp-select");
-    const filter = document.getElementById("cmp-filter");
-    const counter = document.getElementById("cmp-counter");
-    if (!sel) return;
-    function fill() {
-        const q = (filter && filter.value || "").toLowerCase();
-        sel.innerHTML = "";
-        let shown = 0;
-        SAMPLES.forEach((s, i) => {
-            const label = sampleLabel(s);
-            if (q && label.toLowerCase().indexOf(q) < 0) return;
+function fillViewFunctions() {
+    const c = viewControls();
+    if (!c.fn) return;
+    const tier = c.tier ? c.tier.value : "__all__";
+    const q = (c.filter && c.filter.value || "").toLowerCase();
+    c.fn.innerHTML = "";
+    let shown = 0, tierTotal = 0;
+    VIEW_SAMPLES.forEach((s, i) => {
+        const inTier = tier === "__all__" || (s.difficulty || "__none__") === tier;
+        if (!inTier) return;
+        tierTotal += 1;
+        const label = sampleLabel(s);
+        if (q && label.toLowerCase().indexOf(q) < 0) return;
+        const o = document.createElement("option");
+        o.value = i; o.textContent = label;
+        c.fn.appendChild(o); shown += 1;
+    });
+    if (c.counter) c.counter.textContent = shown + " / " + tierTotal + " functions";
+    renderViewEntry();
+}
+function initView(samples) {
+    VIEW_SAMPLES = samples || [];
+    const c = viewControls();
+    if (!c.fn) return;
+    // Difficulty tiers present in the data; legacy payloads (no tags) get "all".
+    const tiers = DIFFICULTIES.filter(t => VIEW_SAMPLES.some(s => s.difficulty === t));
+    if (c.tier) {
+        (tiers.length ? tiers : ["__all__"]).forEach(t => {
             const o = document.createElement("option");
-            o.value = i; o.textContent = label;
-            sel.appendChild(o); shown += 1;
+            o.value = t; o.textContent = t === "__all__" ? "all" : t;
+            c.tier.appendChild(o);
         });
-        if (counter) counter.textContent = shown + " / " + SAMPLES.length + " samples";
-        renderCompare();
     }
-    sel.addEventListener("change", renderCompare);
-    if (filter) filter.addEventListener("input", fill);
-    fill();
-}
-
-// ---- Hardest view ----
-let HARDEST = [];
-function renderHardest() {
-    const list = document.getElementById("hardest-list");
-    if (!list) return;
-    const mSel = document.getElementById("hard-metric");
-    const dSel = document.getElementById("hard-dec");
-    const mFilter = mSel ? mSel.value : "__all__";
-    const dFilter = dSel ? dSel.value : "__all__";
-    let shown = 0, html = "";
-    for (const e of HARDEST) {
-        if (mFilter !== "__all__" && e.metric !== mFilter) continue;
-        if (dFilter !== "__all__" && e.decompiler !== dFilter) continue;
-        shown += 1;
-        const metricLabel = metricName(e.metric);
-        const sizeStr = (e.size != null) ? (e.size + " lines") : "? lines";
-        html += '<div class="hard-entry">';
-        html += '<div class="hard-head"><span class="fn">' + escapeHtml(e.function) +
-            '</span> &middot; ' + escapeHtml(e.decompiler) + ' &middot; ' +
-            escapeHtml(metricLabel) + '</div>';
-        html += '<div class="hard-meta"><span class="tag">' + escapeHtml(e.project) + '/' +
-            escapeHtml(e.opt_level) + '/' + escapeHtml(e.binary) + '</span>' +
-            '<span class="tag score-bad">score ' + Number(e.value).toFixed(3) +
-            ' (perfect ' + Number(e.perfect_value).toFixed(3) + ')</span>' +
-            '<span class="tag">' + escapeHtml(sizeStr) + '</span></div>';
-        const cols = (e.decompiled_code ? 1 : 0) + (e.source_code ? 1 : 0);
-        html += '<div class="cmp-grid" style="grid-template-columns:repeat(' +
-            Math.max(1, cols) + ',minmax(0,1fr));">';
-        if (e.decompiled_code) {
-            html += '<div class="cmp-col"><h4>' + escapeHtml(e.decompiler) +
-                '</h4><pre><code>' + escapeHtml(e.decompiled_code) + '</code></pre></div>';
-        }
-        if (e.source_code) {
-            html += '<div class="cmp-col src"><h4>source</h4><pre><code>' +
-                escapeHtml(e.source_code) + '</code></pre></div>';
-        }
-        html += '</div></div>';
+    // Decompilers: union over the entries (covers versioned ids), sorted.
+    const decs = [];
+    for (const s of VIEW_SAMPLES) {
+        for (const d in (s.decompiled || {})) if (decs.indexOf(d) < 0) decs.push(d);
     }
-    if (shown === 0) html = '<p class="view-desc">no entries match the current filter.</p>';
-    list.innerHTML = html;
-    const counter = document.getElementById("hard-counter");
-    if (counter) counter.textContent = "showing " + shown + " / " + HARDEST.length;
-}
-function initHardest(entries) {
-    HARDEST = entries || [];
-    if (!HARDEST.length) return;
-    const mSel = document.getElementById("hard-metric"), dSel = document.getElementById("hard-dec");
-    if (!mSel || !dSel) return;
-    const metrics = [], decs = [];
-    for (const e of HARDEST) {
-        if (metrics.indexOf(e.metric) < 0) metrics.push(e.metric);
-        if (decs.indexOf(e.decompiler) < 0) decs.push(e.decompiler);
+    decs.sort();
+    if (c.dec) {
+        decs.forEach(d => {
+            const o = document.createElement("option");
+            o.value = d; o.textContent = d;
+            c.dec.appendChild(o);
+        });
     }
-    metrics.sort(); decs.sort();
-    for (const m of metrics) {
-        const o = document.createElement("option");
-        o.value = m; o.textContent = metricName(m); mSel.appendChild(o);
+    if (c.metric) {
+        orderedMetrics().forEach(m => {
+            const o = document.createElement("option");
+            o.value = m; o.textContent = metricName(m);
+            c.metric.appendChild(o);
+        });
     }
-    for (const d of decs) {
-        const o = document.createElement("option");
-        o.value = d; o.textContent = d; dSel.appendChild(o);
-    }
-    mSel.addEventListener("change", renderHardest);
-    dSel.addEventListener("change", renderHardest);
-    renderHardest();
+    if (c.tier) c.tier.addEventListener("change", fillViewFunctions);
+    if (c.dec) c.dec.addEventListener("change", renderViewEntry);
+    if (c.metric) c.metric.addEventListener("change", renderViewEntry);
+    c.fn.addEventListener("change", renderViewEntry);
+    if (c.filter) c.filter.addEventListener("input", fillViewFunctions);
+    fillViewFunctions();
 }
 
 // ---- Historical (SVG) ----
@@ -625,8 +617,7 @@ function initHistory(history) {
 // the metric registry these views label their columns and scores with.
 const LAZY_VIEWS = {
     about: {file: "dataset", body: "dataset-summary", render: buildDataset},
-    compare: {file: "samples", body: "compare-body", render: initCompare},
-    hardest: {file: "hardest", body: "hardest-list", render: initHardest},
+    view: {file: "samples", body: "view-body", render: initView},
     history: {file: "history", body: "history-charts", render: initHistory}
 };
 const lazyStarted = {};

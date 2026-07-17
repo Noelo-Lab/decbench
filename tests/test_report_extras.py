@@ -256,5 +256,8 @@ def test_build_payloads_scrubs_prebaked_malware(tmp_path: Path, monkeypatch) -> 
     payloads = build_payloads(fd, Scoreboard(name="t"))
 
     assert payloads["samples"] == []
-    assert payloads["hardest"] == []
+    # hardest is stored in function_results.json but never shipped as a payload
+    # anymore (the View page's hard tier replaced it) — so prebaked malware in
+    # it cannot publish either.
+    assert "hardest" not in payloads
     assert "MALWARE_C" not in json.dumps(payloads)

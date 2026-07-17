@@ -23,14 +23,12 @@ id = "distance"
 nav_label = "distance"
 requires_function_data = true
 
+# The side-by-side code view (absorbed the old `compare` and `hardest` views):
+# source vs a chosen decompiler's output across easy/medium/hard difficulty
+# tiers, ~100 functions each.
 [[view]]
-id = "compare"
-nav_label = "compare"
-requires_function_data = true
-
-[[view]]
-id = "hardest"
-nav_label = "hardest"
+id = "view"
+nav_label = "view"
 requires_function_data = true
 
 # The id and the nav label differ here: routing/hash uses "history", the sidebar

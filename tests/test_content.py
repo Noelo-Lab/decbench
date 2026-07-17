@@ -40,8 +40,7 @@ def test_view_registry_covers_the_report(content: Content) -> None:
     assert [v.id for v in content.view_specs] == [
         "leaderboard",
         "distance",
-        "compare",
-        "hardest",
+        "view",
         "history",
         "about",
     ]
@@ -85,11 +84,13 @@ def test_default_view_is_the_leaderboard(content: Content) -> None:
 
 
 def test_empty_states_are_parsed(content: Content) -> None:
-    hardest = content.view("hardest")
-    assert hardest.has_empty_state
-    assert hardest.title == "hardest functions &mdash; hall of shame"
-    assert hardest.empty_title == "hardest functions"
-    assert "no hardest-function data" in hardest.empty_html
+    view = content.view("view")
+    assert view.has_empty_state
+    assert view.title == "view"
+    assert "no sample functions were attached" in view.empty_html
+    # The three dropdowns are the contract with app.js's initView.
+    for control in ("view-difficulty", "view-dec", "view-metric", "view-select"):
+        assert f'id="{control}"' in view.body_html
 
 
 def test_inline_html_passes_through_unescaped(content: Content) -> None:

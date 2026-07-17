@@ -83,9 +83,7 @@ class TestRegistry:
 
 @pytest.mark.parametrize("name", ["angr", "ida", "ghidra"])
 class TestSmokeDecompile:
-    def test_decompile_tiny_binary(
-        self, name: str, tiny_binary: Path, tmp_path: Path
-    ) -> None:
+    def test_decompile_tiny_binary(self, name: str, tiny_binary: Path, tmp_path: Path) -> None:
         if not _is_available(name):
             pytest.skip(f"{name} is not available on this system")
 

@@ -29,7 +29,10 @@ from decbench.models.scoreboard import Scoreboard
 from decbench.rendering.html import render_html_report
 from decbench.rendering.site import build_site
 
-DATA_FILES = ["aggregates", "dataset", "hardest", "history", "samples"]
+# `hardest` is deliberately absent: HardestEntry data is still stored in
+# function_results.json but no longer shipped — the View page's `hard`
+# difficulty tier (inside samples.json) replaced the Hardest view.
+DATA_FILES = ["aggregates", "dataset", "history", "samples"]
 
 
 @pytest.fixture
@@ -339,6 +342,9 @@ def test_both_modes_render_the_same_skeleton(
         '<table id="leaderboard-table">',
         '<table id="metrics-perfect-table">',
         'data-view="about"',
+        'data-view="view"',
+        'id="view-difficulty"',
+        'id="view-select"',
         'data-stat="functions"',
         'id="normalize-btn"',
     ):
