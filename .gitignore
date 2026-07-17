@@ -149,3 +149,4 @@ testing/
 /results*
 # stray top-level generated report (real ones live in results/)
 /report.html
+.claude/
