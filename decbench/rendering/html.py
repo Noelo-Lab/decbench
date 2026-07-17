@@ -422,7 +422,7 @@ def _is_empty(view_id: str, function_data: FunctionData | None) -> bool:
 
 
 def _goal_cards(view: ViewContent) -> str:
-    """The Metrics page's ``## [n]`` cards. Empty string for every other view."""
+    """The About page's ``## [n]`` metric cards. Empty string for every other view."""
     return "".join(_goal_card(card) for card in view.goals)
 
 
@@ -455,10 +455,11 @@ def _generated_table(
         if function_data is None:
             return _static_leaderboard_table(scoreboard, content)
         return '<table id="leaderboard-table"><thead><tr></tr></thead><tbody></tbody></table>'
-    if view_id == "metrics":
-        if function_data is None:
-            return _static_metrics_table(scoreboard, content)
-        return '<table id="metrics-perfect-table"><thead><tr></tr></thead><tbody></tbody></table>'
+    if view_id == "about" and function_data is None:
+        # With data, about.md carries the empty `metrics-perfect-table` scaffold
+        # inline (mid-page, where the metrics section sits) and app.js fills it;
+        # only the no-JS/no-data report needs a renderer-built static table.
+        return _static_metrics_table(scoreboard, content)
     return ""
 
 

@@ -339,10 +339,12 @@ def report(scoreboard_path, output, function_data) -> None:
     else:
         console.print("[yellow]No function data found; generating static report.[/yellow]")
 
-    # Ensure the dataset presets (unoptimized/optimized/inlined/large/sample-set)
-    # are tagged so the report's dataset selector works even when re-rendering
-    # older data.
-    if fd is not None and not fd.dataset_presets:
+    # Re-tag the dataset presets (unoptimized/optimized/inlined/large/sample-set)
+    # on every render: membership is a pure, seeded function of the records, so
+    # re-deriving it is idempotent — and it is what lets a preset rename or a
+    # membership-rule change take effect on re-render without a benchmark re-run
+    # (data written before the rename carries stale tags otherwise).
+    if fd is not None:
         try:
             from decbench.scoring.datasets import assign_datasets
 
@@ -404,11 +406,12 @@ def site_build(results_path, output) -> None:
     scoreboard = Scoreboard.from_toml(scoreboard_path)
     fd = FunctionData.from_json(fd_path)
 
-    # Tag dataset presets so the selector works when re-rendering older data.
-    if not fd.dataset_presets:
-        from decbench.scoring.datasets import assign_datasets
+    # Re-tag dataset presets on every render (idempotent; membership is a pure
+    # seeded function of the records) so renames/rule changes take effect on
+    # re-render instead of serving tags baked in by an older decbench.
+    from decbench.scoring.datasets import assign_datasets
 
-        assign_datasets(fd)
+    assign_datasets(fd)
 
     out_dir = Path(output)
     build_site(scoreboard, fd, out_dir)

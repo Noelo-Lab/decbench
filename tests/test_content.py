@@ -39,9 +39,7 @@ def test_view_registry_ids_are_unique(content: Content) -> None:
 def test_view_registry_covers_the_report(content: Content) -> None:
     assert [v.id for v in content.view_specs] == [
         "leaderboard",
-        "metrics",
         "distance",
-        "dataset",
         "compare",
         "hardest",
         "history",
@@ -58,7 +56,7 @@ def test_history_view_id_differs_from_its_nav_label(content: Content) -> None:
 def test_visible_views_drop_data_backed_views_without_data(content: Content) -> None:
     without = [v.id for v in content.visible_views(has_function_data=False)]
     with_data = [v.id for v in content.visible_views(has_function_data=True)]
-    assert without == ["leaderboard", "metrics", "about"]
+    assert without == ["leaderboard", "about"]
     assert with_data == [v.id for v in content.view_specs]
 
 
@@ -129,38 +127,46 @@ def test_ordered_metrics_sorts_known_and_appends_unknown(content: Content) -> No
     assert content.ordered_metrics(["zzz", "ged"]) == ["ged", "zzz"]
 
 
-# -- goal cards ------------------------------------------------------------
+# -- goal cards (on the about page) -----------------------------------------
 
 
 def test_goal_card_parse_yields_three_cards(content: Content) -> None:
-    goals = content.view("metrics").goals
+    goals = content.view("about").goals
     assert len(goals) == 3
     assert [g.number for g in goals] == ["1", "2", "3"]
     assert [g.metric_key for g in goals] == BENCHMARK_METRICS
 
 
 def test_goal_cards_are_fully_populated(content: Content) -> None:
-    for card in content.view("metrics").goals:
+    for card in content.view("about").goals:
         assert card.title
         assert card.metric_display_name
-        assert card.body_html and not card.body_html.startswith("<p")
+        assert card.body_html
+        # Every metric card carries its collapsible how-it-works visualization.
+        assert 'class="metric-viz"' in card.body_html
+        assert "<svg" in card.body_html
         assert card.perfect.startswith("perfect = ")
 
 
 def test_goal_card_perfect_lines_match_the_metric_registry(content: Content) -> None:
     """The explainer and metrics.toml must not drift apart."""
-    for card in content.view("metrics").goals:
+    for card in content.view("about").goals:
         spec = content.metric(card.metric_key)
         assert spec is not None
         assert card.perfect == spec.perfect_line
 
 
-def test_metrics_view_keeps_intro_and_outro_around_the_cards(content: Content) -> None:
-    view = content.view("metrics")
-    assert "three goals" in view.body_html
+def test_about_view_keeps_intro_and_outro_around_the_cards(content: Content) -> None:
+    view = content.view("about")
+    assert "three separable goals" in view.body_html
     assert "[1]" not in view.body_html  # cards were lifted out of the body
     assert 'class="recovered"' in view.outro_html
     assert 'id="metrics-table-note"' in view.outro_html
+    # The dataset section (scaffolds app.js fills from data/dataset.json)
+    # merged into this page's outro.
+    assert 'id="dataset-summary"' in view.outro_html
+    assert 'id="dataset-projects"' in view.outro_html
+    assert 'id="metrics-perfect-table"' in view.outro_html
 
 
 # -- datasets --------------------------------------------------------------

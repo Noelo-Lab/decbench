@@ -25,7 +25,7 @@ Markdown conventions (documented in the files themselves, parsed here):
 * ``# <title>`` opens a section. A bare title is the view **body**; ``# [empty]
   <title>`` is the empty state; ``# [outro]`` is body content the renderer emits
   *after* its generated markup.
-* In ``metrics.md``, ``## [n] <title>`` blocks are structured **goal cards**
+* In ``about.md``, ``## [n] <title>`` blocks are structured **goal cards**
   (:class:`GoalCard`) — a ``metric:`` line, a body, and a ``**perfect =**`` line.
 * Inline HTML passes through unescaped: the prose is already final markup.
 """
@@ -413,7 +413,7 @@ def _load_view(view_id: str, metrics: tuple[MetricSpec, ...]) -> ViewContent:
     sections = _split_sections(_read(f"{view_id}.md"))
     title, body_md = sections.get(_BODY_SECTION, ("", ""))
     goals: tuple[GoalCard, ...] = ()
-    if view_id == "metrics":
+    if view_id == "about":
         goals, body_md = _parse_goal_cards(body_md, metrics)
     empty_title, empty_md = sections.get(_EMPTY_SECTION, ("", ""))
     _, outro_md = sections.get(_OUTRO_SECTION, ("", ""))

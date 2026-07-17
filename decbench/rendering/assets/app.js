@@ -291,7 +291,7 @@ let lastResult = null;
 function refresh() {
     lastResult = currentCombo();
     if (!lastResult) {
-        ["leaderboard", "metrics", "distance"].forEach(v => showBanner(v,
+        ["leaderboard", "about", "distance"].forEach(v => showBanner(v,
             "no precomputed aggregates for dataset '" + (state.dataset || FALLBACK_PRESET) +
             "' with normalize=" + (state.normalize ? "on" : "off") + "."));
         return;
@@ -302,7 +302,7 @@ function refresh() {
     updateStats(lastResult);
 }
 
-// ---- Dataset / About page (corpus-wide; independent of the selectors) ----
+// ---- About page's dataset section (corpus-wide; independent of the selectors) ----
 function buildDataset(ds) {
     const cats = ds.categories || [], summary = ds.summary || {}, joern = ds.joern || {};
     const proj = (ds.projects || []).slice();
@@ -624,7 +624,7 @@ function initHistory(history) {
 // Fetched on FIRST navigation, once. Each also waits on aggregates, which carry
 // the metric registry these views label their columns and scores with.
 const LAZY_VIEWS = {
-    dataset: {file: "dataset", body: "dataset-summary", render: buildDataset},
+    about: {file: "dataset", body: "dataset-summary", render: buildDataset},
     compare: {file: "samples", body: "compare-body", render: initCompare},
     hardest: {file: "hardest", body: "hardest-list", render: initHardest},
     history: {file: "history", body: "history-charts", render: initHistory}
@@ -718,7 +718,7 @@ function init() {
         initDatasetSelector();
         refresh();
     }).catch(err => {
-        ["leaderboard", "metrics", "distance"].forEach(v => showBanner(v,
+        ["leaderboard", "about", "distance"].forEach(v => showBanner(v,
             "could not load data/aggregates.json — " + err.message +
             ". this view has no data."));
     });
