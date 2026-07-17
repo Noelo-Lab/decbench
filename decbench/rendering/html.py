@@ -214,6 +214,9 @@ def render_html_report(
         function_data: Optional per-function dataset. Without it the report falls
             back to static tables built from the scoreboard alone.
     """
+    from decbench.rendering.visibility import apply_hidden_decompilers
+
+    scoreboard, function_data = apply_hidden_decompilers(scoreboard, function_data)
     if function_data is None:
         assets = static_assets()
     else:

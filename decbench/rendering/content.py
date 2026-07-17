@@ -144,6 +144,7 @@ class SiteContent:
     sidebar: Sidebar
     banners: dict[str, str]
     side_stats: dict[str, str]
+    hidden_decompilers: tuple[str, ...] = ()
 
     @property
     def no_function_data_banner(self) -> str:
@@ -431,12 +432,14 @@ def _load_view(view_id: str, metrics: tuple[MetricSpec, ...]) -> ViewContent:
 def _load_site() -> SiteContent:
     """Parse ``site.toml``."""
     raw = _load_toml("site.toml")
+    hidden = tuple((raw.get("decompilers") or {}).get("hidden") or ())
     return SiteContent(
         brand=Brand(**raw["brand"]),
         footer=Footer(**raw["footer"]),
         sidebar=Sidebar(**raw["sidebar"]),
         banners=dict(raw["banners"]),
         side_stats=dict(raw["side_stats"]),
+        hidden_decompilers=hidden,
     )
 
 

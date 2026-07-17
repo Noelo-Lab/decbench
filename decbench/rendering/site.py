@@ -59,6 +59,12 @@ def build_site(scoreboard: Scoreboard, function_data: FunctionData, out_dir: Pat
             Required: a site with no data has nothing to show.
         out_dir: The tree root, e.g. ``site/``.
     """
+    from decbench.rendering.visibility import apply_hidden_decompilers
+
+    # Hide site-hidden decompilers (content/site.toml) from EVERY page and
+    # payload; their results stay on disk, untouched.
+    scoreboard, function_data = apply_hidden_decompilers(scoreboard, function_data)
+
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for generated in (out_dir / _DATA_DIR, out_dir / _FONTS_DIR):
