@@ -13,27 +13,27 @@
 # Button order is the order of the tables below.
 
 [[preset]]
-name = "full"
-label = "full"
-description = "everything — O0 + O2 + O2-noinline (per-opt double-count ok)"
+name = "unoptimized"
+label = "unoptimized"
+description = "unoptimized builds (O0) — surfaces simple structural differences"
 default = true
 
 [[preset]]
-name = "hard"
-label = "hard"
-description = "optimized, no inlining (O2-noinline), large functions only"
+name = "optimized"
+label = "optimized"
+description = "optimized without inlining (O2-noinline)"
 
 [[preset]]
-name = "hard-inlined"
-label = "hard-inlined"
-description = "optimized WITH inlining (O2), large functions only"
+name = "inlined"
+label = "inlined"
+description = "optimized WITH inlining (plain O2)"
 
 [[preset]]
-name = "unoptimized"
-label = "unoptimized"
-description = "unoptimized only (O0) — surfaces simple structural differences"
+name = "large"
+label = "large"
+description = "large functions only (upper size tail), optimized without inlining"
 
 [[preset]]
-name = "tiny"
-label = "tiny"
-description = "~100 functions evenly sampled across inlined/optimized/unoptimized/large and projects"
+name = "sample-set"
+label = "sample-set"
+description = "~250 functions evenly sampled across unoptimized/optimized/inlined/large/ARM-unoptimized and projects"

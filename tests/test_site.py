@@ -62,19 +62,19 @@ def function_data() -> FunctionData:
                         values={"angr": {"ged": 0.0, "type_match": 1.0}},
                         perfects={"angr": {"ged": True, "type_match": True}},
                         decompiled={"angr": True},
-                        datasets=["full"],
+                        datasets=["unoptimized"],
                     ),
                     FunctionRecord(
                         function="f2",
                         values={"angr": {"ged": 2.0, "type_match": 0.5}},
                         perfects={"angr": {"ged": False, "type_match": False}},
                         decompiled={"angr": True},
-                        datasets=["full", "tiny"],
+                        datasets=["unoptimized", "sample-set"],
                     ),
                 ],
             )
         ],
-        dataset_presets=[DatasetPreset(name="full"), DatasetPreset(name="tiny")],
+        dataset_presets=[DatasetPreset(name="unoptimized"), DatasetPreset(name="sample-set")],
         samples=[
             SampleEntry(
                 project="proj",
@@ -148,7 +148,12 @@ def test_aggregates_carry_the_registry_and_the_default_view(
     assert agg["metric_registry"]["ged"]["short_name"] == "Structure"
     assert agg["default_view"] == "leaderboard"
     # Every (preset x normalize) combination is precomputed, not recomputed client-side.
-    assert set(agg["combos"]) == {"full|0", "full|1", "tiny|0", "tiny|1"}
+    assert set(agg["combos"]) == {
+        "unoptimized|0",
+        "unoptimized|1",
+        "sample-set|0",
+        "sample-set|1",
+    }
 
 
 def test_preset_text_comes_from_the_content_registry(
@@ -159,10 +164,10 @@ def test_preset_text_comes_from_the_content_registry(
     build_site(scoreboard, function_data, out)
     agg = json.loads((out / "data" / "aggregates.json").read_text())
 
-    full = next(p for p in agg["presets"] if p["name"] == "full")
-    assert full["label"] == "full"
-    assert "O2-noinline" in full["description"]
-    assert full["default"] is True
+    unopt = next(p for p in agg["presets"] if p["name"] == "unoptimized")
+    assert unopt["label"] == "unoptimized"
+    assert "O0" in unopt["description"]
+    assert unopt["default"] is True
 
 
 def test_nojekyll_is_present(

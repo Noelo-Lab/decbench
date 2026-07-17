@@ -466,22 +466,23 @@ def _topup_samples(
     excluded: set[str],
     headroom: int = 4,
 ) -> list[tuple[BinaryGroup, FunctionRecord]]:
-    """Replace excluded ``tiny`` records with non-excluded ones of the same shape.
+    """Replace excluded ``sample-set`` records with non-excluded ones of the same shape.
 
-    The ``tiny`` slice is a deliberately even sample (see
-    :mod:`decbench.scoring.datasets`): balanced across the inlined / optimized /
-    unoptimized / large categories, spread across projects, at most one function
-    per binary. Dropping the malware members without replacing them would both
-    shorten the Compare view and skew that balance, so each dropped record is
-    replaced by one drawn from the same ``(opt_level, is_large)`` bucket, reusing
-    the same even-spread sampler and honouring the binaries already taken.
+    The ``sample-set`` slice is a deliberately even sample (see
+    :mod:`decbench.scoring.datasets`): balanced across the unoptimized /
+    optimized / inlined / large / ARM categories, spread across projects, at
+    most one function per binary. Dropping the malware members without
+    replacing them would both shorten the Compare view and skew that balance,
+    so each dropped record is replaced by one drawn from the same
+    ``(opt_level, is_large)`` bucket, reusing the same even-spread sampler and
+    honouring the binaries already taken.
 
-    ``tiny`` *membership itself is left untouched* — it feeds the report's
+    ``sample-set`` *membership itself is left untouched* — it feeds the report's
     client-side aggregates, and re-sampling it would move published numbers.
     ``headroom`` over-draws so replacements that turn out to have no decompiled
     code can be skipped without shortening the result.
     """
-    # Same-package internals: the tiny slice's own sampler, reused so the
+    # Same-package internals: the sample-set slice's own sampler, reused so the
     # replacements obey the identical spread rules.
     from decbench.scoring.datasets import _resolve_seed, _sample_even
 
@@ -515,14 +516,15 @@ def _topup_samples(
 def build_samples(
     function_data: FunctionData,
     decompile_results: Any,
-    max_samples: int = 140,
+    max_samples: int = 250,
     excluded_projects: Iterable[str] | None = None,
 ) -> list[Any]:
     """Curated side-by-side samples (source + each decompiler's output).
 
-    Prefers the ``tiny`` representative slice (so it spans projects/opt levels at
-    one function per binary); falls back to any function with decompiled code.
-    Requires datasets to be assigned first (see :func:`attach_extras`).
+    Prefers the ``sample-set`` representative slice (so it spans projects/opt
+    levels at one function per binary); falls back to any function with
+    decompiled code. Requires datasets to be assigned first (see
+    :func:`attach_extras`).
 
     Functions from ``excluded_projects`` (by default the malware targets — see
     :func:`publish_malware_allowed`) are dropped and *replaced* by equivalent
@@ -536,8 +538,8 @@ def build_samples(
     def opt_key_for(group_opt: str) -> Any:
         return group_opt  # _lookup_* tolerate string opt keys via _opt_value
 
-    tiny = [(g, f) for g in groups for f in g.functions if "tiny" in (f.datasets or [])]
-    candidates = tiny or [(g, f) for g in groups for f in g.functions]
+    sample_set = [(g, f) for g in groups for f in g.functions if "sample-set" in (f.datasets or [])]
+    candidates = sample_set or [(g, f) for g in groups for f in g.functions]
     # Publish no more than the unfiltered slice would have — and, thanks to the
     # top-up below, no fewer.
     limit = min(max_samples, len(candidates))
@@ -550,7 +552,7 @@ def build_samples(
         removed = [(g, f) for g, f in candidates if g.project in excluded]
         if removed:
             _log_exclusions("samples", Counter(g.project for g, _f in removed))
-            if tiny:
+            if sample_set:
                 kept += _topup_samples(function_data, removed, kept, excluded)
         candidates = kept
 
@@ -712,9 +714,10 @@ def attach_extras(
         except Exception:
             function_data.history = []
 
-    # Tag each function with its dataset presets (full/hard/hard-inlined/tiny)
-    # so the report shows a single dataset selector instead of many toggles.
-    # Must run BEFORE build_samples (which prefers the `tiny` slice).
+    # Tag each function with its dataset presets (unoptimized/optimized/inlined/
+    # large/sample-set) so the report shows a single dataset selector instead of
+    # many toggles. Must run BEFORE build_samples (which prefers the
+    # `sample-set` slice).
     try:
         from decbench.scoring.datasets import assign_datasets
 
@@ -723,8 +726,8 @@ def attach_extras(
         pass
 
     # Side-by-side Compare samples (original source vs each decompiler's output).
-    # Runs after assign_datasets so the `tiny` slice (and its malware-replacement
-    # top-up) is available.
+    # Runs after assign_datasets so the `sample-set` slice (and its
+    # malware-replacement top-up) is available.
     try:
         function_data.samples = build_samples(
             function_data, decompile_results, excluded_projects=excluded

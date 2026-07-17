@@ -53,8 +53,8 @@ class FunctionRecord(BaseModel):
     datasets: list[str] = Field(
         default_factory=list,
         description="Names of the dataset presets this function belongs to "
-        "(e.g. 'full', 'hard', 'hard-inlined', 'tiny'); drives the report's "
-        "single dataset selector instead of many ad-hoc toggles",
+        "(e.g. 'unoptimized', 'optimized', 'inlined', 'large', 'sample-set'); "
+        "drives the report's single dataset selector instead of many ad-hoc toggles",
     )
 
 
@@ -114,9 +114,10 @@ class DatasetPreset(BaseModel):
     """A named, selectable view of the dataset shown in the report.
 
     Replaces the report's many label/binary toggles with a small fixed set of
-    curated views (full / hard / hard-inlined / tiny). Membership per function
-    is precomputed server-side (see :mod:`decbench.scoring.datasets`) and stored
-    on :attr:`FunctionRecord.datasets`.
+    curated views (unoptimized / optimized / inlined / large / sample-set).
+    Membership per function is precomputed server-side (see
+    :mod:`decbench.scoring.datasets`) and stored on
+    :attr:`FunctionRecord.datasets`.
 
     Only :attr:`name` is meaningful for new data: the presentation is owned by
     ``decbench/rendering/content/datasets.toml`` and joined on at render time.
@@ -195,7 +196,8 @@ class FunctionData(BaseModel):
     )
     dataset_presets: list[DatasetPreset] = Field(
         default_factory=list,
-        description="The selectable dataset views (full/hard/hard-inlined/tiny)",
+        description="The selectable dataset views "
+        "(unoptimized/optimized/inlined/large/sample-set)",
     )
     hardest: list[HardestEntry] = Field(
         default_factory=list,

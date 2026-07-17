@@ -339,8 +339,9 @@ def report(scoreboard_path, output, function_data) -> None:
     else:
         console.print("[yellow]No function data found; generating static report.[/yellow]")
 
-    # Ensure the dataset presets (full/hard/hard-inlined/tiny) are tagged so the
-    # report's dataset selector works even when re-rendering older data.
+    # Ensure the dataset presets (unoptimized/optimized/inlined/large/sample-set)
+    # are tagged so the report's dataset selector works even when re-rendering
+    # older data.
     if fd is not None and not fd.dataset_presets:
         try:
             from decbench.scoring.datasets import assign_datasets
@@ -717,7 +718,8 @@ def improvements(
 def download(config, dest, repo_path, include, revision) -> None:
     """Download a published DecBench dataset config (alias for `decbench-data`).
 
-    CONFIG is one of the published configs: full / hard / hard-inlined / tiny.
+    CONFIG is one of the published configs, e.g. sample-set / large /
+    unoptimized / optimized / inlined / full.
     This is a thin alias that delegates to the standalone `decbench_data`
     package (shipped from the HuggingFace dataset repo), so no heavy DecBench
     imports are pulled in.

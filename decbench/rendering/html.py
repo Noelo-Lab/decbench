@@ -339,7 +339,7 @@ def _side_stats(scoreboard: Scoreboard, content: Content) -> str:
 
 
 def _dataset_selector(function_data: FunctionData, content: Content) -> str:
-    """The sidebar dataset selector (full / hard / hard-inlined / ... / tiny).
+    """The sidebar dataset selector (unoptimized / optimized / ... / sample-set).
 
     Preset *names* come from the run; their labels, descriptions and which one is
     preselected come from ``content/datasets.toml`` (see
