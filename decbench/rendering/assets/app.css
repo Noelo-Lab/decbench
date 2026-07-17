@@ -163,6 +163,17 @@ button:hover, select:hover { color: #000; background: var(--text); }
 .controls label { color: var(--text-muted); }
 .counter { color: var(--text-muted); font-size: 0.82em; }
 
+/* ---- Collapsible metric visualizations (about page) ---- */
+details.metric-viz {
+    border: dashed 1px rgba(219, 219, 219, 0.25);
+    padding: 0.45rem 0.8rem; margin: 0.7rem 0;
+}
+details.metric-viz summary {
+    cursor: pointer; color: var(--amber); font-size: 0.85em; user-select: none;
+}
+details.metric-viz summary:hover { color: var(--text); }
+details.metric-viz[open] summary { margin-bottom: 0.7rem; }
+
 /* ---- Metrics cards ---- */
 .goal {
     border: dashed 1px rgba(219,219,219,0.4);

@@ -19,18 +19,8 @@ requires_function_data = false
 default = true
 
 [[view]]
-id = "metrics"
-nav_label = "metrics"
-requires_function_data = false
-
-[[view]]
 id = "distance"
 nav_label = "distance"
-requires_function_data = true
-
-[[view]]
-id = "dataset"
-nav_label = "dataset"
 requires_function_data = true
 
 [[view]]
@@ -50,9 +40,12 @@ id = "history"
 nav_label = "historical"
 requires_function_data = true
 
-# The explainer page: what the benchmark is and how to read it. Last in the nav —
-# it explains the numbers, so it sits after them, and it needs no data. NOT the
-# page the site opens on; that is the leaderboard above (`default = true`).
+# The explainer page: why the benchmark exists, the three metrics (with their
+# goal cards + visualizations), and the dataset. It absorbed the old `metrics`
+# and `dataset` views. Last in the nav — it explains the numbers, so it sits
+# after them — and it needs no data (its dataset tables are filled lazily by
+# app.js when data exists, and stay empty otherwise). NOT the page the site
+# opens on; that is the leaderboard above (`default = true`).
 [[view]]
 id = "about"
 nav_label = "about"
