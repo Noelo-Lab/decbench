@@ -622,6 +622,35 @@ def _r2_bare_name(name: str) -> str:
     return name.rsplit(".", 1)[-1] if name else name
 
 
+def _addr_targets_of(function_names: set[int] | set[str] | None) -> set[int]:
+    """The int (ELF-file-space) addresses in the driver's function filter."""
+    if not function_names:
+        return set()
+    return {int(x) for x in function_names if isinstance(x, int) and not isinstance(x, bool)}
+
+
+def _skip_r2_function(
+    bare_name: str,
+    file_addr: int,
+    text_range: tuple[int, int] | None,
+    addr_targets: set[int] | None,
+) -> bool:
+    """Whether to drop an r2-discovered function, honouring the source targets.
+
+    A function whose address is one of ``addr_targets`` (the DWARF ``low_pc``
+    source functions the driver asked for) is a VERIFIED real function and is
+    always kept: the ``.text`` heuristic behind :func:`should_skip_function`
+    misfires on binaries with the code split across multiple executable
+    sections (e.g. u-boot's tiny ``.text`` + 486 KB ``.text_rest``, freertos),
+    where the real functions live outside the one detected ``.text`` and would
+    otherwise be dropped — the exact reason r2dec scored 0 on those ARM targets.
+    Non-target functions still go through the normal filter.
+    """
+    if addr_targets and raw_common._addr_matches(file_addr, addr_targets):
+        return False
+    return raw_common.should_skip_function(bare_name, file_addr, text_range)
+
+
 def _func_ident_in_code(code: str) -> str | None:
     """The identifier of the first top-level function definition in ``code``.
 
@@ -785,12 +814,16 @@ class R2DecDecompiler(DockerizedDecompiler):
         elf_base: int,
         text_range: tuple[int, int] | None,
         baddr: int,
+        addr_targets: set[int] | None = None,
     ) -> list[tuple[str, int, int]]:
         """``(r2_flag_name, file_addr, r2_addr)`` for benchmarkable functions.
 
         Uses radare2's ``aflj`` (function list). ``file_addr`` is ELF-file space
         (``r2_addr - baddr + elf_base``). Imports/PLT/reloc stubs, the entrypoint
-        alias, CRT helpers, and anything outside ``.text`` are dropped.
+        alias, CRT helpers, and anything outside ``.text`` are dropped — EXCEPT a
+        function whose address is one of ``addr_targets`` (the driver's DWARF
+        ``low_pc`` source set), which is a verified real function and is kept
+        regardless of the ``.text`` heuristic (see :func:`_skip_r2_function`).
         """
         funcs = r.cmdj("aflj") or []
         out: list[tuple[str, int, int]] = []
@@ -805,7 +838,7 @@ class R2DecDecompiler(DockerizedDecompiler):
                 continue
             raw = int(raw)
             file_addr = raw - baddr + elf_base
-            if raw_common.should_skip_function(_r2_bare_name(name), file_addr, text_range):
+            if _skip_r2_function(_r2_bare_name(name), file_addr, text_range, addr_targets):
                 continue
             out.append((name, file_addr, raw))
         out.sort(key=lambda t: t[1])
@@ -992,7 +1025,9 @@ class R2DecDecompiler(DockerizedDecompiler):
                     targets.append((name, int(fa), raw, name))
             else:
                 targets = self._narrow(
-                    self._discover(r, elf_base, text_range, baddr),
+                    self._discover(
+                        r, elf_base, text_range, baddr, _addr_targets_of(function_names)
+                    ),
                     function_names,
                     binary_path.name,
                 )
@@ -1091,6 +1126,7 @@ class R2DecDecompiler(DockerizedDecompiler):
         # container already filtered by address, so this is a defensive re-check).
         by_addr: dict[int, tuple[str, str]] = {}
         discovered: list[tuple[str, int, int]] = []
+        addr_targets = _addr_targets_of(function_names)
         for entry in entries:
             raw = entry.get("addr")
             if raw is None:
@@ -1100,7 +1136,7 @@ class R2DecDecompiler(DockerizedDecompiler):
             nm = entry.get("name") or ""
             if _r2_is_import(nm) or nm in _R2_ENTRY_NAMES:
                 continue
-            if raw_common.should_skip_function(_r2_bare_name(nm), file_addr, text_range):
+            if _skip_r2_function(_r2_bare_name(nm), file_addr, text_range, addr_targets):
                 continue
             by_addr[file_addr] = (nm, entry.get("code") or "")
             discovered.append((nm, file_addr, int(raw)))
