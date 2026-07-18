@@ -33,7 +33,7 @@ Markdown conventions (documented in the files themselves, parsed here):
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib.resources import files
 
@@ -44,6 +44,7 @@ __all__ = [
     "Category",
     "Content",
     "DatasetPresetSpec",
+    "DecompilerSpec",
     "Footer",
     "GoalCard",
     "MetricSpec",
@@ -64,6 +65,15 @@ _METRIC_LINE_RE = re.compile(r"^metric:[ \t]*(?P<name>.+)$")
 _PERFECT_RE = re.compile(r"^\*\*perfect\s*=\*\*[ \t]*(?P<rest>.+)$")
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _WRAPPING_P_RE = re.compile(r"^<p[^>]*>(?P<inner>.*)</p>\s*$", re.DOTALL)
+# `<details class="metric-viz">...</details>` — a hand-authored raw-HTML island.
+# Mistune knows nothing of SVG: blank-line-separated `<text>`/`<rect>` runs inside
+# one are "loose paragraphs" to it, and the `<p>` it wraps them in — INSIDE an
+# `<svg>` — is invalid foreign content that makes the browser abandon SVG parsing.
+# Islands are therefore lifted out before markdown rendering and spliced back in
+# verbatim afterwards. Lines inside an island still must not start with `# `/`## `
+# (the section/card splitters are line-based and run first).
+_ISLAND_RE = re.compile(r"<details class=\"metric-viz\"[^>]*>.*?</details>", re.DOTALL)
+_ISLAND_TOKEN = "decbench-viz-island-{index}"
 
 _BODY_SECTION = "body"
 _EMPTY_SECTION = "empty"
@@ -223,6 +233,26 @@ class DatasetPresetSpec:
 
 
 @dataclass(frozen=True)
+class DecompilerSpec:
+    """Presentation of one decompiler: its official name, link, and version labels.
+
+    ``version_overrides`` maps a raw version string (as a run recorded it) to a
+    prettier one, e.g. IDA's ``"920"`` -> ``"9.2"``.
+    """
+
+    id: str
+    display_name: str
+    url: str = ""
+    version_overrides: dict[str, str] = field(default_factory=dict)
+
+    def pretty_version(self, raw: str | None) -> str | None:
+        """Prettify a raw version string, or pass it through when unmapped/absent."""
+        if raw is None:
+            return None
+        return self.version_overrides.get(raw, raw)
+
+
+@dataclass(frozen=True)
 class Category:
     """One software type, and the binary labels that place a project in it."""
 
@@ -240,6 +270,7 @@ class Content:
     metrics: tuple[MetricSpec, ...]
     dataset_presets: tuple[DatasetPresetSpec, ...]
     categories: tuple[Category, ...] = ()
+    decompilers: tuple[DecompilerSpec, ...] = ()
 
     # -- views -------------------------------------------------------------
     def view(self, view_id: str) -> ViewContent:
@@ -302,6 +333,23 @@ class Content:
                 return p
         return None
 
+    # -- decompilers -------------------------------------------------------
+    def decompiler(self, dec_id: str) -> DecompilerSpec | None:
+        """Presentation for a decompiler id, by exact match then base name.
+
+        A versioned id (``ghidra@12.1``) with no exact entry resolves to the base
+        ``ghidra`` entry; an id with neither returns ``None`` (the caller falls
+        back to the raw id).
+        """
+        base = dec_id.split("@", 1)[0]
+        fallback: DecompilerSpec | None = None
+        for spec in self.decompilers:
+            if spec.id == dec_id:
+                return spec
+            if spec.id == base:
+                fallback = spec
+        return fallback
+
 
 def _read(name: str) -> str:
     """Read one content file as text, working from a wheel or a checkout."""
@@ -329,6 +377,32 @@ def _unwrap_paragraph(html: str) -> str:
     stripped = html.strip()
     match = _WRAPPING_P_RE.match(stripped)
     return match.group("inner").strip() if match else stripped
+
+
+def _render_with_islands(markdown: str, render: mistune.Markdown) -> str:
+    """Render markdown while passing raw-HTML islands through byte-for-byte.
+
+    Each island is swapped for a bare single-word token (which mistune renders as
+    a lone paragraph), then spliced back over that paragraph after rendering.
+    """
+    islands: list[str] = []
+
+    def _lift(match: re.Match[str]) -> str:
+        islands.append(match.group(0))
+        return _ISLAND_TOKEN.format(index=len(islands) - 1)
+
+    html = render(_ISLAND_RE.sub(_lift, markdown))
+    # Descending index: token "…-1" is a prefix of "…-10", so ascending bare-token
+    # replacement would corrupt the tenth island while splicing the second.
+    for index, island in reversed(list(enumerate(islands))):
+        token = _ISLAND_TOKEN.format(index=index)
+        for wrapped in (f"<p>{token}</p>", f'<p class="view-desc">{token}</p>'):
+            if wrapped in html:
+                html = html.replace(wrapped, island)
+                break
+        else:
+            html = html.replace(token, island)
+    return html
 
 
 def _split_sections(text: str) -> dict[str, tuple[str, str]]:
@@ -404,7 +478,7 @@ def _build_card(number: str, title: str, lines: list[str], by_display: dict[str,
         title=title,
         metric_display_name=metric_display,
         metric_key=by_display.get(metric_display, ""),
-        body_html=_unwrap_paragraph(_render_inline("\n".join(body).strip())),
+        body_html=_unwrap_paragraph(_render_with_islands("\n".join(body).strip(), _render_inline)),
         perfect=perfect,
     )
 
@@ -421,8 +495,8 @@ def _load_view(view_id: str, metrics: tuple[MetricSpec, ...]) -> ViewContent:
     return ViewContent(
         id=view_id,
         title=title,
-        body_html=_render_view(body_md).strip(),
-        outro_html=_render_view(outro_md).strip() if outro_md else "",
+        body_html=_render_with_islands(body_md, _render_view).strip(),
+        outro_html=_render_with_islands(outro_md, _render_view).strip() if outro_md else "",
         empty_title=empty_title or title,
         empty_html=_render_view(empty_md).strip() if empty_md else "",
         goals=goals,
@@ -461,6 +535,15 @@ def load_content() -> Content:
         Category(name=c["name"], labels=tuple(c["labels"]))
         for c in _load_toml("categories.toml")["category"]
     )
+    decompilers = tuple(
+        DecompilerSpec(
+            id=d["id"],
+            display_name=d["display_name"],
+            url=d.get("url", ""),
+            version_overrides=dict(d.get("version_overrides") or {}),
+        )
+        for d in _load_toml("decompilers.toml")["decompiler"]
+    )
     views = {spec.id: _load_view(spec.id, metrics) for spec in view_specs}
     return Content(
         site=_load_site(),
@@ -469,4 +552,5 @@ def load_content() -> Content:
         metrics=metrics,
         dataset_presets=presets,
         categories=categories,
+        decompilers=decompilers,
     )

@@ -446,6 +446,12 @@ def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dic
         or sorted({group.project for group in function_data.groups}),
         "decompilers": decompilers,
         "decompiler_versions": function_data.decompiler_versions,
+        # Official display names / links / prettified versions the client renders in
+        # place of raw ids. Keyed by the same (hidden-filtered) decompiler ids, so
+        # the registry can never reintroduce a hidden backend.
+        "decompiler_registry": _decompiler_registry(
+            content, decompilers, function_data.decompiler_versions
+        ),
         "metrics": metrics,
         # How to name and order those metrics on screen. `metrics` above is the run's
         # raw order (whatever the metrics happened to be registered in); the site sorts
@@ -477,6 +483,37 @@ def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dic
             for (name, normalize), accumulator in accumulators.items()
         },
     }
+
+
+def _decompiler_registry(
+    content: Content, decompilers: list[str], versions: dict[str, str]
+) -> dict[str, dict[str, Any]]:
+    """Presentation for each visible decompiler id: display name, url, pretty version.
+
+    Gated on ``decompilers`` — which is ``function_data.decompilers``, already
+    stripped of the site-hidden backends before the payload is built — so a hidden
+    decompiler never reaches this map. A versioned id resolves its display via the
+    base-name entry (``content.decompiler``); its version comes from the run's own
+    ``decompiler_versions``, then through that entry's overrides. An id the registry
+    has never heard of still carries its raw version, and the client falls back to
+    the raw id for a name.
+    """
+    registry: dict[str, dict[str, Any]] = {}
+    for dec in decompilers:
+        spec = content.decompiler(dec)
+        raw = versions.get(dec)
+        entry: dict[str, Any] = {}
+        if spec is not None:
+            entry["display_name"] = spec.display_name
+            if spec.url:
+                entry["url"] = spec.url
+            pretty = spec.pretty_version(raw)
+        else:
+            pretty = raw
+        if pretty is not None:
+            entry["version"] = pretty
+        registry[dec] = entry
+    return registry
 
 
 def _default_preset_name(content: Content, preset_names: list[str]) -> str | None:
@@ -562,9 +599,40 @@ def build_payloads(function_data: FunctionData, scoreboard: Scoreboard) -> dict[
     return {
         "aggregates": build_aggregates(function_data, scoreboard),
         "dataset": build_dataset_page(function_data),
-        "samples": [s.model_dump(mode="json") for s in samples],
-        "history": [h.model_dump(mode="json") for h in function_data.history],
+        "samples": [_finite_sample(s.model_dump(mode="json")) for s in samples],
+        "history": [_finite_history(h.model_dump(mode="json")) for h in function_data.history],
     }
+
+
+def _finite_sample(dump: dict[str, Any]) -> dict[str, Any]:
+    """Drop non-finite metric values from one serialized sample.
+
+    ``function_results.json`` stores a ``ged`` of ``inf`` when the metric could
+    not be measured. Python's ``json`` happily writes that as ``Infinity`` — which
+    strict browser ``JSON.parse`` rejects, taking the whole samples payload (and
+    the View page) down with it. The client already skips metrics absent from
+    ``values``, so an unmeasured value is dropped rather than rewritten.
+    """
+    dump["values"] = {
+        dec: {m: v for m, v in metrics.items() if math.isfinite(v)}
+        for dec, metrics in (dump.get("values") or {}).items()
+    }
+    return dump
+
+
+def _finite_history(dump: dict[str, Any]) -> dict[str, Any]:
+    """Same guard for one serialized history point (see :func:`_finite_sample`).
+
+    A degenerate ingest (0-function denominator) can leave a non-finite score;
+    the chart already skips ``null`` points, so that is what a bad float becomes.
+    """
+    dump["scores"] = {
+        m: v for m, v in (dump.get("scores") or {}).items() if v is None or math.isfinite(v)
+    }
+    overall = dump.get("overall")
+    if isinstance(overall, float) and not math.isfinite(overall):
+        dump["overall"] = None
+    return dump
 
 
 @dataclass

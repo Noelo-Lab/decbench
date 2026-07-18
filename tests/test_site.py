@@ -34,6 +34,10 @@ from decbench.rendering.site import build_site
 # difficulty tier (inside samples.json) replaced the Hardest view.
 DATA_FILES = ["aggregates", "dataset", "history", "samples"]
 
+# One `<view>/index.html` subpage per visible view (all five, given data), so
+# /leaderboard/, /distance/, ... are directly linkable.
+VIEW_IDS = ["leaderboard", "distance", "view", "history", "about"]
+
 
 @pytest.fixture
 def scoreboard() -> Scoreboard:
@@ -128,6 +132,7 @@ def test_build_site_writes_the_documented_tree(
         ".nojekyll",
         "fonts/source-code-pro-latin.woff2",
         *(f"data/{name}.json" for name in DATA_FILES),
+        *(f"{view}/index.html" for view in VIEW_IDS),
     }
 
 
@@ -211,6 +216,86 @@ def test_rebuild_removes_stale_data_files(
     build_site(scoreboard, function_data, out)
     assert not stale.exists()
     assert (out / "data" / "aggregates.json").exists()
+
+
+# -- the linkable subpage tree ---------------------------------------------
+
+
+def test_each_visible_view_gets_a_subpage(
+    tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
+) -> None:
+    """`/leaderboard/`, `/distance/`, ... are directories a reader can link to."""
+    out = tmp_path / "site"
+    build_site(scoreboard, function_data, out)
+    for view in VIEW_IDS:
+        assert (out / view / "index.html").is_file(), view
+
+
+def test_subpage_carries_prefixed_assets_and_opens_on_its_own_view(
+    tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
+) -> None:
+    """A subpage's asset links hop up to the root, and its own view opens.
+
+    Deliberately NOT via ``<base href="../">``: a base rebases same-document
+    references too, which strips SVG ``url(#marker)`` arrowheads and reroutes
+    in-page ``#view`` anchors on every subpage.
+    """
+    out = tmp_path / "site"
+    build_site(scoreboard, function_data, out)
+    about = (out / "about" / "index.html").read_text()
+
+    assert "<base" not in about
+    assert 'window.__DECBENCH_ROOT__ = "../"' in about
+    # Its own section (and nav item) is the active one, not the site default.
+    assert '<section class="view active" id="view-about"' in about
+    assert '<section class="view active" id="view-leaderboard"' not in about
+    assert '<link rel="stylesheet" href="../app.css">' in about
+    assert '<script src="../app.js"></script>' in about
+
+
+def test_root_index_has_the_root_stamp_and_no_base(
+    tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
+) -> None:
+    """The root stamps an empty hop (so app.js knows it is split mode) and no <base>."""
+    out = tmp_path / "site"
+    build_site(scoreboard, function_data, out)
+    index = (out / "index.html").read_text()
+
+    assert 'window.__DECBENCH_ROOT__ = ""' in index
+    assert "<base" not in index
+    assert '<section class="view active" id="view-leaderboard"' in index
+
+
+def test_rebuild_prunes_stale_view_dirs_but_spares_user_dirs(
+    tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
+) -> None:
+    """A removed/renamed view's subdir is pruned — but only ours, never a user's.
+
+    Safety hinges on the skeleton marker: a directory whose index.html lacks it
+    (a CNAME folder, a hand-added page) must survive the rebuild untouched.
+    """
+    from decbench.rendering.html import SITE_PAGE_MARKER
+
+    out = tmp_path / "site"
+    build_site(scoreboard, function_data, out)
+
+    stale = out / "oldview"
+    stale.mkdir()
+    (stale / "index.html").write_text(f"<head>{SITE_PAGE_MARKER}</head>stale")
+    user = out / "extras"
+    user.mkdir()
+    (user / "index.html").write_text("my own page, no marker")
+    user_file = out / "CNAME"
+    user_file.write_text("example.com")
+
+    build_site(scoreboard, function_data, out)
+
+    assert not stale.exists(), "a marked stale view dir is pruned"
+    assert user.exists(), "an unmarked user dir is left alone"
+    assert user_file.exists()
+    assert (out / "index.html").is_file()
+    for view in VIEW_IDS:
+        assert (out / view / "index.html").is_file()
 
 
 # -- linked vs inlined -----------------------------------------------------

@@ -145,7 +145,9 @@ def test_goal_cards_are_fully_populated(content: Content) -> None:
         assert card.body_html
         # Every metric card carries its collapsible how-it-works visualization.
         assert 'class="metric-viz"' in card.body_html
-        assert "<svg" in card.body_html
+        # GED and type_match draw inline SVG; byte_match visualizes with an HTML
+        # assembly line-diff (.viz-diff) instead, so accept either.
+        assert "<svg" in card.body_html or 'class="viz-diff"' in card.body_html
         assert card.perfect.startswith("perfect = ")
 
 
@@ -197,6 +199,46 @@ def test_dataset_presets_cover_the_selector(content: Content) -> None:
         assert preset.label and preset.description
 
 
+# -- decompilers -----------------------------------------------------------
+
+
+def test_decompiler_registry_loads_with_names_links_and_overrides(content: Content) -> None:
+    """decompilers.toml supplies the official names/links the leaderboard renders."""
+    angr = content.decompiler("angr")
+    assert angr is not None
+    assert angr.display_name == "angr"
+    assert angr.url == "https://angr.io"
+
+    ida = content.decompiler("ida")
+    assert ida is not None
+    assert ida.display_name == "Hex-Rays"
+    # A raw version string is prettified through the entry's overrides.
+    assert ida.pretty_version("920") == "9.2"
+    assert ida.pretty_version("unknown") == "unknown"  # unmapped passes through
+    assert ida.pretty_version(None) is None
+
+
+def test_decompiler_lookup_matches_base_name_for_versioned_ids(content: Content) -> None:
+    """A versioned id (ghidra@12.1) with no exact entry resolves to its base."""
+    spec = content.decompiler("ghidra@12.1")
+    assert spec is not None
+    assert spec.id == "ghidra"
+    assert spec.display_name == "Ghidra"
+
+
+def test_decompiler_lookup_returns_none_for_unknown_id(content: Content) -> None:
+    """An id the registry never heard of falls back (caller uses the raw id)."""
+    assert content.decompiler("angr-declib") is None
+
+
+def test_decompiler_url_is_optional(content: Content) -> None:
+    """Kuna and Phoenix have no homepage yet, so they render unlinked."""
+    kuna = content.decompiler("kuna")
+    assert kuna is not None and kuna.url == ""
+    phoenix = content.decompiler("phoenix")
+    assert phoenix is not None and phoenix.url == ""
+
+
 # -- categories / site -----------------------------------------------------
 
 
@@ -236,3 +278,49 @@ def test_footer_renders_projects_and_falls_back_when_empty(content: Content) -> 
 
 def test_load_content_is_cached(content: Content) -> None:
     assert load_content() is content
+
+
+# -- raw-HTML islands --------------------------------------------------------
+
+
+def test_metric_viz_islands_pass_through_verbatim() -> None:
+    """A blank-line-riddled SVG island must survive markdown rendering untouched.
+
+    Mistune would otherwise wrap each blank-line-separated SVG child in a `<p>`
+    INSIDE the `<svg>` — invalid foreign content the browser refuses to draw.
+    """
+    from decbench.rendering.content import _render_inline, _render_view, _render_with_islands
+
+    island = (
+        '<details class="metric-viz" open>\n<summary>how</summary>\n'
+        '<svg viewBox="0 0 10 10">\n\n<rect x="1"/>\n\n<text x="2">hi</text>\n\n</svg>\n'
+        "</details>"
+    )
+    markdown = f"intro prose\n\n{island}\n\nafter prose"
+    for renderer in (_render_inline, _render_view):
+        html = _render_with_islands(markdown, renderer)
+        assert island in html
+
+
+def test_about_goal_card_svgs_carry_no_stray_paragraphs(content: Content) -> None:
+    import re
+
+    for card in content.view("about").goals:
+        for svg in re.findall(r"<svg.*?</svg>", card.body_html, re.DOTALL):
+            assert not re.search(r"<p[\s>]", svg)
+
+
+def test_metric_viz_blocks_open_by_default_and_carry_a_visualization(content: Content) -> None:
+    """The redone metric visualizations show without a click (`open`) and drop the
+    now-redundant "[click to expand]" cue. GED and type_match draw inline SVG;
+    byte_match uses an HTML assembly line-diff (.viz-diff)."""
+    goals = {g.metric_key: g.body_html for g in content.view("about").goals}
+    for body in goals.values():
+        assert '<details class="metric-viz" open>' in body
+        assert "[click to expand]" not in body
+    assert "<svg" in goals["ged"]
+    assert "<svg" in goals["type_match"]
+    assert 'class="viz-diff"' in goals["byte_match"]
+    # The byte_match score strip's arithmetic is exact: 7 / 8 = 0.88.
+    assert "0.88" in goals["byte_match"]
+    assert "0.87" not in goals["byte_match"]

@@ -138,6 +138,9 @@ tr:last-child td { border-bottom: none; }
 .lb-rank { color: var(--text-muted); width: 2.6em; }
 .lb-name { font-weight: 700; font-size: 1.02em; }
 .lb-name .ver { color: var(--text-muted); font-weight: 400; font-size: 0.85em; }
+/* Linked decompiler names keep the terminal look: same color, underline on hover. */
+.lb-name a { color: inherit; text-decoration: none; }
+.lb-name a:hover { text-decoration: underline; }
 td.metric-cell { white-space: nowrap; }
 .cell-pct { font-weight: 700; }
 .cell-count { color: var(--text-muted); font-size: 0.82em; }
@@ -236,3 +239,218 @@ footer { color: var(--text-muted); font-size: 0.82em; margin-top: 1.5rem; }
     .nav { flex-direction: row; flex-wrap: wrap; }
     .side-foot { margin-top: 0.5rem; }
 }
+
+/* ==========================================================================
+   Metric-visualization + syntax-highlight additions.
+
+   Appended after the base rules above (see viz/NOTES.md). Everything here is
+   NEW and namespaced tok- / viz- / dl- so it cannot collide with the rules
+   above; a couple of view-page helpers (.src-*) are tacked on at the very end.
+   ========================================================================== */
+
+:root {
+  --blue: #4a90d9;          /* chart blue — also numbers/immediates            */
+  --viz-type: #57b9ab;      /* types: a calm teal, distinct from kw/str        */
+  --viz-pp: #b083c9;        /* preprocessor / directives                       */
+  --viz-call: #d7cf94;      /* function calls: soft gold                       */
+}
+
+/* ---- Syntax token colours (dark terminal) ------------------------------- */
+.tok-com  { color: var(--text-muted); font-style: italic; }
+.tok-kw   { color: var(--amber); }
+.tok-type { color: var(--viz-type); }
+.tok-str  { color: var(--green); }
+.tok-num  { color: var(--blue); }
+.tok-imm  { color: var(--blue); }
+.tok-pp   { color: var(--viz-pp); }
+.tok-call { color: var(--viz-call); }
+.tok-mn   { color: var(--amber); }            /* asm mnemonic                 */
+.tok-reg  { color: var(--text); }             /* asm register: default text   */
+.tok-lbl  { color: var(--green); }            /* asm label / address          */
+
+/* ---- Code panels inside a visualization --------------------------------- */
+/* Strip base.css pre chrome: the .viz-panel provides the frame instead.     */
+pre.viz-code {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  max-height: 460px;
+  font-size: 0.82em;
+  line-height: 1.5;
+}
+pre.viz-code code {
+  color: var(--text);
+  font-family: "Source Code Pro", ui-monospace, Consolas, monospace;
+}
+
+/* ---- Visualization scaffold --------------------------------------------- */
+.viz-wrap { margin: 0.2rem 0 0.2rem; }
+
+.viz-row { margin: 0.9rem 0; }
+.viz-rowlabel {
+  color: var(--text-muted);
+  font-size: 0.8em;
+  letter-spacing: 0.03em;
+  margin: 0.2rem 0 0.5rem;
+}
+.viz-rowlabel::before { content: "> "; color: var(--text-muted); }
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+.viz-panel {
+  background: var(--code-bg);
+  border: dashed 1px rgba(219, 219, 219, 0.28);
+  padding: 0.6rem 0.75rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.viz-panel-h {
+  color: var(--text-muted);
+  font-size: 0.78em;
+  letter-spacing: 0.03em;
+  margin-bottom: 0.5rem;
+}
+.viz-panel-h::before { content: "// "; color: var(--text-muted); }
+.viz-panel-h.is-src   { color: var(--green); }
+.viz-panel-h.is-dec   { color: var(--text); }
+.viz-panel svg { flex: 1; min-height: 0; }
+
+/* graph caption (under a CFG etc.) */
+.viz-cap {
+  color: var(--text-muted);
+  font-size: 0.76em;
+  text-align: center;
+  margin-top: 0.4rem;
+}
+
+/* ---- Pipeline chip strip (decompiled C -> fixup -> recompile -> asm) ----- */
+.viz-pipe {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.2rem 0 0.8rem;
+  font-size: 0.8em;
+}
+.viz-chip {
+  border: dashed 1px rgba(219, 219, 219, 0.4);
+  padding: 0.15rem 0.5rem;
+  white-space: nowrap;
+  color: var(--text);
+}
+.viz-chip.is-in  { border-color: rgba(219, 219, 219, 0.4); }
+.viz-chip.is-out { border-color: var(--amber); color: var(--amber); }
+.viz-parrow { color: var(--text-muted); white-space: nowrap; }
+.viz-parrow b { color: var(--green); font-weight: 600; }
+
+/* ---- Annotation callout + score strip ----------------------------------- */
+.viz-callout {
+  border: dashed 1px var(--red);
+  color: var(--red);
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85em;
+  display: inline-block;
+  margin-top: 0.7rem;
+}
+.viz-callout .n { font-weight: 700; }
+
+.viz-score {
+  border: dashed 1px rgba(219, 219, 219, 0.4);
+  background: var(--code-bg);
+  padding: 0.55rem 0.85rem;
+  margin-top: 0.8rem;
+  font-size: 0.92em;
+  line-height: 1.7;
+}
+.viz-score .big { font-size: 1.15em; font-weight: 700; }
+.viz-score .perfect { color: var(--text-muted); font-size: 0.92em; }
+.viz-good { color: var(--green); font-weight: 700; }
+.viz-warn { color: var(--amber); font-weight: 700; }
+.viz-bad  { color: var(--red); font-weight: 700; }
+.viz-dim  { color: var(--text-muted); }
+
+/* ---- Explainer note ----------------------------------------------------- */
+.viz-note {
+  color: var(--text-muted);
+  font-size: 0.85em;
+  line-height: 1.55;
+  margin: 0.7rem 0 0.1rem;
+}
+.viz-note code { color: var(--viz-type); }
+.viz-legend {
+  color: var(--text-muted);
+  font-size: 0.82em;
+  margin-top: 0.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1.1rem;
+}
+.viz-legend .pass { white-space: nowrap; }
+.viz-legend .k { font-weight: 700; color: var(--text); }
+
+/* ---- Assembly line diff -------------------------------------------------- */
+.viz-diff {
+  border: dashed 1px rgba(219, 219, 219, 0.32);
+  font-size: 0.8em;
+  margin-top: 0.2rem;
+  overflow-x: auto;
+}
+.dl-head, .dl-row {
+  display: grid;
+  grid-template-columns: 1.9rem minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+}
+.dl-head {
+  color: var(--text-muted);
+  font-size: 0.92em;
+  border-bottom: dashed 1px rgba(219, 219, 219, 0.32);
+}
+.dl-head span { padding: 0.3rem 0.7rem; }
+.dl-head .h-mk { text-align: center; padding-left: 0; padding-right: 0; }
+.dl-row code {
+  padding: 0.22rem 0.7rem;
+  white-space: pre;
+  color: var(--text);
+  font-family: "Source Code Pro", ui-monospace, Consolas, monospace;
+}
+.dl-row .dl-mk {
+  text-align: center;
+  font-weight: 700;
+  padding: 0.22rem 0;
+}
+.dl-row .dl-gt { border-right: dashed 1px rgba(219, 219, 219, 0.18); }
+.dl-match { background: rgba(106, 176, 76, 0.10); }
+.dl-match .dl-mk { color: var(--green); }
+.dl-norm  { background: rgba(212, 167, 44, 0.10); }
+.dl-norm  .dl-mk { color: var(--amber); }
+.dl-diff  { background: rgba(192, 80, 77, 0.14); }
+.dl-diff  .dl-mk { color: var(--red); }
+.dl-diff  code { color: #e2938f; }
+.dl-op { color: var(--amber); }               /* normalized operand  ____     */
+
+/* ---- Narrow layout ------------------------------------------------------- */
+@media (max-width: 700px) {
+  .viz-grid { grid-template-columns: 1fr; }
+  .dl-head, .dl-row { grid-template-columns: 1.6rem 1fr 1fr; }
+  .dl-row code { font-size: 0.94em; }
+}
+
+/* ---- View-page code panels (source_status, set in renderViewEntry) ------- */
+/* A muted badge under the source heading when the source came from a .i, and  */
+/* the placeholder shown when no source could be captured at all.             */
+.src-badge {
+  display: inline-block;
+  color: var(--text-muted);
+  font-size: 0.76em;
+  border: dashed 1px rgba(219, 219, 219, 0.28);
+  padding: 0.08rem 0.4rem;
+  margin: 0.1rem 0 0.35rem;
+}
+.cmp-col.src-missing .view-desc { margin: 0.35rem 0 0; }

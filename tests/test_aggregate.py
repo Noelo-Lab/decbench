@@ -526,6 +526,75 @@ def test_decompiled_by_fallback_excludes_a_decompiler_with_no_perfects_entry() -
     assert aggregates["combos"][combo_key("full", True)]["functions"] == 0
 
 
+# -- decompiler registry ---------------------------------------------------
+
+
+def _registry_data(decompilers: list[str], versions: dict[str, str] | None = None) -> FunctionData:
+    """A dataset over arbitrary decompiler ids, with optional raw versions."""
+    return FunctionData(
+        decompilers=list(decompilers),
+        decompiler_versions=versions or {},
+        metrics=["ged"],
+        groups=[
+            BinaryGroup(
+                project="proj",
+                opt_level="O0",
+                binary="bin",
+                functions=[
+                    FunctionRecord(
+                        function="f",
+                        values={d: {"ged": 0.0} for d in decompilers},
+                        perfects={d: {"ged": True} for d in decompilers},
+                        decompiled=dict.fromkeys(decompilers, True),
+                        datasets=["full"],
+                    )
+                ],
+            )
+        ],
+        dataset_presets=[DatasetPreset(name="full", label="full", description="")],
+    )
+
+
+def test_registry_carries_names_links_and_prettified_versions() -> None:
+    """app.js labels every decompiler from this; the version is prettified here."""
+    data = _registry_data(
+        ["angr", "ghidra", "ida"], {"angr": "9.2.223", "ghidra": "12.1", "ida": "920"}
+    )
+    registry = _build(data)["decompiler_registry"]
+
+    assert registry["angr"] == {
+        "display_name": "angr",
+        "url": "https://angr.io",
+        "version": "9.2.223",
+    }
+    assert registry["ida"]["display_name"] == "Hex-Rays"
+    assert registry["ida"]["version"] == "9.2", "raw '920' prettified server-side"
+    # The raw versions map is kept untouched for back-compat.
+    assert _build(data)["decompiler_versions"]["ida"] == "920"
+
+
+def test_registry_covers_only_the_runs_decompilers() -> None:
+    """It is keyed by function_data.decompilers, so it never invents backends."""
+    registry = _build(_registry_data(["angr"]))["decompiler_registry"]
+    assert set(registry) == {"angr"}
+
+
+def test_registry_falls_back_for_an_unregistered_id() -> None:
+    """An id with no entry still ships its raw version; the client uses the raw name."""
+    registry = _build(_registry_data(["mystery"], {"mystery": "0.1"}))["decompiler_registry"]
+    assert registry["mystery"] == {"version": "0.1"}, "no display_name/url, version passthrough"
+
+
+def test_registry_resolves_versioned_ids_by_base_name() -> None:
+    """`ghidra@12.1` gets Ghidra's name/url; its version comes from the run."""
+    registry = _build(_registry_data(["ghidra@12.1"], {"ghidra@12.1": "12.1"}))[
+        "decompiler_registry"
+    ]
+    assert registry["ghidra@12.1"]["display_name"] == "Ghidra"
+    assert registry["ghidra@12.1"]["url"] == "https://ghidra-sre.org"
+    assert registry["ghidra@12.1"]["version"] == "12.1"
+
+
 # -- dataset page ----------------------------------------------------------
 
 

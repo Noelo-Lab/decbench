@@ -324,10 +324,22 @@ aesthetic: black bg, Source Code Pro mono, dashed rules, ASCII bars). `html.py` 
   `large` / `sample-set` (250 fns; `scoring/datasets.py`).
   A view's `id` MUST have a matching `<id>.md`; exactly one view and one preset
   must set `default = true` (`tests/test_content.py` enforces both).
+  PLUS `decompilers.toml` — the decompiler registry (id → official
+  display_name/url/version_overrides, e.g. ida→"Hex-Rays" + "920"→"9.2"); shipped
+  into `aggregates.json` as `decompiler_registry` (hidden decompilers gated out),
+  rendered as linked names + versions everywhere `app.js` names a decompiler.
+  **Raw-HTML islands**: `<details class="metric-viz">...</details>` blocks pass
+  through markdown VERBATIM (`content.py _render_with_islands` — mistune would
+  otherwise wrap SVG children in `<p>` inside `<svg>`, which browsers refuse to
+  draw; that was the 2026-07 "about page is broken" bug). No line inside an
+  island may start with `# `/`## `; blank lines are fine.
 - `assets/` - `app.css`, `app.js`, and a **vendored** Source Code Pro woff2 (no
   Google Fonts CDN — the report must render offline). The scaffold's element ids
   (`leaderboard-table`, `view-<id>`, ...) are the contract with `app.js`;
-  renaming one silently blanks a view.
+  renaming one silently blanks a view. `app.js` also carries a self-contained
+  C/asm syntax highlighter (`hlC`/`hlAsm`/`applyStaticHighlights`; token classes
+  `tok-*` in app.css) — every `<pre data-lang="c|asm">` in static content and the
+  view page's code panels are highlighted with it; NO third-party highlighter.
 - `aggregate.py` - **precomputes every aggregate at BUILD time.** Every view is a
   pure function of exactly 2 selectors (dataset preset x normalize-failures
   toggle) = 5x2 = **10 combos**, keyed `"<preset>|<0|1>"`. Semantics are ported
@@ -374,7 +386,17 @@ the site is entirely data-driven; `decbench report` can still fall back to
 scoreboard-only tables). `data/` and `fonts/` are wiped per build: stale JSON on a
 live site is worse than missing JSON, because nothing reports it. Emits
 `.nojekyll` (Jekyll silently drops `_`-prefixed paths). Contract:
-`docs/SITE_DATA_SCHEMA.md`. **`.github/workflows/pages.yml` is deploy-ONLY** — CI
+`docs/SITE_DATA_SCHEMA.md`. **Linkable URLs**: the build also writes a
+`site/<view>/index.html` per visible view (`<base href="../">` +
+`window.__DECBENCH_ROOT__`; stale view dirs pruned only when their index.html
+carries `SITE_PAGE_MARKER`), so `/leaderboard/` etc. deep-link; client state
+lives in query params (`?dataset=<preset>&norm=1`, and on the view page
+`?tier=&dec=&metric=&fn=<proj>/<opt>/<bin>::<func>`); legacy `#<view>` hashes
+still route. Payload writers use `json.dumps(..., allow_nan=False)` — browsers
+parse JSON strictly, and `function_results.json` CAN contain `ged: Infinity`
+(non-finite sample values are dropped by `aggregate._finite_sample`; anything
+else non-finite fails the build loudly instead of shipping a payload
+`JSON.parse` rejects). **`.github/workflows/pages.yml` is deploy-ONLY** — CI
 CANNOT generate the site (needs the decompilers + ~1.9 GB Joern + ~15 GB of
 binaries); the maintainer builds locally and commits `site/` (no longer gitignored),
 and the workflow only uploads it, failing if `site/index.html` or
@@ -407,6 +429,22 @@ label for the noinline variants.
 
 ## Gotchas
 
+- **An additive resume leaves a SCOPED `scoreboard.toml`.**
+  `DECBENCH_DECOMPILERS=<one> scripts/run_benchmark.py <tree>` merges that
+  decompiler into every checkpoint and `function_results.json`, but the
+  `scoreboard.toml` it writes lists ONLY that run's decompilers (seen: r2dec-only
+  on 2026-07-17). The site renderer now takes its sidebar counts from
+  `function_results.json`, but anything else reading `scoreboard.decompilers`
+  after a resume sees a partial list until the next full rebuild
+  (`scripts/rebuild_function_data.py`).
+- **Sample source extraction needs `.c`/`.i` next to the binary.** Older trees
+  copied `.c` non-recursively (nested-tree projects — all cps firmware, libacl —
+  got none; now `rglob`), so their samples relied on the preprocessed `.i`
+  fallback in `utils/source_extract.py` (`function_source_ex` → status
+  `"preprocessed"`, stored as `SampleEntry.source_status`). To repair an existing
+  `function_results.json` without re-running anything:
+  `scripts/repair_sample_sources.py IN_JSON TREE_ROOT OUT_JSON` (read-only on the
+  tree; refuses to write under results/).
 - **Multiprocessing must use `spawn`/`forkserver`, not `fork`, for large parallel
   runs.** The main process imports angr (which starts threads); forking workers
   afterward deadlocks them on a mutex held at fork time (symptom: workers wedged in

@@ -1,8 +1,8 @@
 # DecBench site data schema
 
 The site is a static SPA whose every aggregate view is **precomputed server-side**.
-Nothing per-function is shipped except the two bounded, code-carrying lists
-(`samples`, `hardest`).
+Nothing per-function is shipped except the bounded, code-carrying `samples` list
+(the old `hardest` payload was absorbed into `samples`' `hard` difficulty tier).
 
 ## Why precomputed
 
@@ -22,21 +22,59 @@ Consequence: adding a *new* client-side filter dimension requires a re-render
 
 ```
 site/
-├── index.html          # shell: skeleton + prose, no data
+├── index.html          # shell: skeleton + prose, no data (opens on the default view)
 ├── app.css
 ├── app.js
 ├── .nojekyll           # stop Pages from running Jekyll over the tree
+├── leaderboard/index.html  # one subpage per VISIBLE view: the same skeleton, that
+├── distance/index.html     #   view marked active and its asset links prefixed with
+├── view/index.html         #   "../" (no <base> — that would break same-document SVG
+├── history/index.html      #   url(#marker) refs and #anchors). Makes /leaderboard/,
+├── about/index.html        #   /distance/, ... directly linkable and reload-safe.
 └── data/
     ├── aggregates.json # the 10 combos + registry. Loaded eagerly.
     ├── dataset.json    # Dataset page. Corpus-wide, selector-independent.
     ├── history.json    # Historical page.
-    ├── samples.json    # Compare page. Lazy — fetched on first view.
-    └── hardest.json    # Hardest page. Lazy — fetched on first view.
+    └── samples.json    # View page. Lazy — fetched on first view.
 ```
+
+Every page carries the comment marker `<!-- decbench:page -->`. On rebuild the writer
+prunes a subdirectory left by a removed/renamed view, but **only** when its
+`index.html` carries that marker — never an arbitrary directory (a `CNAME` folder, a
+hand-added page) a maintainer dropped in `site/`. `data/` and `fonts/` are wholly
+regenerated and wiped first.
 
 `index.html` in **single-file mode** (`decbench report`) inlines every asset and every
 data file into one HTML document, so it still opens over `file://` where `fetch()` is
-CORS-blocked. The JS branches on `window.__DECBENCH_INLINE__` and skips fetching.
+CORS-blocked. The JS branches on `window.__DECBENCH_INLINE__` and skips fetching. A
+single-file report has no subpage tree and no routing root (below).
+
+## Routing and URL state
+
+The site is one SPA rendered under several URLs, so a view and a data configuration
+are both linkable.
+
+**View routing.** Each split page stamps `window.__DECBENCH_ROOT__` — the relative hop
+to the site root (`""` on `index.html`, `"../"` on a subpage) — in an inline script
+*before* `app.js`, which is how the client tells split mode from the inline report
+(where it is undefined) and computes the site root for `pushState` targets. In split
+mode a nav click `pushState`s to `<root><view>/` and back/forward re-route from the
+path; a fresh load resolves a valid legacy `#hash` first (so old `site/#about` links
+keep working), otherwise the renderer already marked the right section active. The
+single-file report keeps pure `#hash` routing. All `history` calls are wrapped in
+`try/catch` for `file://`.
+
+**State in query params** (read once at init, written with `replaceState` on every
+change — never a new history entry), both modes:
+
+* `dataset=<preset>` — a selectable preset name; omitted from the URL when it is the
+  default preset.
+* `norm=1` — normalize-failures on (absent/`0` = off).
+* view page only: `tier=easy|medium|hard`, `dec=<decompiler id>`, `metric=<metric>`,
+  and `fn=<project>/<opt>/<binary>::<function>` (the selected function). These are
+  written only while the view page is open.
+
+Unknown or invalid values fall back silently to defaults — never an error banner.
 
 ## `data/aggregates.json`
 
@@ -47,7 +85,11 @@ CORS-blocked. The JS branches on `window.__DECBENCH_INLINE__` and skips fetching
   "generated_at": "2026-07-15T15:28:00", // ISO 8601
   "projects_evaluated": ["bash", "..."],
   "decompilers": ["angr", "binja", "ghidra", "ida", "kuna", "phoenix"],
-  "decompiler_versions": {"ghidra@12.1": "12.1"},  // id -> display version
+  "decompiler_versions": {"ghidra@12.1": "12.1"},  // id -> raw version (back-compat)
+  "decompiler_registry": {                         // id -> presentation (see below)
+    "angr": {"display_name": "angr", "url": "https://angr.io", "version": "9.2.223"},
+    "ida":  {"display_name": "Hex-Rays", "url": "https://hex-rays.com/ida-pro/", "version": "9.2"}
+  },
   "metrics": ["ged", "type_match", "byte_match"],  // as present in the run
   "presets": [
     {"name": "full", "label": "full", "description": "...", "default": true}
@@ -81,6 +123,25 @@ percentage client-side keeps the JSON small and lossless.
 
 `distance[dec][metric]` is `null` when no function under the combo had a finite
 distance for that metric.
+
+### Decompiler registry
+
+`decompiler_registry` maps each decompiler id to how it is shown — `display_name`,
+an optional `url` (a project homepage; the client renders a link when present,
+`target=_blank rel=noopener`), and an optional prettified `version`. The client
+(`app.js`'s `decName`/`decUrl`/`decVersion`) renders these in place of raw ids in the
+leaderboard, the metrics table, the distance table, the view page's decompiler
+dropdown, and the historical legend; name-sorting sorts by `display_name`. It is
+**tolerant**: a missing registry, or an id with no entry, falls back to the raw id
+(unlinked), exactly like `metric_registry`.
+
+The presentation comes from `decbench/rendering/content/decompilers.toml`. The
+`version` is `decompiler_versions[id]` passed through that entry's `version_overrides`
+(e.g. IDA's raw `"920"` → `"9.2"`), prettified **server-side** so the client renders
+it verbatim; the raw `decompiler_versions` map is kept for back-compat. Lookup is by
+exact id, then base name before `@`, so a versioned id (`ghidra@12.1`) resolves to the
+`ghidra` entry. The registry is keyed by `decompilers` — the same list, already
+stripped of site-hidden backends — so it can never reintroduce a hidden decompiler.
 
 ### No presets (`__all__`)
 
@@ -155,16 +216,21 @@ benchmark's fairness contract:
 `categories` and each project's `cats` are resolved at build time from the taxonomy in
 `decbench/rendering/content/categories.toml` against per-binary labels.
 
-## `data/samples.json` / `data/hardest.json` / `data/history.json`
+## `data/samples.json` / `data/history.json`
 
-Serialized straight from `FunctionData.samples`, `.hardest`, `.history`
-(`decbench/models/function_data.py`) — every float exactly as measured. These carry the
-per-function metric values the Compare view prints via `toFixed(2)`, which is precisely
-why they are not rounded on the way out (see "Float precision" above).
+Serialized straight from `FunctionData.samples`, `.history`
+(`decbench/models/function_data.py`) — every *finite* float exactly as measured. Values
+that could not be measured are stored as `Infinity` upstream; browsers' strict
+`JSON.parse` rejects that token, so non-finite sample metric values are dropped and
+non-finite history points nulled at build time (`aggregate._finite_sample` /
+`_finite_history`), and both JSON writers run with `allow_nan=False` so anything else
+non-finite fails the build loudly. Finite values are never rounded on the way out (see
+"Float precision" above). `FunctionData.hardest` is still *stored* but no longer
+shipped — the View page's `hard` tier replaced it.
 
-These are the site's size floor — `hardest.json` 4.8 MB + `samples.json` 2.0 MB of
-embedded C source — because both views exist to *show the code*. They are fetched
-lazily, so they cost nothing until the reader opens those pages.
+`samples.json` (a few MB of embedded C source) is the site's size floor — the view
+exists to *show the code*. It is fetched lazily, so it costs nothing until the reader
+opens that page.
 
 Malware targets are **excluded** from both payloads at build time
 (`scoring/report_extras.py`), because publishing them is what these files would

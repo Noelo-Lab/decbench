@@ -1,0 +1,66 @@
+# The decompiler registry: official display names, project links, and version
+# prettifiers for the leaderboard / metrics / distance tables, the view page's
+# decompiler dropdown, and the historical legend.
+#
+# Each `[[decompiler]]` table has:
+#   id            the decompiler id as it appears in results (the raw backend name).
+#   display_name  the name shown on the site.
+#   url           optional project homepage; omit the key entirely when there is
+#                 none, and the name renders unlinked.
+#   version_overrides  optional inline table mapping a RAW version string (as the
+#                 run recorded it, e.g. IDA's "920") to a prettier one ("9.2").
+#
+# Lookup is by exact id first, then by the base name before '@' — so a versioned
+# id like `ghidra@12.1` resolves to the `ghidra` entry (its version comes from the
+# run's own decompiler_versions, then through version_overrides). Ids with no
+# entry fall back to the raw id, unlinked (e.g. the `*-declib` comparison backends).
+
+[[decompiler]]
+id = "angr"
+display_name = "angr"
+url = "https://angr.io"
+
+[[decompiler]]
+id = "ghidra"
+display_name = "Ghidra"
+url = "https://ghidra-sre.org"
+
+[[decompiler]]
+id = "ida"
+display_name = "Hex-Rays"
+url = "https://hex-rays.com/ida-pro/"
+version_overrides = { "920" = "9.2" }
+
+[[decompiler]]
+id = "binja"
+display_name = "Binary Ninja"
+url = "https://binary.ninja"
+
+[[decompiler]]
+id = "kuna"
+display_name = "Kuna"
+
+[[decompiler]]
+id = "phoenix"
+display_name = "Phoenix (angr)"
+
+[[decompiler]]
+id = "r2dec"
+display_name = "r2dec"
+url = "https://github.com/wargio/r2dec-js"
+version_overrides = { "r2-6.0.8" = "r2 6.0.8" }
+
+[[decompiler]]
+id = "dewolf"
+display_name = "dewolf"
+url = "https://github.com/fkie-cad/dewolf"
+
+[[decompiler]]
+id = "retdec"
+display_name = "RetDec"
+url = "https://github.com/avast/retdec"
+
+[[decompiler]]
+id = "reko"
+display_name = "Reko"
+url = "https://github.com/uxmal/reko"

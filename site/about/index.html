@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DecBench Scoreboard</title>
-    <link rel="stylesheet" href="app.css">
+    <link rel="stylesheet" href="../app.css">
 </head>
 <body>
     <div class="layout">
@@ -15,7 +15,7 @@
                 <div class="brand-title">DecBench</div>
                 <div class="brand-sub">decompiler benchmark</div>
             </div>
-            <nav class="nav"><a class="nav-item active" data-view="leaderboard" href="#leaderboard"><span class="nav-bullet">&gt;</span> leaderboard</a><a class="nav-item" data-view="distance" href="#distance"><span class="nav-bullet">&gt;</span> distance</a><a class="nav-item" data-view="view" href="#view"><span class="nav-bullet">&gt;</span> view</a><a class="nav-item" data-view="history" href="#history"><span class="nav-bullet">&gt;</span> historical</a><a class="nav-item" data-view="about" href="#about"><span class="nav-bullet">&gt;</span> about</a></nav>
+            <nav class="nav"><a class="nav-item" data-view="leaderboard" href="#leaderboard"><span class="nav-bullet">&gt;</span> leaderboard</a><a class="nav-item" data-view="distance" href="#distance"><span class="nav-bullet">&gt;</span> distance</a><a class="nav-item" data-view="view" href="#view"><span class="nav-bullet">&gt;</span> view</a><a class="nav-item" data-view="history" href="#history"><span class="nav-bullet">&gt;</span> historical</a><a class="nav-item active" data-view="about" href="#about"><span class="nav-bullet">&gt;</span> about</a></nav>
             
         <div class="side-section">
             <div class="side-label">dataset</div>
@@ -36,7 +36,7 @@
         <main class="main">
             
             
-    <section class="view active" id="view-leaderboard" data-view="leaderboard">
+    <section class="view" id="view-leaderboard" data-view="leaderboard">
         <h2 class="view-title">leaderboard</h2>
         <p class="view-desc">ranked by Union &mdash; the share of functions a decompiler recovers
 <em>perfectly on at least one metric</em>. click a column to sort.</p><table id="leaderboard-table"><thead><tr></tr></thead><tbody></tbody></table>
@@ -88,7 +88,7 @@ between. pick a difficulty, a decompiler, and a metric to highlight.</p>
 appears once &ge;2 versions have been benchmarked
 (e.g. ghidra@12.0 vs ghidra@12.1).</p>
     </section>
-    <section class="view" id="view-about" data-view="about">
+    <section class="view active" id="view-about" data-view="about">
         <h2 class="view-title">decbench</h2>
         <p class="view-desc">a benchmark for decompilers. we compile real C projects at several optimization
 levels, decompile every function of the resulting binaries with each decompiler,
@@ -465,7 +465,7 @@ that's reported here (per decompiler), not folded into the headline score.</p>
             <footer>DecBench v1.0 &mdash; decompiler benchmarking suite &middot; projects: base-passwd, bash, betaflight, bzip2, chibios, cleanflight, coreutils, crazyflie, cronie, dash, dexter, diffutils, dpkg, e2fsprogs, findutils, freertos, gnutls, grep, gzip, iproute2, kmod, libacl, libbsd, libedit, libexpat, libopencm3, libselinux, minipig, mirai, mirai-win, mydoom, nuttx, openssh-portable, riot-os, rsyslog, shadow, sysvinit, tar, u-boot, x0r-usb, zlib</footer>
         </main>
     </div>
-    <script>window.__DECBENCH_ROOT__ = "";</script>
-    <script src="app.js"></script>
+    <script>window.__DECBENCH_ROOT__ = "../";</script>
+    <script src="../app.js"></script>
 </body>
 </html>

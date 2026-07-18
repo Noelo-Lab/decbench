@@ -361,7 +361,7 @@ class TestScoringPipeline:
             # Sidebar layout: nav + JS-driven leaderboard + view routing.
             assert 'class="sidebar"' in content
             assert 'id="leaderboard-table"' in content
-            assert 'data-view="metrics"' in content
+            assert 'data-view="about"' in content  # absorbed the old metrics view
             # The precomputed combos the client looks up instead of recomputing.
             assert '"combos"' in content
             # `</script>` escaping in the inline payload: see tests/test_site.py.

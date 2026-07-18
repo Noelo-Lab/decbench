@@ -45,6 +45,7 @@ from decbench.rendering.content import Content, GoalCard, ViewContent, ViewSpec,
 __all__ = [
     "CSS_FILE",
     "JS_FILE",
+    "SITE_PAGE_MARKER",
     "PageAssets",
     "asset_bytes",
     "asset_text",
@@ -58,6 +59,12 @@ __all__ = [
 
 CSS_FILE = "app.css"
 JS_FILE = "app.js"
+
+#: A comment stamped into every page this module builds. The split-site writer
+#: (:mod:`decbench.rendering.site`) uses it to tell a view subdirectory it wrote
+#: from an arbitrary directory a maintainer dropped in ``site/``: only a directory
+#: whose ``index.html`` carries this marker is safe to remove as a stale view.
+SITE_PAGE_MARKER = "<!-- decbench:page -->"
 
 _ASSETS_DIR = "assets"
 _FONTS_DIR = "fonts"
@@ -120,8 +127,10 @@ def _json_for_script(payload: Any) -> str:
 
     ``<`` is escaped so a ``</script>`` sequence inside the data — decompiled C
     can contain anything — cannot close the tag early and break the page.
+    ``allow_nan=False`` for the same reason as the split tree's ``_write_json``:
+    strict ``JSON.parse`` would reject an ``Infinity``, so the build fails loud.
     """
-    return json.dumps(payload).replace("<", "\\u003c")
+    return json.dumps(payload, allow_nan=False).replace("<", "\\u003c")
 
 
 # --------------------------------------------------------------------------
@@ -145,14 +154,26 @@ class PageAssets:
     """Markup for the end of ``<body>``: the client script, plus any inline data."""
 
 
-def linked_assets() -> PageAssets:
+def linked_assets(root: str = "") -> PageAssets:
     """Split mode: link ``app.css``/``app.js``; the client fetches ``data/*.json``.
 
     Setting no ``__DECBENCH_INLINE__`` is what tells ``app.js`` to fetch.
+
+    ``root`` is the relative hop from this page to the site root: ``""`` for the
+    root ``index.html``, ``"../"`` for a ``<view>/index.html`` subpage. The hop is
+    prefixed onto the asset links directly — NOT via ``<base href>``, which would
+    also rebase same-document references: SVG ``url(#marker)`` arrowheads and
+    in-page ``#view`` anchors resolve against the base URL in Chrome/Firefox, so a
+    ``<base>`` silently strips every arrowhead from the About visualizations on
+    subpages. Every page stamps ``window.__DECBENCH_ROOT__`` (the same hop)
+    *before* ``app.js`` so the client can anchor ``data/*.json`` fetches and
+    ``<root><view>/`` pushState targets to the site root. The inline single-file
+    report sets none of this.
     """
+    root_stamp = f"<script>window.__DECBENCH_ROOT__ = {json.dumps(root)};</script>\n    "
     return PageAssets(
-        head_html=f'<link rel="stylesheet" href="{CSS_FILE}">',
-        body_end_html=f'<script src="{JS_FILE}"></script>',
+        head_html=f'<link rel="stylesheet" href="{root}{CSS_FILE}">',
+        body_end_html=f'{root_stamp}<script src="{root}{JS_FILE}"></script>',
     )
 
 
@@ -231,6 +252,7 @@ def build_page(
     function_data: FunctionData | None,
     assets: PageAssets,
     content: Content | None = None,
+    active_view: str | None = None,
 ) -> str:
     """Assemble the page skeleton — the one shared by both delivery modes.
 
@@ -242,18 +264,23 @@ def build_page(
             leaderboard/metrics tables are rendered statically instead.
         assets: The delivery mode (see :func:`linked_assets` / :func:`inline_assets`).
         content: Parsed ``content/``; loaded (and cached) when omitted.
+        active_view: The view whose section (and nav item) opens marked active — a
+            split-site subpage (``site/<view>/index.html``) passes its own id so a
+            direct load opens on it. ``None`` (and any id not visible on this page)
+            falls back to views.toml's default.
     """
     content = content or load_content()
     site = content.site
     has_data = function_data is not None
     visible = content.visible_views(has_data)
     default_view = _default_view_id(content, visible)
+    active = _resolve_active_view(active_view, visible, default_view)
 
-    nav = "".join(_nav_item(spec) for spec in visible)
+    nav = "".join(_nav_item(spec, active=spec.id == active) for spec in visible)
     selector = _dataset_selector(function_data, content) if has_data else ""
     banner = f'<div class="banner">{site.no_function_data_banner}</div>' if not has_data else ""
     sections = "".join(
-        _view_section(content, spec, scoreboard, function_data, active=spec.id == default_view)
+        _view_section(content, spec, scoreboard, function_data, active=spec.id == active)
         for spec in visible
     )
     footer = site.footer.render(
@@ -265,6 +292,7 @@ def build_page(
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
+    {SITE_PAGE_MARKER}
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{html_escape(scoreboard.name)}</title>
@@ -280,7 +308,7 @@ def build_page(
             </div>
             <nav class="nav">{nav}</nav>
             {selector}
-            <div class="side-stats">{_side_stats(scoreboard, content)}</div>
+            <div class="side-stats">{_side_stats(scoreboard, function_data, content)}</div>
             <div class="side-foot">[ {stamp} ]</div>
         </aside>
 
@@ -313,25 +341,48 @@ def _default_view_id(content: Content, visible: tuple[ViewSpec, ...]) -> str:
     return ids[0] if ids else ""
 
 
-def _nav_item(spec: ViewSpec) -> str:
-    """One sidebar nav link. ``href`` doubles as the view's routing hash."""
+def _resolve_active_view(
+    active_view: str | None, visible: tuple[ViewSpec, ...], default_view: str
+) -> str:
+    """The view to open marked active: ``active_view`` if visible, else the default."""
+    if active_view is not None and any(spec.id == active_view for spec in visible):
+        return active_view
+    return default_view
+
+
+def _nav_item(spec: ViewSpec, active: bool = False) -> str:
+    """One sidebar nav link. ``href`` doubles as the view's routing hash.
+
+    In split mode ``app.js`` rewrites the ``href`` to the real ``<view>/`` subpage
+    URL at init; the ``#<id>`` shipped here keeps the no-JS and single-file forms
+    working.
+    """
+    cls = "nav-item active" if active else "nav-item"
     return (
-        f'<a class="nav-item" data-view="{spec.id}" href="#{spec.id}">'
+        f'<a class="{cls}" data-view="{spec.id}" href="#{spec.id}">'
         f'<span class="nav-bullet">&gt;</span> {html_escape(spec.nav_label)}</a>'
     )
 
 
-def _side_stats(scoreboard: Scoreboard, content: Content) -> str:
+def _side_stats(
+    scoreboard: Scoreboard, function_data: FunctionData | None, content: Content
+) -> str:
     """The sidebar counters.
 
     ``functions``/``binaries`` carry a ``data-stat`` hook because ``app.js``
     rewrites them to the selected dataset's counts; the other two are fixed.
+
+    The decompiler/metric counts prefer ``function_data``: after an additive
+    resume (``DECBENCH_DECOMPILERS=r2dec ... run_benchmark``) the tree's
+    ``scoreboard.toml`` lists only the decompilers of that last run, while
+    ``function_results.json`` carries every column the page actually shows.
     """
+    counted = function_data if function_data is not None else scoreboard
     stats = [
         ("functions", f"{scoreboard.total_functions:,}", True),
         ("binaries", f"{scoreboard.total_binaries:,}", True),
-        ("decompilers", f"{len(scoreboard.decompilers)}", False),
-        ("metrics", f"{len(scoreboard.metrics)}", False),
+        ("decompilers", f"{len(counted.decompilers)}", False),
+        ("metrics", f"{len(counted.metrics)}", False),
     ]
     out = ""
     for name, value, live in stats:

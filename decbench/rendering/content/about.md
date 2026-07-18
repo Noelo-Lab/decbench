@@ -74,90 +74,134 @@ metric: Structural Correctness (GED)
 
 Does the decompiled code branch and loop the same way the source does? We compare the control-flow graphs of the source and the decompilation with a Graph Edit Distance (GED) &mdash; the number of node/edge insertions, deletions, and substitutions needed to turn one CFG into the other.
 
-<details class="metric-viz">
-<summary>how GED works: source &rarr; CFG &rarr; graph diff [click to expand]</summary>
-<div style="background:#000;color:#DBDBDB;padding:8px 0;font-family:'Source Code Pro',monospace;">
-<svg viewBox="0 0 760 350" font-family="'Source Code Pro', monospace" style="max-width:100%;height:auto;display:block">
-  <defs>
-    <marker id="ged-p" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#d4a72c"/></marker>
-    <marker id="ged-e" markerWidth="8" markerHeight="8" refX="5.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#8a8a8a"/></marker>
-    <marker id="ged-r" markerWidth="8" markerHeight="8" refX="5.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#c0504d"/></marker>
-  </defs>
+<details class="metric-viz" open>
+<summary>how GED works: source &rarr; CFG &rarr; graph diff</summary>
+<div class="viz-wrap">
 
-  <!-- ============ 1. SOURCE CODE PANEL ============ -->
-  <text x="16" y="66" font-size="10" fill="#8a8a8a">source.c</text>
-  <rect x="12" y="72" width="210" height="188" rx="4" fill="#141414" stroke="#545454" stroke-width="1"/>
-  <text x="20" y="92"  font-size="11" fill="#8a8a8a">// sum of |x[i]|</text>
-  <text x="20" y="110" font-size="11" fill="#DBDBDB"><tspan fill="#d4a72c">int</tspan> sum(<tspan fill="#d4a72c">int</tspan> *x, <tspan fill="#d4a72c">int</tspan> n) {</text>
-  <text x="28" y="128" font-size="11" fill="#DBDBDB"><tspan fill="#d4a72c">int</tspan> i, s = 0;</text>
-  <text x="28" y="146" font-size="11" fill="#DBDBDB"><tspan fill="#d4a72c">for</tspan> (i=0; i&lt;n; i++)</text>
-  <text x="36" y="164" font-size="11" fill="#DBDBDB"><tspan fill="#d4a72c">if</tspan> (x[i] &lt; 0)</text>
-  <text x="44" y="182" font-size="11" fill="#DBDBDB">s -= x[i];</text>
-  <text x="36" y="200" font-size="11" fill="#DBDBDB"><tspan fill="#d4a72c">else</tspan> s += x[i];</text>
-  <text x="28" y="218" font-size="11" fill="#DBDBDB"><tspan fill="#d4a72c">return</tspan> s;</text>
-  <text x="20" y="236" font-size="11" fill="#DBDBDB">}</text>
+<div class="viz-row">
+<div class="viz-rowlabel">A &middot; lift the source to a control-flow graph</div>
+<div class="viz-pipe">
+<span class="viz-chip is-in">source .c</span>
+<span class="viz-parrow">&mdash;<b>&nbsp;joern&nbsp;</b>&rarr;</span>
+<span class="viz-chip is-out">control-flow graph</span>
+<span class="viz-dim">&nbsp;(same lift is applied to every decompiler's C output)</span>
+</div>
+<div class="viz-grid">
 
-  <!-- arrow 1: joern -->
-  <text x="245" y="147" font-size="10.5" fill="#d4a72c" text-anchor="middle">joern</text>
-  <line x1="224" y1="156" x2="263" y2="156" stroke="#8a8a8a" stroke-width="1.5" marker-end="url(#ged-p)"/>
+<div class="viz-panel">
+<div class="viz-panel-h is-src">source.c</div>
+<pre class="viz-code" data-lang="c"><code>// sum of |x[i]|
+int sum_abs(int *x, int n) {
+    int i, s = 0;
+    for (i = 0; i &lt; n; i++) {
+        if (x[i] &lt; 0)
+            s -= x[i];
+        else
+            s += x[i];
+    }
+    return s;
+}</code></pre>
+</div>
 
-  <!-- ============ 2. SOURCE CFG (green) ============ -->
-  <rect x="268" y="72" width="214" height="188" rx="4" fill="none" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/>
-  <text x="375" y="88" font-size="11" fill="#6ab04c" text-anchor="middle">source CFG</text>
-
-  <!-- edges -->
-  <line x1="375" y1="113" x2="375" y2="127" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
-  <line x1="364" y1="151" x2="349" y2="170" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
-  <line x1="386" y1="151" x2="401" y2="170" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
-  <line x1="352" y1="193" x2="366" y2="212" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
-  <line x1="398" y1="193" x2="384" y2="212" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
-  <path d="M349,222 C300,208 300,150 349,142" fill="none" stroke="#8a8a8a" stroke-width="1.1" stroke-dasharray="3 3" marker-end="url(#ged-e)"/>
-  <text x="292" y="185" font-size="9" fill="#8a8a8a" text-anchor="middle">loop</text>
-  <!-- nodes -->
-  <rect x="349" y="91"  width="52" height="22" rx="4" fill="#141414" stroke="#6ab04c" stroke-width="1.3"/><text x="375" y="106" font-size="11" fill="#DBDBDB" text-anchor="middle">entry</text>
-  <rect x="349" y="129" width="52" height="22" rx="4" fill="#141414" stroke="#6ab04c" stroke-width="1.3"/><text x="375" y="144" font-size="11" fill="#DBDBDB" text-anchor="middle">cond</text>
-  <rect x="315" y="171" width="52" height="22" rx="4" fill="#141414" stroke="#6ab04c" stroke-width="1.3"/><text x="341" y="186" font-size="11" fill="#DBDBDB" text-anchor="middle">then</text>
-  <rect x="383" y="171" width="52" height="22" rx="4" fill="#141414" stroke="#6ab04c" stroke-width="1.3"/><text x="409" y="186" font-size="11" fill="#DBDBDB" text-anchor="middle">else</text>
-  <rect x="349" y="213" width="52" height="22" rx="4" fill="#141414" stroke="#6ab04c" stroke-width="1.3"/><text x="375" y="228" font-size="11" fill="#DBDBDB" text-anchor="middle">exit</text>
-
-  <!-- arrow 2: decompiler output -> joern -->
-  <text x="509" y="127" font-size="9.5" fill="#d4a72c" text-anchor="middle">decompiler</text>
-  <text x="509" y="139" font-size="9.5" fill="#d4a72c" text-anchor="middle">output &rarr; joern</text>
-  <line x1="484" y1="156" x2="533" y2="156" stroke="#8a8a8a" stroke-width="1.5" marker-end="url(#ged-p)"/>
-
-  <!-- ============ 3. DECOMPILED CFG (matched grey + red diff) ============ -->
-  <rect x="536" y="72" width="212" height="188" rx="4" fill="none" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/>
-  <text x="642" y="88" font-size="11" fill="#DBDBDB" text-anchor="middle">decompiled CFG</text>
-
-  <!-- matched edges -->
-  <line x1="642" y1="113" x2="642" y2="127" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
-  <line x1="631" y1="151" x2="616" y2="170" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
-  <line x1="653" y1="151" x2="668" y2="170" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
-  <line x1="619" y1="193" x2="633" y2="212" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
-  <line x1="665" y1="193" x2="651" y2="212" stroke="#8a8a8a" stroke-width="1.2" marker-end="url(#ged-e)"/>
-  <path d="M616,222 C567,208 567,150 616,142" fill="none" stroke="#8a8a8a" stroke-width="1.1" stroke-dasharray="3 3" marker-end="url(#ged-e)"/>
-  <text x="559" y="185" font-size="9" fill="#8a8a8a" text-anchor="middle">loop</text>
-
-  <!-- RED inserted node + its 2 edges (the difference) -->
-  <line x1="668" y1="143" x2="684" y2="149" stroke="#c0504d" stroke-width="1.5" marker-end="url(#ged-r)"/>
-  <path d="M709,161 C742,190 722,226 662,222" fill="none" stroke="#c0504d" stroke-width="1.5" marker-end="url(#ged-r)"/>
-  <rect x="686" y="139" width="52" height="22" rx="4" fill="#1a0f0f" stroke="#c0504d" stroke-width="1.4"/><text x="712" y="154" font-size="11" fill="#c0504d" text-anchor="middle">blk</text>
-  <text x="706" y="198" font-size="9" fill="#c0504d" text-anchor="middle">+1 node</text>
-  <text x="706" y="210" font-size="9" fill="#c0504d" text-anchor="middle">+2 edges</text>
-
-  <!-- matched nodes (normal colour) -->
-  <rect x="616" y="91"  width="52" height="22" rx="4" fill="#141414" stroke="#545454" stroke-width="1.2"/><text x="642" y="106" font-size="11" fill="#DBDBDB" text-anchor="middle">entry</text>
-  <rect x="616" y="129" width="52" height="22" rx="4" fill="#141414" stroke="#545454" stroke-width="1.2"/><text x="642" y="144" font-size="11" fill="#DBDBDB" text-anchor="middle">cond</text>
-  <rect x="582" y="171" width="52" height="22" rx="4" fill="#141414" stroke="#545454" stroke-width="1.2"/><text x="608" y="186" font-size="11" fill="#DBDBDB" text-anchor="middle">then</text>
-  <rect x="650" y="171" width="52" height="22" rx="4" fill="#141414" stroke="#545454" stroke-width="1.2"/><text x="676" y="186" font-size="11" fill="#DBDBDB" text-anchor="middle">else</text>
-  <rect x="616" y="213" width="52" height="22" rx="4" fill="#141414" stroke="#545454" stroke-width="1.2"/><text x="642" y="228" font-size="11" fill="#DBDBDB" text-anchor="middle">exit</text>
-
-  <!-- ============ 4. RESULT STRIP ============ -->
-  <rect x="12" y="270" width="736" height="66" rx="4" fill="#141414" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/>
-  <text x="26" y="298" font-size="11.5"><tspan fill="#c0504d" font-weight="bold">GED = 3</tspan><tspan fill="#8a8a8a">   node &amp; edge insertions + deletions + substitutions to align the two CFGs</tspan></text>
-  <text x="26" y="322" font-size="11.5"><tspan fill="#6ab04c" font-weight="bold">GED = 0</tspan><tspan fill="#8a8a8a">   &rarr;  graph-isomorphic control flow = a perfect structural match</tspan></text>
+<div class="viz-panel">
+<div class="viz-panel-h is-src">control-flow graph</div>
+<svg viewBox="0 0 360 300" role="img" aria-label="control-flow graph of sum_abs" style="max-width:100%;height:auto;display:block">
+<defs>
+<marker id="ga-g" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#8a8a8a"/></marker>
+</defs>
+<!-- edges -->
+<line x1="180" y1="44" x2="180" y2="79" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#ga-g)"/>
+<line x1="168" y1="110" x2="112" y2="156" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#ga-g)"/>
+<line x1="192" y1="110" x2="248" y2="156" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#ga-g)"/>
+<line x1="101" y1="188" x2="160" y2="240" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#ga-g)"/>
+<line x1="259" y1="188" x2="200" y2="240" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#ga-g)"/>
+<path d="M139,251 C78,250 22,238 22,180 C22,120 74,101 137,101" fill="none" stroke="#8a8a8a" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ga-g)"/>
+<text x="68" y="130" font-size="9.5" fill="#8a8a8a" text-anchor="middle">loop</text>
+<text x="104" y="139" font-size="9.5" fill="#8a8a8a" text-anchor="end">&lt;0</text>
+<text x="234" y="139" font-size="9.5" fill="#8a8a8a">&ge;0</text>
+<!-- nodes -->
+<rect x="139" y="14"  width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="180" y="33"  font-size="12.5" fill="#DBDBDB" text-anchor="middle">entry</text>
+<rect x="139" y="80"  width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="180" y="99"  font-size="12.5" fill="#DBDBDB" text-anchor="middle">cond</text>
+<rect x="52"  y="158" width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="93"  y="177" font-size="12.5" fill="#DBDBDB" text-anchor="middle">then</text>
+<rect x="226" y="158" width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="267" y="177" font-size="12.5" fill="#DBDBDB" text-anchor="middle">else</text>
+<rect x="139" y="242" width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="180" y="261" font-size="12.5" fill="#DBDBDB" text-anchor="middle">exit</text>
 </svg>
-<p style="color:#8a8a8a;font-size:0.85em;margin:6px 4px 0;">Structural Correctness (GED): Joern lifts both the original source and each decompiler's C output to control-flow graphs, then counts the fewest node/edge edits needed to make them isomorphic &mdash; 0 means an identical shape. Only control structure is scored (node labels are ignored), so the signal is fair across decompilers.</p>
+<div class="viz-cap">green = the reference shape (dashed edge = loop back-edge)</div>
+</div>
+
+</div>
+</div>
+
+<div class="viz-row">
+<div class="viz-rowlabel">B &middot; the edit distance: reference vs a decompiler's CFG</div>
+<div class="viz-grid">
+
+<div class="viz-panel">
+<div class="viz-panel-h is-src">source CFG</div>
+<svg viewBox="0 0 360 300" role="img" aria-label="source control-flow graph" style="max-width:100%;height:auto;display:block">
+<defs>
+<marker id="gb-g" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#8a8a8a"/></marker>
+</defs>
+<line x1="180" y1="44" x2="180" y2="79" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gb-g)"/>
+<line x1="168" y1="110" x2="112" y2="156" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gb-g)"/>
+<line x1="192" y1="110" x2="248" y2="156" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gb-g)"/>
+<line x1="101" y1="188" x2="160" y2="240" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gb-g)"/>
+<line x1="259" y1="188" x2="200" y2="240" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gb-g)"/>
+<path d="M139,251 C78,250 22,238 22,180 C22,120 74,101 137,101" fill="none" stroke="#8a8a8a" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#gb-g)"/>
+<text x="68" y="130" font-size="9.5" fill="#8a8a8a" text-anchor="middle">loop</text>
+<rect x="139" y="14"  width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="180" y="33"  font-size="12.5" fill="#DBDBDB" text-anchor="middle">entry</text>
+<rect x="139" y="80"  width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="180" y="99"  font-size="12.5" fill="#DBDBDB" text-anchor="middle">cond</text>
+<rect x="52"  y="158" width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="93"  y="177" font-size="12.5" fill="#DBDBDB" text-anchor="middle">then</text>
+<rect x="226" y="158" width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="267" y="177" font-size="12.5" fill="#DBDBDB" text-anchor="middle">else</text>
+<rect x="139" y="242" width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="180" y="261" font-size="12.5" fill="#DBDBDB" text-anchor="middle">exit</text>
+</svg>
+<div class="viz-cap">5 nodes &middot; 6 edges</div>
+</div>
+
+<div class="viz-panel">
+<div class="viz-panel-h is-dec">decompiled CFG</div>
+<svg viewBox="0 0 360 300" role="img" aria-label="decompiled control-flow graph with one inserted node" style="max-width:100%;height:auto;display:block">
+<defs>
+<marker id="gd-g" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#8a8a8a"/></marker>
+<marker id="gd-r" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#c0504d"/></marker>
+</defs>
+<!-- matched (grey) edges -->
+<line x1="180" y1="44" x2="180" y2="79" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gd-g)"/>
+<line x1="168" y1="110" x2="112" y2="156" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gd-g)"/>
+<line x1="192" y1="110" x2="248" y2="156" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gd-g)"/>
+<line x1="101" y1="188" x2="160" y2="240" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gd-g)"/>
+<line x1="259" y1="188" x2="200" y2="240" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gd-g)"/>
+<path d="M139,251 C78,250 22,238 22,180 C22,120 74,101 137,101" fill="none" stroke="#8a8a8a" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#gd-g)"/>
+<text x="68" y="130" font-size="9.5" fill="#8a8a8a" text-anchor="middle">loop</text>
+<!-- RED inserted node + its 2 edges -->
+<path d="M222,94 C332,102 332,182 302,214" fill="none" stroke="#c0504d" stroke-width="1.6" marker-end="url(#gd-r)"/>
+<line x1="252" y1="234" x2="224" y2="250" stroke="#c0504d" stroke-width="1.6" marker-end="url(#gd-r)"/>
+<rect x="252" y="214" width="70" height="28" rx="5" fill="#1a0f0f" stroke="#c0504d" stroke-width="1.5"/><text x="287" y="232" font-size="12" fill="#c0504d" text-anchor="middle">blk</text>
+<!-- matched (grey) nodes -->
+<rect x="139" y="14"  width="82" height="30" rx="5" fill="#141414" stroke="#545454" stroke-width="1.3"/><text x="180" y="33"  font-size="12.5" fill="#DBDBDB" text-anchor="middle">entry</text>
+<rect x="139" y="80"  width="82" height="30" rx="5" fill="#141414" stroke="#545454" stroke-width="1.3"/><text x="180" y="99"  font-size="12.5" fill="#DBDBDB" text-anchor="middle">cond</text>
+<rect x="52"  y="158" width="82" height="30" rx="5" fill="#141414" stroke="#545454" stroke-width="1.3"/><text x="93"  y="177" font-size="12.5" fill="#DBDBDB" text-anchor="middle">then</text>
+<rect x="226" y="158" width="82" height="30" rx="5" fill="#141414" stroke="#545454" stroke-width="1.3"/><text x="267" y="177" font-size="12.5" fill="#DBDBDB" text-anchor="middle">else</text>
+<rect x="139" y="242" width="82" height="30" rx="5" fill="#141414" stroke="#545454" stroke-width="1.3"/><text x="180" y="261" font-size="12.5" fill="#DBDBDB" text-anchor="middle">exit</text>
+</svg>
+<div class="viz-cap">matched nodes grey &middot; <span style="color:#c0504d">inserted node + 2 edges red</span></div>
+</div>
+
+</div>
+
+<div class="viz-callout">
+GED = <span class="n">3</span> &nbsp;&mdash;&nbsp; 1 node insertion + 2 edge insertions to align the two CFGs
+</div>
+
+<div class="viz-score">
+<div><span class="viz-good big">GED = 0</span> <span class="viz-dim">&rarr; the two CFGs are graph-isomorphic &mdash; a perfect structural match.</span></div>
+<div class="perfect">only control-flow shape is scored; node labels are ignored, so the signal is fair across decompilers.</div>
+</div>
+
+</div>
+
+<p class="viz-note">Structural Correctness (GED): Joern lifts both the original source and each decompiler's C output to control-flow graphs, then counts the fewest node/edge edits needed to make them isomorphic &mdash; <code>0</code> means an identical shape. Only control structure is scored, so the signal is fair across decompilers.</p>
+
 </div>
 </details>
 
@@ -168,94 +212,93 @@ metric: Type Correctness
 
 Did the decompiler recover the right variable and argument types? We match the decompiled variables against DWARF ground truth (arguments by ABI position, stack variables by calibrated offset, the rest by name) and score the fraction recovered correctly.
 
-<details class="metric-viz">
-<summary>how type matching works: DWARF ground truth &harr; decompiled variables [click to expand]</summary>
-<div style="background:#000;padding:8px 0;">
-<svg viewBox="0 0 760 396" style="max-width:100%;height:auto;display:block" xmlns="http://www.w3.org/2000/svg" font-family="Source Code Pro, monospace">
-  <defs>
-    <marker id="tm-arrow-green" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#6ab04c"/></marker>
-    <marker id="tm-arrow-amber" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#d4a72c"/></marker>
-    <marker id="tm-arrow-red" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#c0504d"/></marker>
-  </defs>
+<details class="metric-viz" open>
+<summary>how type matching works: DWARF ground truth &harr; recovered variables</summary>
+<div class="viz-wrap">
 
-  <!-- title -->
-  <text x="380" y="26" text-anchor="middle" font-size="12.5" fill="#DBDBDB">type_match &mdash; recovered variable types vs DWARF ground truth</text>
+<svg viewBox="0 0 720 322" role="img" aria-label="stack-frame type matching between DWARF ground truth and decompiler output" style="max-width:100%;height:auto;display:block">
+<defs>
+<marker id="tm-g" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#6ab04c"/></marker>
+<marker id="tm-a" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#d4a72c"/></marker>
+<marker id="tm-r" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#c0504d"/></marker>
+</defs>
 
-  <!-- ============ LEFT PANEL ============ -->
-  <rect x="16" y="44" width="250" height="256" fill="none" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/>
-  <text x="24" y="64" font-size="10.5" fill="#DBDBDB">DWARF ground truth <tspan fill="#8a8a8a">(from -g build)</tspan></text>
-  <line x1="24" y1="72" x2="258" y2="72" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/>
+<!-- panel headers -->
+<text x="24"  y="26" font-size="12.5" fill="#DBDBDB">DWARF ground truth <tspan fill="#8a8a8a">(from -g build)</tspan></text>
+<text x="696" y="26" text-anchor="end" font-size="12.5" fill="#DBDBDB">decompiler output</text>
+<line x1="24"  y1="34" x2="310" y2="34" stroke="rgba(219,219,219,0.35)" stroke-width="1" stroke-dasharray="4 3"/>
+<line x1="410" y1="34" x2="696" y2="34" stroke="rgba(219,219,219,0.35)" stroke-width="1" stroke-dasharray="4 3"/>
 
-  <!-- left rows -->
-  <rect x="24" y="82"  width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/>
-  <rect x="24" y="136" width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/>
-  <rect x="24" y="190" width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/>
-  <rect x="24" y="244" width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/>
+<!-- band A label -->
+<text x="360" y="54" text-anchor="middle" font-size="10.5" fill="#8a8a8a"><tspan fill="#DBDBDB" font-weight="bold">[1]</tspan> arguments &mdash; matched by ABI position</text>
 
-  <text x="32" y="100" font-size="10.5" fill="#8a8a8a">arg 0</text>
-  <text x="32" y="119" font-size="12" fill="#DBDBDB">char *<tspan fill="#8a8a8a">path</tspan></text>
+<!-- ==== argument slots ==== -->
+<!-- A1 -->
+<rect x="24" y="62" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
+<text x="34" y="80"  font-size="10" fill="#8a8a8a">arg 0 &middot; %rdi</text>
+<text x="34" y="99"  font-size="13" fill="#DBDBDB">char *<tspan fill="#8a8a8a">path</tspan></text>
+<rect x="410" y="62" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
+<text x="420" y="80"  font-size="10" fill="#8a8a8a">param a1</text>
+<text x="420" y="99"  font-size="13" fill="#6ab04c">char *</text>
+<text x="686" y="94"  text-anchor="end" font-size="15" fill="#6ab04c">&#10003;</text>
+<!-- A2 -->
+<rect x="24" y="114" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
+<text x="34" y="132" font-size="10" fill="#8a8a8a">arg 1 &middot; %esi</text>
+<text x="34" y="151" font-size="13" fill="#DBDBDB">int <tspan fill="#8a8a8a">mode</tspan></text>
+<rect x="410" y="114" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
+<text x="420" y="132" font-size="10" fill="#8a8a8a">param a2</text>
+<text x="420" y="151" font-size="13" fill="#d4a72c">uint</text>
+<text x="686" y="146" text-anchor="end" font-size="15" fill="#d4a72c">&#8800;</text>
 
-  <text x="32" y="154" font-size="10.5" fill="#8a8a8a">arg 1</text>
-  <text x="32" y="173" font-size="12" fill="#DBDBDB">int <tspan fill="#8a8a8a">mode</tspan></text>
+<!-- band B label -->
+<text x="360" y="188" text-anchor="middle" font-size="10.5" fill="#8a8a8a"><tspan fill="#DBDBDB" font-weight="bold">[2]</tspan> stack locals &mdash; by frame offset, <tspan fill="#DBDBDB" font-weight="bold">[3]</tspan> then by name</text>
 
-  <text x="32" y="208" font-size="10.5" fill="#8a8a8a">local @ rsp-0x18</text>
-  <text x="32" y="227" font-size="12" fill="#DBDBDB">size_t <tspan fill="#8a8a8a">len</tspan></text>
+<!-- ==== local slots ==== -->
+<!-- B1 -->
+<rect x="24" y="196" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
+<text x="34" y="214" font-size="10" fill="#8a8a8a">local @ rbp-0x18</text>
+<text x="34" y="233" font-size="13" fill="#DBDBDB">size_t <tspan fill="#8a8a8a">len</tspan></text>
+<rect x="410" y="196" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
+<text x="420" y="214" font-size="10" fill="#8a8a8a">var_28 @ rbp-0x28</text>
+<text x="420" y="233" font-size="13" fill="#6ab04c">ulong</text>
+<text x="686" y="228" text-anchor="end" font-size="15" fill="#6ab04c">&#10003;</text>
+<!-- B2 -->
+<rect x="24" y="248" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
+<text x="34" y="266" font-size="10" fill="#8a8a8a">local @ rbp-0x20</text>
+<text x="34" y="285" font-size="13" fill="#DBDBDB">struct stat <tspan fill="#8a8a8a">st</tspan></text>
+<rect x="410" y="248" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
+<text x="420" y="266" font-size="10" fill="#8a8a8a">var_30 @ rbp-0x30</text>
+<text x="420" y="285" font-size="13" fill="#c0504d">undefined8</text>
+<text x="686" y="280" text-anchor="end" font-size="15" fill="#c0504d">&#10007;</text>
 
-  <text x="32" y="262" font-size="10.5" fill="#8a8a8a">local @ rsp-0x20</text>
-  <text x="32" y="281" font-size="12" fill="#DBDBDB">struct stat <tspan fill="#8a8a8a">st</tspan></text>
+<!-- ==== connectors (gap 310..410) ==== -->
+<text x="360" y="80"  text-anchor="middle" font-size="9.5" fill="#6ab04c"><tspan font-weight="bold">[1]</tspan> ABI 0</text>
+<line x1="310" y1="85"  x2="406" y2="85"  stroke="#6ab04c" stroke-width="1.6" marker-end="url(#tm-g)"/>
 
-  <!-- ============ RIGHT PANEL ============ -->
-  <rect x="494" y="44" width="250" height="256" fill="none" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/>
-  <text x="502" y="64" font-size="10.5" fill="#DBDBDB">decompiler output</text>
-  <line x1="502" y1="72" x2="736" y2="72" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="360" y="132" text-anchor="middle" font-size="9.5" fill="#d4a72c"><tspan font-weight="bold">[1]</tspan> int &#8800; uint</text>
+<line x1="310" y1="137" x2="406" y2="137" stroke="#d4a72c" stroke-width="1.6" marker-end="url(#tm-a)"/>
 
-  <rect x="502" y="82"  width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/>
-  <rect x="502" y="136" width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/>
-  <rect x="502" y="190" width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/>
-  <rect x="502" y="244" width="234" height="48" fill="#141414" stroke="#545454" stroke-width="1"/>
+<text x="360" y="214" text-anchor="middle" font-size="9.5" fill="#6ab04c"><tspan font-weight="bold">[2]</tspan> offset +0x10</text>
+<line x1="310" y1="219" x2="406" y2="219" stroke="#6ab04c" stroke-width="1.6" marker-end="url(#tm-g)"/>
 
-  <text x="510" y="100" font-size="10.5" fill="#8a8a8a">arg a1</text>
-  <text x="510" y="119" font-size="12" fill="#6ab04c">char *</text>
-  <text x="728" y="120" text-anchor="end" font-size="13" fill="#6ab04c">&#10003;</text>
-
-  <text x="510" y="154" font-size="10.5" fill="#8a8a8a">arg a2</text>
-  <text x="510" y="173" font-size="12" fill="#d4a72c">uint</text>
-  <text x="728" y="174" text-anchor="end" font-size="13" fill="#c0504d">&#10007;</text>
-
-  <text x="510" y="208" font-size="10.5" fill="#8a8a8a">var_18  @ -0x18</text>
-  <text x="510" y="227" font-size="12" fill="#6ab04c">unsigned long</text>
-  <text x="728" y="228" text-anchor="end" font-size="13" fill="#6ab04c">&#10003;</text>
-
-  <text x="510" y="262" font-size="10.5" fill="#8a8a8a">var_20</text>
-  <text x="510" y="281" font-size="12" fill="#c0504d">undefined8</text>
-  <text x="728" y="282" text-anchor="end" font-size="13" fill="#c0504d">&#10007;</text>
-
-  <!-- ============ MATCH ARROWS (gap 266..494) ============ -->
-  <!-- row 1: match, pass 1 -->
-  <line x1="266" y1="106" x2="490" y2="106" stroke="#6ab04c" stroke-width="1.6" marker-end="url(#tm-arrow-green)"/>
-  <text x="380" y="98" text-anchor="middle" font-size="9.5" fill="#cfcfcf"><tspan fill="#6ab04c" font-weight="bold">[1]</tspan> arg 0 &harr; by ABI position</text>
-
-  <!-- row 2: mismatch, pass 1 -->
-  <line x1="266" y1="160" x2="490" y2="160" stroke="#d4a72c" stroke-width="1.6" marker-end="url(#tm-arrow-amber)"/>
-  <text x="380" y="152" text-anchor="middle" font-size="9.5" fill="#cfcfcf"><tspan fill="#d4a72c" font-weight="bold">[1]</tspan> int != uint  (mismatch)</text>
-
-  <!-- row 3: match, pass 2 -->
-  <line x1="266" y1="214" x2="490" y2="214" stroke="#6ab04c" stroke-width="1.6" marker-end="url(#tm-arrow-green)"/>
-  <text x="380" y="206" text-anchor="middle" font-size="9.5" fill="#cfcfcf"><tspan fill="#6ab04c" font-weight="bold">[2]</tspan> stack offset -0x18, calibrated</text>
-
-  <!-- row 4: miss, pass 2 -->
-  <line x1="266" y1="268" x2="490" y2="268" stroke="#c0504d" stroke-width="1.6" marker-end="url(#tm-arrow-red)"/>
-  <text x="380" y="260" text-anchor="middle" font-size="9.5" fill="#cfcfcf"><tspan fill="#c0504d" font-weight="bold">[2]</tspan> missed struct type</text>
-
-  <!-- ============ PASS LEGEND ============ -->
-  <text x="380" y="318" text-anchor="middle" font-size="9.5" fill="#8a8a8a">matching passes: <tspan fill="#DBDBDB" font-weight="bold">[1]</tspan> args by ABI position (name-independent) &#183; <tspan fill="#DBDBDB" font-weight="bold">[2]</tspan> stack vars by calibrated offset &#183; <tspan fill="#DBDBDB" font-weight="bold">[3]</tspan> rest by exact name</text>
-
-  <!-- ============ RESULT STRIP ============ -->
-  <rect x="16" y="330" width="728" height="54" fill="#141414" stroke="#545454" stroke-width="1"/>
-  <text x="30" y="356" font-size="13.5" fill="#DBDBDB">score = <tspan fill="#8a8a8a">matched-correct / recoverable</tspan> = <tspan fill="#6ab04c" font-weight="bold">2</tspan> / 4 = <tspan fill="#d4a72c" font-weight="bold">0.50</tspan></text>
-  <text x="30" y="376" font-size="11" fill="#8a8a8a"><tspan fill="#6ab04c">1.0</tspan> &rarr; every recoverable variable typed correctly = perfect</text>
+<text x="360" y="266" text-anchor="middle" font-size="9.5" fill="#c0504d"><tspan font-weight="bold">[3]</tspan> missed struct</text>
+<line x1="310" y1="271" x2="406" y2="271" stroke="#c0504d" stroke-width="1.6" marker-end="url(#tm-r)"/>
 </svg>
-<p style="color:#8a8a8a;font-size:0.85em;">Only variables carrying a DWARF location count as <em>recoverable</em> &mdash; fully optimized-out vars are dropped for everyone, so the denominator is identical across decompilers. Arguments match by ABI position (name-independent, so angr's <code>a1</code>/<code>a2</code> get fair credit), stack locals by an auto-calibrated frame-offset shift, and the remainder by exact name.</p>
+
+<div class="viz-legend">
+<span class="pass"><span class="k">[1]</span> arguments by ABI position (name-independent)</span>
+<span class="pass"><span class="k">[2]</span> stack vars by calibrated frame offset</span>
+<span class="pass"><span class="k">[3]</span> remainder by exact name</span>
+<span class="pass"><span style="color:#6ab04c">&#10003;</span> correct type &middot; <span style="color:#d4a72c">&#8800;</span> type mismatch &middot; <span style="color:#c0504d">&#10007;</span> missed</span>
+</div>
+
+<div class="viz-score">
+<div>score = <span class="viz-dim">matched-correct / recoverable</span> = <span class="viz-good">2</span> <span class="viz-dim">/</span> 4 = <span class="viz-warn big">0.50</span></div>
+<div class="perfect"><span class="viz-good">1.0</span> &rarr; every recoverable variable typed correctly = perfect</div>
+</div>
+
+<p class="viz-note">Only variables carrying a DWARF location count as <em>recoverable</em> &mdash; fully optimized-out vars are dropped for everyone, so the denominator is identical across decompilers. Arguments match by ABI position (name-independent, so angr's <code>a1</code>/<code>a2</code> get fair credit), stack locals by an auto-calibrated frame-offset shift (here <code>+0x10</code>, so ground-truth <code>-0x18</code> aligns to the decompiler's <code>-0x28</code>), and the remainder by exact name.</p>
+
 </div>
 </details>
 
@@ -266,128 +309,77 @@ metric: Recompilation Bytematch
 
 Does the decompiled code recompile to the same machine code? We run a uniform compilability fixup (define decompiler pseudo-types, strip illegal symbol-version tokens, declare missing symbols) so every decompiler gets a fair shot at building, recompile each function with the original toolchain, and compare the resulting assembly &mdash; normalizing link-time-dependent operands (call/jump targets, PC-relative offsets) so only real differences count.
 
-<details class="metric-viz">
-<summary>how bytematch works: fixup &rarr; recompile &rarr; normalized asm diff [click to expand]</summary>
-<div style="background:#000;color:#DBDBDB;font-family:'Source Code Pro',monospace;padding:4px 0;">
-<svg viewBox="0 0 760 374" style="max-width:100%;height:auto;display:block;">
-  <defs>
-    <marker id="bm-arrow" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,0 L6,3 L0,6 Z" fill="#8a8a8a"/>
-    </marker>
-  </defs>
+<details class="metric-viz" open>
+<summary>how bytematch works: fixup &rarr; recompile &rarr; normalized asm diff</summary>
+<div class="viz-wrap">
 
-  <g font-family="'Source Code Pro',monospace" fill="#DBDBDB">
+<div class="viz-row">
+<div class="viz-rowlabel">A &middot; rebuild the decompiler's own C, the same way the original was built</div>
+<div class="viz-pipe">
+<span class="viz-chip is-in">decompiled .c</span>
+<span class="viz-parrow">&mdash;<b>&nbsp;compilability fixup&nbsp;</b>&rarr;</span>
+<span class="viz-chip">buildable .c</span>
+<span class="viz-parrow">&mdash;<b>&nbsp;recompile&nbsp;</b>&rarr;</span>
+<span class="viz-chip is-out">assembly</span>
+<span class="viz-dim">&nbsp;(same toolchain &amp; -O flags as the source: x86&rarr;gcc, ARM&rarr;arm-eabi, PE&rarr;MinGW)</span>
+</div>
+<div class="viz-grid">
 
-    <!-- title -->
-    <text x="50" y="22" font-size="14" fill="#DBDBDB">byte_match</text>
-    <text x="140" y="22" font-size="12" fill="#8a8a8a">— recompile the decompiled C, then diff the bytes against the original</text>
+<div class="viz-panel">
+<div class="viz-panel-h is-dec">decompiled .c &mdash; pseudo-types injected by the fixup</div>
+<pre class="viz-code" data-lang="c"><code>undefined4 scale(int a) {
+    uint x = a * 3;
+    log_val(x);
+    return x + limit;
+}</code></pre>
+<div class="viz-cap">fixup adds only <code style="color:#6ab04c">typedef</code>s for <span class="tok-type">undefined4</span>/<span class="tok-type">uint</span> &mdash; never rewrites logic</div>
+</div>
 
-    <!-- ============ TOP LANE: decompiled C -> fixup -> buildable .c -> recompile -> .o ============ -->
+<div class="viz-panel">
+<div class="viz-panel-h is-dec">recompiled assembly (-O2, x86-64)</div>
+<pre class="viz-code" data-lang="asm"><code>scale:
+    push   rbx
+    imul   ebx, edi, 3
+    mov    edi, ebx
+    call   log_val
+    mov    eax, ebx
+    add    eax, [rip+limit]
+    pop    rbx
+    ret</code></pre>
+</div>
 
-    <!-- Panel A: decompiled C -->
-    <rect x="50" y="40" width="160" height="84" fill="#141414" stroke="#545454" stroke-width="1"/>
-    <text x="58" y="57" font-size="11" fill="#DBDBDB">decompiled C</text>
-    <text x="58" y="76" font-size="11"><tspan fill="#d4a72c">undefined4</tspan><tspan fill="#DBDBDB"> f(int a){</tspan></text>
-    <text x="58" y="92" font-size="11"><tspan fill="#DBDBDB">  </tspan><tspan fill="#d4a72c">uint</tspan><tspan fill="#DBDBDB"> x = a*3;</tspan></text>
-    <text x="58" y="108" font-size="11" fill="#DBDBDB">  return x; }</text>
+</div>
+</div>
 
-    <!-- arrow 1: compilability fixup -->
-    <line x1="212" y1="82" x2="297" y2="82" stroke="#8a8a8a" stroke-width="1.4" marker-end="url(#bm-arrow)"/>
-    <text x="255" y="60" font-size="11" fill="#6ab04c" text-anchor="middle">compilability</text>
-    <text x="255" y="72" font-size="11" fill="#6ab04c" text-anchor="middle">fixup</text>
-    <text x="255" y="98" font-size="8.5" fill="#8a8a8a" text-anchor="middle">inject only</text>
-    <text x="255" y="108" font-size="8.5" fill="#8a8a8a" text-anchor="middle">what gcc needs;</text>
-    <text x="255" y="118" font-size="8.5" fill="#8a8a8a" text-anchor="middle">never rewrite logic</text>
+<div class="viz-row">
+<div class="viz-rowlabel">B &middot; diff the recompiled bytes against the original .text</div>
+<div class="viz-diff">
+<div class="dl-head"><span class="h-mk"></span><span>original .text</span><span>recompiled</span></div>
+<div class="dl-row dl-match"><span class="dl-mk">&#10003;</span><code class="dl-gt">push   rbx</code><code>push   rbx</code></div>
+<div class="dl-row dl-diff"><span class="dl-mk">&#10007;</span><code class="dl-gt">lea    ebx, [rdi+rdi*2]</code><code>imul   ebx, edi, 3</code></div>
+<div class="dl-row dl-match"><span class="dl-mk">&#10003;</span><code class="dl-gt">mov    edi, ebx</code><code>mov    edi, ebx</code></div>
+<div class="dl-row dl-norm"><span class="dl-mk">&#8776;</span><code class="dl-gt">call   <span class="dl-op">____</span></code><code>call   <span class="dl-op">____</span></code></div>
+<div class="dl-row dl-match"><span class="dl-mk">&#10003;</span><code class="dl-gt">mov    eax, ebx</code><code>mov    eax, ebx</code></div>
+<div class="dl-row dl-norm"><span class="dl-mk">&#8776;</span><code class="dl-gt">add    eax, [rip+<span class="dl-op">____</span>]</code><code>add    eax, [rip+<span class="dl-op">____</span>]</code></div>
+<div class="dl-row dl-match"><span class="dl-mk">&#10003;</span><code class="dl-gt">pop    rbx</code><code>pop    rbx</code></div>
+<div class="dl-row dl-match"><span class="dl-mk">&#10003;</span><code class="dl-gt">ret</code><code>ret</code></div>
+</div>
 
-    <!-- Panel B: buildable .c -->
-    <rect x="300" y="40" width="150" height="84" fill="#141414" stroke="#545454" stroke-width="1"/>
-    <text x="308" y="57" font-size="11" fill="#DBDBDB">buildable .c</text>
-    <text x="308" y="74" font-size="9" fill="#6ab04c">+ typedef u32 undefined4;</text>
-    <text x="308" y="88" font-size="9" fill="#6ab04c">+ typedef u32 uint;</text>
-    <text x="308" y="106" font-size="9" fill="#8a8a8a">undefined4 f(int a){…}</text>
+<div class="viz-legend">
+<span class="pass"><span style="color:#6ab04c">&#10003;</span> identical line</span>
+<span class="pass"><span style="color:#d4a72c">&#8776;</span> matches after normalizing a link-time operand (<span class="dl-op">____</span> = <code>call</code> target / <code>[rip+disp]</code>)</span>
+<span class="pass"><span style="color:#c0504d">&#10007;</span> real difference (edit distance = changed asm lines)</span>
+</div>
 
-    <!-- arrow 2: recompile -->
-    <line x1="452" y1="82" x2="537" y2="82" stroke="#8a8a8a" stroke-width="1.4" marker-end="url(#bm-arrow)"/>
-    <text x="495" y="60" font-size="11" fill="#d4a72c" text-anchor="middle">recompile</text>
-    <text x="495" y="72" font-size="9.5" fill="#d4a72c" text-anchor="middle">same toolchain</text>
-    <text x="495" y="98" font-size="8.5" fill="#8a8a8a" text-anchor="middle">PE→MinGW</text>
-    <text x="495" y="108" font-size="8.5" fill="#8a8a8a" text-anchor="middle">ARM→arm-eabi</text>
-    <text x="495" y="118" font-size="8.5" fill="#8a8a8a" text-anchor="middle">x86→gcc</text>
+<div class="viz-score">
+<div>byte_match = <span class="viz-dim">matching / total</span> = <span class="viz-good">7</span> <span class="viz-dim">/</span> 8 = <span class="viz-good big">0.88</span></div>
+<div class="perfect"><span class="viz-good">1.0</span> &rarr; recompiled assembly matches the original = perfect</div>
+</div>
 
-    <!-- Panel C: .o recompiled -->
-    <rect x="540" y="40" width="170" height="84" fill="#141414" stroke="#545454" stroke-width="1"/>
-    <text x="548" y="57" font-size="11" fill="#DBDBDB">.o  (recompiled)</text>
-    <text x="548" y="78" font-size="10" fill="#8a8a8a">recompiled the SAME</text>
-    <text x="548" y="94" font-size="10" fill="#8a8a8a">way as the source:</text>
-    <text x="548" y="110" font-size="10" fill="#d4a72c">-O2 · x86-64</text>
+</div>
 
-    <!-- ============ CONVERGE: .o bytes + original bytes -> normalize + diff ============ -->
+<p class="viz-note">Recompilation Bytematch rebuilds the decompiler's own C the SAME way the original was built &mdash; toolchain and <code>-O*/-m*</code> flags read from the DWARF producer &mdash; then compares assembly line by line. A compilability fixup injects <em>only</em> what gcc reports missing (typedefs for pseudo-types like <code>undefined4</code>/<code>uint</code>, decls for implicit functions) and never rewrites logic. Link-time-dependent operands &mdash; <code>call</code>/branch targets and <code>[rip&plusmn;disp]</code> displacements &mdash; are normalized away, so an unlinked address difference is not a penalty. Type recovery is scored separately (type_match), so fixing types just to compile is fair.</p>
 
-    <!-- feed arrow: .o -> diff -->
-    <line x1="600" y1="124" x2="562" y2="147" stroke="#8a8a8a" stroke-width="1.4" marker-end="url(#bm-arrow)"/>
-    <text x="606" y="140" font-size="9" fill="#8a8a8a">recompiled bytes</text>
-
-    <!-- Panel D: original binary -->
-    <rect x="50" y="168" width="150" height="100" fill="#141414" stroke="#545454" stroke-width="1"/>
-    <text x="58" y="187" font-size="11" fill="#DBDBDB">original binary</text>
-    <text x="58" y="208" font-size="10" fill="#8a8a8a">ground-truth</text>
-    <text x="58" y="224" font-size="10" fill="#8a8a8a">func f @ 0x1149</text>
-    <text x="58" y="240" font-size="10" fill="#8a8a8a">raw .text bytes</text>
-    <text x="58" y="258" font-size="9" fill="#6ab04c">the reference</text>
-
-    <!-- feed arrow: original -> diff -->
-    <line x1="200" y1="218" x2="247" y2="218" stroke="#8a8a8a" stroke-width="1.4" marker-end="url(#bm-arrow)"/>
-    <text x="224" y="212" font-size="9" fill="#8a8a8a" text-anchor="middle">bytes</text>
-
-    <!-- Box E: normalize + diff -->
-    <rect x="250" y="148" width="340" height="138" fill="none" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/>
-    <text x="262" y="166" font-size="12" fill="#DBDBDB">normalize + diff</text>
-    <text x="262" y="179" font-size="9" fill="#8a8a8a">blank link-time operands, then compare asm lines</text>
-
-    <!-- asm inner panel -->
-    <rect x="258" y="184" width="324" height="94" fill="#141414" stroke="#545454" stroke-width="1"/>
-    <text x="340" y="196" font-size="10" fill="#8a8a8a" text-anchor="middle">recompiled</text>
-    <text x="500" y="196" font-size="10" fill="#8a8a8a" text-anchor="middle">original</text>
-    <line x1="420" y1="186" x2="420" y2="276" stroke="rgba(219,219,219,0.35)" stroke-width="1" stroke-dasharray="3 3"/>
-
-    <!-- row match rects -->
-    <rect x="259" y="200" width="322" height="16" fill="#6ab04c" fill-opacity="0.12"/>
-    <rect x="259" y="216" width="322" height="16" fill="#6ab04c" fill-opacity="0.12"/>
-    <rect x="259" y="232" width="322" height="16" fill="#6ab04c" fill-opacity="0.12"/>
-    <rect x="259" y="248" width="322" height="16" fill="#c0504d" fill-opacity="0.16"/>
-
-    <!-- row 1: match -->
-    <text x="270" y="212" font-size="11" fill="#6ab04c">push rbp</text>
-    <text x="430" y="212" font-size="11" fill="#6ab04c">push rbp</text>
-    <!-- row 2: match, normalized rip-disp -->
-    <text x="270" y="228" font-size="11"><tspan fill="#6ab04c">mov eax,[rip+</tspan><tspan fill="#d4a72c">____</tspan><tspan fill="#6ab04c">]</tspan></text>
-    <text x="430" y="228" font-size="11"><tspan fill="#6ab04c">mov eax,[rip+</tspan><tspan fill="#d4a72c">____</tspan><tspan fill="#6ab04c">]</tspan></text>
-    <!-- row 3: match, normalized call target -->
-    <text x="270" y="244" font-size="11"><tspan fill="#6ab04c">call </tspan><tspan fill="#d4a72c">____</tspan></text>
-    <text x="430" y="244" font-size="11"><tspan fill="#6ab04c">call </tspan><tspan fill="#d4a72c">____</tspan></text>
-    <!-- row 4: differ -->
-    <text x="270" y="260" font-size="11" fill="#c0504d">shl eax, 2</text>
-    <text x="430" y="260" font-size="11" fill="#c0504d">lea eax,[eax*4]</text>
-    <!-- ellipsis -->
-    <text x="340" y="273" font-size="11" fill="#8a8a8a" text-anchor="middle">⋮</text>
-    <text x="500" y="273" font-size="11" fill="#8a8a8a" text-anchor="middle">⋮</text>
-
-    <!-- legend -->
-    <rect x="250" y="294" width="10" height="10" fill="#6ab04c" fill-opacity="0.55" stroke="#6ab04c" stroke-width="0.8"/>
-    <text x="264" y="303" font-size="9" fill="#8a8a8a">match</text>
-    <rect x="318" y="294" width="10" height="10" fill="#d4a72c" fill-opacity="0.55" stroke="#d4a72c" stroke-width="0.8"/>
-    <text x="332" y="303" font-size="9" fill="#8a8a8a">normalized operand</text>
-    <rect x="470" y="294" width="10" height="10" fill="#c0504d" fill-opacity="0.55" stroke="#c0504d" stroke-width="0.8"/>
-    <text x="484" y="303" font-size="9" fill="#8a8a8a">byte differs</text>
-
-    <!-- ============ RESULT STRIP ============ -->
-    <rect x="50" y="314" width="660" height="48" fill="none" stroke="rgba(219,219,219,0.4)" stroke-width="1" stroke-dasharray="4 3"/>
-    <text x="64" y="337" font-size="12"><tspan fill="#8a8a8a">byte_match = </tspan><tspan fill="#DBDBDB">matching asm lines / total</tspan><tspan fill="#8a8a8a"> = </tspan><tspan fill="#6ab04c" font-size="16">0.87</tspan></text>
-    <text x="64" y="354" font-size="10" fill="#8a8a8a"><tspan fill="#6ab04c">1.0</tspan> → recompiled assembly matches the original = perfect</text>
-
-  </g>
-</svg>
-<p style="color:#8a8a8a;font-size:0.85em;">Recompilation Bytematch rebuilds the decompiler's own C the SAME way the original was built — toolchain and <code>-O*/-m*</code> flags read from the DWARF producer (PE→MinGW, ARM→arm-none-eabi, x86→gcc) — then compares assembly line by line. A compilability fixup injects <em>only</em> what gcc reports missing (typedefs for pseudo-types like <code>undefined4</code>/<code>uint</code>/<code>code</code>, decls for implicit functions, globals for undeclared ids) and never rewrites logic. Link-time-dependent operands — call/branch targets and <code>[rip±disp]</code> PC-relative displacements — are normalized away, so an unlinked address difference is not a penalty. Type recovery is scored separately (type_match), so fixing types just to compile is fair.</p>
 </div>
 </details>
 

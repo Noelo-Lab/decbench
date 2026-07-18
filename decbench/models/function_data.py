@@ -105,6 +105,13 @@ class SampleEntry(BaseModel):
         "existed (the View page then shows them untiered)",
     )
     source_code: str | None = Field(default=None, description="Original source C")
+    source_status: str | None = Field(
+        default=None,
+        description="Provenance/diagnostic for source_code: '' or None = extracted "
+        "from a real .c; 'preprocessed' = recovered from a .i (macros expanded); "
+        "'binary_not_found'/'no_source_files'/'func_not_in_sources'/'extract_failed' "
+        "= why source_code is missing. Default None keeps pre-field JSON loadable.",
+    )
     decompiled: dict[str, str] = Field(
         default_factory=dict, description="decompiler id -> decompiled C"
     )

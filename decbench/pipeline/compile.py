@@ -180,9 +180,17 @@ def compile_project(
             project_root=source_dir,
         )
 
-        # Also copy original C files
+        # Also copy original C files. Recursive so nested source trees (CPS
+        # firmware, libacl, gnulib) keep their .c next to the binary, not just
+        # the top-level ones; dedup by basename, SHALLOWEST path first — plain
+        # sorted() would put arch/foo.c before foo.c and an unrelated nested
+        # duplicate would shadow the file that was actually compiled.
         src_dir = source_dir / config.source_dir if config.source_dir else source_dir
-        for c_file in src_dir.glob("*.c"):
+        seen: set[str] = set()
+        for c_file in sorted(src_dir.rglob("*.c"), key=lambda p: (len(p.parts), str(p))):
+            if c_file.name in seen:
+                continue
+            seen.add(c_file.name)
             dest = opt_output_dir / c_file.name
             if not dest.exists():
                 shutil.copy2(c_file, dest)

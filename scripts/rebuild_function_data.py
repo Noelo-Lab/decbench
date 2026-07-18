@@ -34,7 +34,7 @@ from decbench.scoring.report_extras import (
 from decbench.scoring.scoreboard import build_scoreboard_from_function_data
 from decbench.scoring.view_samples import DIFFICULTY_TIERS, select_view_functions
 from decbench.utils.results_tree import resolve_binary
-from decbench.utils.source_extract import function_source
+from decbench.utils.source_extract import function_source, function_source_ex
 
 MARKER = re.compile(r"^// Function: (\S+) @ (0x[0-9a-fA-F]+)\s*$", re.M)
 PERFECT = {"ged": 0.0, "type_match": 1.0, "byte_match": 1.0}
@@ -143,7 +143,7 @@ def build_samples(fd: FunctionData, reader: DiskReader) -> list[SampleEntry]:
                     decompiled[dec] = code
             if not decompiled:
                 continue  # nothing to compare
-            source = function_source(binary, f.function) if binary else None
+            source, source_status = function_source_ex(binary, f.function)
             out.append(
                 SampleEntry(
                     project=g.project,
@@ -154,6 +154,7 @@ def build_samples(fd: FunctionData, reader: DiskReader) -> list[SampleEntry]:
                     labels=f.labels,
                     difficulty=tier,
                     source_code=source,
+                    source_status=source_status,
                     decompiled=decompiled,
                     values=f.values,
                     perfects=f.perfects,

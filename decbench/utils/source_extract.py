@@ -9,8 +9,16 @@ parser, so this is heuristic but conservative:
    (when present) to know *which* source file and roughly *where*.
 2. Find the matching original ``.c`` next to the binary (the compile stage keeps
    per-binary sources in ``compiled/``), then locate the function *definition*
-   (not a call/prototype) and brace-match its body.
+   (not a call/prototype) and brace-match its body. K&R-style definitions are
+   accepted too (bare-identifier param list guarded against prototypes).
+3. Fall back to the preprocessed ``.i`` next to the binary when no ``.c`` carries
+   the definition (nested-tree projects keep only ``.i`` in ``compiled/``). The
+   ``.i`` text is macro-expanded, so it is only used when a real ``.c`` is absent.
 
+:func:`function_source_ex` returns ``(code, status)`` where an empty ``status``
+means the code came from a ``.c``, ``"preprocessed"`` means it came from a ``.i``,
+and the miss codes (``binary_not_found`` / ``no_source_files`` /
+``func_not_in_sources`` / ``extract_failed``) say why ``code`` is ``None``.
 Returns ``None`` whenever anything is uncertain rather than guessing wrong.
 """
 
@@ -128,6 +136,37 @@ def _match_paren(text: str, open_idx: int) -> int | None:
     return None
 
 
+def _knr_body_open(text: str, start: int) -> int | None:
+    """Index of a K&R definition's body ``{``, scanning from just after ``)``.
+
+    A K&R definition places a run of ``;``-terminated parameter declarations
+    between the signature's ``)`` and the body ``{``. ``start`` is the first
+    non-space char after ``)``. Bail (``None``) the moment a ``{``/``}`` appears
+    before the next ``;`` (that means this isn't a plain declaration run, so the
+    ``(`` was a call/expression, not a K&R signature).
+    """
+    i = start
+    n = len(text)
+    while i < n:
+        while i < n and text[i] in " \t\r\n":
+            i += 1
+        if i >= n:
+            return None
+        if text[i] == "{":
+            return i
+        semi = text.find(";", i)
+        if semi < 0:
+            return None
+        obrace = text.find("{", i)
+        if obrace != -1 and obrace < semi:
+            return None
+        cbrace = text.find("}", i)
+        if cbrace != -1 and cbrace < semi:
+            return None
+        i = semi + 1
+    return None
+
+
 def extract_from_text(text: str, func_name: str, decl_line: int = 0) -> str | None:
     """Extract ``func_name``'s definition from C ``text`` via brace matching.
 
@@ -150,12 +189,26 @@ def extract_from_text(text: str, func_name: str, decl_line: int = 0) -> str | No
         close = _match_paren(text, paren)
         if close is None:
             continue
-        # The next non-space char after ')' must be '{' for a definition.
+        # The next non-space char after ')' decides definition vs prototype.
         j = close + 1
         while j < len(text) and text[j] in " \t\r\n":
             j += 1
-        if j >= len(text) or text[j] != "{":
-            continue  # prototype, call, or K&R — skip the simple case
+        if j >= len(text):
+            continue
+        if text[j] == ";":
+            continue  # prototype / forward declaration, never a definition
+        if text[j] != "{":
+            # Possible K&R definition. The ';' guard above is essential: an
+            # empty/bare-param prototype would otherwise let the loose scan below
+            # stitch across to an unrelated later '{'. Accept only a bare-
+            # identifier param list, then a run of ';'-terminated declarations.
+            params = text[paren + 1 : close]
+            if not re.fullmatch(r"[\s\w,]*", params):
+                continue
+            body = _knr_body_open(text, j)
+            if body is None:
+                continue
+            j = body
         # Reject if this looks like a call inside another body: require the
         # token before the name (ignoring the return type) to start a logical
         # line — i.e. the line's first non-space isn't itself a statement.
@@ -185,37 +238,74 @@ def extract_from_text(text: str, func_name: str, decl_line: int = 0) -> str | No
     return snippet or None
 
 
-def function_source(binary_path: Path, func_name: str) -> str | None:
-    """Best-effort source text for ``func_name`` defined in ``binary_path``.
+def function_source_ex(binary_path: Path | None, func_name: str) -> tuple[str | None, str]:
+    """Best-effort source text for ``func_name`` plus a provenance/miss status.
 
-    Looks for the original ``.c`` sources kept next to the binary (the compile
-    stage writes them into ``compiled/``), guided by DWARF when available.
+    Searches the sources kept next to the binary (the compile stage writes them
+    into ``compiled/``), guided by DWARF when available: ``.c`` first (readable
+    original), then the preprocessed ``.i`` (macro-expanded fallback for nested-
+    tree projects that keep only ``.i``). Within each extension the DWARF-named
+    file is tried first.
+
+    Returns ``(code, status)`` where ``status`` is ``""`` when ``code`` came from
+    a ``.c``, ``"preprocessed"`` when from a ``.i``, and one of
+    ``"binary_not_found"`` / ``"no_source_files"`` / ``"func_not_in_sources"`` /
+    ``"extract_failed"`` when ``code`` is ``None``.
     """
+    if binary_path is None:
+        return None, "binary_not_found"
+    binary_path = Path(binary_path)
+    # A missing binary only loses the DWARF *hint* (_dwarf_decl swallows the open
+    # failure); the sibling sources may still hold the function — e.g. a partial
+    # results snapshot whose artifacts were pruned but whose .c/.i were kept. Only
+    # a missing directory means there is nothing to search at all.
+    if not binary_path.parent.is_dir():
+        return None, "binary_not_found"
+
     decl = _dwarf_decl(binary_path)
     decl_file, decl_line = decl.get(func_name, ("", 0))
-
+    decl_stem = os.path.splitext(decl_file)[0] if decl_file else ""
     search_dir = binary_path.parent
-    sources = sorted(p for p in search_dir.glob("*.c") if p.is_file())
-    if not sources:
-        return None
 
-    # Prefer the DWARF-named file, then any file containing the name.
-    ordered: list[Path] = []
-    if decl_file:
-        for p in sources:
-            if p.name == decl_file or p.stem == os.path.splitext(decl_file)[0]:
-                ordered.append(p)
-    ordered += [p for p in sources if p not in ordered]
+    any_sources = False
+    found_name = False
+    for ext in (".c", ".i"):
+        sources = sorted(p for p in search_dir.glob(f"*{ext}") if p.is_file())
+        if not sources:
+            continue
+        any_sources = True
+        # Prefer the DWARF-named file (matched on stem, since decl_file is foo.c
+        # but the preprocessed file is foo.i), then any file containing the name.
+        ordered: list[Path] = []
+        if decl_stem:
+            ordered = [p for p in sources if p.stem == decl_stem]
+        ordered += [p for p in sources if p not in ordered]
 
-    for p in ordered:
-        try:
-            text = p.read_text(errors="replace")
-        except Exception:  # noqa: BLE001
-            continue
-        if func_name not in text:
-            continue
-        line_hint = decl_line if (decl_file and p.name == decl_file) else 0
-        snippet = extract_from_text(text, func_name, line_hint)
-        if snippet:
-            return snippet
-    return None
+        for p in ordered:
+            try:
+                text = p.read_text(errors="replace")
+            except Exception:  # noqa: BLE001
+                continue
+            if func_name not in text:
+                continue
+            found_name = True
+            # decl_line indexes the original .c; it does not correspond to the
+            # preprocessed .i line numbers, so only use it as a hint for .c.
+            line_hint = decl_line if (ext == ".c" and p.stem == decl_stem) else 0
+            snippet = extract_from_text(text, func_name, line_hint)
+            if snippet:
+                return snippet, ("" if ext == ".c" else "preprocessed")
+
+    if not any_sources:
+        return None, "no_source_files"
+    if not found_name:
+        return None, "func_not_in_sources"
+    return None, "extract_failed"
+
+
+def function_source(binary_path: Path, func_name: str) -> str | None:
+    """Best-effort source text for ``func_name`` (back-compat wrapper).
+
+    Thin wrapper over :func:`function_source_ex` that drops the status code.
+    """
+    return function_source_ex(binary_path, func_name)[0]

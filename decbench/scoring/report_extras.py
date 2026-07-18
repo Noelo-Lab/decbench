@@ -242,6 +242,27 @@ def _lookup_binary_path(
     return None
 
 
+def _lookup_source_ex(
+    decompile_results: Any,
+    project: str,
+    opt_level: Any,
+    binary: str,
+    func_name: str,
+) -> tuple[str | None, str]:
+    """Best-effort source text + provenance/miss status for one function."""
+    bp = _lookup_binary_path(decompile_results, project, opt_level, binary)
+    if bp is None:
+        return None, "binary_not_found"
+    try:
+        from pathlib import Path
+
+        from decbench.utils.source_extract import function_source_ex
+
+        return function_source_ex(Path(bp), func_name)
+    except Exception:
+        return None, "extract_failed"
+
+
 def _lookup_source(
     decompile_results: Any,
     project: str,
@@ -250,17 +271,7 @@ def _lookup_source(
     func_name: str,
 ) -> str | None:
     """Best-effort original source text for one function (for side-by-side view)."""
-    bp = _lookup_binary_path(decompile_results, project, opt_level, binary)
-    if bp is None:
-        return None
-    try:
-        from pathlib import Path
-
-        from decbench.utils.source_extract import function_source
-
-        return function_source(Path(bp), func_name)
-    except Exception:
-        return None
+    return _lookup_source_ex(decompile_results, project, opt_level, binary, func_name)[0]
 
 
 def _lookup_line_count(
@@ -463,7 +474,7 @@ def _materialize_sample(
             decompiled[dec] = code
     if not decompiled:
         return None
-    source = _lookup_source(
+    source, source_status = _lookup_source_ex(
         decompile_results, group.project, group.opt_level, group.binary, record.function
     )
     return SampleEntry(
@@ -475,6 +486,7 @@ def _materialize_sample(
         labels=record.labels,
         difficulty=difficulty,
         source_code=source,
+        source_status=source_status,
         decompiled=decompiled,
         values=record.values,
         perfects=record.perfects,

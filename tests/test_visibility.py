@@ -135,6 +135,9 @@ def test_build_site_omits_hidden_decompiler(tmp_path: Path) -> None:
     agg = json.loads((out / "data" / "aggregates.json").read_text())
     assert "phoenix" not in agg["decompilers"]
     assert set(agg["decompilers"]) == {"angr", "ghidra"}
+    # The decompiler registry is gated on the (already-filtered) decompiler list,
+    # so a hidden backend can never re-enter through it.
+    assert set(agg["decompiler_registry"]) == {"angr", "ghidra"}
     blob = "".join(
         (out / "data" / f"{name}.json").read_text() for name in ("aggregates", "samples", "history")
     )
