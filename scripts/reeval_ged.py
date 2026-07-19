@@ -28,7 +28,10 @@ import pickle
 import sys
 from pathlib import Path
 
-DECOMPILERS = ("angr", "phoenix", "ghidra", "ida", "binja", "kuna")
+# Every decompiler whose checkpoints may carry stale inline GED. r2dec/dewolf
+# joined the tree after the first reeval; a refresh must cover them too, or the
+# scoped update_ged overlay leaves their columns on the inline values forever.
+DECOMPILERS = ("angr", "phoenix", "ghidra", "ida", "binja", "kuna", "r2dec", "dewolf")
 OPT_LEVELS = ("O0", "O2", "O2-noinline")
 SRC_OPT = "O0"  # source CFGs are opt-independent; extract once from here
 

@@ -439,6 +439,19 @@ label for the noinline variants.
 
 ## Gotchas
 
+- **The published metric numbers are the reeval OVERLAYS, not the checkpoint
+  inline values.** `results/<tree>/{ged,type_match,byte_match}_new.json` (from
+  `scripts/reeval_{ged,typematch}.py` / `reeval_bytematch.py`) carry the
+  corrected values (sanitized decompiled parses, per-TU source matching,
+  non-finite dropped, compilability fixup); the per-project checkpoints still
+  hold the ORIGINAL inline values from each decompiler's first evaluation.
+  `run_benchmark.py`'s finalize now re-applies all three overlays (scoped: a
+  decompiler with no overlay entries — freshly added r2dec/dewolf — keeps its
+  inline values). Before that fix, any additive resume silently reverted every
+  metric column to the stale inline set (the 2026-07-19 "Kuna dropped from 47%
+  to 22%" incident). After adding a decompiler, refresh the overlays (the reeval
+  scripts' DECOMPILERS now include r2dec/dewolf) and re-run
+  `rebuild_function_data.py` before publishing.
 - **An additive resume leaves a SCOPED `scoreboard.toml`.**
   `DECBENCH_DECOMPILERS=<one> scripts/run_benchmark.py <tree>` merges that
   decompiler into every checkpoint and `function_results.json`, but the

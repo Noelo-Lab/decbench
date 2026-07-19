@@ -18,6 +18,7 @@ Usage:  python scripts/rebuild_function_data.py results/sailr_full
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
 from collections import Counter
@@ -91,7 +92,12 @@ def update_byte_match(
     reeval (e.g. the Docker ARM/PE recompile) without dropping the host-computed
     x86 byte_match.
     Returns per-dec compile tallies (over the newly merged values).
+
+    Like :func:`update_ged`, the stale-value drop is scoped to the decompilers
+    the reeval covered: one added after the reeval (r2dec/dewolf) has no fresh
+    entries at all, and an unscoped drop would wipe its whole healthy column.
     """
+    covered = {key.split("::", 4)[3] for key in new}
     tally = {d: {"comp": 0, "tot": 0} for d in fd.decompilers}
     for g in fd.groups:
         for f in g.functions:
@@ -99,7 +105,7 @@ def update_byte_match(
                 key = f"{g.opt_level}::{g.project}::{g.binary}::{dec}::{f.function}"
                 rec = new.get(key)
                 if rec is None:
-                    if not add_only:
+                    if not add_only and dec in covered:
                         # No fresh value (artifact gone): drop any stale value.
                         mv.pop("byte_match", None)
                         f.perfects.get(dec, {}).pop("byte_match", None)
@@ -235,24 +241,34 @@ def recompute_scoreboard(fd: FunctionData, old: Scoreboard) -> Scoreboard:
 
 
 def update_ged(fd: FunctionData, new: dict[str, dict]) -> int:
-    """Replace the whole GED column with the freshly recomputed values.
+    """Replace the GED column with the freshly recomputed values, per decompiler.
 
-    The reeval (``scripts/reeval_ged.py``) now DROPS unmeasurable functions
+    The reeval (``scripts/reeval_ged.py``) DROPS unmeasurable functions
     (empty-prototype/degenerate source) and pairs each binary against its own
-    translation unit, so its output is the authoritative, collision-free GED set.
-    We first CLEAR every existing ged value/perfect (purging stale ``inf`` entries
-    and wrong-source scores from the prior run) and then apply the new ones — a
-    function with no fresh GED ends up with NO ged key, i.e. excluded from GED's
-    denominator. Returns the number of (function, decompiler) entries set.
+    translation unit, so its output is the authoritative, collision-free GED set
+    for every decompiler it COVERS. Scoping matters: a decompiler evaluated
+    *after* the reeval (r2dec/dewolf added by an additive resume) has healthy
+    fresh values and NO ``ged_new.json`` entries — a blanket clear would wipe its
+    whole column (and an un-overlaid finalize did the inverse: it reverted the
+    covered six to the stale inline values; see the 2026-07-19 GED-collapse
+    post-mortem). So: covered decompilers are cleared then rewritten; uncovered
+    ones keep their values except non-finite entries, which are dropped for the
+    same excluded-from-the-denominator policy the reeval applies. Returns the
+    number of (function, decompiler) entries set.
     """
+    covered = {key.split("::", 4)[3] for key in new}
     for g in fd.groups:
         for f in g.functions:
-            for mv in f.values.values():
-                mv.pop("ged", None)
-            for mp in f.perfects.values():
-                mp.pop("ged", None)
-            for md in f.distances.values():
-                md.pop("ged", None)
+            for dec, mv in f.values.items():
+                if dec in covered:
+                    mv.pop("ged", None)
+                elif not math.isfinite(mv.get("ged", 0.0)):
+                    mv.pop("ged", None)
+                    (f.perfects.get(dec) or {}).pop("ged", None)
+                    (f.distances.get(dec) or {}).pop("ged", None)
+            for dec in covered:
+                (f.perfects.get(dec) or {}).pop("ged", None)
+                (f.distances.get(dec) or {}).pop("ged", None)
     n = 0
     for g in fd.groups:
         for f in g.functions:

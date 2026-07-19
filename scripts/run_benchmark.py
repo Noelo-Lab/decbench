@@ -727,6 +727,38 @@ def main() -> int:
         decompilers=DECOMPILERS,
     )
     fd = build_function_data(all_evaluate, projects, all_decompile)
+    # GED overlay: the checkpoints' inline GED predates the reeval fixes
+    # (sanitized decompiled parses, per-TU source matching, non-finite dropped),
+    # and the published numbers are built on the reeval set (ged_new.json).
+    # Skipping this reverts the whole GED column to the stale inline values for
+    # every decompiler the reeval covered — which is exactly what the 2026-07-17
+    # r2dec resume finalize did (kuna 47%→22% etc.). update_ged is scoped:
+    # decompilers absent from ged_new.json (freshly evaluated this run) keep
+    # their inline values, minus non-finite entries.
+    from rebuild_function_data import update_byte_match, update_ged, update_type_match
+
+    bm_tally: dict[str, dict] = {}
+    for stem, apply_overlay in (
+        ("ged_new", update_ged),
+        ("type_match_new", update_type_match),
+        ("byte_match_new", None),
+    ):
+        overlay_path = out_dir / f"{stem}.json"
+        if not overlay_path.exists():
+            print(
+                f"[finalize] WARNING: no {overlay_path} — that metric column is the "
+                "raw inline checkpoint values (stale for any decompiler evaluated "
+                "before the reeval fixes). Run the matching reeval script, then rebuild.",
+                flush=True,
+            )
+            continue
+        payload = json.loads(overlay_path.read_text())
+        if apply_overlay is None:
+            bm_tally = update_byte_match(fd, payload)
+            n = sum(t["tot"] for t in bm_tally.values())
+        else:
+            n = apply_overlay(fd, payload)
+        print(f"[finalize] overlaid {n} entries from {overlay_path}", flush=True)
     # Populate the report's code-carrying extras: dataset tags (unoptimized/optimized/...),
     # side-by-side Compare samples (with source), Hardest functions, and
     # per-decompiler compile rates. Without this the report has no Compare view,
@@ -742,6 +774,10 @@ def main() -> int:
         )
     except Exception as e:  # noqa: BLE001
         print(f"[warn] attach_extras failed: {e}", flush=True)
+    # attach_extras derives compile rates from the inline (checkpoint) byte_match;
+    # for the overlaid decompilers the reeval tally is the published number.
+    if bm_tally:
+        fd.compile_rates.update({d: t["comp"] / t["tot"] for d, t in bm_tally.items() if t["tot"]})
     fd_path = out_dir / "function_results.json"
     fd.to_json(fd_path)
     scoreboard.raw_data_path = fd_path
