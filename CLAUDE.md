@@ -150,8 +150,13 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 #     python scripts/run_benchmark.py results/ghidra_history -- <sailr stems>
 #   then: python scripts/ingest_history.py results/ghidra_history results/full_run
 
-# FULL run over ALL projects (sailr x86 + cps ARM + malware ARM/PE). Both drivers
-# now gather projects/{sailr,cps,malware}/*.toml (gather_tomls(); cps/disabled/
+# FULL run = EVERY project AND EVERY supported decompiler. A "full run" always
+# means all projects we support — projects/{sailr,cps,malware}/*.toml — decompiled
+# by all backends available on this machine: angr, phoenix, ghidra, ida, binja,
+# kuna, r2dec, and dewolf (phoenix is kept in the data but hidden from the site).
+# If a new project or decompiler is added, "full run" includes it too; scope down
+# only for a deliberate partial pass. (sailr x86 + cps ARM + malware ARM/PE.) Both
+# drivers gather projects/{sailr,cps,malware}/*.toml (gather_tomls(); cps/disabled/
 # excluded). sailr compiles on the host; cps/malware need the cross/mingw
 # toolchains so they compile INSIDE the slim `decbench-compile` image
 # (Dockerfile.compile — ARM + mingw + decbench's light compile deps; the host has
@@ -166,9 +171,14 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 #        -e HOME=/tmp --user "$(id -u):$(id -g)" decbench-compile \
 #        python3 scripts/compile_all.py results/full_run 8 <cps+malware stems...>
 #   4) one decompile+evaluate+report pass over everything (resumes per-project):
-#      DECBENCH_WORKERS=40 DECBENCH_DECOMPILERS=angr,phoenix,ghidra,ida,binja \
+#      DECBENCH_WORKERS=40 \
+#        DECBENCH_DECOMPILERS=angr,phoenix,ghidra,ida,binja,kuna,r2dec,dewolf \
 #        GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 #        python scripts/run_benchmark.py results/full_run
+#      (dewolf is slow + BN-based; for it, prefer several concurrent instances on
+#      disjoint project groups + DECBENCH_DEWOLF_SHARDS to saturate cores — see the
+#      dewolf backend notes. r2dec runs via its Docker image. Resume is per-project
+#      AND per-decompiler, so a full run can be assembled decompiler-by-decompiler.)
 #   byte_match ABSTAINS (no result, not 0) for ARM/PE on the host (no cross/mingw
 #   recompiler) — GED + type_match carry cps/malware. The summary column is Union
 #   (perfect on ≥1 measurable metric, over functions with ≥1 measurable metric),
