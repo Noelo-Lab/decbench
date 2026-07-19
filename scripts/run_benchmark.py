@@ -105,9 +105,10 @@ DECOMPILE_TIMEOUT = int(os.environ.get("DECBENCH_DECOMPILE_TIMEOUT") or "300")
 #     process-group SIGKILL stays as a belt-and-suspenders leak guard.
 #   - dewolf: Binary Ninja frontend + a z3/sympy logic-simplification pipeline
 #     that can blow up on complex control flow (the paper's main timeout source);
-#     runs out-of-process in its own venv. It is as slow as angr on the hard
-#     binaries, so it gets the SAME 3600s budget — truncating it at a smaller
-#     budget than angr would unfairly count its hardest functions as failures.
+#     runs out-of-process in its own venv. A single stuck function can otherwise
+#     burn the whole budget with little recovered, so it is capped at 1200s —
+#     lower than angr/phoenix because dewolf's blowups are per-function hangs the
+#     cap exists to bound, not a slow-but-progressing whole-binary decompile.
 #   - r2dec: radare2 `aaa` analysis then per-function pseudo-C; `aaa` on a big
 #     binary can run minutes, so budget like ghidra/binja.
 DECOMPILER_TIMEOUT = {
@@ -116,7 +117,7 @@ DECOMPILER_TIMEOUT = {
     "phoenix": int(os.environ.get("DECBENCH_PHOENIX_TIMEOUT") or "3600"),
     "ghidra": int(os.environ.get("DECBENCH_GHIDRA_TIMEOUT") or "1800"),
     "binja": int(os.environ.get("DECBENCH_BINJA_TIMEOUT") or "1800"),
-    "dewolf": int(os.environ.get("DECBENCH_DEWOLF_TIMEOUT") or "3600"),
+    "dewolf": int(os.environ.get("DECBENCH_DEWOLF_TIMEOUT") or "1200"),
     "r2dec": int(os.environ.get("DECBENCH_R2DEC_TIMEOUT") or "1800"),
 }
 _HERE = Path(__file__).resolve().parent
