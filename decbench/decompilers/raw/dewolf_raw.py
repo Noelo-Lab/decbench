@@ -21,6 +21,17 @@ Like the other raw backends it drives a fully-stripped binary and filters to the
 project's source functions BY ADDRESS (``function_names`` is a set of ints), with
 per-function partial-progress checkpointing so a timeout still yields the
 functions completed so far.
+
+**Function-level sharding.** dewolf decompiles a binary's functions
+sequentially in one Binary Ninja session, so a binary with many functions pins a
+single core for a long time. Because Binary Ninja parallelizes across PROCESSES
+(verified: concurrent headless sessions run in parallel, the single-seat license
+notwithstanding), :meth:`decompile_binary` splits the target addresses into up to
+``DECBENCH_DEWOLF_SHARDS`` (default 8) shards and runs one driver per shard
+concurrently, each its own BN session on a disjoint subset, then merges. Sharding
+kicks in only when there are enough functions to amortize each shard's BN-load
+cost. The shard drivers inherit the decompile task's process group, so the run
+driver's per-binary-timeout killpg reaps them together.
 """
 
 from __future__ import annotations
@@ -29,7 +40,9 @@ import json
 import logging
 import os
 import subprocess
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -86,6 +99,19 @@ class RawDewolfDecompiler(Decompiler):
     def _astyle_dir(self) -> str | None:
         return self._settings().get("astyle_path") or os.environ.get("DECBENCH_DEWOLF_ASTYLE")
 
+    @staticmethod
+    def _shard_count() -> int:
+        """How many parallel driver processes to split one binary's functions into.
+
+        Each shard is an independent Binary Ninja session on a disjoint subset of
+        the target functions, so this is the intra-binary parallelism knob (see
+        ``decompile_binary``). ``DECBENCH_DEWOLF_SHARDS`` overrides; default 8.
+        """
+        try:
+            return max(1, int(os.environ.get("DECBENCH_DEWOLF_SHARDS") or "8"))
+        except ValueError:
+            return 8
+
     def _child_env(self) -> dict[str, str]:
         env = dict(os.environ)
         repo = self._repo()
@@ -141,10 +167,12 @@ class RawDewolfDecompiler(Decompiler):
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
         failed_functions: list[str] = []
+        lock = threading.Lock()
 
         # The driver filters by address itself; pass the int targets through.
-        target_addrs = {a for a in (function_names or set()) if isinstance(a, int)} or None
-        addrs_arg = json.dumps(sorted(target_addrs)) if target_addrs else "NONE"
+        target_addrs = sorted(
+            a for a in (function_names or set()) if isinstance(a, int) and not isinstance(a, bool)
+        )
 
         def _meta(partial: bool, error: str | None = None) -> DecompilerMetadata:
             extra: dict[str, Any] = {"backend": "dewolf", "via": "raw"}
@@ -162,6 +190,7 @@ class RawDewolfDecompiler(Decompiler):
             )
 
         def _dump() -> None:
+            """Checkpoint partial progress. Caller holds ``lock``."""
             if progress_path is None:
                 return
             partial = DecompilationResult(
@@ -173,8 +202,24 @@ class RawDewolfDecompiler(Decompiler):
             )
             common.dump_progress(progress_path, partial)
 
-        cmd = [str(self._python()), str(_DRIVER), str(binary_path), str(elf_base), addrs_arg]
-        try:
+        # Function-level sharding: dewolf decompiles a binary's functions
+        # SEQUENTIALLY in one Binary Ninja session, so a binary with many
+        # functions pins a single core for a long time. Binary Ninja parallelizes
+        # across PROCESSES, so we split the target addresses into up to
+        # ``_shard_count`` shards and run one driver per shard concurrently — each
+        # its own BN session on a disjoint address subset — then merge. Only shard
+        # when there are enough functions to amortize each shard's BN-load cost
+        # (>= 2x the shard count); tiny binaries and the no-filter case run one
+        # driver. The driver subprocesses inherit this task's process group, so
+        # the run driver's per-binary-timeout killpg reaps them all.
+        if target_addrs and len(target_addrs) >= 2 * self._shard_count():
+            k = self._shard_count()
+            shard_args = [json.dumps(target_addrs[i::k]) for i in range(k)]
+        else:
+            shard_args = [json.dumps(target_addrs) if target_addrs else "NONE"]
+
+        def _consume(addrs_arg: str) -> None:
+            cmd = [str(self._python()), str(_DRIVER), str(binary_path), str(elf_base), addrs_arg]
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -183,40 +228,50 @@ class RawDewolfDecompiler(Decompiler):
                 text=True,
                 bufsize=1,
             )
-        except Exception as exc:  # noqa: BLE001
-            _l.error("dewolf-raw failed to launch on %s: %s", binary_path, exc)
-            return self._error_result(binary_path, start_time, str(exc))
-
-        assert proc.stdout is not None
-        try:
-            for line in proc.stdout:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                kind = obj.get("type")
-                if kind == "func":
-                    name = str(obj.get("name") or "")
-                    code = obj.get("code") or ""
-                    if not name or not code:
+            assert proc.stdout is not None
+            try:
+                for line in proc.stdout:
+                    line = line.strip()
+                    if not line:
                         continue
-                    decompiled_functions[name] = FunctionDecompilation(
-                        name=name,
-                        address=int(obj.get("addr", 0)),
-                        decompiled_code=code,
-                        line_count=code.count("\n") + 1,
-                        line_mappings=[],
-                        variables=[],
-                        metadata=common.extract_metrics(code),
-                    )
-                    _dump()
-                elif kind == "fail":
-                    failed_functions.append(str(obj.get("name") or obj.get("addr")))
-        finally:
-            proc.wait()
+                    try:
+                        obj = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    kind = obj.get("type")
+                    if kind == "func":
+                        name = str(obj.get("name") or "")
+                        code = obj.get("code") or ""
+                        if not name or not code:
+                            continue
+                        fd = FunctionDecompilation(
+                            name=name,
+                            address=int(obj.get("addr", 0)),
+                            decompiled_code=code,
+                            line_count=code.count("\n") + 1,
+                            line_mappings=[],
+                            variables=[],
+                            metadata=common.extract_metrics(code),
+                        )
+                        with lock:
+                            decompiled_functions[name] = fd
+                            _dump()
+                    elif kind == "fail":
+                        with lock:
+                            failed_functions.append(str(obj.get("name") or obj.get("addr")))
+            finally:
+                proc.wait()
+
+        try:
+            if len(shard_args) == 1:
+                _consume(shard_args[0])
+            else:
+                with ThreadPoolExecutor(max_workers=len(shard_args)) as pool:
+                    list(pool.map(_consume, shard_args))
+        except Exception as exc:  # noqa: BLE001
+            _l.error("dewolf-raw failed on %s: %s", binary_path, exc)
+            if not decompiled_functions:
+                return self._error_result(binary_path, start_time, str(exc))
 
         result = DecompilationResult(
             binary_path=binary_path,
