@@ -57,13 +57,21 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
             out[name] = {"value": 0.0, "compilable": False, "error": str(e)[:120]}
             continue
         md = mv.metadata or {}
+        # ABSTAIN, don't score 0: when byte_match can't be measured for this
+        # binary (no matching recompile toolchain — ARM/PE on an x86 host), the
+        # per-function call still returns 0/skipped. Emitting it would make the
+        # rebuild count it as a non-compiling failure and tank the (x86) compile
+        # rate + perfect %. Omit it entirely so rebuild_function_data DROPS
+        # byte_match for that function (per-metric denominators already differ;
+        # GED + type_match carry ARM/PE) — matching compute_for_binary's
+        # binary-level abstain.
+        if md.get("skipped"):
+            continue
         out[name] = {
             "value": float(mv.value),
             "compilable": bool(md.get("compilable", False)),
             "dist": md.get("changed_lines"),  # changed asm lines (distance view)
         }
-        if md.get("skipped"):
-            out[name]["skipped"] = True  # abstained (no matching toolchain)
     key = f"{opt}::{project}::{stem}::{dec}"
     return key, out
 
