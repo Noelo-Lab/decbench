@@ -418,19 +418,14 @@ function orderedMetrics() {
 // the same way metricSpecs is: a missing registry (older payload) or an unknown id
 // (r2dec/dewolf data landing before its entry) falls back to the raw id, unlinked.
 //
-// SHOW_LOGOS is the single switch for the logo experiment: when true, decompilers the
+// SHOW_LOGOS is the single switch for the logos: when true, decompilers the
 // registry marks with `logo` get a small `.dlogo-<base>` badge prepended to their
 // (stacked) leaderboard name. Flip it to false to disable logos everywhere with no
-// other edit — the license tag and stacked layout stay regardless.
-//
-// Recommendation (2026-07): kept OFF. On the strict mono/black terminal page the
-// real backend favicons read as a mismatched sticker strip — the two red marks
-// (Ghidra, Binary Ninja) collide with the red the score bars already use for a bad
-// result, filled-tile logos (IDA/binja/angr) clash with the line-art ones, and
-// several are muddy at ~18px. Grayscale-dim-with-hover-colour (below) tames that but
-// still adds noise the stacked name/version/license cell does not need. The whole
-// experiment stays one flag away: set this to true to turn it back on.
-const SHOW_LOGOS = false;
+// other edit. ON by maintainer choice (2026-07-20), with the grayscale-at-rest /
+// colour-on-row-hover treatment keeping them quiet on the mono page; the license
+// tag that briefly lived under the version was dropped at the same time (the
+// registry still carries `license` — only the rendering was removed).
+const SHOW_LOGOS = true;
 function decRegistry() { return (AGG && AGG.decompiler_registry) || {}; }
 function decRegEntry(id) {
     const reg = decRegistry();
@@ -444,7 +439,6 @@ function decRegEntry(id) {
 }
 function decName(id) { const e = decRegEntry(id); return (e && e.display_name) || id; }
 function decUrl(id) { const e = decRegEntry(id); return (e && e.url) || null; }
-function decLicense(id) { const e = decRegEntry(id); return (e && e.license) || null; }
 function decHasLogo(id) { const e = decRegEntry(id); return !!(e && e.logo); }
 function decVersion(id) {
     const e = decRegEntry(id);
@@ -459,11 +453,11 @@ function decTip(id) {
 // A decompiler as a table cell: linked when the registry carries a url (opens in a
 // new tab; styled to keep the terminal look — see .lb-name a).
 //
-// Two forms, one source of truth (name/url/version/license/logo):
+// Two forms, one source of truth (name/url/version/logo):
 //   compact (default)  `[logo] name <span.ver>vX</span>` on one line — the metrics
 //                      table, distance table, view dropdown and history legend.
-//   stacked ({stacked:true})  a three-line block for the LEADERBOARD: name / version
-//                      / license, each on its own line, name optionally logo-prefixed.
+//   stacked ({stacked:true})  a two-line block for the LEADERBOARD: logo-prefixed
+//                      name, then the version on its own line.
 // The version keeps the same rule in both: a "v" prefix only in front of a digit
 // ("v9.2" reads right, "vr2 6.0.8" does not).
 function decNameHtml(id, options) {
@@ -480,10 +474,8 @@ function decNameHtml(id, options) {
         return logo + nameHtml +
             (vtxt ? ' <span class="ver">' + escapeHtml(vtxt) + '</span>' : '');
     }
-    const lic = decLicense(id);
     let html = '<span class="lb-stack"><span class="lb-nm">' + logo + nameHtml + '</span>';
     if (vtxt) html += '<span class="ver">' + escapeHtml(vtxt) + '</span>';
-    if (lic) html += '<span class="lic lic-' + escapeHtml(lic) + '">' + escapeHtml(lic) + '</span>';
     return html + '</span>';
 }
 

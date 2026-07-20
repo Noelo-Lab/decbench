@@ -138,16 +138,16 @@ the view page's decompiler dropdown, and the historical legend; name-sorting sor
 `display_name`. It is **tolerant**: a missing registry, or an id with no entry, falls
 back to the raw id (unlinked), exactly like `metric_registry`.
 
-Two of these fields drive the **leaderboard name cell only**, which renders as a
-stacked block — the (linked) name, then the version, then the `license` tag (subtly
-colour-coded, muted green/amber, per `.lic-*` in `app.css`). The other tables keep the
-compact inline `name vX` form (one `decNameHtml(id, {stacked})` with an options arg
-serves both). `logo` marks that `app.css` ships a self-contained `.dlogo-<base>`
-background for that id; it is consumed only when `app.js`'s `SHOW_LOGOS` flag is on,
-which prepends a small logo to the stacked name line. `SHOW_LOGOS` ships **off** — the
-logos read as noise on the mono terminal page — so `logo` is inert by default. Both
-fields are emitted only when set (absent = no tag / no logo), so the payload stays
-minimal, and both come from `decbench/rendering/content/decompilers.toml`.
+The **leaderboard name cell only** renders as a stacked block — the logo-prefixed
+(linked) name, then the version on its own line. The other tables keep the compact
+inline `name vX` form (one `decNameHtml(id, {stacked})` with an options arg serves
+both). `logo` marks that `app.css` ships a self-contained `.dlogo-<base>` background
+for that id (grayscale at rest, full colour on row hover); it is consumed when
+`app.js`'s `SHOW_LOGOS` flag is on, which it ships as (2026-07-20, maintainer
+choice). `license` is still emitted for consumers but is not rendered anywhere since
+the same date (the tag briefly lived under the version). Both fields are emitted only
+when set, so the payload stays minimal, and both come from
+`decbench/rendering/content/decompilers.toml`.
 
 The presentation comes from `decbench/rendering/content/decompilers.toml`. The
 `version` is `decompiler_versions[id]` passed through that entry's `version_overrides`

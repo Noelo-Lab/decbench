@@ -149,7 +149,8 @@ tr:last-child td { border-bottom: none; }
    line — the thing the row is about — sits level with the rank and the metric bars. */
 .lb-name-stacked { vertical-align: top; }
 .lb-stack { display: flex; flex-direction: column; gap: 0.03rem; line-height: 1.25; }
-.lb-name-stacked .lb-nm { font-weight: 700; display: flex; align-items: center; }
+/* nowrap: "Binary Ninja" must not fold into a taller two-line row. */
+.lb-name-stacked .lb-nm { font-weight: 700; display: flex; align-items: center; white-space: nowrap; }
 .lb-name-stacked .ver,
 .lb-name-stacked .lic {
     font-weight: 400; font-size: 0.72em; letter-spacing: 0.02em; white-space: nowrap;
