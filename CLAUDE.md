@@ -278,22 +278,46 @@ functions — no binary copying (`decbench subset function_results.json`).
   ARM→arm-none-eabi, x86→gcc; flags read from the DWARF producer), via
   `decbench/utils/binfmt.py`. Returns a non-scoring result if that toolchain
   isn't installed (don't fake a wrong-arch recompile). Works on ELF and PE.
-  **Two fairness passes (v2, `cache_version="2"`) — investigate before changing:**
+  **Two fairness passes (v5, `cache_version="5"`) — investigate before changing:**
   (1) a **compilability fixup** (`decbench/metrics/fixup.py`) so decompiler
-  output actually builds instead of auto-scoring 0 — it strips illegal tokens
-  (`GLIBC_2.2.5::stderr` symbol-version names), then runs a **gcc-diagnostic-driven
-  self-repair loop** (`LC_ALL=C` for ASCII quotes) that injects ONLY what the
-  compiler reports missing: `typedef`s for pseudo-types (`undefined4`/`code`/`uint`),
-  decls for implicit functions, globals for undeclared ids — never redefining what
-  the decompiler already declared (conflict-withdrawal handles the rare clash).
-  This *maximizes compilation* uniformly for all decompilers (raised compile rate
-  ~16-39%→~44-46% on sailr). (2) **operand normalization** in `_disassemble_bytes`
-  blanks link-time-dependent operands (branch/call targets, `[rip±disp]`) so a
-  function whose only "difference" is an unlinked call displacement isn't
-  penalized. The metric still records `compilable` per function (surfaced as the
-  report's per-decompiler **compile rate**). Net effect on sailr: byte_match mean
-  ~0.05→~0.19 (3-4×). Type recovery is measured separately by `type_match`, so
-  fixing types to compile is fair.
+  output actually builds instead of auto-scoring 0 — it sanitizes illegal tokens
+  (`GLIBC_2.2.5::stderr` version names, binja `@ reg`/`u>>`, Ghidra `x._4_4_`
+  sub-pieces, `*(void *)` derefs, computed gotos, array return types), then runs
+  a **gcc-diagnostic-driven self-repair loop** (compiled WITHOUT `-w` so
+  implicit-decl warnings drive repair; `LC_ALL=C` for ASCII quotes) that injects
+  ONLY what the compiler reports missing, with the best available fidelity:
+  width-matched `typedef`s for pseudo-types (`undefined4`/`_DWORD`/`uint`;
+  Ghidra/kuna `int8`=8 BYTES vs `int32`=4 bytes), IDA/Ghidra **helper macros**
+  (`LOBYTE`/`HIBYTE`/`BYTEn`/`CONCATxy`/`SUBxy`/`ZEXT`/`SEXT`/`__ROLn__`/
+  `__OFADD__` — semantics unit-tested), curated **libc prototypes** and the
+  decompiler's OWN **sibling signatures** (`derive_context_decls`, so internal
+  calls get real prototypes → correct call-site codegen), **synthesized structs**
+  (members harvested from `has no member` diagnostics), width-typed globals (IDA
+  `dword_`/`off_` prefixes; arrays when subscripted), and **positional edits**
+  for identifier-less diagnostics (untyped derefs, `={0}`, calls through data).
+  It never redefines what the decompiler declared (conflict-withdrawal + a
+  malformed-injected-decl backout handle clashes). This *maximizes compilation*
+  uniformly (sailr O0 compile rate ~20-79%→~83-95% per decompiler, ~86-92% of
+  sampled prior failures rescued). (2) **operand normalization** in
+  `_disassemble_bytes` blanks link-time-dependent operands: direct branch/call
+  targets (hex AND decimal) and rip/pc-relative memory INCLUDING the unlinked
+  object's bare `[rip]`/`[rip+dec]` form (the single biggest linking-noise class
+  — a global access mismatched its linked original purely because the reloc slot
+  is 0); plus **x86-64-only** varargs AL-zeroing (`mov eax, 0`/`xor eax, eax`
+  before a `call`) dropped from both listings (its presence tracks scaffolding
+  prototypes, not decompiler logic). `binfmt.producer_flags` also now carries
+  codegen `-f` flags (`-fomit-frame-pointer`, `-fzero-call-used-regs`, `-ftrapv`,
+  ...) from the DWARF producer — dropping them made whole projects (openssh,
+  sysvinit) unwinnable. The metric still records `compilable` per function
+  (report's per-decompiler **compile rate**). Net effect on sailr: byte_match
+  mean roughly 2-3× (e.g. O0 IDA 0.28→0.46, ghidra 0.26→0.41); the perfect rate
+  rises but stays modest because ~60% of residual diff is genuine C-shape
+  divergence (variable materialization, control-flow restructure, untyped
+  pointer arith) that O0 codegen amplifies line-for-line — NOT harness noise.
+  Known accepted limit: a normalized bare `[rip]` does not compare symbol
+  identity, so reads of *different* globals can both reach 1.0 (same conflation
+  the linked-side hex displacement always had). Type recovery is measured
+  separately by `type_match`, so fixing types to compile is fair.
 
 `decbench/utils/binfmt.py` is the shared binary-format helper: detect ELF/PE +
 arch, pick the matching recompiler + capstone arch, read DWARF from ELF *or* PE

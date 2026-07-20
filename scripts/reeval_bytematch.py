@@ -23,7 +23,7 @@ from pathlib import Path
 
 from decbench.utils.results_tree import OPT_LEVELS, resolve_binary, split_functions
 
-DECOMPILERS = ("angr", "phoenix", "ghidra", "ida", "binja", "kuna")
+DECOMPILERS = ("angr", "phoenix", "ghidra", "ida", "binja", "kuna", "r2dec", "dewolf")
 
 
 def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
@@ -34,12 +34,17 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
     """
     opt, project, stem, dec, binary_path, c_path = task
     from decbench.metrics.byte_match import ByteMatchMetric
+    from decbench.metrics.fixup import derive_context_decls
     from decbench.models.decompilation import FunctionDecompilation
 
     metric = ByteMatchMetric()
     binary = Path(binary_path)
     out: dict[str, dict] = {}
-    for name, (addr, code) in split_functions(Path(c_path)).items():
+    funcs = split_functions(Path(c_path))
+    # The decompiler's OWN sibling signatures: gives internal calls real
+    # prototypes during the fixup compile (matches compute_for_binary's path).
+    context = derive_context_decls({n: c for n, (_a, c) in funcs.items()})
+    for name, (addr, code) in funcs.items():
         fd = FunctionDecompilation(
             name=name,
             address=addr,
@@ -47,7 +52,7 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
             line_count=code.count("\n") + 1,
         )
         try:
-            mv = metric.compute_for_function(fd, original_binary_path=binary)
+            mv = metric.compute_for_function(fd, original_binary_path=binary, context_decls=context)
         except Exception as e:  # noqa: BLE001
             out[name] = {"value": 0.0, "compilable": False, "error": str(e)[:120]}
             continue
@@ -57,6 +62,8 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
             "compilable": bool(md.get("compilable", False)),
             "dist": md.get("changed_lines"),  # changed asm lines (distance view)
         }
+        if md.get("skipped"):
+            out[name]["skipped"] = True  # abstained (no matching toolchain)
     key = f"{opt}::{project}::{stem}::{dec}"
     return key, out
 
@@ -90,7 +97,9 @@ def main() -> None:
     # Optional trailing project stems restrict the reeval (e.g. only the ARM/PE
     # projects when recomputing byte_match in the cross-toolchain container).
     only = {a for a in sys.argv[3:] if not a.lstrip("-").isdigit()} or None
-    ckpt_dir = root / "reeval_bm"
+    # Overridable so a re-scored pass (e.g. after a metric cache_version bump)
+    # can run side-by-side without touching the published checkpoints/overlay.
+    ckpt_dir = Path(os.environ.get("DECBENCH_REEVAL_CKPT_DIR", root / "reeval_bm"))
     ckpt_dir.mkdir(exist_ok=True)
 
     tasks = build_tasks(root, only=only)
@@ -119,7 +128,7 @@ def main() -> None:
         data = json.loads(cp.read_text())
         for func, v in data.items():
             merged[f"{key}::{func}"] = v
-    out_path = root / "byte_match_new.json"
+    out_path = Path(os.environ.get("DECBENCH_REEVAL_OUT", root / "byte_match_new.json"))
     out_path.write_text(json.dumps(merged))
     comp = sum(1 for v in merged.values() if v.get("compilable"))
     print(

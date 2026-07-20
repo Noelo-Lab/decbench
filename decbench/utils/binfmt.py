@@ -94,9 +94,23 @@ def tool_available(name: str) -> bool:
     return shutil.which(name) is not None
 
 
-# Codegen-relevant flags to carry over from the original build (NOT -g; we add it).
+# Codegen-relevant flags to carry over from the original build (NOT -g; we add
+# it). Besides -m*/-O*, a whitelist of -f flags that change emitted code:
+# dropping them made byte_match unwinnable for whole projects (openssh's
+# -fzero-call-used-regs=all pads every epilogue with zeroing, its -ftrapv turns
+# arithmetic into __addv* calls; sysvinit's -fomit-frame-pointer switches every
+# stack access from rbp- to rsp-relative). Header-independent, codegen-only
+# flags only — nothing here affects parsing or needs libc headers.
 _FLAG_RE = re.compile(
-    r"(?:^|\s)(-m(?:arch|tune|cpu|thumb|float-abi|fpu|abi)?=?\S*|-O[0-3sgz]?)"
+    r"(?:^|\s)(-m(?:arch|tune|cpu|thumb|float-abi|fpu|abi)?=?\S*|-O[0-3sgz]?"
+    r"|-f(?:no-)?(?:omit-frame-pointer|zero-call-used-regs=\S+|trapv|wrapv"
+    r"|stack-protector(?:-strong|-all|-explicit)?|cf-protection(?:=\S+)?"
+    r"|PIC|PIE|pic|pie|plt|common|short-enums|signed-char|unsigned-char"
+    r"|strict-aliasing|jump-tables|delete-null-pointer-checks|stack-clash-protection"
+    r"|optimize-sibling-calls|reorder-blocks(?:-and-partition)?|tree-vectorize"
+    r"|unroll-loops|finite-math-only|fast-math|math-errno|trapping-math"
+    r"|signed-zeros|associative-math|reciprocal-math|unsafe-math-optimizations"
+    r"|single-precision-constant|float-store|excess-precision=\S+)(?=\s|$))"
 )
 
 
@@ -139,9 +153,19 @@ def capstone_arch_mode(info: BinInfo, thumb: bool = False):
 # --- DWARF (ELF or PE) -------------------------------------------------------
 
 _DWARF_SECS = (
-    ".debug_info", ".debug_aranges", ".debug_abbrev", ".debug_frame",
-    ".debug_str", ".debug_loc", ".debug_ranges", ".debug_line", ".debug_addr",
-    ".debug_str_offsets", ".debug_line_str", ".debug_loclists", ".debug_rnglists",
+    ".debug_info",
+    ".debug_aranges",
+    ".debug_abbrev",
+    ".debug_frame",
+    ".debug_str",
+    ".debug_loc",
+    ".debug_ranges",
+    ".debug_line",
+    ".debug_addr",
+    ".debug_str_offsets",
+    ".debug_line_str",
+    ".debug_loclists",
+    ".debug_rnglists",
     ".debug_types",
 )
 
@@ -157,15 +181,25 @@ def _build_dwarfinfo(secs: dict[str, bytes], little_endian: bool, addr_size: int
         config=DwarfConfig(
             little_endian=little_endian, default_address_size=addr_size, machine_arch=march
         ),
-        debug_info_sec=mk(".debug_info"), debug_aranges_sec=mk(".debug_aranges"),
-        debug_abbrev_sec=mk(".debug_abbrev"), debug_frame_sec=mk(".debug_frame"),
-        eh_frame_sec=None, debug_str_sec=mk(".debug_str"),
-        debug_loc_sec=mk(".debug_loc"), debug_ranges_sec=mk(".debug_ranges"),
-        debug_line_sec=mk(".debug_line"), debug_addr_sec=mk(".debug_addr"),
-        debug_str_offsets_sec=mk(".debug_str_offsets"), debug_line_str_sec=mk(".debug_line_str"),
-        debug_pubtypes_sec=None, debug_pubnames_sec=None,
-        debug_loclists_sec=mk(".debug_loclists"), debug_rnglists_sec=mk(".debug_rnglists"),
-        debug_sup_sec=None, gnu_debugaltlink_sec=None, debug_types_sec=mk(".debug_types"),
+        debug_info_sec=mk(".debug_info"),
+        debug_aranges_sec=mk(".debug_aranges"),
+        debug_abbrev_sec=mk(".debug_abbrev"),
+        debug_frame_sec=mk(".debug_frame"),
+        eh_frame_sec=None,
+        debug_str_sec=mk(".debug_str"),
+        debug_loc_sec=mk(".debug_loc"),
+        debug_ranges_sec=mk(".debug_ranges"),
+        debug_line_sec=mk(".debug_line"),
+        debug_addr_sec=mk(".debug_addr"),
+        debug_str_offsets_sec=mk(".debug_str_offsets"),
+        debug_line_str_sec=mk(".debug_line_str"),
+        debug_pubtypes_sec=None,
+        debug_pubnames_sec=None,
+        debug_loclists_sec=mk(".debug_loclists"),
+        debug_rnglists_sec=mk(".debug_rnglists"),
+        debug_sup_sec=None,
+        gnu_debugaltlink_sec=None,
+        debug_types_sec=mk(".debug_types"),
     )
 
 

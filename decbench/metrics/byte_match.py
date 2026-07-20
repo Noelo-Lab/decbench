@@ -87,13 +87,19 @@ _BRANCH_MNEMONICS = frozenset(
     }
 )
 
-# An immediate hex literal, optionally ARM-style ``#``-prefixed (and possibly
-# negative): matches ``0x40``, ``#0x40``, ``#-0x40``.
-_HEX_TOKEN = re.compile(r"#?-?0x[0-9a-fA-F]+")
+# An immediate literal, optionally ARM-style ``#``-prefixed (and possibly
+# negative), hex OR decimal: ``0x40``, ``#0x40``, ``#-0x40``, and the bare
+# decimal form capstone prints for small displacements/targets (``call 4``).
+_HEX_TOKEN = re.compile(r"#?-?(?:0x[0-9a-fA-F]+|\d+)")
 # A PC/IP-relative *memory* operand: x86 ``[rip + 0x..]`` / ``[rip - 0x..]`` and
 # AArch64 literal loads ``[pc, #0x..]``. The displacement encodes a data/GOT
 # offset fixed up at link time, so it is layout-dependent and gets a placeholder.
-_PC_REL_MEM = re.compile(r"\[(rip|pc)\s*[+\-,]\s*#?-?0x[0-9a-fA-F]+\]")
+# The displacement is OPTIONAL and may be decimal: in an *unlinked* object the
+# relocation slot is 0 and capstone prints a bare ``[rip]`` (and small
+# displacements print as decimal, e.g. ``[rip + 7]``) — without matching those,
+# every global/string access in a recompiled object mismatches its linked
+# original purely because of linking.
+_PC_REL_MEM = re.compile(r"\[(rip|pc)(?:\s*[+\-,]\s*#?-?(?:0x[0-9a-fA-F]+|\d+))?\]")
 # AArch64 PC-relative *address* computations whose immediate is the (page)
 # target itself — capstone prints e.g. ``adrp x0, #0x400000``.
 _PC_REL_MNEMONICS = frozenset({"adrp", "adr"})
@@ -145,6 +151,25 @@ def _disassemble_bytes(data: bytes, address: int = 0, arch_mode: tuple | None = 
             op_str = _normalize_operands(insn.mnemonic, insn.op_str)
             line = f"{insn.mnemonic} {op_str}".strip()
             lines.append(line)
+
+        # Drop x86-64 varargs AL-zeroing (``mov eax, 0`` / ``xor eax, eax``
+        # immediately before a call): the SysV ABI makes callers zero AL for
+        # variadic/unprototyped callees, so its presence tracks whether a
+        # *prototype* was in scope at compile time — for recompiled decompiler
+        # output the prototype is our injected scaffolding, not the
+        # decompiler's logic. Applied to BOTH listings uniformly. ONLY on
+        # x86-64: i386 (regparm) and Win64 have no AL-varargs convention, so a
+        # ``xor eax, eax`` before a call there is a real register argument.
+        if arch_mode == (capstone.CS_ARCH_X86, capstone.CS_MODE_64):
+            lines = [
+                ln
+                for i, ln in enumerate(lines)
+                if not (
+                    ln in ("mov eax, 0", "xor eax, eax")
+                    and i + 1 < len(lines)
+                    and lines[i + 1].startswith("call ")
+                )
+            ]
 
         return lines
 
@@ -250,10 +275,17 @@ class ByteMatchMetric(Metric):
     requires_source_cfg = False
     requires_decompiled_cfg = False
 
-    # v3: compilability fixup pass (decbench/metrics/fixup.py) + operand
-    # normalization (branch targets, x86 rip- and ARM pc-relative; indirect-branch
-    # displacements preserved).
-    cache_version = "3"
+    # v5: rip/pc-relative normalization also covers the unlinked-object bare
+    # ``[rip]`` (zero/decimal displacement) form; direct branch/call targets
+    # normalize decimal as well as hex; x86-64-only varargs AL-zeroing before
+    # calls is dropped from both listings; fixup gains width-correct IDA/Ghidra
+    # pseudo-types, semantically-correct helper macros, sibling/libc prototypes,
+    # struct synthesis, positional repairs and a malformed-decl backout, and
+    # producer_flags now carries codegen ``-f`` flags. (NOTE: a bare ``[rip]``
+    # conflates reads of *different* globals — the same accepted precision limit
+    # the linked-side hex displacement always had; symbol identity isn't
+    # compared.)
+    cache_version = "5"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
@@ -321,6 +353,10 @@ class ByteMatchMetric(Metric):
                 metadata={"error": "Could not extract original function bytes"},
             )
 
+        # Sibling prototypes (the decompiler's OWN recovered signatures for the
+        # binary's other functions) shape the fixup's injected decls, so they
+        # are part of the cache key.
+        context_decls: dict[str, str] | None = kwargs.get("context_decls")
         key_inputs = [
             decompiled.decompiled_code,
             decompiled.name,
@@ -328,11 +364,12 @@ class ByteMatchMetric(Metric):
             original_bytes.hex(),
             recompiler,
             list(flags),
+            sorted(context_decls.items()) if context_decls else None,
         ]
         return self._cached_value(
             key_inputs,
             lambda: self._compute_uncached(
-                decompiled, original_bytes, recompiler, flags, arch_mode
+                decompiled, original_bytes, recompiler, flags, arch_mode, context_decls
             ),
         )
 
@@ -343,6 +380,7 @@ class ByteMatchMetric(Metric):
         compiler: str,
         flags: list[str],
         arch_mode: tuple | None,
+        context_decls: dict[str, str] | None = None,
     ) -> MetricValue:
         import shutil
 
@@ -352,7 +390,13 @@ class ByteMatchMetric(Metric):
         # Compile decompiled code the same way as source (matching toolchain),
         # running the fixup/self-repair pass so the maximum number of functions
         # build (otherwise non-compiling code is a flat 0 and dominates).
-        fix = compile_with_fixup(decompiled.decompiled_code, decompiled.name, compiler, flags)
+        fix = compile_with_fixup(
+            decompiled.decompiled_code,
+            decompiled.name,
+            compiler,
+            flags,
+            context_decls=context_decls,
+        )
         obj_path = fix.obj_path
 
         if obj_path is None:
@@ -480,11 +524,20 @@ class ByteMatchMetric(Metric):
                         ],
                     )
 
+        # The decompiler's own signatures for this binary's functions: used by
+        # the fixup to give internal calls real prototypes.
+        from decbench.metrics.fixup import derive_context_decls
+
+        context_decls = derive_context_decls(
+            {name: fd.decompiled_code or "" for name, fd in decompilation.functions.items()}
+        )
+
         for func_name, func_decomp in decompilation.functions.items():
             try:
                 value = self.compute_for_function(
                     func_decomp,
                     original_binary_path=original_binary_path,
+                    context_decls=context_decls,
                 )
                 function_results[func_name] = value
 
