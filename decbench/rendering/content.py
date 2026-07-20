@@ -155,6 +155,12 @@ class SiteContent:
     banners: dict[str, str]
     side_stats: dict[str, str]
     hidden_decompilers: tuple[str, ...] = ()
+    pages_domain: str = ""
+    """Custom domain the split site is served from (``[pages] domain``).
+
+    When set, :func:`decbench.rendering.site.build_site` emits a ``CNAME`` file
+    carrying it. Empty = no custom domain (the github.io URL).
+    """
 
     @property
     def no_function_data_banner(self) -> str:
@@ -521,6 +527,7 @@ def _load_site() -> SiteContent:
         banners=dict(raw["banners"]),
         side_stats=dict(raw["side_stats"]),
         hidden_decompilers=hidden,
+        pages_domain=str((raw.get("pages") or {}).get("domain") or ""),
     )
 
 

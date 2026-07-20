@@ -88,6 +88,11 @@ def build_site(scoreboard: Scoreboard, function_data: FunctionData, out_dir: Pat
     (out_dir / CSS_FILE).write_text(asset_text(CSS_FILE), encoding="utf-8")
     (out_dir / JS_FILE).write_text(asset_text(JS_FILE), encoding="utf-8")
     (out_dir / _NOJEKYLL).write_text("", encoding="utf-8")
+    # GitHub Pages custom domain. Workflow deploys take the domain from the repo's
+    # Pages settings, but the CNAME file keeps the tree self-documenting and keeps
+    # the domain if publishing ever moves back to a branch source.
+    if content.site.pages_domain:
+        (out_dir / "CNAME").write_text(content.site.pages_domain + "\n", encoding="utf-8")
 
     for name, blob in iter_font_assets():
         (out_dir / _FONTS_DIR / name).write_bytes(blob)

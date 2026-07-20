@@ -40,3 +40,9 @@ normalize_title = "Only count functions that EVERY decompiler decompiled success
 # change; no benchmark re-run needed.
 [decompilers]
 hidden = ["phoenix"]
+
+# GitHub Pages custom domain. `decbench site build` writes it into the tree's
+# CNAME file; the authoritative routing for workflow deploys is the repo's Pages
+# settings (Settings -> Pages -> Custom domain), which must carry the same value.
+[pages]
+domain = "decbench.com"

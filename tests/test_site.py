@@ -26,6 +26,7 @@ from decbench.models.function_data import (
     SampleEntry,
 )
 from decbench.models.scoreboard import Scoreboard
+from decbench.rendering.content import load_content
 from decbench.rendering.html import render_html_report
 from decbench.rendering.site import build_site
 
@@ -130,6 +131,7 @@ def test_build_site_writes_the_documented_tree(
         "app.css",
         "app.js",
         ".nojekyll",
+        "CNAME",
         "fonts/source-code-pro-latin.woff2",
         *(f"data/{name}.json" for name in DATA_FILES),
         *(f"{view}/index.html" for view in VIEW_IDS),
@@ -435,3 +437,15 @@ def test_both_modes_render_the_same_skeleton(
     ):
         assert marker in index, marker
         assert marker in single, marker
+
+
+def test_build_site_writes_the_custom_domain_cname(
+    tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
+) -> None:
+    """The configured Pages domain lands in CNAME (settings are authoritative;
+    the file keeps the tree self-documenting and branch-publishing-safe)."""
+    out = tmp_path / "site"
+    build_site(scoreboard, function_data, out)
+    domain = load_content().site.pages_domain
+    assert domain  # site.toml carries one today
+    assert (out / "CNAME").read_text() == f"{domain}\n"

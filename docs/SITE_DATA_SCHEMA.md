@@ -31,6 +31,7 @@ site/
 ├── view/index.html         #   "../" (no <base> — that would break same-document SVG
 ├── history/index.html      #   url(#marker) refs and #anchors). Makes /leaderboard/,
 ├── about/index.html        #   /distance/, ... directly linkable and reload-safe.
+├── CNAME                   # custom domain (from site.toml [pages].domain)
 └── data/
     ├── aggregates.json # the 10 combos + registry. Loaded eagerly.
     ├── dataset.json    # Dataset page. Corpus-wide, selector-independent.
