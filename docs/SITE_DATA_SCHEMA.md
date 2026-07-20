@@ -77,6 +77,17 @@ change — never a new history entry), both modes:
 
 Unknown or invalid values fall back silently to defaults — never an error banner.
 
+**Theme.** The light/dark choice is NOT part of the SPA state above: it is applied
+before `app.js` runs, by the tiny bootstrap script in every page's `<head>` (see
+`html.py`'s `_THEME_BOOTSTRAP`). Dark is the default; the bootstrap reads
+`localStorage['decbench-theme']` (`"light"`/`"dark"`) and stamps `data-theme` on
+`<html>` before first paint, so there is no flash. An optional **`?theme=light`** (or
+`?theme=dark`) query param overrides the stored value — a debug/share convenience that
+is also *persisted* to `localStorage`, so a shared `?theme=light` link keeps light mode
+on subsequent navigation. There is deliberately no OS-preference (`prefers-color-scheme`)
+detection: only an explicit choice switches. The sidebar `[ light mode ]`/`[ dark mode ]`
+button (`#theme-toggle`) flips and persists it at runtime.
+
 ## `data/aggregates.json`
 
 ```jsonc

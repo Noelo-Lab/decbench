@@ -326,6 +326,18 @@ def test_about_goal_card_svgs_carry_no_stray_paragraphs(content: Content) -> Non
             assert not re.search(r"<p[\s>]", svg)
 
 
+def test_about_goal_cards_use_theme_tokens_not_hardcoded_colors(content: Content) -> None:
+    """The metric visualizations must be theme-aware: every SVG fill/stroke and
+    inline color resolves a CSS var, so the light theme re-inks them. A stray
+    ``#rrggbb`` would paint a dark-theme color onto the light page (marker-id refs
+    like ``url(#tm-g)`` are not six hex digits, so they do not trip this)."""
+    import re
+
+    for card in content.view("about").goals:
+        stray = re.findall(r"#[0-9a-fA-F]{6}\b", card.body_html)
+        assert stray == [], (card.metric_key, stray)
+
+
 def test_metric_viz_blocks_open_by_default_and_carry_a_visualization(content: Content) -> None:
     """The redone metric visualizations show without a click (`open`) and drop the
     now-redundant "[click to expand]" cue. GED and type_match draw inline SVG;

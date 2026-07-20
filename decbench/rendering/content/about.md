@@ -107,24 +107,24 @@ int sum_abs(int *x, int n) {
 <div class="viz-panel-h is-src">control-flow graph</div>
 <svg viewBox="0 0 360 300" role="img" aria-label="control-flow graph of sum_abs" style="max-width:100%;height:auto;display:block">
 <defs>
-<marker id="ga-g" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#8a8a8a"/></marker>
+<marker id="ga-g" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--text-muted)"/></marker>
 </defs>
 <!-- edges -->
-<line x1="180" y1="44" x2="180" y2="79" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#ga-g)"/>
-<line x1="168" y1="110" x2="112" y2="156" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#ga-g)"/>
-<line x1="192" y1="110" x2="248" y2="156" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#ga-g)"/>
-<line x1="101" y1="188" x2="160" y2="240" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#ga-g)"/>
-<line x1="259" y1="188" x2="200" y2="240" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#ga-g)"/>
-<path d="M139,251 C78,250 22,238 22,180 C22,120 74,101 137,101" fill="none" stroke="#8a8a8a" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ga-g)"/>
-<text x="68" y="130" font-size="9.5" fill="#8a8a8a" text-anchor="middle">loop</text>
-<text x="104" y="139" font-size="9.5" fill="#8a8a8a" text-anchor="end">&lt;0</text>
-<text x="234" y="139" font-size="9.5" fill="#8a8a8a">&ge;0</text>
+<line x1="180" y1="44" x2="180" y2="79" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#ga-g)"/>
+<line x1="168" y1="110" x2="112" y2="156" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#ga-g)"/>
+<line x1="192" y1="110" x2="248" y2="156" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#ga-g)"/>
+<line x1="101" y1="188" x2="160" y2="240" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#ga-g)"/>
+<line x1="259" y1="188" x2="200" y2="240" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#ga-g)"/>
+<path d="M139,251 C78,250 22,238 22,180 C22,120 74,101 137,101" fill="none" stroke="var(--text-muted)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ga-g)"/>
+<text x="68" y="130" font-size="9.5" fill="var(--text-muted)" text-anchor="middle">loop</text>
+<text x="104" y="139" font-size="9.5" fill="var(--text-muted)" text-anchor="end">&lt;0</text>
+<text x="234" y="139" font-size="9.5" fill="var(--text-muted)">&ge;0</text>
 <!-- nodes -->
-<rect x="139" y="14"  width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="180" y="33"  font-size="12.5" fill="#DBDBDB" text-anchor="middle">entry</text>
-<rect x="139" y="80"  width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="180" y="99"  font-size="12.5" fill="#DBDBDB" text-anchor="middle">cond</text>
-<rect x="52"  y="158" width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="93"  y="177" font-size="12.5" fill="#DBDBDB" text-anchor="middle">then</text>
-<rect x="226" y="158" width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="267" y="177" font-size="12.5" fill="#DBDBDB" text-anchor="middle">else</text>
-<rect x="139" y="242" width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="180" y="261" font-size="12.5" fill="#DBDBDB" text-anchor="middle">exit</text>
+<rect x="139" y="14"  width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="180" y="33"  font-size="12.5" fill="var(--text)" text-anchor="middle">entry</text>
+<rect x="139" y="80"  width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="180" y="99"  font-size="12.5" fill="var(--text)" text-anchor="middle">cond</text>
+<rect x="52"  y="158" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="93"  y="177" font-size="12.5" fill="var(--text)" text-anchor="middle">then</text>
+<rect x="226" y="158" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="267" y="177" font-size="12.5" fill="var(--text)" text-anchor="middle">else</text>
+<rect x="139" y="242" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="180" y="261" font-size="12.5" fill="var(--text)" text-anchor="middle">exit</text>
 </svg>
 <div class="viz-cap">green = the reference shape (dashed edge = loop back-edge)</div>
 </div>
@@ -140,20 +140,20 @@ int sum_abs(int *x, int n) {
 <div class="viz-panel-h is-src">source CFG</div>
 <svg viewBox="0 0 360 300" role="img" aria-label="source control-flow graph" style="max-width:100%;height:auto;display:block">
 <defs>
-<marker id="gb-g" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#8a8a8a"/></marker>
+<marker id="gb-g" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--text-muted)"/></marker>
 </defs>
-<line x1="180" y1="44" x2="180" y2="79" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gb-g)"/>
-<line x1="168" y1="110" x2="112" y2="156" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gb-g)"/>
-<line x1="192" y1="110" x2="248" y2="156" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gb-g)"/>
-<line x1="101" y1="188" x2="160" y2="240" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gb-g)"/>
-<line x1="259" y1="188" x2="200" y2="240" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gb-g)"/>
-<path d="M139,251 C78,250 22,238 22,180 C22,120 74,101 137,101" fill="none" stroke="#8a8a8a" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#gb-g)"/>
-<text x="68" y="130" font-size="9.5" fill="#8a8a8a" text-anchor="middle">loop</text>
-<rect x="139" y="14"  width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="180" y="33"  font-size="12.5" fill="#DBDBDB" text-anchor="middle">entry</text>
-<rect x="139" y="80"  width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="180" y="99"  font-size="12.5" fill="#DBDBDB" text-anchor="middle">cond</text>
-<rect x="52"  y="158" width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="93"  y="177" font-size="12.5" fill="#DBDBDB" text-anchor="middle">then</text>
-<rect x="226" y="158" width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="267" y="177" font-size="12.5" fill="#DBDBDB" text-anchor="middle">else</text>
-<rect x="139" y="242" width="82" height="30" rx="5" fill="#141414" stroke="#6ab04c" stroke-width="1.4"/><text x="180" y="261" font-size="12.5" fill="#DBDBDB" text-anchor="middle">exit</text>
+<line x1="180" y1="44" x2="180" y2="79" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gb-g)"/>
+<line x1="168" y1="110" x2="112" y2="156" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gb-g)"/>
+<line x1="192" y1="110" x2="248" y2="156" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gb-g)"/>
+<line x1="101" y1="188" x2="160" y2="240" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gb-g)"/>
+<line x1="259" y1="188" x2="200" y2="240" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gb-g)"/>
+<path d="M139,251 C78,250 22,238 22,180 C22,120 74,101 137,101" fill="none" stroke="var(--text-muted)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#gb-g)"/>
+<text x="68" y="130" font-size="9.5" fill="var(--text-muted)" text-anchor="middle">loop</text>
+<rect x="139" y="14"  width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="180" y="33"  font-size="12.5" fill="var(--text)" text-anchor="middle">entry</text>
+<rect x="139" y="80"  width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="180" y="99"  font-size="12.5" fill="var(--text)" text-anchor="middle">cond</text>
+<rect x="52"  y="158" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="93"  y="177" font-size="12.5" fill="var(--text)" text-anchor="middle">then</text>
+<rect x="226" y="158" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="267" y="177" font-size="12.5" fill="var(--text)" text-anchor="middle">else</text>
+<rect x="139" y="242" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="180" y="261" font-size="12.5" fill="var(--text)" text-anchor="middle">exit</text>
 </svg>
 <div class="viz-cap">5 nodes &middot; 6 edges</div>
 </div>
@@ -162,29 +162,29 @@ int sum_abs(int *x, int n) {
 <div class="viz-panel-h is-dec">decompiled CFG</div>
 <svg viewBox="0 0 360 300" role="img" aria-label="decompiled control-flow graph with one inserted node" style="max-width:100%;height:auto;display:block">
 <defs>
-<marker id="gd-g" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#8a8a8a"/></marker>
-<marker id="gd-r" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#c0504d"/></marker>
+<marker id="gd-g" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--text-muted)"/></marker>
+<marker id="gd-r" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--red)"/></marker>
 </defs>
 <!-- matched (grey) edges -->
-<line x1="180" y1="44" x2="180" y2="79" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gd-g)"/>
-<line x1="168" y1="110" x2="112" y2="156" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gd-g)"/>
-<line x1="192" y1="110" x2="248" y2="156" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gd-g)"/>
-<line x1="101" y1="188" x2="160" y2="240" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gd-g)"/>
-<line x1="259" y1="188" x2="200" y2="240" stroke="#8a8a8a" stroke-width="1.3" marker-end="url(#gd-g)"/>
-<path d="M139,251 C78,250 22,238 22,180 C22,120 74,101 137,101" fill="none" stroke="#8a8a8a" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#gd-g)"/>
-<text x="68" y="130" font-size="9.5" fill="#8a8a8a" text-anchor="middle">loop</text>
+<line x1="180" y1="44" x2="180" y2="79" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gd-g)"/>
+<line x1="168" y1="110" x2="112" y2="156" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gd-g)"/>
+<line x1="192" y1="110" x2="248" y2="156" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gd-g)"/>
+<line x1="101" y1="188" x2="160" y2="240" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gd-g)"/>
+<line x1="259" y1="188" x2="200" y2="240" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gd-g)"/>
+<path d="M139,251 C78,250 22,238 22,180 C22,120 74,101 137,101" fill="none" stroke="var(--text-muted)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#gd-g)"/>
+<text x="68" y="130" font-size="9.5" fill="var(--text-muted)" text-anchor="middle">loop</text>
 <!-- RED inserted node + its 2 edges -->
-<path d="M222,94 C332,102 332,182 302,214" fill="none" stroke="#c0504d" stroke-width="1.6" marker-end="url(#gd-r)"/>
-<line x1="252" y1="234" x2="224" y2="250" stroke="#c0504d" stroke-width="1.6" marker-end="url(#gd-r)"/>
-<rect x="252" y="214" width="70" height="28" rx="5" fill="#1a0f0f" stroke="#c0504d" stroke-width="1.5"/><text x="287" y="232" font-size="12" fill="#c0504d" text-anchor="middle">blk</text>
+<path d="M222,94 C332,102 332,182 302,214" fill="none" stroke="var(--red)" stroke-width="1.6" marker-end="url(#gd-r)"/>
+<line x1="252" y1="234" x2="224" y2="250" stroke="var(--red)" stroke-width="1.6" marker-end="url(#gd-r)"/>
+<rect x="252" y="214" width="70" height="28" rx="5" fill="var(--panel-red-tint)" stroke="var(--red)" stroke-width="1.5"/><text x="287" y="232" font-size="12" fill="var(--red)" text-anchor="middle">blk</text>
 <!-- matched (grey) nodes -->
-<rect x="139" y="14"  width="82" height="30" rx="5" fill="#141414" stroke="#545454" stroke-width="1.3"/><text x="180" y="33"  font-size="12.5" fill="#DBDBDB" text-anchor="middle">entry</text>
-<rect x="139" y="80"  width="82" height="30" rx="5" fill="#141414" stroke="#545454" stroke-width="1.3"/><text x="180" y="99"  font-size="12.5" fill="#DBDBDB" text-anchor="middle">cond</text>
-<rect x="52"  y="158" width="82" height="30" rx="5" fill="#141414" stroke="#545454" stroke-width="1.3"/><text x="93"  y="177" font-size="12.5" fill="#DBDBDB" text-anchor="middle">then</text>
-<rect x="226" y="158" width="82" height="30" rx="5" fill="#141414" stroke="#545454" stroke-width="1.3"/><text x="267" y="177" font-size="12.5" fill="#DBDBDB" text-anchor="middle">else</text>
-<rect x="139" y="242" width="82" height="30" rx="5" fill="#141414" stroke="#545454" stroke-width="1.3"/><text x="180" y="261" font-size="12.5" fill="#DBDBDB" text-anchor="middle">exit</text>
+<rect x="139" y="14"  width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1.3"/><text x="180" y="33"  font-size="12.5" fill="var(--text)" text-anchor="middle">entry</text>
+<rect x="139" y="80"  width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1.3"/><text x="180" y="99"  font-size="12.5" fill="var(--text)" text-anchor="middle">cond</text>
+<rect x="52"  y="158" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1.3"/><text x="93"  y="177" font-size="12.5" fill="var(--text)" text-anchor="middle">then</text>
+<rect x="226" y="158" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1.3"/><text x="267" y="177" font-size="12.5" fill="var(--text)" text-anchor="middle">else</text>
+<rect x="139" y="242" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1.3"/><text x="180" y="261" font-size="12.5" fill="var(--text)" text-anchor="middle">exit</text>
 </svg>
-<div class="viz-cap">matched nodes grey &middot; <span style="color:#c0504d">inserted node + 2 edges red</span></div>
+<div class="viz-cap">matched nodes grey &middot; <span style="color:var(--red)">inserted node + 2 edges red</span></div>
 </div>
 
 </div>
@@ -218,78 +218,78 @@ Did the decompiler recover the right variable and argument types? We match the d
 
 <svg viewBox="0 0 720 322" role="img" aria-label="stack-frame type matching between DWARF ground truth and decompiler output" style="max-width:100%;height:auto;display:block">
 <defs>
-<marker id="tm-g" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#6ab04c"/></marker>
-<marker id="tm-a" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#d4a72c"/></marker>
-<marker id="tm-r" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#c0504d"/></marker>
+<marker id="tm-g" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--green)"/></marker>
+<marker id="tm-a" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--amber)"/></marker>
+<marker id="tm-r" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--red)"/></marker>
 </defs>
 
 <!-- panel headers -->
-<text x="24"  y="26" font-size="12.5" fill="#DBDBDB">DWARF ground truth <tspan fill="#8a8a8a">(from -g build)</tspan></text>
-<text x="696" y="26" text-anchor="end" font-size="12.5" fill="#DBDBDB">decompiler output</text>
-<line x1="24"  y1="34" x2="310" y2="34" stroke="rgba(219,219,219,0.35)" stroke-width="1" stroke-dasharray="4 3"/>
-<line x1="410" y1="34" x2="696" y2="34" stroke="rgba(219,219,219,0.35)" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="24"  y="26" font-size="12.5" fill="var(--text)">DWARF ground truth <tspan fill="var(--text-muted)">(from -g build)</tspan></text>
+<text x="696" y="26" text-anchor="end" font-size="12.5" fill="var(--text)">decompiler output</text>
+<line x1="24"  y1="34" x2="310" y2="34" stroke="var(--border-dim)" stroke-width="1" stroke-dasharray="4 3"/>
+<line x1="410" y1="34" x2="696" y2="34" stroke="var(--border-dim)" stroke-width="1" stroke-dasharray="4 3"/>
 
 <!-- band A label -->
-<text x="360" y="54" text-anchor="middle" font-size="10.5" fill="#8a8a8a"><tspan fill="#DBDBDB" font-weight="bold">[1]</tspan> arguments &mdash; matched by ABI position</text>
+<text x="360" y="54" text-anchor="middle" font-size="10.5" fill="var(--text-muted)"><tspan fill="var(--text)" font-weight="bold">[1]</tspan> arguments &mdash; matched by ABI position</text>
 
 <!-- ==== argument slots ==== -->
 <!-- A1 -->
-<rect x="24" y="62" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
-<text x="34" y="80"  font-size="10" fill="#8a8a8a">arg 0 &middot; %rdi</text>
-<text x="34" y="99"  font-size="13" fill="#DBDBDB">char *<tspan fill="#8a8a8a">path</tspan></text>
-<rect x="410" y="62" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
-<text x="420" y="80"  font-size="10" fill="#8a8a8a">param a1</text>
-<text x="420" y="99"  font-size="13" fill="#6ab04c">char *</text>
-<text x="686" y="94"  text-anchor="end" font-size="15" fill="#6ab04c">&#10003;</text>
+<rect x="24" y="62" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="34" y="80"  font-size="10" fill="var(--text-muted)">arg 0 &middot; %rdi</text>
+<text x="34" y="99"  font-size="13" fill="var(--text)">char *<tspan fill="var(--text-muted)">path</tspan></text>
+<rect x="410" y="62" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="420" y="80"  font-size="10" fill="var(--text-muted)">param a1</text>
+<text x="420" y="99"  font-size="13" fill="var(--green)">char *</text>
+<text x="686" y="94"  text-anchor="end" font-size="15" fill="var(--green)">&#10003;</text>
 <!-- A2 -->
-<rect x="24" y="114" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
-<text x="34" y="132" font-size="10" fill="#8a8a8a">arg 1 &middot; %esi</text>
-<text x="34" y="151" font-size="13" fill="#DBDBDB">int <tspan fill="#8a8a8a">mode</tspan></text>
-<rect x="410" y="114" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
-<text x="420" y="132" font-size="10" fill="#8a8a8a">param a2</text>
-<text x="420" y="151" font-size="13" fill="#d4a72c">uint</text>
-<text x="686" y="146" text-anchor="end" font-size="15" fill="#d4a72c">&#8800;</text>
+<rect x="24" y="114" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="34" y="132" font-size="10" fill="var(--text-muted)">arg 1 &middot; %esi</text>
+<text x="34" y="151" font-size="13" fill="var(--text)">int <tspan fill="var(--text-muted)">mode</tspan></text>
+<rect x="410" y="114" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="420" y="132" font-size="10" fill="var(--text-muted)">param a2</text>
+<text x="420" y="151" font-size="13" fill="var(--amber)">uint</text>
+<text x="686" y="146" text-anchor="end" font-size="15" fill="var(--amber)">&#8800;</text>
 
 <!-- band B label -->
-<text x="360" y="188" text-anchor="middle" font-size="10.5" fill="#8a8a8a"><tspan fill="#DBDBDB" font-weight="bold">[2]</tspan> stack locals &mdash; by frame offset, <tspan fill="#DBDBDB" font-weight="bold">[3]</tspan> then by name</text>
+<text x="360" y="188" text-anchor="middle" font-size="10.5" fill="var(--text-muted)"><tspan fill="var(--text)" font-weight="bold">[2]</tspan> stack locals &mdash; by frame offset, <tspan fill="var(--text)" font-weight="bold">[3]</tspan> then by name</text>
 
 <!-- ==== local slots ==== -->
 <!-- B1 -->
-<rect x="24" y="196" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
-<text x="34" y="214" font-size="10" fill="#8a8a8a">local @ rbp-0x18</text>
-<text x="34" y="233" font-size="13" fill="#DBDBDB">size_t <tspan fill="#8a8a8a">len</tspan></text>
-<rect x="410" y="196" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
-<text x="420" y="214" font-size="10" fill="#8a8a8a">var_28 @ rbp-0x28</text>
-<text x="420" y="233" font-size="13" fill="#6ab04c">ulong</text>
-<text x="686" y="228" text-anchor="end" font-size="15" fill="#6ab04c">&#10003;</text>
+<rect x="24" y="196" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="34" y="214" font-size="10" fill="var(--text-muted)">local @ rbp-0x18</text>
+<text x="34" y="233" font-size="13" fill="var(--text)">size_t <tspan fill="var(--text-muted)">len</tspan></text>
+<rect x="410" y="196" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="420" y="214" font-size="10" fill="var(--text-muted)">var_28 @ rbp-0x28</text>
+<text x="420" y="233" font-size="13" fill="var(--green)">ulong</text>
+<text x="686" y="228" text-anchor="end" font-size="15" fill="var(--green)">&#10003;</text>
 <!-- B2 -->
-<rect x="24" y="248" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
-<text x="34" y="266" font-size="10" fill="#8a8a8a">local @ rbp-0x20</text>
-<text x="34" y="285" font-size="13" fill="#DBDBDB">struct stat <tspan fill="#8a8a8a">st</tspan></text>
-<rect x="410" y="248" width="286" height="46" rx="3" fill="#141414" stroke="#545454" stroke-width="1"/>
-<text x="420" y="266" font-size="10" fill="#8a8a8a">var_30 @ rbp-0x30</text>
-<text x="420" y="285" font-size="13" fill="#c0504d">undefined8</text>
-<text x="686" y="280" text-anchor="end" font-size="15" fill="#c0504d">&#10007;</text>
+<rect x="24" y="248" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="34" y="266" font-size="10" fill="var(--text-muted)">local @ rbp-0x20</text>
+<text x="34" y="285" font-size="13" fill="var(--text)">struct stat <tspan fill="var(--text-muted)">st</tspan></text>
+<rect x="410" y="248" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="420" y="266" font-size="10" fill="var(--text-muted)">var_30 @ rbp-0x30</text>
+<text x="420" y="285" font-size="13" fill="var(--red)">undefined8</text>
+<text x="686" y="280" text-anchor="end" font-size="15" fill="var(--red)">&#10007;</text>
 
 <!-- ==== connectors (gap 310..410) ==== -->
-<text x="360" y="80"  text-anchor="middle" font-size="9.5" fill="#6ab04c"><tspan font-weight="bold">[1]</tspan> ABI 0</text>
-<line x1="310" y1="85"  x2="406" y2="85"  stroke="#6ab04c" stroke-width="1.6" marker-end="url(#tm-g)"/>
+<text x="360" y="80"  text-anchor="middle" font-size="9.5" fill="var(--green)"><tspan font-weight="bold">[1]</tspan> ABI 0</text>
+<line x1="310" y1="85"  x2="406" y2="85"  stroke="var(--green)" stroke-width="1.6" marker-end="url(#tm-g)"/>
 
-<text x="360" y="132" text-anchor="middle" font-size="9.5" fill="#d4a72c"><tspan font-weight="bold">[1]</tspan> int &#8800; uint</text>
-<line x1="310" y1="137" x2="406" y2="137" stroke="#d4a72c" stroke-width="1.6" marker-end="url(#tm-a)"/>
+<text x="360" y="132" text-anchor="middle" font-size="9.5" fill="var(--amber)"><tspan font-weight="bold">[1]</tspan> int &#8800; uint</text>
+<line x1="310" y1="137" x2="406" y2="137" stroke="var(--amber)" stroke-width="1.6" marker-end="url(#tm-a)"/>
 
-<text x="360" y="214" text-anchor="middle" font-size="9.5" fill="#6ab04c"><tspan font-weight="bold">[2]</tspan> offset +0x10</text>
-<line x1="310" y1="219" x2="406" y2="219" stroke="#6ab04c" stroke-width="1.6" marker-end="url(#tm-g)"/>
+<text x="360" y="214" text-anchor="middle" font-size="9.5" fill="var(--green)"><tspan font-weight="bold">[2]</tspan> offset +0x10</text>
+<line x1="310" y1="219" x2="406" y2="219" stroke="var(--green)" stroke-width="1.6" marker-end="url(#tm-g)"/>
 
-<text x="360" y="266" text-anchor="middle" font-size="9.5" fill="#c0504d"><tspan font-weight="bold">[3]</tspan> missed struct</text>
-<line x1="310" y1="271" x2="406" y2="271" stroke="#c0504d" stroke-width="1.6" marker-end="url(#tm-r)"/>
+<text x="360" y="266" text-anchor="middle" font-size="9.5" fill="var(--red)"><tspan font-weight="bold">[3]</tspan> missed struct</text>
+<line x1="310" y1="271" x2="406" y2="271" stroke="var(--red)" stroke-width="1.6" marker-end="url(#tm-r)"/>
 </svg>
 
 <div class="viz-legend">
 <span class="pass"><span class="k">[1]</span> arguments by ABI position (name-independent)</span>
 <span class="pass"><span class="k">[2]</span> stack vars by calibrated frame offset</span>
 <span class="pass"><span class="k">[3]</span> remainder by exact name</span>
-<span class="pass"><span style="color:#6ab04c">&#10003;</span> correct type &middot; <span style="color:#d4a72c">&#8800;</span> type mismatch &middot; <span style="color:#c0504d">&#10007;</span> missed</span>
+<span class="pass"><span style="color:var(--green)">&#10003;</span> correct type &middot; <span style="color:var(--amber)">&#8800;</span> type mismatch &middot; <span style="color:var(--red)">&#10007;</span> missed</span>
 </div>
 
 <div class="viz-score">
@@ -332,7 +332,7 @@ Does the decompiled code recompile to the same machine code? We run a uniform co
     log_val(x);
     return x + limit;
 }</code></pre>
-<div class="viz-cap">fixup adds only <code style="color:#6ab04c">typedef</code>s for <span class="tok-type">undefined4</span>/<span class="tok-type">uint</span> &mdash; never rewrites logic</div>
+<div class="viz-cap">fixup adds only <code style="color:var(--green)">typedef</code>s for <span class="tok-type">undefined4</span>/<span class="tok-type">uint</span> &mdash; never rewrites logic</div>
 </div>
 
 <div class="viz-panel">
@@ -366,9 +366,9 @@ Does the decompiled code recompile to the same machine code? We run a uniform co
 </div>
 
 <div class="viz-legend">
-<span class="pass"><span style="color:#6ab04c">&#10003;</span> identical line</span>
-<span class="pass"><span style="color:#d4a72c">&#8776;</span> matches after normalizing a link-time operand (<span class="dl-op">____</span> = <code>call</code> target / <code>[rip+disp]</code>)</span>
-<span class="pass"><span style="color:#c0504d">&#10007;</span> real difference (edit distance = changed asm lines)</span>
+<span class="pass"><span style="color:var(--green)">&#10003;</span> identical line</span>
+<span class="pass"><span style="color:var(--amber)">&#8776;</span> matches after normalizing a link-time operand (<span class="dl-op">____</span> = <code>call</code> target / <code>[rip+disp]</code>)</span>
+<span class="pass"><span style="color:var(--red)">&#10007;</span> real difference (edit distance = changed asm lines)</span>
 </div>
 
 <div class="viz-score">

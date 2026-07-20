@@ -388,8 +388,9 @@ def test_inline_json_cannot_close_the_script_tag(tmp_path: Path, scoreboard: Sco
     html = path.read_text()
 
     assert "\\u003c/script>" in html
-    # The only literal </script> tags are the ones the renderer itself emits.
-    assert html.count("</script>") == 2
+    # The only literal </script> tags are the ones the renderer itself emits: the
+    # <head> theme bootstrap, the inline data payload, and the client script.
+    assert html.count("</script>") == 3
 
 
 def test_report_without_data_ships_no_client(tmp_path: Path, scoreboard: Scoreboard) -> None:
@@ -437,6 +438,48 @@ def test_both_modes_render_the_same_skeleton(
     ):
         assert marker in index, marker
         assert marker in single, marker
+
+
+def test_theme_bootstrap_and_toggle_ship_in_both_data_modes(
+    tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
+) -> None:
+    """The light/dark toggle lives in the shared skeleton, so both delivery modes
+    get it identically: a <head> script that applies the stored theme BEFORE the
+    stylesheet (no flash of the default theme), and a sidebar button app.js wires.
+    """
+    out = tmp_path / "site"
+    build_site(scoreboard, function_data, out)
+    index = (out / "index.html").read_text()
+
+    report = tmp_path / "report.html"
+    render_html_report(scoreboard, report, function_data)
+    single = report.read_text()
+
+    # Split mode links app.css; the single-file report inlines a <style> block.
+    for html, sheet in ((index, '<link rel="stylesheet"'), (single, "<style>")):
+        assert "localStorage.getItem('decbench-theme')" in html
+        assert "document.documentElement.dataset.theme" in html
+        # The bootstrap must run BEFORE the stylesheet or the default theme flashes.
+        assert html.index("decbench-theme") < html.index(sheet)
+        # The sidebar toggle button ships both CSS-driven labels.
+        assert 'id="theme-toggle"' in html
+        assert "[ light mode ]" in html
+        assert "[ dark mode ]" in html
+
+
+def test_scoreboard_only_report_has_no_theme_ui(tmp_path: Path, scoreboard: Scoreboard) -> None:
+    """The static, client-less report ships neither the theme bootstrap nor the
+    toggle button: without app.js to wire it the button would be inert."""
+    path = tmp_path / "report.html"
+    render_html_report(scoreboard, path, None)
+    html = path.read_text()
+
+    # Functional markers only: the inlined stylesheet's comments mention the
+    # localStorage key in prose, so match the bootstrap's actual code and the
+    # button id instead.
+    assert "localStorage.getItem('decbench-theme')" not in html
+    assert "document.documentElement.dataset.theme" not in html
+    assert 'id="theme-toggle"' not in html
 
 
 def test_build_site_writes_the_custom_domain_cname(

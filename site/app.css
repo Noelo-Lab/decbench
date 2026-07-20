@@ -32,22 +32,83 @@
     unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-/* ---- Theme ---- */
+/* ---- Theme ----
+   Dark is the default look. Two theme surfaces share ONE token set: this :root
+   block IS the dark palette; the :root[data-theme="light"] block below re-inks
+   every token for a light ground. The choice is an explicit user opt-in — the
+   FOUC-free head script (html.py) stamps data-theme on <html> from
+   localStorage['decbench-theme'] (or a ?theme= debug param) before first paint;
+   there is NO OS-preference detection. Anything hard-coded outside these two
+   blocks is a theme leak, so keep palette values here (or derived from --line-rgb
+   / the tint tokens). app.js reads the chart tokens via getComputedStyle, so the
+   whole palette — chart chrome included — lives in this one file. */
 :root {
     --bg: #000;
     --code-bg: #141414;
     --code-border: #545454;
     --text: #DBDBDB;
     --text-muted: #8a8a8a;
-    --border-color: rgba(219, 219, 219, 0.9);
+    /* One ink channel drives every dashed rule, inverting hover and low-alpha
+       wash: --border-color and the rgba(var(--line-rgb), a) borders below all
+       follow it, so a single override in the light block re-inks them all. */
+    --line-rgb: 219, 219, 219;
+    --border-color: rgba(var(--line-rgb), 0.9);
+    --border-dim: rgba(var(--line-rgb), 0.4);
     --green: #6ab04c;
     --amber: #d4a72c;
     --red: #c0504d;
-    /* Historical charts. app.js reads these via getComputedStyle rather than
-       carrying its own copies, so the palette lives in one file. */
+    /* License tags: dimmer than the --green/--amber score palette so they never
+       read as a bar (see .lic-open-source / .lic-closed-source). */
+    --lic-open: #7f9e63;
+    --lic-closed: #b39a54;
+    /* Diff-row washes (.dl-match/.dl-norm/.dl-diff, .cat-hl) + the red-tinted
+       "inserted node" panel in the about-page GED SVG. */
+    --tint-green: rgba(106, 176, 76, 0.10);
+    --tint-green-hl: rgba(106, 176, 76, 0.16);
+    --tint-amber: rgba(212, 167, 44, 0.10);
+    --tint-red: rgba(192, 80, 77, 0.14);
+    --dl-diff-fg: #e2938f;
+    --panel-red-tint: #1a0f0f;
+    /* Inset chrome under a code panel: a heavy black inset reads as depth on the
+       dark ground; on paper it becomes barely-there (a dark vignette would look
+       like grime), see the light override. */
+    --pre-shadow: rgba(0, 0, 0, 0.8);
     --chart-grid: #333;
     --chart-axis: #666;
     --sidebar-w: 230px;
+}
+
+/* Light theme — terminal-on-paper. The SAME design system re-inked for a light
+   ground, NOT a naive invert: every token above is redeclared (except the ones
+   that derive from --line-rgb / the tint channel, which re-ink for free). The
+   --blue / --viz-* tokens are declared in the second :root block further down;
+   their light values live here too (this selector's higher specificity wins) so
+   ALL light overrides sit in one place. */
+:root[data-theme="light"] {
+    --bg: #f7f6f3;
+    --code-bg: #ececea;
+    --code-border: #b5b5b5;
+    --text: #1c1c1c;
+    --text-muted: #6b6b6b;
+    --line-rgb: 28, 28, 28;
+    --green: #3f7a2a;
+    --amber: #8f6a10;
+    --red: #a03832;
+    --blue: #2b6cb0;
+    --viz-type: #1f7a6d;
+    --viz-pp: #7d3aac;
+    --viz-call: #7a6410;
+    --lic-open: #4f6b3a;
+    --lic-closed: #7a6320;
+    --tint-green: rgba(63, 122, 42, 0.14);
+    --tint-green-hl: rgba(63, 122, 42, 0.18);
+    --tint-amber: rgba(143, 106, 16, 0.16);
+    --tint-red: rgba(160, 56, 50, 0.13);
+    --dl-diff-fg: #8f2f29;
+    --panel-red-tint: #f4e5e3;
+    --pre-shadow: rgba(0, 0, 0, 0.08);
+    --chart-grid: #ccc;
+    --chart-axis: #999;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html { background: var(--bg); }
@@ -86,20 +147,31 @@ a { color: var(--text); text-decoration: none; }
     border: dashed 1px transparent;
 }
 .nav-bullet { color: var(--text-muted); }
-.nav-item:hover { color: #000; background: var(--text); }
+.nav-item:hover { color: var(--bg); background: var(--text); }
 .nav-item.active {
     border-color: var(--border-color);
     color: var(--green);
 }
 .nav-item.active .nav-bullet { color: var(--green); }
-.side-section { border-top: dashed 1px rgba(219,219,219,0.25); padding-top: 0.9rem; }
+.side-section { border-top: dashed 1px rgba(var(--line-rgb),0.25); padding-top: 0.9rem; }
 .side-label { color: var(--text-muted); font-size: 0.78em; margin-bottom: 0.4rem; }
 .ds-controls { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .ds-desc { color: var(--text-muted); font-size: 0.74em; margin-top: 0.4rem; line-height: 1.35; }
-.side-stats { border-top: dashed 1px rgba(219,219,219,0.25); padding-top: 0.9rem; font-size: 0.85em; }
+.side-stats { border-top: dashed 1px rgba(var(--line-rgb),0.25); padding-top: 0.9rem; font-size: 0.85em; }
 .side-stat { color: var(--text-muted); padding: 0.05rem 0; }
 .side-num { color: var(--text); font-weight: 700; }
 .side-foot { color: var(--text-muted); font-size: 0.78em; margin-top: auto; }
+
+/* ---- Theme toggle (sidebar foot) ----
+   A terminal-style button (.ds-btn) that flips the light/dark theme. Its LABEL is
+   driven purely by data-theme in CSS, so it reads correctly at first paint with no
+   JS flash: "[ light mode ]" while dark is active (a click switches TO light) and
+   "[ dark mode ]" once light is active. app.js wires only the click. */
+.theme-toggle { display: inline-block; margin-bottom: 0.55rem; }
+.theme-toggle .th-to-dark { display: none; }
+:root[data-theme="light"] .theme-toggle .th-to-light { display: none; }
+:root[data-theme="light"] .theme-toggle .th-to-dark { display: inline; }
+.side-foot-stamp { color: var(--text-muted); }
 
 /* ---- Main ---- */
 .main {
@@ -124,7 +196,7 @@ h3.sub:before { content: "> "; color: var(--text-muted); }
 table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
 th, td {
     text-align: left; padding: 0.45rem 0.8rem 0.45rem 0;
-    border-bottom: dashed 1px rgba(219, 219, 219, 0.22);
+    border-bottom: dashed 1px rgba(var(--line-rgb), 0.22);
     vertical-align: middle;
 }
 th {
@@ -160,8 +232,8 @@ tr:last-child td { border-bottom: none; }
    terminal look. open-source reads muted green, closed-source muted amber (both
    dimmer than the --green/--amber score palette so they never compete with a bar). */
 .lb-name-stacked .lic { text-transform: lowercase; }
-.lic-open-source { color: #7f9e63; }
-.lic-closed-source { color: #b39a54; }
+.lic-open-source { color: var(--lic-open); }
+.lic-closed-source { color: var(--lic-closed); }
 /* Taller name rows: top-align the whole leaderboard row and nudge the single-line
    cells down so they line up with the NAME (first) line of the stacked block. */
 #leaderboard-table td { vertical-align: top; }
@@ -174,10 +246,10 @@ td.metric-cell { white-space: nowrap; }
 .pct-high { color: var(--green); }
 .pct-mid { color: var(--amber); }
 .pct-low { color: var(--red); }
-.binrow:hover td { background: rgba(219, 219, 219, 0.06); }
-.col-overall { border-left: dashed 1px rgba(219,219,219,0.25); }
-.cat-btn.active { color: #000; background: var(--green); border-style: solid; font-weight: 700; }
-tr.cat-hl td { background: rgba(106, 176, 76, 0.16); }
+.binrow:hover td { background: rgba(var(--line-rgb), 0.06); }
+.col-overall { border-left: dashed 1px rgba(var(--line-rgb),0.25); }
+.cat-btn.active { color: var(--bg); background: var(--green); border-style: solid; font-weight: 700; }
+tr.cat-hl td { background: var(--tint-green-hl); }
 
 /* ---- Buttons / inputs ---- */
 button, select, input[type=text] {
@@ -185,16 +257,16 @@ button, select, input[type=text] {
     color: var(--text); padding: 0.25rem 0.6rem; cursor: pointer;
     font-family: inherit; font-size: 0.88em;
 }
-button:hover, select:hover { color: #000; background: var(--text); }
+button:hover, select:hover { color: var(--bg); background: var(--text); }
 .ds-btn { padding: 0.15rem 0.5rem; font-size: 0.82em; }
-.ds-btn.active { color: #000; background: var(--text); border-style: solid; font-weight: 700; }
+.ds-btn.active { color: var(--bg); background: var(--text); border-style: solid; font-weight: 700; }
 .controls { display: flex; align-items: center; gap: 0.7rem; margin: 0.8rem 0; flex-wrap: wrap; font-size: 0.9em; }
 .controls label { color: var(--text-muted); }
 .counter { color: var(--text-muted); font-size: 0.82em; }
 
 /* ---- Collapsible metric visualizations (about page) ---- */
 details.metric-viz {
-    border: dashed 1px rgba(219, 219, 219, 0.25);
+    border: dashed 1px rgba(var(--line-rgb), 0.25);
     padding: 0.45rem 0.8rem; margin: 0.7rem 0;
 }
 details.metric-viz summary {
@@ -205,7 +277,7 @@ details.metric-viz[open] summary { margin-bottom: 0.7rem; }
 
 /* ---- Metrics cards ---- */
 .goal {
-    border: dashed 1px rgba(219,219,219,0.4);
+    border: dashed 1px rgba(var(--line-rgb),0.4);
     padding: 0.9rem 1.1rem; margin: 0.9rem 0;
 }
 .goal-head { font-weight: 700; font-size: 1.02em; margin-bottom: 0.2rem; }
@@ -222,7 +294,7 @@ details.metric-viz[open] summary { margin-bottom: 0.7rem; }
 /* ---- Code blocks / compare ---- */
 pre {
     background: var(--code-bg); border: 0.1em solid var(--code-border);
-    box-shadow: inset 0 0 0.4em rgba(0,0,0,0.8);
+    box-shadow: inset 0 0 0.4em var(--pre-shadow);
     padding: 0.7rem 0.9rem; overflow: auto; margin: 0.4rem 0;
     font-size: 0.8em; line-height: 1.45; max-height: 560px;
 }
@@ -240,7 +312,7 @@ pre code { font-family: Consolas, "Source Code Pro", monospace; color: var(--tex
 .cmp-meta { color: var(--text-muted); font-size: 0.82em; margin-bottom: 0.4rem; }
 
 /* ---- Hardest ---- */
-.hard-entry { border: dashed 1px rgba(219,219,219,0.4); padding: 0.7rem 0.9rem; margin: 0.9rem 0; }
+.hard-entry { border: dashed 1px rgba(var(--line-rgb),0.4); padding: 0.7rem 0.9rem; margin: 0.9rem 0; }
 .hard-head { font-size: 0.95em; margin-bottom: 0.2rem; }
 .hard-head .fn { font-weight: 700; }
 .hard-meta { color: var(--text-muted); font-size: 0.82em; margin-bottom: 0.3rem; }
@@ -274,6 +346,9 @@ footer { color: var(--text-muted); font-size: 0.82em; margin-top: 1.5rem; }
    above; a couple of view-page helpers (.src-*) are tacked on at the very end.
    ========================================================================== */
 
+/* Dark values for the syntax/viz palette. Their LIGHT overrides live in the
+   :root[data-theme="light"] block near the top of this file (kept together with
+   the rest of the light palette; that selector's higher specificity wins). */
 :root {
   --blue: #4a90d9;          /* chart blue — also numbers/immediates            */
   --viz-type: #57b9ab;      /* types: a calm teal, distinct from kw/str        */
@@ -331,7 +406,7 @@ pre.viz-code code {
 }
 .viz-panel {
   background: var(--code-bg);
-  border: dashed 1px rgba(219, 219, 219, 0.28);
+  border: dashed 1px rgba(var(--line-rgb), 0.28);
   padding: 0.6rem 0.75rem;
   min-width: 0;
   display: flex;
@@ -366,12 +441,12 @@ pre.viz-code code {
   font-size: 0.8em;
 }
 .viz-chip {
-  border: dashed 1px rgba(219, 219, 219, 0.4);
+  border: dashed 1px rgba(var(--line-rgb), 0.4);
   padding: 0.15rem 0.5rem;
   white-space: nowrap;
   color: var(--text);
 }
-.viz-chip.is-in  { border-color: rgba(219, 219, 219, 0.4); }
+.viz-chip.is-in  { border-color: rgba(var(--line-rgb), 0.4); }
 .viz-chip.is-out { border-color: var(--amber); color: var(--amber); }
 .viz-parrow { color: var(--text-muted); white-space: nowrap; }
 .viz-parrow b { color: var(--green); font-weight: 600; }
@@ -388,7 +463,7 @@ pre.viz-code code {
 .viz-callout .n { font-weight: 700; }
 
 .viz-score {
-  border: dashed 1px rgba(219, 219, 219, 0.4);
+  border: dashed 1px rgba(var(--line-rgb), 0.4);
   background: var(--code-bg);
   padding: 0.55rem 0.85rem;
   margin-top: 0.8rem;
@@ -423,7 +498,7 @@ pre.viz-code code {
 
 /* ---- Assembly line diff -------------------------------------------------- */
 .viz-diff {
-  border: dashed 1px rgba(219, 219, 219, 0.32);
+  border: dashed 1px rgba(var(--line-rgb), 0.32);
   font-size: 0.8em;
   margin-top: 0.2rem;
   overflow-x: auto;
@@ -436,7 +511,7 @@ pre.viz-code code {
 .dl-head {
   color: var(--text-muted);
   font-size: 0.92em;
-  border-bottom: dashed 1px rgba(219, 219, 219, 0.32);
+  border-bottom: dashed 1px rgba(var(--line-rgb), 0.32);
 }
 .dl-head span { padding: 0.3rem 0.7rem; }
 .dl-head .h-mk { text-align: center; padding-left: 0; padding-right: 0; }
@@ -451,14 +526,14 @@ pre.viz-code code {
   font-weight: 700;
   padding: 0.22rem 0;
 }
-.dl-row .dl-gt { border-right: dashed 1px rgba(219, 219, 219, 0.18); }
-.dl-match { background: rgba(106, 176, 76, 0.10); }
+.dl-row .dl-gt { border-right: dashed 1px rgba(var(--line-rgb), 0.18); }
+.dl-match { background: var(--tint-green); }
 .dl-match .dl-mk { color: var(--green); }
-.dl-norm  { background: rgba(212, 167, 44, 0.10); }
+.dl-norm  { background: var(--tint-amber); }
 .dl-norm  .dl-mk { color: var(--amber); }
-.dl-diff  { background: rgba(192, 80, 77, 0.14); }
+.dl-diff  { background: var(--tint-red); }
 .dl-diff  .dl-mk { color: var(--red); }
-.dl-diff  code { color: #e2938f; }
+.dl-diff  code { color: var(--dl-diff-fg); }
 .dl-op { color: var(--amber); }               /* normalized operand  ____     */
 
 /* ---- Narrow layout ------------------------------------------------------- */
@@ -475,7 +550,7 @@ pre.viz-code code {
   display: inline-block;
   color: var(--text-muted);
   font-size: 0.76em;
-  border: dashed 1px rgba(219, 219, 219, 0.28);
+  border: dashed 1px rgba(var(--line-rgb), 0.28);
   padding: 0.08rem 0.4rem;
   margin: 0.1rem 0 0.35rem;
 }
@@ -508,6 +583,15 @@ pre.viz-code code {
   transition: filter 0.12s ease, opacity 0.12s ease;
 }
 .binrow:hover .dlogo { filter: none; opacity: 1; }
+
+/* Light theme: several marks (r2dec/dewolf/kuna) are RECOLOURED to light #DBDBDB
+   art for the dark ground — on paper they would vanish. Darken every logo to a
+   grey silhouette instead, and KEEP that filter on row hover (a light-art logo
+   has no useful full-colour form on a light page), so the column stays legible.
+   The colour-favicon marks (angr/ghidra/ida/binja) also darken to a clean grey,
+   matching the terminal-on-paper look rather than turning the table into stickers. */
+:root[data-theme="light"] .dlogo { filter: grayscale(1) brightness(0.4) contrast(1.1); opacity: 0.9; }
+:root[data-theme="light"] .binrow:hover .dlogo { filter: grayscale(1) brightness(0.4) contrast(1.1); opacity: 1; }
 
 /* angr — github.com/angr avatar (angr.io) */
 .dlogo-angr { background-image: url(data:image/png;base64,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); }

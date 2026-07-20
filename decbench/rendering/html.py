@@ -66,6 +66,35 @@ JS_FILE = "app.js"
 #: whose ``index.html`` carries this marker is safe to remove as a stale view.
 SITE_PAGE_MARKER = "<!-- decbench:page -->"
 
+#: Theme bootstrap. Inlined into <head> BEFORE the stylesheet so the chosen theme
+#: is applied to <html> before first paint — a link/style loaded first would flash
+#: the default (dark) theme. It reads localStorage (in try/catch: file:// and
+#: privacy modes throw) plus an optional ``?theme=`` param (a debug/share
+#: convenience, documented in docs/SITE_DATA_SCHEMA.md), then stamps
+#: ``data-theme`` on the document element. Dark is the default and the only
+#: theme when nothing is stored; there is deliberately NO OS-preference detection
+#: — only an explicit user choice switches to light. Lives in the shared skeleton
+#: (not :class:`PageAssets`) so both delivery modes get it identically.
+_THEME_BOOTSTRAP = (
+    "<script>(function(){try{"
+    "var q=new URLSearchParams(location.search).get('theme');"
+    "var t=q||localStorage.getItem('decbench-theme')||'dark';"
+    "if(t!=='light'&&t!=='dark')t='dark';"
+    "document.documentElement.dataset.theme=t;"
+    "if(q==='light'||q==='dark')localStorage.setItem('decbench-theme',q);"
+    "}catch(e){}})();</script>"
+)
+
+#: The sidebar theme-toggle button. Both labels ship; CSS shows the right one for
+#: the active theme (data-theme), so it is correct at first paint and app.js only
+#: has to wire the click.
+_THEME_TOGGLE = (
+    '<button class="ds-btn theme-toggle" id="theme-toggle" type="button"'
+    ' aria-label="toggle light or dark theme">'
+    '<span class="th-to-light">[ light mode ]</span>'
+    '<span class="th-to-dark">[ dark mode ]</span></button>'
+)
+
 _ASSETS_DIR = "assets"
 _FONTS_DIR = "fonts"
 
@@ -289,6 +318,18 @@ def build_page(
     )
     stamp = scoreboard.generated_at.strftime("%Y-%m-%d %H:%M")
 
+    # Theme UI ships only where the client that drives it does — the two
+    # data-bearing delivery modes. A scoreboard-only static report has no app.js,
+    # so a toggle would be inert and the bootstrap pointless; leave it untouched.
+    theme_head = _THEME_BOOTSTRAP if has_data else ""
+    if has_data:
+        side_foot = (
+            f'<div class="side-foot">{_THEME_TOGGLE}'
+            f'<div class="side-foot-stamp">[ {stamp} ]</div></div>'
+        )
+    else:
+        side_foot = f'<div class="side-foot">[ {stamp} ]</div>'
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -296,6 +337,7 @@ def build_page(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{html_escape(scoreboard.name)}</title>
+    {theme_head}
     {assets.head_html}
 </head>
 <body>
@@ -309,7 +351,7 @@ def build_page(
             <nav class="nav">{nav}</nav>
             {selector}
             <div class="side-stats">{_side_stats(scoreboard, function_data, content)}</div>
-            <div class="side-foot">[ {stamp} ]</div>
+            {side_foot}
         </aside>
 
         <main class="main">

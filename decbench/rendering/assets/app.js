@@ -1062,9 +1062,39 @@ function buildChart(container, history, metricKey, title) {
 function initHistory(history) {
     const container = document.getElementById("history-charts");
     if (!container || !(history || []).length) return;
+    // Cache the payload so a live theme flip can redraw these charts: they BAKE
+    // colors (getComputedStyle at build time), so CSS alone cannot re-tint them.
+    _lastHistory = history;
     container.innerHTML = "";
     for (const m of metricList()) buildChart(container, history, m, metricName(m));
     buildChart(container, history, "__overall__", "Union (perfect on at least one metric)");
+}
+
+// ---- Theme toggle ----
+// Dark is the default; light is an explicit opt-in, persisted in localStorage.
+// The FOUC-free <head> script (html.py) already applied the stored/URL theme
+// before first paint, and the button LABEL is CSS-driven off data-theme — so all
+// that is left for the client is the click. Most of the page is pure CSS and
+// re-tints for free; the only exception is the historical charts, which bake
+// colors at render time and must be redrawn (see initHistory's _lastHistory).
+let _lastHistory = null;
+function currentTheme() {
+    return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem("decbench-theme", theme); } catch (e) { /* private mode */ }
+    // Invalidate the memoized series palette (it read --green/--amber/--red from
+    // the old theme) and redraw the charts if they are already on screen.
+    _chartColors = null;
+    if (lazyStarted.history && _lastHistory) initHistory(_lastHistory);
+}
+function initThemeToggle() {
+    const btn = document.getElementById("theme-toggle");
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+        applyTheme(currentTheme() === "light" ? "dark" : "light");
+    });
 }
 
 // ---- Lazy views ----
@@ -1259,6 +1289,7 @@ function initDatasetSelector() {
 
 function init() {
     initNav();
+    initThemeToggle();
     // Color the about page's server-rendered <pre data-lang> blocks. They are in
     // the DOM from page load in both modes (all view sections ship in every page),
     // so this runs once here rather than via a DOMContentLoaded auto-init.
