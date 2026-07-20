@@ -565,12 +565,31 @@ def test_registry_carries_names_links_and_prettified_versions() -> None:
     assert registry["angr"] == {
         "display_name": "angr",
         "url": "https://angr.io",
+        "license": "open-source",
+        "logo": True,
         "version": "9.2.223",
     }
     assert registry["ida"]["display_name"] == "Hex-Rays"
     assert registry["ida"]["version"] == "9.2", "raw '920' prettified server-side"
     # The raw versions map is kept untouched for back-compat.
     assert _build(data)["decompiler_versions"]["ida"] == "920"
+
+
+def test_registry_carries_license_and_logo_flags() -> None:
+    """The stacked name cell reads `license`; the logo experiment reads `logo`.
+
+    Both are presentation-only and emitted only when set (kept out of the payload
+    otherwise), and `license` flows straight from decompilers.toml.
+    """
+    registry = _build(_registry_data(["angr", "ida", "phoenix"]))["decompiler_registry"]
+
+    assert registry["angr"]["license"] == "open-source"
+    assert registry["angr"]["logo"] is True
+    assert registry["ida"]["license"] == "closed-source"
+    assert registry["ida"]["logo"] is True
+    # Phoenix ships no logo asset, so the flag is omitted rather than False.
+    assert registry["phoenix"]["license"] == "open-source"
+    assert "logo" not in registry["phoenix"]
 
 
 def test_registry_covers_only_the_runs_decompilers() -> None:

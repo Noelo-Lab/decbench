@@ -218,6 +218,22 @@ def test_decompiler_registry_loads_with_names_links_and_overrides(content: Conte
     assert ida.pretty_version(None) is None
 
 
+def test_decompiler_license_and_logo_are_parsed(content: Content) -> None:
+    """The stacked name cell's license tag and the logo experiment come from here."""
+    angr = content.decompiler("angr")
+    assert angr is not None and angr.license == "open-source" and angr.logo is True
+
+    ida = content.decompiler("ida")
+    assert ida is not None and ida.license == "closed-source" and ida.logo is True
+
+    # Every registered backend declares a license; only some ship a logo asset.
+    for spec in content.decompilers:
+        assert spec.license in {"open-source", "closed-source"}, spec.id
+    # Phoenix/RetDec/Reko carry no logo (no .dlogo-<id> in app.css yet).
+    assert content.decompiler("phoenix").logo is False
+    assert content.decompiler("retdec").logo is False
+
+
 def test_decompiler_lookup_matches_base_name_for_versioned_ids(content: Content) -> None:
     """A versioned id (ghidra@12.1) with no exact entry resolves to its base."""
     spec = content.decompiler("ghidra@12.1")

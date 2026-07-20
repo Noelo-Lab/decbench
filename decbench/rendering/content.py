@@ -238,11 +238,18 @@ class DecompilerSpec:
 
     ``version_overrides`` maps a raw version string (as a run recorded it) to a
     prettier one, e.g. IDA's ``"920"`` -> ``"9.2"``.
+
+    ``license`` is ``"open-source"`` / ``"closed-source"`` (or ``""`` for none) and
+    is shown as a muted tag in the leaderboard's stacked name cell. ``logo`` marks
+    that a ``.dlogo-<id>`` background-image is shipped in ``app.css``; both flow
+    through the registry so the client can render them (see ``aggregate.py``).
     """
 
     id: str
     display_name: str
     url: str = ""
+    license: str = ""
+    logo: bool = False
     version_overrides: dict[str, str] = field(default_factory=dict)
 
     def pretty_version(self, raw: str | None) -> str | None:
@@ -540,6 +547,8 @@ def load_content() -> Content:
             id=d["id"],
             display_name=d["display_name"],
             url=d.get("url", ""),
+            license=d.get("license", ""),
+            logo=bool(d.get("logo", False)),
             version_overrides=dict(d.get("version_overrides") or {}),
         )
         for d in _load_toml("decompilers.toml")["decompiler"]

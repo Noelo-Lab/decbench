@@ -417,6 +417,20 @@ function orderedMetrics() {
 // Official names / links / prettified versions replace raw ids on screen. Tolerant
 // the same way metricSpecs is: a missing registry (older payload) or an unknown id
 // (r2dec/dewolf data landing before its entry) falls back to the raw id, unlinked.
+//
+// SHOW_LOGOS is the single switch for the logo experiment: when true, decompilers the
+// registry marks with `logo` get a small `.dlogo-<base>` badge prepended to their
+// (stacked) leaderboard name. Flip it to false to disable logos everywhere with no
+// other edit — the license tag and stacked layout stay regardless.
+//
+// Recommendation (2026-07): kept OFF. On the strict mono/black terminal page the
+// real backend favicons read as a mismatched sticker strip — the two red marks
+// (Ghidra, Binary Ninja) collide with the red the score bars already use for a bad
+// result, filled-tile logos (IDA/binja/angr) clash with the line-art ones, and
+// several are muddy at ~18px. Grayscale-dim-with-hover-colour (below) tames that but
+// still adds noise the stacked name/version/license cell does not need. The whole
+// experiment stays one flag away: set this to true to turn it back on.
+const SHOW_LOGOS = false;
 function decRegistry() { return (AGG && AGG.decompiler_registry) || {}; }
 function decRegEntry(id) {
     const reg = decRegistry();
@@ -430,6 +444,8 @@ function decRegEntry(id) {
 }
 function decName(id) { const e = decRegEntry(id); return (e && e.display_name) || id; }
 function decUrl(id) { const e = decRegEntry(id); return (e && e.url) || null; }
+function decLicense(id) { const e = decRegEntry(id); return (e && e.license) || null; }
+function decHasLogo(id) { const e = decRegEntry(id); return !!(e && e.logo); }
 function decVersion(id) {
     const e = decRegEntry(id);
     if (e && e.version) return e.version;
@@ -441,15 +457,34 @@ function decTip(id) {
     return v ? (decName(id) + " — version " + v) : decName(id);
 }
 // A decompiler as a table cell: linked when the registry carries a url (opens in a
-// new tab; styled to keep the terminal look — see .lb-name a), plus a muted version.
-function decNameHtml(id) {
+// new tab; styled to keep the terminal look — see .lb-name a).
+//
+// Two forms, one source of truth (name/url/version/license/logo):
+//   compact (default)  `[logo] name <span.ver>vX</span>` on one line — the metrics
+//                      table, distance table, view dropdown and history legend.
+//   stacked ({stacked:true})  a three-line block for the LEADERBOARD: name / version
+//                      / license, each on its own line, name optionally logo-prefixed.
+// The version keeps the same rule in both: a "v" prefix only in front of a digit
+// ("v9.2" reads right, "vr2 6.0.8" does not).
+function decNameHtml(id, options) {
+    options = options || {};
     const name = escapeHtml(decName(id)), url = decUrl(id), v = decVersion(id);
+    const logo = (SHOW_LOGOS && decHasLogo(id))
+        ? '<span class="dlogo dlogo-' + escapeHtml(baseName(id)) + '"></span>'
+        : '';
     const nameHtml = url
         ? '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener">' + name + '</a>'
         : name;
-    // "v" only in front of a number: "v9.2" reads right, "vr2 6.0.8" does not.
     const vtxt = v ? (/^\d/.test(v) ? "v" + v : v) : null;
-    return nameHtml + (vtxt ? ' <span class="ver">' + escapeHtml(vtxt) + '</span>' : '');
+    if (!options.stacked) {
+        return logo + nameHtml +
+            (vtxt ? ' <span class="ver">' + escapeHtml(vtxt) + '</span>' : '');
+    }
+    const lic = decLicense(id);
+    let html = '<span class="lb-stack"><span class="lb-nm">' + logo + nameHtml + '</span>';
+    if (vtxt) html += '<span class="ver">' + escapeHtml(vtxt) + '</span>';
+    if (lic) html += '<span class="lic lic-' + escapeHtml(lic) + '">' + escapeHtml(lic) + '</span>';
+    return html + '</span>';
 }
 
 // ---- Combo lookup (replaces the old client-side recompute) ----
@@ -560,7 +595,8 @@ function buildLeaderboard(result) {
     let body = "";
     decs.forEach((d, i) => {
         let row = '<tr class="binrow"><td class="lb-rank">#' + (i + 1) + '</td>' +
-            '<td class="lb-name" title="' + escapeHtml(decTip(d)) + '">' + decNameHtml(d) + '</td>';
+            '<td class="lb-name lb-name-stacked" title="' + escapeHtml(decTip(d)) + '">' +
+            decNameHtml(d, {stacked: true}) + '</td>';
         row += '<td class="metric-cell col-overall">' + cellPctHtml(overallCell(result, d)) + '</td>';
         for (const m of metrics) row += '<td class="metric-cell">' + cellPctHtml(metricCell(result, d, m)) + '</td>';
         row += '<td class="metric-cell">' + errorCellHtml(errorCell(result, d)) + '</td>';

@@ -507,6 +507,14 @@ def _decompiler_registry(
             entry["display_name"] = spec.display_name
             if spec.url:
                 entry["url"] = spec.url
+            # `license` (open/closed-source) and `logo` (a shipped .dlogo-<id>
+            # background) are presentation-only; the client renders the license as a
+            # muted tag in the stacked name cell and shows a logo when SHOW_LOGOS is
+            # on. Emit each only when set, so the payload stays minimal.
+            if spec.license:
+                entry["license"] = spec.license
+            if spec.logo:
+                entry["logo"] = True
             pretty = spec.pretty_version(raw)
         else:
             pretty = raw

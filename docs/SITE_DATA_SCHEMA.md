@@ -87,8 +87,10 @@ Unknown or invalid values fall back silently to defaults — never an error bann
   "decompilers": ["angr", "binja", "ghidra", "ida", "kuna", "phoenix"],
   "decompiler_versions": {"ghidra@12.1": "12.1"},  // id -> raw version (back-compat)
   "decompiler_registry": {                         // id -> presentation (see below)
-    "angr": {"display_name": "angr", "url": "https://angr.io", "version": "9.2.223"},
-    "ida":  {"display_name": "Hex-Rays", "url": "https://hex-rays.com/ida-pro/", "version": "9.2"}
+    "angr": {"display_name": "angr", "url": "https://angr.io",
+             "license": "open-source", "logo": true, "version": "9.2.223"},
+    "ida":  {"display_name": "Hex-Rays", "url": "https://hex-rays.com/ida-pro/",
+             "license": "closed-source", "logo": true, "version": "9.2"}
   },
   "metrics": ["ged", "type_match", "byte_match"],  // as present in the run
   "presets": [
@@ -128,12 +130,24 @@ distance for that metric.
 
 `decompiler_registry` maps each decompiler id to how it is shown — `display_name`,
 an optional `url` (a project homepage; the client renders a link when present,
-`target=_blank rel=noopener`), and an optional prettified `version`. The client
-(`app.js`'s `decName`/`decUrl`/`decVersion`) renders these in place of raw ids in the
-leaderboard, the metrics table, the distance table, the view page's decompiler
-dropdown, and the historical legend; name-sorting sorts by `display_name`. It is
-**tolerant**: a missing registry, or an id with no entry, falls back to the raw id
-(unlinked), exactly like `metric_registry`.
+`target=_blank rel=noopener`), an optional prettified `version`, an optional
+`license` (`"open-source"` / `"closed-source"`), and an optional `logo` flag. The
+client (`app.js`'s `decName`/`decUrl`/`decVersion`/`decLicense`/`decHasLogo`) renders
+these in place of raw ids in the leaderboard, the metrics table, the distance table,
+the view page's decompiler dropdown, and the historical legend; name-sorting sorts by
+`display_name`. It is **tolerant**: a missing registry, or an id with no entry, falls
+back to the raw id (unlinked), exactly like `metric_registry`.
+
+Two of these fields drive the **leaderboard name cell only**, which renders as a
+stacked block — the (linked) name, then the version, then the `license` tag (subtly
+colour-coded, muted green/amber, per `.lic-*` in `app.css`). The other tables keep the
+compact inline `name vX` form (one `decNameHtml(id, {stacked})` with an options arg
+serves both). `logo` marks that `app.css` ships a self-contained `.dlogo-<base>`
+background for that id; it is consumed only when `app.js`'s `SHOW_LOGOS` flag is on,
+which prepends a small logo to the stacked name line. `SHOW_LOGOS` ships **off** — the
+logos read as noise on the mono terminal page — so `logo` is inert by default. Both
+fields are emitted only when set (absent = no tag / no logo), so the payload stays
+minimal, and both come from `decbench/rendering/content/decompilers.toml`.
 
 The presentation comes from `decbench/rendering/content/decompilers.toml`. The
 `version` is `decompiler_versions[id]` passed through that entry's `version_overrides`
