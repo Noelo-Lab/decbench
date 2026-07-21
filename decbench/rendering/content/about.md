@@ -309,6 +309,8 @@ metric: Recompilation Bytematch
 
 Does the decompiled code recompile to the same machine code? We run a uniform compilability fixup (define decompiler pseudo-types, strip illegal symbol-version tokens, declare missing symbols) so every decompiler gets a fair shot at building, recompile each function with the original toolchain, and compare the resulting assembly &mdash; normalizing link-time-dependent operands (call/jump targets, PC-relative offsets) so only real differences count.
 
+The leaderboard's <strong>Compiles</strong> column reports the first half of this on its own &mdash; the share of a decompiler's output that the fixup got to build at all (before any assembly comparison). It is measured only where a matching recompiler exists (x86); ARM/PE firmware and malware abstain rather than count as failures.
+
 <details class="metric-viz" open>
 <summary>how bytematch works: fixup &rarr; recompile &rarr; normalized asm diff</summary>
 <div class="viz-wrap">

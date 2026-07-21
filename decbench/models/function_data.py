@@ -41,6 +41,13 @@ class FunctionRecord(BaseModel):
         "all metrics share one denominator per decompiler; a missing metric on a "
         "decompiled function counts as not-perfect.",
     )
+    compiles: dict[str, bool] = Field(
+        default_factory=dict,
+        description="decompiler -> whether byte_match successfully RECOMPILED "
+        "this decompiler's output (the compilability-fixup pass built it). Only "
+        "present where byte_match was measurable (x86; ARM/PE abstain). Powers "
+        "the leaderboard's per-decompiler Compiles column; absent = not measured.",
+    )
     labels: list[str] = Field(
         default_factory=list,
         description="Labels applied to this function",

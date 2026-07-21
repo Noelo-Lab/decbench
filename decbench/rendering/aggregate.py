@@ -178,6 +178,11 @@ class _FunctionFacts:
     perfect: tuple[tuple[bool, ...], ...]
     union_perfect: tuple[bool, ...]
     distances: tuple[tuple[float | None, ...], ...]
+    # Per-decompiler recompilation status: True (byte_match built it), False (it
+    # did not compile), None (byte_match not measurable for this dec — ARM/PE
+    # abstained, or the dec never decompiled the function; excluded from the
+    # Compiles denominator). Independent of the metrics/perfect maps.
+    compiles: tuple[bool | None, ...]
 
 
 def _function_facts(
@@ -195,6 +200,7 @@ def _function_facts(
     perfect: list[tuple[bool, ...]] = []
     union_perfect: list[bool] = []
     distances: list[tuple[float | None, ...]] = []
+    compiles: list[bool | None] = []
     all_decompiled = True
 
     for dec in decompilers:
@@ -228,6 +234,12 @@ def _function_facts(
                 )
             )
 
+        # Compiles: only counts where byte_match was actually measured for this
+        # dec (it has a byte_match value). None otherwise → out of the Compiles
+        # denominator, matching the per-dec, non-shared basis of `compile_rates`.
+        bm = (func.values.get(dec) or {}).get("byte_match")
+        compiles.append(bool(func.compiles.get(dec)) if bm is not None else None)
+
     return _FunctionFacts(
         datasets=frozenset(func.datasets),
         all_decompiled=all_decompiled,
@@ -238,6 +250,7 @@ def _function_facts(
         perfect=tuple(perfect),
         union_perfect=tuple(union_perfect),
         distances=tuple(distances),
+        compiles=tuple(compiles),
     )
 
 
@@ -292,6 +305,8 @@ class _ComboAccumulator:
         self._overall_total = [0] * n_dec
         self._errored = [0] * n_dec
         self._scope = [0] * n_dec
+        self._compiled = [0] * n_dec
+        self._compile_total = [0] * n_dec
         self._distances: list[list[list[float]]] = [
             [[] for _ in range(n_dist)] for _ in range(n_dec)
         ]
@@ -322,6 +337,11 @@ class _ComboAccumulator:
                 self._overall_total[di] += 1
                 if facts.union_perfect[di]:
                     self._overall_perfect[di] += 1
+            compiled = facts.compiles[di]
+            if compiled is not None:
+                self._compile_total[di] += 1
+                if compiled:
+                    self._compiled[di] += 1
             dec_distances = self._distances[di]
             for mi, value in enumerate(facts.distances[di]):
                 if value is not None:
@@ -351,6 +371,11 @@ class _ComboAccumulator:
             },
             "errors": {
                 dec: [self._errored[di], self._scope[di]]
+                for di, dec in enumerate(self._decompilers)
+            },
+            # Per-decompiler recompilation success: [# compiled, # byte_match-measured].
+            "compile": {
+                dec: [self._compiled[di], self._compile_total[di]]
                 for di, dec in enumerate(self._decompilers)
             },
             "distance": {

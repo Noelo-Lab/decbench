@@ -122,6 +122,7 @@ button (`#theme-toggle`) flips and persists it at runtime.
       },
       "overall": {"angr": [111, 222]},   // Union column: decompiler -> [perfect, total]
       "errors":  {"angr": [5, 1000]},    // decompiler -> [errored, scope]
+      "compile": {"angr": [890, 1000]},  // Compiles column: decompiler -> [compiled, byte_match-measured]
       "distance": {                      // decompiler -> metric -> stats | null
         "angr": {"ged": {"mean": 3.25, "median": 2, "n": 5000, "at0": 1200}}
       }
@@ -131,8 +132,8 @@ button (`#theme-toggle`) flips and persists it at runtime.
 }
 ```
 
-`per_metric`, `overall` and `errors` are `[numerator, denominator]` pairs, not
-percentages: the UI renders `perfect/total` counts next to the bar, and computing the
+`per_metric`, `overall`, `errors` and `compile` are `[numerator, denominator]` pairs,
+not percentages: the UI renders `count/total` next to the bar, and computing the
 percentage client-side keeps the JSON small and lossless.
 
 `distance[dec][metric]` is `null` when no function under the combo had a finite
@@ -217,6 +218,12 @@ benchmark's fairness contract:
   functions where every metric was measurable.)
 * `errors.scope` = functions the decompiler attempted (present in `decompiled`);
   `errors.errored` = those where it produced nothing.
+* `compile` is the **Compiles** column: `[# whose decompiled C recompiled, #
+  where byte_match was measured]`. The denominator is per-decompiler (functions
+  where that decompiler has a byte_match value — decompiled AND the target arch
+  had a recompile toolchain), so ARM/PE abstentions never enter it. This is the
+  compilability-fixup success rate, and it moves with the dataset preset like the
+  metric columns (O0 code compiles more readily than O2).
 * `normalize=1` additionally restricts to functions **every** decompiler decompiled.
 
 ## `data/dataset.json`

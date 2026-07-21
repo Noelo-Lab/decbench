@@ -106,19 +106,28 @@ def update_byte_match(
                 rec = new.get(key)
                 if rec is None:
                     if not add_only and dec in covered:
-                        # No fresh value (artifact gone): drop any stale value.
+                        # No fresh value (artifact gone / abstained): drop any
+                        # stale value, distance, perfect and compile flag.
                         mv.pop("byte_match", None)
                         f.perfects.get(dec, {}).pop("byte_match", None)
                         f.distances.get(dec, {}).pop("byte_match", None)
+                        f.compiles.pop(dec, None)
                     continue
                 val = float(rec["value"])
                 mv["byte_match"] = val
                 f.perfects.setdefault(dec, {})["byte_match"] = val >= PERFECT["byte_match"]
+                compilable = bool(rec.get("compilable"))
+                f.compiles[dec] = compilable
                 if rec.get("dist") is not None:
                     f.distances.setdefault(dec, {})["byte_match"] = float(rec["dist"])
+                else:
+                    # Non-compiling (or extract-failed): no fresh distance. Clear
+                    # any stale one so the distance view + a compile proxy can't
+                    # read a value left over from a prior computation.
+                    f.distances.get(dec, {}).pop("byte_match", None)
                 t = tally.setdefault(dec, {"comp": 0, "tot": 0})
                 t["tot"] += 1
-                if rec.get("compilable"):
+                if compilable:
                     t["comp"] += 1
     return tally
 
