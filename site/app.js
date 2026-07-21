@@ -499,6 +499,11 @@ function pairOf(map, key) { const c = map && map[key]; return c || [0, 0]; }
 function metricCell(result, d, m) { return pairOf((result.per_metric || {})[d], m); }
 function overallCell(result, d) { return pairOf(result.overall, d); }
 function errorCell(result, d) { return pairOf(result.errors, d); }
+// Compiles: share of a decompiler's byte_match-measured functions whose output
+// actually recompiled (the compilability-fixup pass built it). Denominator is
+// per-decompiler (functions where byte_match was measurable), so ARM/PE
+// abstentions never enter it — see aggregate.py `compile`.
+function compileCell(result, d) { return pairOf(result.compile, d); }
 
 // ---- Formatting ----
 function pctClass(p) { return p >= 50 ? "high" : (p >= 20 ? "mid" : "low"); }
@@ -557,6 +562,7 @@ function errorCellHtml(cell) {
 function sortValue(d, key, result) {
     if (key === "__name__") return decName(d);
     if (key === "__errors__") return errRate(errorCell(result, d));
+    if (key === "__compile__") return pct(compileCell(result, d));
     const cell = key === "__overall__" ? overallCell(result, d) : metricCell(result, d, key);
     return pct(cell);
 }
@@ -568,6 +574,7 @@ function buildLeaderboard(result) {
     // function it was asked to decompile (lower is better).
     const cols = [["__name__", "decompiler"], ["__overall__", "Union"]];
     for (const m of metrics) cols.push([m, metricShort(m)]);
+    cols.push(["__compile__", "Compiles"]);
     cols.push(["__errors__", "Errors"]);
     let head = "<th>#</th>";
     for (const [key, label] of cols) {
@@ -591,6 +598,7 @@ function buildLeaderboard(result) {
             decNameHtml(d, {stacked: true}) + '</td>';
         row += '<td class="metric-cell col-overall">' + cellPctHtml(overallCell(result, d)) + '</td>';
         for (const m of metrics) row += '<td class="metric-cell">' + cellPctHtml(metricCell(result, d, m)) + '</td>';
+        row += '<td class="metric-cell">' + cellPctHtml(compileCell(result, d)) + '</td>';
         row += '<td class="metric-cell">' + errorCellHtml(errorCell(result, d)) + '</td>';
         row += '</tr>';
         body += row;

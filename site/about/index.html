@@ -31,7 +31,7 @@
             </div>
         </div>
             <div class="side-stats"><div class="side-stat"><span class="side-num" data-stat="functions">94,716</span> functions</div><div class="side-stat"><span class="side-num" data-stat="binaries">806</span> binaries</div><div class="side-stat"><span class="side-num">7</span> decompilers</div><div class="side-stat"><span class="side-num">3</span> metrics</div></div>
-            <div class="side-foot"><button class="ds-btn theme-toggle" id="theme-toggle" type="button" aria-label="toggle light or dark theme"><span class="th-to-light">[ light mode ]</span><span class="th-to-dark">[ dark mode ]</span></button><div class="side-foot-stamp">[ 2026-07-20 04:56 ]</div></div>
+            <div class="side-foot"><button class="ds-btn theme-toggle" id="theme-toggle" type="button" aria-label="toggle light or dark theme"><span class="th-to-light">[ light mode ]</span><span class="th-to-dark">[ dark mode ]</span></button><div class="side-foot-stamp">[ 2026-07-21 04:25 ]</div></div>
         </aside>
 
         <main class="main">
@@ -351,6 +351,7 @@ GED = <span class="n">3</span> &nbsp;&mdash;&nbsp; 1 node insertion + 2 edge ins
             <div class="goal-head"><span class="num">[3]</span>Recompilation correctness</div>
             <div class="goal-metric">metric: Recompilation Bytematch</div>
             <div class="goal-body"><p>Does the decompiled code recompile to the same machine code? We run a uniform compilability fixup (define decompiler pseudo-types, strip illegal symbol-version tokens, declare missing symbols) so every decompiler gets a fair shot at building, recompile each function with the original toolchain, and compare the resulting assembly &mdash; normalizing link-time-dependent operands (call/jump targets, PC-relative offsets) so only real differences count.</p>
+<p>The leaderboard's <strong>Compiles</strong> column reports the first half of this on its own &mdash; the share of a decompiler's output that the fixup got to build at all (before any assembly comparison). It is measured only where a matching recompiler exists (x86); ARM/PE firmware and malware abstain rather than count as failures.</p>
 <details class="metric-viz" open>
 <summary>how bytematch works: fixup &rarr; recompile &rarr; normalized asm diff</summary>
 <div class="viz-wrap">
