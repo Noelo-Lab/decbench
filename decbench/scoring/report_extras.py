@@ -21,6 +21,7 @@ import logging
 import os
 from collections import Counter
 from collections.abc import Iterable, Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from decbench.models.function_data import HardestEntry, HistoryPoint
@@ -254,8 +255,6 @@ def _lookup_source_ex(
     if bp is None:
         return None, "binary_not_found"
     try:
-        from pathlib import Path
-
         from decbench.utils.source_extract import function_source_ex
 
         return function_source_ex(Path(bp), func_name)
@@ -548,6 +547,138 @@ def build_samples(
             if entry is not None:
                 samples.append(entry)
     _log_exclusions("samples", dropped)
+    return samples
+
+
+class SampleSetReader:
+    """Reads decompiled blocks and resolves binaries from an on-disk results tree.
+
+    Mirrors ``scripts/rebuild_function_data.DiskReader`` but lives in the package
+    so the site build can read the ``sample-set`` slice's code straight off disk
+    without ``decbench`` importing from ``scripts/``. Both walk the same tree
+    layout via :mod:`decbench.utils.results_tree`
+    (``<root>/<opt>/<project>/{decompiled,compiled}``). Reads are cached per file,
+    so the at-most-one-function-per-binary ``sample-set`` touches each artifact
+    once. Reading through the tree's symlinked opt dirs is fine.
+    """
+
+    def __init__(self, root: Path) -> None:
+        from decbench.utils import results_tree
+
+        self._rt = results_tree
+        self.root = Path(root)
+        self._dec_cache: dict[tuple[str, str, str, str], dict[str, str]] = {}
+        self._bin_cache: dict[tuple[str, str, str], Path | None] = {}
+
+    def binary(self, opt: str, project: str, stem: str) -> Path | None:
+        """The compiled binary for a decompiled stem (``None`` if not on disk)."""
+        key = (opt, project, stem)
+        if key not in self._bin_cache:
+            comp = self._rt.compiled_dir(self.root, opt, project)
+            self._bin_cache[key] = self._rt.resolve_binary(comp, stem)
+        return self._bin_cache[key]
+
+    def decompiled(self, opt: str, project: str, stem: str, dec: str) -> dict[str, str]:
+        """``function name -> decompiled block`` for one decompiler's ``.c`` file."""
+        key = (opt, project, stem, dec)
+        if key not in self._dec_cache:
+            cf = self._rt.decompiled_c_path(self.root, opt, project, dec, stem)
+            blocks = self._rt.split_functions(cf) if cf.is_file() else {}
+            self._dec_cache[key] = {name: code for name, (_addr, code) in blocks.items()}
+        return self._dec_cache[key]
+
+
+def _tree_has_artifacts(root: Path) -> bool:
+    """Whether ``root`` looks like a real results tree (carries per-opt subdirs).
+
+    A bare ``scoreboard.toml`` + ``function_results.json`` directory (as the unit
+    tests and a partial snapshot can be) has none, so sample-set materialization is
+    skipped there rather than emitting empty entries.
+    """
+    from decbench.utils import results_tree
+
+    return any((root / opt).is_dir() for opt in results_tree.OPT_LEVELS)
+
+
+def build_sample_set_samples(
+    function_data: FunctionData,
+    root: Path,
+    excluded_projects: Iterable[str] | None = None,
+) -> list[Any]:
+    """One ``SampleEntry`` per ``sample-set`` function, code read from ``root``.
+
+    Materializes the View page's ``sample-set`` difficulty tier: every function
+    tagged ``"sample-set"`` in :attr:`FunctionRecord.datasets` (assigned by
+    :func:`decbench.scoring.datasets.assign_datasets`) becomes a side-by-side
+    entry with ``difficulty="sample-set"``. Decompiled C is read from the tree's
+    ``decompiled/<dec>_<stem>.c`` artifacts and source via
+    :func:`function_source_ex`; per-metric values/perfects come from the record.
+
+    Unlike the GED-tiered :func:`build_samples` (built at benchmark time from the
+    in-memory decompile results), this runs at *site-build* time off the on-disk
+    tree, so it degrades gracefully: an empty list when ``root`` has no artifact
+    dirs (a bare results tree), and a function whose only reachable code is a
+    hidden decompiler's is dropped later by :mod:`decbench.rendering.visibility`.
+
+    Malware-project functions are excluded here (matching :func:`build_samples`);
+    :func:`drop_malware_entries` in ``build_payloads`` is the final gate on the
+    published payload.
+    """
+    from decbench.models.function_data import SampleEntry
+    from decbench.utils.source_extract import function_source_ex
+
+    root = Path(root)
+    if not _tree_has_artifacts(root):
+        logger.warning(
+            "no artifact directories under %s; skipping sample-set View "
+            "materialization (its tier stays empty). Expected for a bare "
+            "scoreboard+function_results tree.",
+            root,
+        )
+        return []
+
+    excluded = set(excluded_projects or ()) or malware_projects(function_data)
+    if publish_malware_allowed():
+        excluded = set()
+
+    reader = SampleSetReader(root)
+    dropped: Counter[str] = Counter()
+    samples: list[Any] = []
+    for group in function_data.groups:
+        for record in group.functions:
+            if "sample-set" not in (record.datasets or []):
+                continue
+            if group.project in excluded:
+                dropped[group.project] += 1
+                continue
+            decompiled: dict[str, str] = {}
+            for dec in function_data.decompilers:
+                code = reader.decompiled(group.opt_level, group.project, group.binary, dec).get(
+                    record.function
+                )
+                if code:
+                    decompiled[dec] = code
+            if not decompiled:
+                continue  # nothing to show (or only hidden-decompiler output)
+            binary = reader.binary(group.opt_level, group.project, group.binary)
+            source, source_status = function_source_ex(binary, record.function)
+            samples.append(
+                SampleEntry(
+                    project=group.project,
+                    opt_level=group.opt_level,
+                    binary=group.binary,
+                    function=record.function,
+                    size=record.size,
+                    labels=record.labels,
+                    difficulty="sample-set",
+                    source_code=source,
+                    source_status=source_status,
+                    decompiled=decompiled,
+                    values=record.values,
+                    perfects=record.perfects,
+                )
+            )
+    _log_exclusions("sample-set", dropped)
     return samples
 
 

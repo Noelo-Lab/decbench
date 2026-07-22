@@ -33,7 +33,7 @@ Markdown conventions (documented in the files themselves, parsed here):
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from importlib.resources import files
 
@@ -313,6 +313,22 @@ class Content:
             v for v in self.view_specs if has_function_data or not v.requires_function_data
         )
 
+    def with_view(self, view_id: str, markdown_text: str) -> Content:
+        """Return a copy with ``view_id``'s prose re-parsed from ``markdown_text``.
+
+        The view must already be registered (a :class:`ViewSpec` in
+        ``view_specs``); only its :class:`ViewContent` is replaced, every other
+        view and all other content left untouched. This is how the CLI injects
+        an external single source of truth — the repo-root ``CHANGELOG.md`` —
+        into the ``changelog`` view at build time without writing into the
+        packaged ``content/`` tree. An unregistered id is a no-op.
+        """
+        if not any(spec.id == view_id for spec in self.view_specs):
+            return self
+        views = dict(self.views)
+        views[view_id] = _parse_view(view_id, markdown_text, self.metrics)
+        return replace(self, views=views)
+
     # -- metrics -----------------------------------------------------------
     def metric(self, name: str) -> MetricSpec | None:
         """Look up a metric's presentation, or ``None`` if it is unregistered."""
@@ -498,8 +514,19 @@ def _build_card(number: str, title: str, lines: list[str], by_display: dict[str,
 
 
 def _load_view(view_id: str, metrics: tuple[MetricSpec, ...]) -> ViewContent:
-    """Parse ``<view_id>.md`` into a :class:`ViewContent`."""
-    sections = _split_sections(_read(f"{view_id}.md"))
+    """Parse the packaged ``<view_id>.md`` into a :class:`ViewContent`."""
+    return _parse_view(view_id, _read(f"{view_id}.md"), metrics)
+
+
+def _parse_view(view_id: str, text: str, metrics: tuple[MetricSpec, ...]) -> ViewContent:
+    """Parse a view's markdown *text* into a :class:`ViewContent`.
+
+    Split out from :func:`_load_view` so the same parse can run on a string a
+    caller supplies rather than the packaged file — e.g. the CLI injecting the
+    repo-root ``CHANGELOG.md`` into the ``changelog`` view (see
+    :meth:`Content.with_view`).
+    """
+    sections = _split_sections(text)
     title, body_md = sections.get(_BODY_SECTION, ("", ""))
     goals: tuple[GoalCard, ...] = ()
     if view_id == "about":

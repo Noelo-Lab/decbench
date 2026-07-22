@@ -52,7 +52,12 @@ _SUBPAGE_HOP = "../"
 _NOJEKYLL = ".nojekyll"
 
 
-def build_site(scoreboard: Scoreboard, function_data: FunctionData, out_dir: Path) -> None:
+def build_site(
+    scoreboard: Scoreboard,
+    function_data: FunctionData,
+    out_dir: Path,
+    content: Content | None = None,
+) -> None:
     """Write the complete static site tree to ``out_dir``.
 
     Idempotent: ``data/`` and ``fonts/`` are wholly generated, so both are cleared
@@ -65,13 +70,16 @@ def build_site(scoreboard: Scoreboard, function_data: FunctionData, out_dir: Pat
         function_data: The per-function dataset every page is computed from.
             Required: a site with no data has nothing to show.
         out_dir: The tree root, e.g. ``site/``.
+        content: Parsed ``content/``; loaded (and cached) when omitted. The CLI
+            passes one with the repo-root ``CHANGELOG.md`` injected into the
+            ``changelog`` view (see :meth:`Content.with_view`).
     """
     from decbench.rendering.visibility import apply_hidden_decompilers
 
     # Hide site-hidden decompilers (content/site.toml) from EVERY page and
     # payload; their results stay on disk, untouched.
     scoreboard, function_data = apply_hidden_decompilers(scoreboard, function_data)
-    content = load_content()
+    content = content or load_content()
 
     out_dir.mkdir(parents=True, exist_ok=True)
 

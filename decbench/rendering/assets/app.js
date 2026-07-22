@@ -17,12 +17,12 @@
  * Two delivery modes, one code path (see loadData):
  *
  *   split   a Pages tree. data/aggregates.json is fetched eagerly; the
- *           code-carrying payloads (samples/history) and dataset.json are
- *           fetched on first navigation to their view.
+ *           code-carrying samples payload and dataset.json are fetched on first
+ *           navigation to their view.
  *   inline  a single-file `decbench report`, opened over file:// where fetch()
  *           is CORS-blocked. The renderer sets window.__DECBENCH_INLINE__ to a
- *           map keyed by data-file stem — {aggregates, dataset, samples,
- *           history} — and we read it directly, never fetching.
+ *           map keyed by data-file stem — {aggregates, dataset, samples} — and
+ *           we read it directly, never fetching.
  */
 
 /* ============================================================================
@@ -430,8 +430,8 @@ function decRegistry() { return (AGG && AGG.decompiler_registry) || {}; }
 function decRegEntry(id) {
     const reg = decRegistry();
     if (reg[id]) return reg[id];
-    // Base-name fallback: the history legend keys by base ("ghidra"), the registry
-    // by full id ("ghidra@12.1"); resolve one to the other.
+    // Base-name fallback: a versioned id ("ghidra@12.1") resolves to its base
+    // ("ghidra") entry when the registry has no exact match for it.
     const base = baseName(id);
     if (reg[base]) return reg[base];
     for (const k in reg) if (baseName(k) === base) return reg[k];
@@ -455,7 +455,7 @@ function decTip(id) {
 //
 // Two forms, one source of truth (name/url/version/logo):
 //   compact (default)  `[logo] name <span.ver>vX</span>` on one line — the metrics
-//                      table, distance table, view dropdown and history legend.
+//                      table, the distance table and the compile table.
 //   stacked ({stacked:true})  a two-line block for the LEADERBOARD: logo-prefixed
 //                      name, then the version on its own line.
 // The version keeps the same rule in both: a "v" prefix only in front of a digit
@@ -577,7 +577,6 @@ function errorCellHtml(cell) {
 function sortValue(d, key, result) {
     if (key === "__name__") return decName(d);
     if (key === "__errors__") return errRate(errorCell(result, d));
-    if (key === "__compile__") return pct(compileCell(result, d));
     const cell = key === "__overall__" ? overallCell(result, d) : metricCell(result, d, key);
     return pct(cell);
 }
@@ -586,10 +585,10 @@ function buildLeaderboard(result) {
     if (!tbl) return;
     const decs = visibleDecs(), metrics = orderedMetrics();
     // Header. "Errors" = how often the decompiler failed/timed out on a
-    // function it was asked to decompile (lower is better).
+    // function it was asked to decompile (lower is better). The Compiles rate
+    // used to sit here; it moved to its own table on the distance page.
     const cols = [["__name__", "decompiler"], ["__overall__", "Union"]];
     for (const m of metrics) cols.push([m, metricShort(m)]);
-    cols.push(["__compile__", "Compiles"]);
     cols.push(["__errors__", "Errors"]);
     let head = "<th>#</th>";
     for (const [key, label] of cols) {
@@ -613,7 +612,6 @@ function buildLeaderboard(result) {
             decNameHtml(d, {stacked: true}) + '</td>';
         row += '<td class="metric-cell col-overall">' + cellPctHtml(overallCell(result, d)) + '</td>';
         for (const m of metrics) row += '<td class="metric-cell">' + cellPctHtml(metricCell(result, d, m)) + '</td>';
-        row += '<td class="metric-cell">' + cellPctHtml(compileCell(result, d)) + '</td>';
         row += '<td class="metric-cell">' + errorCellHtml(errorCell(result, d)) + '</td>';
         row += '</tr>';
         body += row;
@@ -690,6 +688,29 @@ function buildDistance(result) {
     tbl.querySelector("tbody").innerHTML = body;
 }
 
+// ---- Compile-rate table (lives on the distance page) ----
+// The per-decompiler Compiles rate — the share of a decompiler's
+// byte_match-measured functions whose output actually recompiled — moved off the
+// leaderboard to here. It is one number per decompiler (see aggregate.py's
+// `compile`), so unlike the metrics it gets its own small table rather than a
+// column. Sorted highest-first; codex only appears under the sample-set preset,
+// exactly like the distance table above (both use visibleDecs()).
+function buildCompile(result) {
+    const tbl = document.getElementById("compile-table");
+    if (!tbl) return;
+    const decs = visibleDecs();
+    tbl.querySelector("thead tr").innerHTML = "<th>decompiler</th><th>Compiles</th>";
+    const rows = decs.map(d => ({d, cell: compileCell(result, d)}));
+    rows.sort((a, b) => pct(b.cell) - pct(a.cell));
+    let body = "";
+    for (const r of rows) {
+        body += '<tr class="binrow"><td class="lb-name" title="' +
+            escapeHtml(decTip(r.d)) + '">' + decNameHtml(r.d) + '</td>' +
+            '<td class="metric-cell">' + cellPctHtml(r.cell) + '</td></tr>';
+    }
+    tbl.querySelector("tbody").innerHTML = body;
+}
+
 function updateStats(result) {
     const fnEl = document.querySelector('[data-stat="functions"]');
     if (fnEl) fnEl.textContent = result.functions.toLocaleString();
@@ -714,13 +735,20 @@ function refresh() {
     buildLeaderboard(lastResult);
     buildMetricsTable(lastResult);
     buildDistance(lastResult);
+    buildCompile(lastResult);
     updateStats(lastResult);
+    // The About page's projects table is preset-aware; re-render it if it has been
+    // loaded (no-op before the About view is first opened, or if not in the DOM).
+    renderDatasetProjects();
 }
 
 // ---- About page's dataset section (corpus-wide; independent of the selectors) ----
+// The corpus stats are selector-independent, but the projects table is preset-aware
+// (the sample-set preset lists only its sampled projects), so the loaded payload is
+// cached here and the table is re-rendered from it on preset change (refresh()).
+let _lastDataset = null;
 function buildDataset(ds) {
     const cats = ds.categories || [], summary = ds.summary || {}, joern = ds.joern || {};
-    const proj = (ds.projects || []).slice();
     // Category highlight buttons.
     const cc = document.getElementById("category-controls");
     if (cc) {
@@ -792,20 +820,40 @@ function buildDataset(ds) {
                 s[1] + ')</span></td></tr>';
         }).join("");
     }
-    // Projects table (sorted by LOC desc).
+    // Projects table: cache the payload, then render it preset-aware. refresh()
+    // calls renderDatasetProjects() again on preset change (no refetch).
+    _lastDataset = ds;
+    renderDatasetProjects();
+}
+
+// The About page's projects table, filtered by the selected preset. Only the
+// sample-set preset narrows the list — to the projects it sampled (>=1 function
+// tagged sample-set, per the row's `presets`); every other preset shows the full
+// corpus (which those presets essentially are, and the user asked to filter only
+// the sample-set). Reads the cached payload so refresh() can re-render on a preset
+// change without refetching.
+function renderDatasetProjects() {
     const tbl = document.getElementById("dataset-projects");
-    if (tbl) {
-        tbl.querySelector("thead tr").innerHTML =
-            "<th>project</th><th>types</th><th>LOC</th><th>binaries</th><th>functions</th>";
-        tbl.querySelector("tbody").innerHTML = proj.sort((a, b) => b.loc - a.loc).map(p => {
-            const pcats = p.cats || [];
-            return '<tr data-cats="' + escapeHtml(pcats.join(" ")) + '">' +
-                '<td class="lb-name">' + escapeHtml(p.name) + '</td>' +
-                '<td class="cell-count">' + (escapeHtml(pcats.join(", ")) || "—") + '</td>' +
-                '<td>' + (p.loc ? p.loc.toLocaleString() : "—") + '</td>' +
-                '<td>' + p.binaries + '</td>' +
-                '<td>' + p.functions.toLocaleString() + '</td></tr>';
-        }).join("");
+    if (!tbl || !_lastDataset) return;
+    let proj = (_lastDataset.projects || []).slice();
+    const filtered = (state.dataset || defaultPresetName()) === SAMPLE_SET_PRESET;
+    if (filtered) {
+        proj = proj.filter(p => (p.presets || []).indexOf(SAMPLE_SET_PRESET) >= 0);
+    }
+    tbl.querySelector("thead tr").innerHTML =
+        "<th>project</th><th>types</th><th>LOC</th><th>binaries</th><th>functions</th>";
+    tbl.querySelector("tbody").innerHTML = proj.sort((a, b) => b.loc - a.loc).map(p => {
+        const pcats = p.cats || [];
+        return '<tr data-cats="' + escapeHtml(pcats.join(" ")) + '">' +
+            '<td class="lb-name">' + escapeHtml(p.name) + '</td>' +
+            '<td class="cell-count">' + (escapeHtml(pcats.join(", ")) || "—") + '</td>' +
+            '<td>' + (p.loc ? p.loc.toLocaleString() : "—") + '</td>' +
+            '<td>' + p.binaries + '</td>' +
+            '<td>' + p.functions.toLocaleString() + '</td></tr>';
+    }).join("");
+    const note = document.getElementById("dataset-projects-note");
+    if (note) {
+        note.textContent = filtered ? (proj.length + " projects sampled into the sample-set.") : "";
     }
 }
 
@@ -815,7 +863,12 @@ function buildDataset(ds) {
 // GED agreement); the three dropdowns pick the tier, the decompiler whose output
 // is shown, and the metric whose score is highlighted.
 let VIEW_SAMPLES = [];
-const DIFFICULTIES = ["easy", "medium", "hard"];
+// Tier order for the view-page dropdown. `sample-set` is the dataset-selector's
+// curated slice (materialized at build time, difficulty="sample-set"); it lists
+// after the three GED-agreement tiers, and the decompiler dropdown gains codex
+// only because those entries carry codex output. A tier appears only when the
+// data has entries for it (initView filters this against VIEW_SAMPLES).
+const DIFFICULTIES = ["easy", "medium", "hard", "sample-set"];
 function sampleLabel(s) {
     return s.project + "/" + s.opt_level + "/" + s.binary + " :: " + s.function;
 }
@@ -999,118 +1052,24 @@ function applyViewParams(c) {
     return fnIdx;
 }
 
-// ---- Historical (SVG) ----
-// Series palette. --green/--amber/--red are app.css's; the other seven are
-// chart-only series colors with no token to read them from.
-let _chartColors = null;
-function chartColors() {
-    if (!_chartColors) {
-        _chartColors = [
-            cssVar("--green", "#6ab04c"), "#4a90d9", cssVar("--amber", "#d4a72c"),
-            cssVar("--red", "#c0504d"), "#9b59b6", "#1abc9c", "#e67e22", "#7f8c8d",
-            "#e84393", "#00cec9"
-        ];
-    }
-    return _chartColors;
-}
+// baseName strips a versioned id's "@version" suffix. It outlived the removed
+// Historical view (whose legend keyed by base name): the decompiler registry
+// still uses it to resolve a versioned id ("ghidra@12.1") to its "ghidra" entry.
 function baseName(dec) { const a = dec.indexOf("@"); return a >= 0 ? dec.substring(0, a) : dec; }
-function svgEl(tag, attrs) {
-    const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
-    for (const k in attrs) el.setAttribute(k, attrs[k]);
-    return el;
-}
-function buildChart(container, history, metricKey, title) {
-    const versions = [];
-    for (const h of history) if (versions.indexOf(h.version) < 0) versions.push(h.version);
-    const lines = {};
-    for (const h of history) {
-        const bn = baseName(h.decompiler);
-        let val = metricKey === "__overall__" ? h.overall :
-            (h.scores && (metricKey in h.scores) ? h.scores[metricKey] : null);
-        if (val == null) continue;
-        if (!lines[bn]) lines[bn] = {};
-        lines[bn][h.version] = val;
-    }
-    const decNames = Object.keys(lines).sort();
-    if (!decNames.length || versions.length < 1) return;
-    const block = document.createElement("div");
-    block.className = "chart-block";
-    const h3 = document.createElement("h3"); h3.textContent = title; block.appendChild(h3);
-    const W = 760, H = 280, padL = 46, padR = 16, padT = 14, padB = 40;
-    const plotW = W - padL - padR, plotH = H - padT - padB;
-    const svg = svgEl("svg", {viewBox: "0 0 " + W + " " + H, width: W, height: H, role: "img"});
-    const xFor = i => versions.length === 1 ? padL + plotW / 2 : padL + (plotW * i) / (versions.length - 1);
-    const yFor = v => padT + plotH - (plotH * Math.max(0, Math.min(v, 100)) / 100);
-    // Chart chrome: the muted label color is app.css's; the gridline/axis greys
-    // have no token yet, so they read one if it appears and fall back to today's.
-    const gridColor = cssVar("--chart-grid", "#333");
-    const axisColor = cssVar("--chart-axis", "#666");
-    const labelColor = cssVar("--text-muted", "#8a8a8a");
-    for (let g = 0; g <= 100; g += 25) {
-        const y = yFor(g);
-        svg.appendChild(svgEl("line", {x1: padL, y1: y, x2: W - padR, y2: y, stroke: gridColor, "stroke-width": 1, "stroke-dasharray": "3 3"}));
-        const lbl = svgEl("text", {x: padL - 6, y: y + 4, "text-anchor": "end", fill: labelColor, "font-size": 11, "font-family": "Source Code Pro, monospace"});
-        lbl.textContent = g + "%"; svg.appendChild(lbl);
-    }
-    svg.appendChild(svgEl("line", {x1: padL, y1: padT, x2: padL, y2: padT + plotH, stroke: axisColor, "stroke-width": 1}));
-    svg.appendChild(svgEl("line", {x1: padL, y1: padT + plotH, x2: W - padR, y2: padT + plotH, stroke: axisColor, "stroke-width": 1}));
-    for (let i = 0; i < versions.length; i++) {
-        const t = svgEl("text", {x: xFor(i), y: padT + plotH + 18, "text-anchor": "middle", fill: labelColor, "font-size": 11, "font-family": "Source Code Pro, monospace"});
-        t.textContent = versions[i]; svg.appendChild(t);
-    }
-    const palette = chartColors();
-    const colorByDec = {};
-    decNames.forEach((dn, idx) => {
-        const color = palette[idx % palette.length];
-        colorByDec[dn] = color;
-        const pts = [];
-        for (let i = 0; i < versions.length; i++) {
-            const v = lines[dn][versions[i]];
-            if (v == null) continue;
-            const x = xFor(i), y = yFor(v);
-            pts.push(x + "," + y);
-            svg.appendChild(svgEl("circle", {cx: x, cy: y, r: 3, fill: color}));
-        }
-        if (pts.length >= 2) svg.appendChild(svgEl("polyline", {points: pts.join(" "), fill: "none", stroke: color, "stroke-width": 2}));
-    });
-    block.appendChild(svg);
-    const legend = document.createElement("div"); legend.className = "legend";
-    for (const dn of decNames) {
-        const span = document.createElement("span"); span.className = "item";
-        const sw = document.createElement("span"); sw.className = "swatch"; sw.style.background = colorByDec[dn];
-        span.appendChild(sw); span.appendChild(document.createTextNode(decName(dn))); legend.appendChild(span);
-    }
-    block.appendChild(legend); container.appendChild(block);
-}
-function initHistory(history) {
-    const container = document.getElementById("history-charts");
-    if (!container || !(history || []).length) return;
-    // Cache the payload so a live theme flip can redraw these charts: they BAKE
-    // colors (getComputedStyle at build time), so CSS alone cannot re-tint them.
-    _lastHistory = history;
-    container.innerHTML = "";
-    for (const m of metricList()) buildChart(container, history, m, metricName(m));
-    buildChart(container, history, "__overall__", "Union (perfect on at least one metric)");
-}
 
 // ---- Theme toggle ----
 // Dark is the default; light is an explicit opt-in, persisted in localStorage.
 // The FOUC-free <head> script (html.py) already applied the stored/URL theme
 // before first paint, and the button LABEL is CSS-driven off data-theme — so all
-// that is left for the client is the click. Most of the page is pure CSS and
-// re-tints for free; the only exception is the historical charts, which bake
-// colors at render time and must be redrawn (see initHistory's _lastHistory).
-let _lastHistory = null;
+// that is left for the client is the click. The whole page is pure CSS and
+// re-tints for free (the removed historical charts, which baked colors at render
+// time, were the only thing that had to be redrawn on a live flip).
 function currentTheme() {
     return document.documentElement.dataset.theme === "light" ? "light" : "dark";
 }
 function applyTheme(theme) {
     document.documentElement.dataset.theme = theme;
     try { localStorage.setItem("decbench-theme", theme); } catch (e) { /* private mode */ }
-    // Invalidate the memoized series palette (it read --green/--amber/--red from
-    // the old theme) and redraw the charts if they are already on screen.
-    _chartColors = null;
-    if (lazyStarted.history && _lastHistory) initHistory(_lastHistory);
 }
 function initThemeToggle() {
     const btn = document.getElementById("theme-toggle");
@@ -1125,8 +1084,7 @@ function initThemeToggle() {
 // the metric registry these views label their columns and scores with.
 const LAZY_VIEWS = {
     about: {file: "dataset", body: "dataset-summary", render: buildDataset},
-    view: {file: "samples", body: "view-body", render: initView},
-    history: {file: "history", body: "history-charts", render: initHistory}
+    view: {file: "samples", body: "view-body", render: initView}
 };
 const lazyStarted = {};
 function ensureViewData(name) {

@@ -250,6 +250,7 @@ def render_html_report(
     scoreboard: Scoreboard,
     output_path: Path,
     function_data: FunctionData | None = None,
+    content: Content | None = None,
 ) -> None:
     """Render the self-contained single-file HTML report.
 
@@ -263,6 +264,9 @@ def render_html_report(
         output_path: Where to write the HTML file.
         function_data: Optional per-function dataset. Without it the report falls
             back to static tables built from the scoreboard alone.
+        content: Parsed ``content/``; loaded (and cached) when omitted. The CLI
+            passes one with the repo-root ``CHANGELOG.md`` injected into the
+            ``changelog`` view (see :meth:`Content.with_view`).
     """
     from decbench.rendering.visibility import apply_hidden_decompilers
 
@@ -271,7 +275,7 @@ def render_html_report(
         assets = static_assets()
     else:
         assets = inline_assets(build_payloads(function_data, scoreboard))
-    html = build_page(scoreboard, function_data, assets)
+    html = build_page(scoreboard, function_data, assets, content)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html, encoding="utf-8")
 
@@ -505,14 +509,13 @@ def _view_section(
 def _is_empty(view_id: str, function_data: FunctionData | None) -> bool:
     """Whether a view has no data to render, and should show its empty state.
 
-    Only the two code/history-carrying views can be legitimately empty: the
-    others either need no data or are dropped from the nav without it.
+    Only the code-carrying ``view`` page can be legitimately empty: the others
+    either need no data or are dropped from the nav without it.
     """
     if function_data is None:
         return False
     return {
         "view": not function_data.samples,
-        "history": not function_data.history,
     }.get(view_id, False)
 
 

@@ -410,13 +410,16 @@ aesthetic: black bg, Source Code Pro mono, dashed rules, ASCII bars). `html.py` 
   linked assets + lazy payloads).
 
 Views: **Leaderboard** (default page; swebench.com-style sortable table: Overall +
-per-metric perfect % + Compiles), **Metrics** (the 3 goals + perfect definitions),
+per-metric perfect %), **Metrics** (the 3 goals + perfect definitions),
 **Distance** (raw edit distance to perfect — mean/median/#at-0; finer than the
 perfect rate), **Dataset** (corpus + software types + Joern pipeline health:
 source-parse failures are OUR tooling and leave GED for everyone), **Compare**
 (side-by-side source vs each decompiler, the `tiny` slice; source via
-`utils/source_extract.py`), **Hardest**, **Historical** (pure-SVG line charts
-across versions; view id is `history`, nav label is "historical"), **About**.
+`utils/source_extract.py`), **Hardest**, **Insights** + **Changelog** (prose
+views; the changelog view renders the repo-root CHANGELOG.md, injected at build
+time), **About**. The Compiles rate lives on the **Distance** page; the old
+Historical view was removed 2026-07-22 (HistoryPoint data + ingest_history.py
+remain, just unshipped).
 
 Preset membership is tagged server-side by `scoring/datasets.py`
 (`assign_datasets`; "large" = upper tail of the size bell curve). The

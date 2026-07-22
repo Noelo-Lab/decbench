@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import click
 
 from decbench.models.project import OptimizationLevel, Project
+
+if TYPE_CHECKING:
+    from decbench.rendering.content import Content
 
 
 @click.group()
@@ -292,6 +296,24 @@ def show(scoreboard_path, format) -> None:
         console.print(json.dumps(scoreboard.to_display_dict(), indent=2))
 
 
+def _site_content() -> Content:
+    """Load site content, injecting the repo-root CHANGELOG.md when it exists.
+
+    The ``changelog`` view renders the repository's ``CHANGELOG.md`` as its body,
+    so the log has a single source of truth; ``content/changelog.md`` is the
+    fallback for installs with no repo checkout. The file is resolved relative to
+    this package (``<repo>/CHANGELOG.md``), so a source/editable checkout picks it
+    up and a wheel install falls back silently.
+    """
+    from decbench.rendering.content import load_content
+
+    content = load_content()
+    changelog = Path(__file__).resolve().parent.parent / "CHANGELOG.md"
+    if changelog.is_file():
+        content = content.with_view("changelog", changelog.read_text(encoding="utf-8"))
+    return content
+
+
 @main.command()
 @click.argument("scoreboard_path", type=click.Path(exists=True))
 @click.option(
@@ -352,7 +374,7 @@ def report(scoreboard_path, output, function_data) -> None:
         except Exception:
             pass
 
-    render_html_report(scoreboard, Path(output), fd)
+    render_html_report(scoreboard, Path(output), fd, _site_content())
 
     console.print(f"Report generated: [bold]{output}[/bold]")
 
@@ -413,8 +435,21 @@ def site_build(results_path, output) -> None:
 
     assign_datasets(fd)
 
+    # Materialize the View page's `sample-set` tier from THIS results tree: one
+    # side-by-side entry per `sample-set` function, with decompiled code read from
+    # the tree's decompiled/*.c artifacts and source via function_source_ex. The
+    # GED-tiered easy/medium/hard entries are built at benchmark time; this adds
+    # the sample-set slice at build time (it needs the on-disk tree, which only
+    # `site build` is guaranteed to have — `decbench report` takes a scoreboard
+    # path, so it stays unchanged). Skips gracefully on a bare results tree.
+    from decbench.scoring.report_extras import build_sample_set_samples
+
+    sample_set = build_sample_set_samples(fd, tree)
+    fd.samples.extend(sample_set)
+    console.print(f"Materialized [bold]{len(sample_set)}[/bold] sample-set View entries.")
+
     out_dir = Path(output)
-    build_site(scoreboard, fd, out_dir)
+    build_site(scoreboard, fd, out_dir, _site_content())
 
     total = 0
     for path in sorted(p for p in out_dir.rglob("*") if p.is_file()):

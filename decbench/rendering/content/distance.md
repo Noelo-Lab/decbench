@@ -16,3 +16,14 @@ scored on.
     (mean &middot; median &middot; #at-0 / #measured).</p>
 
 <table id="distance-table"><thead><tr></tr></thead><tbody></tbody></table>
+
+### compiles
+
+The share of each decompiler's byte_match-measured functions whose output
+actually <em>recompiled</em> after the uniform compilability-fixup pass &mdash; a
+fairness control, not a metric (type recovery is scored separately). The
+denominator is per-decompiler: functions where byte_match was measurable, so
+ARM / PE targets with no host recompiler never count against it. This rate moves
+with the selected dataset, like the columns on the leaderboard.
+
+<table id="compile-table"><thead><tr></tr></thead><tbody></tbody></table>

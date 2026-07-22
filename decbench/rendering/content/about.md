@@ -434,4 +434,6 @@ that's reported here (per decompiler), not folded into the headline score.
 
 ### projects
 
+<p class="view-desc" id="dataset-projects-note"></p>
+
 <table id="dataset-projects"><thead><tr></tr></thead><tbody></tbody></table>

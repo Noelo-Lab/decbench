@@ -30,14 +30,16 @@ from decbench.rendering.content import load_content
 from decbench.rendering.html import render_html_report
 from decbench.rendering.site import build_site
 
-# `hardest` is deliberately absent: HardestEntry data is still stored in
-# function_results.json but no longer shipped — the View page's `hard`
-# difficulty tier (inside samples.json) replaced the Hardest view.
-DATA_FILES = ["aggregates", "dataset", "history", "samples"]
+# `hardest` and `history` are deliberately absent: both are still stored in
+# function_results.json but no longer shipped — the View page's `hard` difficulty
+# tier (inside samples.json) replaced the Hardest view, and the Historical view
+# was removed outright.
+DATA_FILES = ["aggregates", "dataset", "samples"]
 
-# One `<view>/index.html` subpage per visible view (all five, given data), so
-# /leaderboard/, /distance/, ... are directly linkable.
-VIEW_IDS = ["leaderboard", "distance", "view", "history", "about"]
+# One `<view>/index.html` subpage per visible view (all six, given data), so
+# /leaderboard/, /distance/, ... are directly linkable. `insights` and
+# `changelog` are prose-only views (no per-function data, no generated table).
+VIEW_IDS = ["leaderboard", "distance", "view", "insights", "changelog", "about"]
 
 
 @pytest.fixture

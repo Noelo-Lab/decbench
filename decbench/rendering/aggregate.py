@@ -620,10 +620,11 @@ def build_payloads(function_data: FunctionData, scoreboard: Scoreboard) -> dict[
     ``window.__DECBENCH_INLINE__`` in the single-file report, so both delivery modes
     hand the client one shape and it never learns which it is running under.
 
-    ``samples``/``history`` are serialized straight through: their metric values are
-    what the View page prints, so they are emitted exactly as measured (see the note
-    by ``ALL_PRESET`` for why they are not rounded). ``hardest`` entries are still
-    *stored* in ``function_results.json`` but no longer shipped — the View page's
+    ``samples`` is serialized straight through: its metric values are what the View
+    page prints, so they are emitted exactly as measured (see the note by
+    ``ALL_PRESET`` for why they are not rounded). ``hardest`` entries — and the
+    ``history`` points that once fed the removed Historical view — are still
+    *stored* in ``function_results.json`` but no longer shipped; the View page's
     ``hard`` difficulty tier (inside ``samples``) replaced the Hardest view.
 
     This is also the last gate before malware code reaches a published payload.
@@ -644,7 +645,6 @@ def build_payloads(function_data: FunctionData, scoreboard: Scoreboard) -> dict[
         "aggregates": build_aggregates(function_data, scoreboard),
         "dataset": build_dataset_page(function_data),
         "samples": [_finite_sample(s.model_dump(mode="json")) for s in samples],
-        "history": [_finite_history(h.model_dump(mode="json")) for h in function_data.history],
     }
 
 
@@ -664,21 +664,6 @@ def _finite_sample(dump: dict[str, Any]) -> dict[str, Any]:
     return dump
 
 
-def _finite_history(dump: dict[str, Any]) -> dict[str, Any]:
-    """Same guard for one serialized history point (see :func:`_finite_sample`).
-
-    A degenerate ingest (0-function denominator) can leave a non-finite score;
-    the chart already skips ``null`` points, so that is what a bad float becomes.
-    """
-    dump["scores"] = {
-        m: v for m, v in (dump.get("scores") or {}).items() if v is None or math.isfinite(v)
-    }
-    overall = dump.get("overall")
-    if isinstance(overall, float) and not math.isfinite(overall):
-        dump["overall"] = None
-    return dump
-
-
 @dataclass
 class _ProjectStats:
     """Per-project rollup for the Dataset page."""
@@ -686,6 +671,7 @@ class _ProjectStats:
     labels: set[str] = field(default_factory=set)
     binaries: set[str] = field(default_factory=set)
     functions: int = 0
+    presets: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -697,6 +683,7 @@ class _ProjectRow:
     loc: int
     binaries: int
     functions: int
+    presets: list[str]
 
     def as_dict(self) -> dict[str, Any]:
         """Emit this row per the schema."""
@@ -706,11 +693,18 @@ class _ProjectRow:
             "loc": self.loc,
             "binaries": self.binaries,
             "functions": self.functions,
+            "presets": self.presets,
         }
 
 
 def _project_stats(function_data: FunctionData) -> dict[str, _ProjectStats]:
-    """Roll the binary groups up per project (labels, distinct binaries, functions)."""
+    """Roll the binary groups up per project (labels, distinct binaries, functions).
+
+    Also records which dataset presets the project participates in — a project is
+    "in" a preset when ANY of its functions carries that preset tag
+    (:attr:`FunctionRecord.datasets`). This drives the About page's preset-aware
+    project filter (client-side: the sample-set preset lists only its projects).
+    """
     stats: dict[str, _ProjectStats] = {}
     for group in function_data.groups:
         entry = stats.get(group.project)
@@ -719,6 +713,8 @@ def _project_stats(function_data: FunctionData) -> dict[str, _ProjectStats]:
         entry.labels.update(group.labels)
         entry.binaries.add(group.binary)
         entry.functions += len(group.functions)
+        for func in group.functions:
+            entry.presets.update(func.datasets or ())
     return stats
 
 
@@ -750,6 +746,9 @@ def build_dataset_page(function_data: FunctionData) -> dict[str, Any]:
     loc_by_project = info.get("loc_by_project") or {}
 
     stats = _project_stats(function_data)
+    # Emit each project's presets in the selector's canonical order (not set order),
+    # so the payload is deterministic and rebuilds byte-identically.
+    preset_order = [p.name for p in function_data.dataset_presets]
     projects = [
         _ProjectRow(
             name=name,
@@ -757,6 +756,7 @@ def build_dataset_page(function_data: FunctionData) -> dict[str, Any]:
             loc=loc_by_project.get(name) or 0,
             binaries=len(stats[name].binaries),
             functions=stats[name].functions,
+            presets=[p for p in preset_order if p in stats[name].presets],
         )
         for name in sorted(stats)
     ]

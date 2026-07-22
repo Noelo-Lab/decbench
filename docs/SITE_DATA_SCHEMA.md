@@ -29,13 +29,13 @@ site/
 ├── leaderboard/index.html  # one subpage per VISIBLE view: the same skeleton, that
 ├── distance/index.html     #   view marked active and its asset links prefixed with
 ├── view/index.html         #   "../" (no <base> — that would break same-document SVG
-├── history/index.html      #   url(#marker) refs and #anchors). Makes /leaderboard/,
-├── about/index.html        #   /distance/, ... directly linkable and reload-safe.
+├── insights/index.html     #   url(#marker) refs and #anchors). Makes /leaderboard/,
+├── changelog/index.html    #   /distance/, ... directly linkable and reload-safe.
+├── about/index.html        #   (insights + changelog are prose-only views.)
 ├── CNAME                   # custom domain (from site.toml [pages].domain)
 └── data/
     ├── aggregates.json # the 10 combos + registry. Loaded eagerly.
     ├── dataset.json    # Dataset page. Corpus-wide, selector-independent.
-    ├── history.json    # Historical page.
     └── samples.json    # View page. Lazy — fetched on first view.
 ```
 
@@ -122,7 +122,7 @@ button (`#theme-toggle`) flips and persists it at runtime.
       },
       "overall": {"angr": [111, 222]},   // Union column: decompiler -> [perfect, total]
       "errors":  {"angr": [5, 1000]},    // decompiler -> [errored, scope]
-      "compile": {"angr": [890, 1000]},  // Compiles column: decompiler -> [compiled, byte_match-measured]
+      "compile": {"angr": [890, 1000]},  // Compiles rate (distance page): decompiler -> [compiled, byte_match-measured]
       "distance": {                      // decompiler -> metric -> stats | null
         "angr": {"ged": {"mean": 3.25, "median": 2, "n": 5000, "at0": 1200}}
       }
@@ -146,9 +146,9 @@ an optional `url` (a project homepage; the client renders a link when present,
 `target=_blank rel=noopener`), an optional prettified `version`, an optional
 `license` (`"open-source"` / `"closed-source"`), and an optional `logo` flag. The
 client (`app.js`'s `decName`/`decUrl`/`decVersion`/`decLicense`/`decHasLogo`) renders
-these in place of raw ids in the leaderboard, the metrics table, the distance table,
-the view page's decompiler dropdown, and the historical legend; name-sorting sorts by
-`display_name`. It is **tolerant**: a missing registry, or an id with no entry, falls
+these in place of raw ids in the leaderboard, the metrics table, the distance page's
+distance and compile tables, and the view page's decompiler dropdown; name-sorting sorts
+by `display_name`. It is **tolerant**: a missing registry, or an id with no entry, falls
 back to the raw id (unlinked), exactly like `metric_registry`.
 
 The **leaderboard name cell only** renders as a stacked block — the logo-prefixed
@@ -218,12 +218,14 @@ benchmark's fairness contract:
   functions where every metric was measurable.)
 * `errors.scope` = functions the decompiler attempted (present in `decompiled`);
   `errors.errored` = those where it produced nothing.
-* `compile` is the **Compiles** column: `[# whose decompiled C recompiled, #
+* `compile` is the **Compiles** rate: `[# whose decompiled C recompiled, #
   where byte_match was measured]`. The denominator is per-decompiler (functions
   where that decompiler has a byte_match value — decompiled AND the target arch
   had a recompile toolchain), so ARM/PE abstentions never enter it. This is the
   compilability-fixup success rate, and it moves with the dataset preset like the
-  metric columns (O0 code compiles more readily than O2).
+  metric columns (O0 code compiles more readily than O2). It is rendered in its
+  own `#compile-table` on the **distance** page (it used to be a leaderboard
+  column); the combo key is unchanged.
 * `normalize=1` additionally restricts to functions **every** decompiler decompiled.
 
 ## `data/dataset.json`
@@ -236,7 +238,12 @@ benchmark's fairness contract:
   },
   "categories": [{"name": "parser", "count": 12}],   // ordered; count = #projects
   "projects": [
-    {"name": "bash", "cats": ["parser"], "loc": 12345, "binaries": 3, "functions": 456}
+    // `presets`: which dataset presets this project participates in (>=1 of its
+    // functions carries that preset tag), in selector order. The About page's
+    // projects table filters on it: the sample-set preset lists only projects
+    // whose `presets` include "sample-set"; other presets show the full list.
+    {"name": "bash", "cats": ["parser"], "loc": 12345, "binaries": 3,
+     "functions": 456, "presets": ["unoptimized", "optimized", "inlined", "sample-set"]}
   ],
   "joern": {
     "source": {"lost": 100, "total": 91483},   // GED unmeasurable: our source front-end
@@ -249,17 +256,28 @@ benchmark's fairness contract:
 `categories` and each project's `cats` are resolved at build time from the taxonomy in
 `decbench/rendering/content/categories.toml` against per-binary labels.
 
-## `data/samples.json` / `data/history.json`
+## `data/samples.json`
 
-Serialized straight from `FunctionData.samples`, `.history`
+Serialized straight from `FunctionData.samples`
 (`decbench/models/function_data.py`) — every *finite* float exactly as measured. Values
 that could not be measured are stored as `Infinity` upstream; browsers' strict
-`JSON.parse` rejects that token, so non-finite sample metric values are dropped and
-non-finite history points nulled at build time (`aggregate._finite_sample` /
-`_finite_history`), and both JSON writers run with `allow_nan=False` so anything else
-non-finite fails the build loudly. Finite values are never rounded on the way out (see
-"Float precision" above). `FunctionData.hardest` is still *stored* but no longer
-shipped — the View page's `hard` tier replaced it.
+`JSON.parse` rejects that token, so non-finite sample metric values are dropped at build
+time (`aggregate._finite_sample`), and the JSON writer runs with `allow_nan=False` so
+anything else non-finite fails the build loudly. Finite values are never rounded on the
+way out (see "Float precision" above). `FunctionData.hardest` and `.history` are still
+*stored* but no longer shipped — the View page's `hard` tier replaced the Hardest view,
+and the Historical view was removed outright (its `history.json` payload and
+`history/index.html` subpage are gone).
+
+Each entry's `difficulty` is one of `easy` / `medium` / `hard` — the GED-agreement
+tiers built at benchmark time (`scoring/view_samples.py`) — or `sample-set`, the
+dataset selector's curated slice, materialized at *site-build* time by
+`decbench site build` (one entry per function tagged `sample-set` in
+`FunctionRecord.datasets`, code read from the results tree's `decompiled/*.c`
+artifacts — `scoring/report_extras.build_sample_set_samples`). The View page lists
+each tier as a dropdown option; the `sample-set` entries are what surface the
+sample-set-only backends (e.g. codex) there. A function may appear both in its GED
+tier and as a separate `sample-set` entry — they are distinct records.
 
 `samples.json` (a few MB of embedded C source) is the site's size floor — the view
 exists to *show the code*. It is fetched lazily, so it costs nothing until the reader

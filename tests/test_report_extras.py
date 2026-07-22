@@ -17,6 +17,7 @@ from decbench.scoring.report_extras import (
     PUBLISH_MALWARE_ENV,
     attach_extras,
     build_hardest,
+    build_sample_set_samples,
     build_samples,
     compute_compile_rates,
     malware_projects,
@@ -28,6 +29,10 @@ int target(int a, int b) {
     return s * 2;
 }
 """
+
+# A minimal-but-valid ELF header (x86-64) so `binfmt.detect` / `resolve_binary`
+# accept the fake binary and source_extract will search its sibling .c.
+_ELF64_HEADER = b"\x7fELF" + b"\x00" * 14 + b"\x3e\x00"
 
 
 def _make_decompile_results(binary_path: Path):
@@ -96,6 +101,98 @@ def test_compute_compile_rates() -> None:
     evaluation = {"proj": {"O0": {"bin1": {"angr": {"byte_match": bm}}}}}
     rates = compute_compile_rates(evaluation)
     assert abs(rates["angr"] - (2 / 3)) < 1e-9
+
+
+# --- sample-set materialization (site-build time) ----------------------------
+#
+# `build_sample_set_samples` is the site-build path that turns every function
+# tagged `sample-set` into a View-page entry, reading decompiled code + source
+# straight off the on-disk results tree (not the in-memory decompile results the
+# GED-tiered `build_samples` uses).
+
+
+def _write_results_tree(root: Path, project: str = "proj") -> None:
+    """Lay out one O0 binary: a codex decompiled block + an ELF binary + .c source."""
+    comp = root / "O0" / project / "compiled"
+    dec = root / "O0" / project / "decompiled"
+    comp.mkdir(parents=True)
+    dec.mkdir(parents=True)
+    (comp / "bin1").write_bytes(_ELF64_HEADER)
+    (comp / "bin1.c").write_text(SOURCE)
+    (dec / "codex_bin1.c").write_text(
+        "// Function: target @ 0x1000\nint target(int a,int b){return a+b+b;}\n"
+    )
+
+
+def _sample_set_fd(project: str = "proj", labels: list[str] | None = None) -> FunctionData:
+    fr = FunctionRecord(
+        function="target",
+        values={"codex": {"ged": 0.0, "type_match": 1.0}},
+        perfects={"codex": {"ged": True, "type_match": True}},
+        labels=["O0"],
+        datasets=["unoptimized", "sample-set"],
+        size=4,
+    )
+    return FunctionData(
+        decompilers=["codex"],
+        metrics=["ged", "type_match"],
+        perfect_values={"ged": 0.0, "type_match": 1.0},
+        groups=[
+            BinaryGroup(
+                project=project,
+                opt_level="O0",
+                binary="bin1",
+                labels=labels or [],
+                functions=[fr],
+            )
+        ],
+    )
+
+
+def test_build_sample_set_samples_materializes_from_tree(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv(PUBLISH_MALWARE_ENV, raising=False)
+    _write_results_tree(tmp_path)
+
+    samples = build_sample_set_samples(_sample_set_fd(), tmp_path)
+
+    assert len(samples) == 1
+    s = samples[0]
+    assert s.difficulty == "sample-set"
+    assert s.function == "target"
+    assert "return a+b+b" in s.decompiled["codex"]
+    # Source resolved from the sibling .c (no DWARF needed for the fake binary).
+    assert s.source_code is not None and "return s * 2;" in s.source_code
+    # Per-metric scores carried from the record, for the View page's score strip.
+    assert s.values["codex"]["ged"] == 0.0
+    assert s.perfects["codex"]["type_match"] is True
+
+
+def test_build_sample_set_samples_skips_untagged(tmp_path: Path) -> None:
+    """Only functions tagged `sample-set` become entries."""
+    _write_results_tree(tmp_path)
+    fd = _sample_set_fd()
+    for group in fd.groups:
+        for func in group.functions:
+            func.datasets = ["unoptimized"]  # not sampled into the sample-set
+    assert build_sample_set_samples(fd, tmp_path) == []
+
+
+def test_build_sample_set_samples_skips_bare_tree(tmp_path: Path, caplog) -> None:
+    """A bare scoreboard+function_results dir (no per-opt artifact dirs) yields []."""
+    import logging
+
+    # tmp_path has no O0/O2/... subdirs, so there is nothing to read.
+    with caplog.at_level(logging.WARNING, logger="decbench.scoring.report_extras"):
+        assert build_sample_set_samples(_sample_set_fd(), tmp_path) == []
+    assert "no artifact directories" in caplog.text
+
+
+def test_build_sample_set_samples_excludes_malware(tmp_path: Path, monkeypatch) -> None:
+    """A malware-project sample-set function never reaches the payload."""
+    monkeypatch.delenv(PUBLISH_MALWARE_ENV, raising=False)
+    _write_results_tree(tmp_path, project="mirai")
+    fd = _sample_set_fd(project="mirai", labels=["malware", "do-not-execute"])
+    assert build_sample_set_samples(fd, tmp_path) == []
 
 
 # --- Malware code must never reach a published payload -----------------------

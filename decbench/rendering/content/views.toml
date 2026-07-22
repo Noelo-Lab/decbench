@@ -31,12 +31,20 @@ id = "view"
 nav_label = "view"
 requires_function_data = true
 
-# The id and the nav label differ here: routing/hash uses "history", the sidebar
-# says "historical".
+# Two prose-only views (no per-function data, no generated table — app.js never
+# touches them): a maintainer's reading of the numbers, then the dated change
+# log. Both sit after the data views and before `about`. The changelog body is
+# the repo-root CHANGELOG.md injected at build time (see cli.py's site_build /
+# report); content/changelog.md is the fallback shipped for when that is absent.
 [[view]]
-id = "history"
-nav_label = "historical"
-requires_function_data = true
+id = "insights"
+nav_label = "insights"
+requires_function_data = false
+
+[[view]]
+id = "changelog"
+nav_label = "changelog"
+requires_function_data = false
 
 # The explainer page: why the benchmark exists, the three metrics (with their
 # goal cards + visualizations), and the dataset. It absorbed the old `metrics`

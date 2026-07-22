@@ -16,7 +16,7 @@
                 <div class="brand-title">DecBench</div>
                 <div class="brand-sub">decompiler benchmark</div>
             </div>
-            <nav class="nav"><a class="nav-item" data-view="leaderboard" href="#leaderboard"><span class="nav-bullet">&gt;</span> leaderboard</a><a class="nav-item" data-view="distance" href="#distance"><span class="nav-bullet">&gt;</span> distance</a><a class="nav-item" data-view="view" href="#view"><span class="nav-bullet">&gt;</span> view</a><a class="nav-item" data-view="history" href="#history"><span class="nav-bullet">&gt;</span> historical</a><a class="nav-item active" data-view="about" href="#about"><span class="nav-bullet">&gt;</span> about</a></nav>
+            <nav class="nav"><a class="nav-item" data-view="leaderboard" href="#leaderboard"><span class="nav-bullet">&gt;</span> leaderboard</a><a class="nav-item" data-view="distance" href="#distance"><span class="nav-bullet">&gt;</span> distance</a><a class="nav-item" data-view="view" href="#view"><span class="nav-bullet">&gt;</span> view</a><a class="nav-item" data-view="insights" href="#insights"><span class="nav-bullet">&gt;</span> insights</a><a class="nav-item" data-view="changelog" href="#changelog"><span class="nav-bullet">&gt;</span> changelog</a><a class="nav-item active" data-view="about" href="#about"><span class="nav-bullet">&gt;</span> about</a></nav>
             
         <div class="side-section">
             <div class="side-label">dataset</div>
@@ -57,6 +57,15 @@ scored on.</p>
     (mean &middot; median &middot; #at-0 / #measured).</p>
 
 <table id="distance-table"><thead><tr></tr></thead><tbody></tbody></table>
+
+<h3 class="sub">compiles</h3>
+<p class="view-desc">The share of each decompiler's byte_match-measured functions whose output
+actually <em>recompiled</em> after the uniform compilability-fixup pass &mdash; a
+fairness control, not a metric (type recovery is scored separately). The
+denominator is per-decompiler: functions where byte_match was measurable, so
+ARM / PE targets with no host recompiler never count against it. This rate moves
+with the selected dataset, like the columns on the leaderboard.</p>
+<table id="compile-table"><thead><tr></tr></thead><tbody></tbody></table>
     </section>
     <section class="view" id="view-view" data-view="view">
         <h2 class="view-title">view</h2>
@@ -83,11 +92,147 @@ between. pick a difficulty, a decompiler, and a metric to highlight.</p>
 </div>
 <div id="view-body"></div>
     </section>
-    <section class="view" id="view-history" data-view="history">
-        <h2 class="view-title">historical</h2>
-        <p class="view-desc">shows how each decompiler's metric scores change across versions.
-appears once &ge;2 versions have been benchmarked
-(e.g. ghidra@12.0 vs ghidra@12.1).</p>
+    <section class="view" id="view-insights" data-view="insights">
+        <h2 class="view-title">insights</h2>
+        <p class="view-desc">what the numbers actually say so far. every claim below is over the published
+data on this site — click through to the leaderboard or distance pages to check
+any of it. (maintainer's notebook: expect this page to change as results land.)</p>
+<h3 class="sub">nobody is close to solved</h3>
+<p class="view-desc">The best conventional decompiler recovers a function perfectly — on even one
+metric — less than half the time on the <em>easiest</em> preset (unoptimized builds:
+Hex-Rays 47.7%, Kuna 47.5%). Turn optimization on and the leaders drop to ~34%.
+Decompilation at the function level, measured against ground truth instead of
+taste, is far from a finished problem.</p>
+<h3 class="sub">an LLM agent doubles the field — on the slice it can afford</h3>
+<p class="view-desc">On the ~250-function <code>sample-set</code>, Codex reaches <strong>53.9%</strong> Union — roughly
+double the best conventional decompiler on the same functions (angr 28.4%,
+Hex-Rays 27.2%). Two caveats keep this honest: LLM backends only run on the
+sample-set (one agentic call per function is orders of magnitude slower and
+costlier than any decompiler here), and Codex's type accuracy is still near
+zero — it wins on control-flow structure and on producing code that actually
+recompiles (21.4% vs. low single digits for everyone else).</p>
+<h3 class="sub">structuring beats frontends</h3>
+<p class="view-desc">Kuna — a research port that reuses Ghidra's frontend but replaces the
+structuring — beats stock Ghidra by ~15 points of Union on every preset. Where
+the control-flow graph gets turned back into <code>if</code>/<code>while</code>, not where the bytes
+get lifted, is where perfection is won or lost.</p>
+<h3 class="sub">type recovery is the weakest link</h3>
+<p class="view-desc">Structure is regularly recovered perfectly; types almost never are. The best
+type score on any preset is angr's 12.1% at O0, and every decompiler falls to
+low single digits once the optimizer erases stack frames. If you want a
+research gap, this is the widest one on the board.</p>
+<h3 class="sub">optimization is the great equalizer</h3>
+<p class="view-desc">From O0 to O2-noinline, every conventional decompiler loses roughly a third of
+its perfect functions (Hex-Rays 47.7% → 33.9%, angr 45.3% → 33.4%). Inlining
+(plain O2) costs a few points more. The ranking barely changes — optimization
+hurts everyone about equally.</p>
+<h3 class="sub">recompilable output is still rare</h3>
+<p class="view-desc">Even after the fairness passes (uniform compilability fixups, link-time operand
+normalization), conventional decompilers produce assembly-matching recompiles
+for under 7% of functions. Readable-but-unrebuildable remains the norm.</p>
+<h3 class="sub">the errors column is a story of its own</h3>
+<p class="view-desc">dewolf fails outright on half the corpus (50–72% depending on preset) — the
+cost of a research pipeline with aggressive simplification. The LLM backends are
+listed only under the <code>sample-set</code> preset, the one slice they are run on; on
+every other preset their rows are omitted rather than shown, so there is no
+inflated error rate there to read into.</p>
+    </section>
+    <section class="view" id="view-changelog" data-view="changelog">
+        <h2 class="view-title">changelog</h2>
+        <p class="view-desc">User-visible changes to the DecBench benchmark and site, newest first. Dates are
+when the change reached the published site. Internal refactors and tooling are
+listed only when they changed published numbers.</p>
+<h3 class="sub">2026-07-22</h3>
+<ul>
+<li><strong>Codex joins the leaderboard</strong> on the <code>sample-set</code> dataset (~250 functions
+sampled across the corpus): an agentic LLM decompiler driven one function at a
+time, now shown with its logo and official name. LLM backends run only on
+<code>sample-set</code> for cost reasons — their rows are omitted on the other presets
+rather than shown as near-total failures.</li>
+<li>New <strong>insights</strong> and <strong>changelog</strong> (this page) pages.</li>
+<li>The <strong>view</strong> page can browse the <code>sample-set</code> functions directly (a
+<code>sample-set</code> option in the difficulty selector), and selecting the
+<code>sample-set</code> preset shows which projects were sampled.</li>
+<li>The <strong>historical</strong> page was removed; the per-decompiler <strong>Compiles</strong> rate
+moved from the leaderboard to its own table on the <strong>distance</strong> page.</li>
+</ul>
+<h3 class="sub">2026-07-21</h3>
+<ul>
+<li><strong>Recompilation (byte_match) metric fairness pass.</strong> Fixed compilability
+fixup gaps, unlinked <code>[rip]</code> operand handling, and dropped <code>-f*</code> flags that
+penalized decompilers for toolchain differences rather than wrong code. A new
+per-decompiler <strong>Compiles</strong> rate was published alongside it.</li>
+<li><strong>dewolf</strong> results completed across the full corpus (sharded Binary Ninja
+drivers; per-function hang cap).</li>
+</ul>
+<h3 class="sub">2026-07-20</h3>
+<ul>
+<li>The site moved to <strong>decbench.com</strong>.</li>
+<li><strong>Light mode</strong>: a sidebar toggle switches between the terminal-dark default
+and a terminal-on-paper light theme.</li>
+<li>Leaderboard rows show each decompiler's <strong>logo</strong>, official name, and version.</li>
+</ul>
+<h3 class="sub">2026-07-19</h3>
+<ul>
+<li><strong>r2dec</strong> results published (radare2's r2dec plugin, run via Docker on the
+real plugin — not the asm-like native fallback).</li>
+<li>Fixed a regression where a resume run silently reverted all three metric
+columns to stale pre-fairness values (Kuna briefly showed 22% instead of 47%).</li>
+</ul>
+<h3 class="sub">2026-07-18</h3>
+<ul>
+<li><strong>Linkable URLs</strong>: every page has its own address (<code>/leaderboard/</code>,
+<code>/view/</code>, ...) and the selected dataset / normalize toggle / viewed function
+live in the URL, so any configuration can be shared.</li>
+<li>The <strong>about</strong> page's metric visualizations were rebuilt (CFG diff for GED,
+recompiled-assembly diff for byte_match, a stack-frame matching diagram for
+type_match) after a rendering bug left them blank.</li>
+<li><strong>Syntax highlighting</strong> for all source and decompiled code on the site.</li>
+<li>The <strong>view</strong> page recovers source for firmware targets from preprocessed
+units (<code>.i</code>) when the original <code>.c</code> was not captured, and explains the reason
+whenever source cannot be shown.</li>
+</ul>
+<h3 class="sub">2026-07-16 — v1.0</h3>
+<ul>
+<li>The benchmark is versioned <strong>v1.0</strong> and the report became this site.</li>
+<li><strong>Union</strong> replaced the old Overall column: the share of functions a
+decompiler recovers perfectly on <em>at least one</em> metric.</li>
+<li>Views consolidated: <strong>about</strong> absorbed metrics + dataset; <strong>view</strong> absorbed
+compare + hardest (with easy/medium/hard difficulty tiers).</li>
+<li>Dataset presets: <code>unoptimized</code> / <code>optimized</code> / <code>inlined</code> / <code>large</code> /
+<code>sample-set</code>.</li>
+<li>New backends: <strong>dewolf</strong> and <strong>Kuna</strong>; <strong>phoenix</strong> runs but is hidden from
+the site.</li>
+</ul>
+<h3 class="sub">2026-07-12 .. 2026-07-15 — fairness overhauls</h3>
+<ul>
+<li>Every decompiler "failure" was traced to benchmark bugs and fixed: phantom
+function rows, PE/Thumb address mismatches, timeout parity across backends,
+Joern parse failures on decompiler-specific C quirks. Error rates dropped
+across the board (e.g. IDA 17% → 4.5%, Ghidra 28% → 16%).</li>
+<li>GED: source CFGs are matched per translation unit (no more cross-file name
+collisions) and degenerate source CFGs are excluded rather than rewarded.</li>
+<li>type_match: per-function stack-offset calibration so frame-relative variables
+align with DWARF ground truth at every optimization level.</li>
+</ul>
+<h3 class="sub">2026-06-25 .. 2026-06-30 — v2 and corpus expansion</h3>
+<ul>
+<li>Declib-free native backends for angr, Ghidra, IDA, Binary Ninja; multi-version
+decompiler support (<code>ghidra@12.0</code> vs <code>ghidra@12.1</code>); content-addressed metric
+caching; reusable compiled-binary datasets.</li>
+<li>Corpus: 26 sailr-eval Debian packages joined by <strong>11 cross-compiled ARM
+firmware targets</strong> (flight controllers, RTOSes, bootloaders) and <strong>6 real
+malware samples</strong> (compiled in isolation, never executed; source never
+published).</li>
+<li>Windows/PE support in type_match and byte_match.</li>
+</ul>
+<h3 class="sub">2026-02 .. 2026-04 — origins</h3>
+<ul>
+<li>Started from sailr-eval; rebuilt around the three-metric system:
+<strong>Structural Correctness (GED)</strong>, <strong>Type Correctness</strong>, and <strong>Recompilation
+Bytematch</strong>, each scored against compiler ground truth (DWARF + the original
+toolchain) rather than taste.</li>
+</ul>
     </section>
     <section class="view active" id="view-about" data-view="about">
         <h2 class="view-title">decbench</h2>
@@ -461,6 +606,8 @@ that's reported here (per decompiler), not folded into the headline score.</p>
 <table id="joern-output-table"><thead><tr></tr></thead><tbody></tbody></table>
 
 <h3 class="sub">projects</h3>
+<p class="view-desc" id="dataset-projects-note"></p>
+
 <table id="dataset-projects"><thead><tr></tr></thead><tbody></tbody></table>
     </section>
             <div class="rule"></div>

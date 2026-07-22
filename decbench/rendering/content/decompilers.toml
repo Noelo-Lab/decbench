@@ -78,15 +78,17 @@ logo = true
 
 [[decompiler]]
 id = "codex"
-display_name = "OpenAI Codex"
+display_name = "Codex"
 url = "https://openai.com/codex/"
 license = "closed-source"
+logo = true
 
 [[decompiler]]
 id = "claude-code"
 display_name = "Claude Code"
 url = "https://claude.com/claude-code"
 license = "closed-source"
+logo = true
 
 [[decompiler]]
 id = "retdec"

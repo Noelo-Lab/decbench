@@ -265,6 +265,30 @@ def test_default_preset_is_explicit_not_positional() -> None:
     assert defaults == ["full"]
 
 
+def test_dataset_projects_carry_their_presets_in_selector_order() -> None:
+    """Each project row lists the presets >=1 of its functions belongs to.
+
+    Drives the About page's preset-aware project filter (sample-set lists only its
+    projects). Order is the selector's (dataset_presets), not set order, so the
+    payload rebuilds byte-identically.
+    """
+    both = _func("both", values={}, perfects={}, datasets=["full", "tiny"])
+    full_only = _func("full_only", values={}, perfects={}, datasets=["full"])
+    dataset = build_dataset_page(_data([both, full_only]))
+
+    row = next(p for p in dataset["projects"] if p["name"] == "proj")
+    assert row["presets"] == ["full", "tiny"]
+
+
+def test_dataset_projects_omit_a_preset_no_function_carries() -> None:
+    """A registered preset that tags none of a project's functions is not listed."""
+    only_full = _func("f", values={}, perfects={}, datasets=["full"])
+    dataset = build_dataset_page(_data([only_full]))
+
+    row = next(p for p in dataset["projects"] if p["name"] == "proj")
+    assert row["presets"] == ["full"]  # "tiny" is registered but unused here
+
+
 # -- the no-presets fallback -----------------------------------------------
 
 

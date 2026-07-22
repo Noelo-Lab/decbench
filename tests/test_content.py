@@ -41,21 +41,18 @@ def test_view_registry_covers_the_report(content: Content) -> None:
         "leaderboard",
         "distance",
         "view",
-        "history",
+        "insights",
+        "changelog",
         "about",
     ]
-
-
-def test_history_view_id_differs_from_its_nav_label(content: Content) -> None:
-    """Routing says "history"; the sidebar says "historical"."""
-    spec = next(v for v in content.view_specs if v.id == "history")
-    assert spec.nav_label == "historical"
 
 
 def test_visible_views_drop_data_backed_views_without_data(content: Content) -> None:
     without = [v.id for v in content.visible_views(has_function_data=False)]
     with_data = [v.id for v in content.visible_views(has_function_data=True)]
-    assert without == ["leaderboard", "about"]
+    # distance/view need per-function data; leaderboard and the two prose views
+    # (insights/changelog) plus about do not.
+    assert without == ["leaderboard", "insights", "changelog", "about"]
     assert with_data == [v.id for v in content.view_specs]
 
 
@@ -105,6 +102,32 @@ def test_convention_comments_are_stripped(content: Content) -> None:
     for spec in content.view_specs:
         view = content.view(spec.id)
         assert "<!--" not in view.body_html + view.outro_html + view.empty_html
+
+
+def test_prose_views_need_no_data_and_carry_a_body(content: Content) -> None:
+    """insights and changelog are prose-only: rendered from their .md, no data."""
+    for vid in ("insights", "changelog"):
+        spec = next(v for v in content.view_specs if v.id == vid)
+        assert not spec.requires_function_data, vid
+        assert content.view(vid).body_html, vid
+
+
+def test_with_view_reparses_only_the_named_view(content: Content) -> None:
+    """with_view swaps ONE view's prose from a string, leaving the rest intact.
+
+    This is how the CLI injects the repo-root CHANGELOG.md into the changelog
+    view at build time without writing into the packaged content/ tree.
+    """
+    injected = content.with_view("changelog", "# changelog\n\n- an injected bullet.")
+    body = injected.view("changelog").body_html
+    assert injected.view("changelog").title == "changelog"
+    assert "<li>an injected bullet.</li>" in body  # markdown lists render as lists
+    # Only the changelog view changed; every other view is the same object, and
+    # the original Content is untouched.
+    assert injected.view("about") is content.view("about")
+    assert "an injected bullet." not in content.view("changelog").body_html
+    # An unregistered id is a no-op (returns self, not a copy).
+    assert content.with_view("does-not-exist", "# x") is content
 
 
 # -- metrics ---------------------------------------------------------------
