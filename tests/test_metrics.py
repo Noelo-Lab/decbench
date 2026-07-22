@@ -547,8 +547,8 @@ int main() {
         assert result.value == 1.0
         assert result.metadata["tp"] == 1
 
-    def test_regex_fallback_no_variables(self) -> None:
-        """No structured variables -> fall back to regex extraction by name."""
+    def test_code_parsed_local_no_variables(self) -> None:
+        """No structured variables -> parse the C, match the local by name."""
         from decbench.metrics.type_match import TypeMatchMetric
 
         func = FunctionDecompilation(
@@ -563,8 +563,35 @@ int main() {
 
         metric = TypeMatchMetric()
         result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
-        assert result.metadata["matched_by"] == "regex"
+        # The local declaration is now parsed into a structured variable and
+        # matched by name via the structured matcher (value unchanged at 1.0).
+        assert result.metadata["matched_by"] == "structured"
         assert result.value == 1.0
+
+    def test_code_parsed_arguments_by_position(self) -> None:
+        """A code-only decompiler (no structured vars) gets ABI-position credit
+        for its arguments — e.g. ``wcomment(FILE *fp, int c)`` whose only
+        variables are its args scored 0 under the old name-only regex fallback."""
+        from decbench.metrics.type_match import TypeMatchMetric
+
+        func = FunctionDecompilation(
+            name="wcomment",
+            address=0x18A5,
+            decompiled_code='void wcomment(FILE *fp, int c)\n{\n    fputs("x", fp);\n}\n',
+            variables=[],
+        )
+        # DWARF ground truth: two arguments; the decompiler renamed the 2nd
+        # (``c`` vs ``i``), so only ABI position — not name — can match it.
+        gt_vars = [
+            {"name": "fp", "type": ["FILE*"], "is_arg": True, "arg_index": 0, "rbp_offset": [-8]},
+            {"name": "i", "type": ["int"], "is_arg": True, "arg_index": 1, "rbp_offset": [-12]},
+        ]
+
+        metric = TypeMatchMetric()
+        result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
+        assert result.value == 1.0
+        assert result.metadata["matched_by_arg"] == 2
+        assert result.metadata["matched_by"] == "structured"
 
     def test_offset_loclist_any_of(self) -> None:
         """GT loclist with multiple offsets matches if any aligns."""

@@ -519,49 +519,153 @@ def _get_array_dims(die: Any) -> list[int | None]:
     return dims
 
 
+# Match common C local-variable declarations:
+#   type name;  |  type name = ...;  |  type *name;  |  type name[N];
+_DECL_PATTERN = re.compile(
+    r"^\s*"
+    r"((?:(?:unsigned|signed|const|volatile|static|struct|union|enum)\s+)*"
+    r"(?:(?:long\s+long|long|short|int|char|float|double|void|bool|"
+    r"__int\d+|_DWORD|_QWORD|_WORD|_BYTE|_BOOL|"
+    r"u?int\d+_t|size_t|ssize_t|"
+    r"undefined\d?|ulong|uint|ushort|uchar|"
+    r"\w+_t)\s*\**)"  # type with possible pointer
+    r")"
+    r"\s+"
+    r"(\w+)"  # variable name
+    r"\s*(?:\[[^\]]*\])?"  # optional array
+    r"\s*(?:=[^;]*)?"  # optional initializer
+    r"\s*;",  # semicolon
+    re.MULTILINE,
+)
+
+_DECL_SKIP = frozenset({"if", "else", "while", "for", "return", "switch", "case", "break"})
+
+
+def _extract_local_decls(code: str) -> list[tuple[str, str]]:
+    """(name, RAW type string) for each local declaration in ``code``."""
+    out: list[tuple[str, str]] = []
+    for match in _DECL_PATTERN.finditer(code):
+        var_name = match.group(2).strip()
+        if var_name in _DECL_SKIP:
+            continue
+        out.append((var_name, match.group(1).strip()))
+    return out
+
+
 def extract_types_from_decompiled_code(code: str) -> list[dict[str, Any]]:
     """Extract variable declarations and their types from decompiled C code.
 
     Uses regex-based parsing to find variable declarations.
     Returns list of dicts with 'name' and 'type' fields.
     """
-    variables: list[dict[str, Any]] = []
+    return [
+        {"name": name, "type": list(normalize_type(type_str))}
+        for name, type_str in _extract_local_decls(code)
+    ]
 
-    # Match common C variable declaration patterns
-    # Handles: type name; type name = ...; type *name; type name[N];
-    decl_pattern = re.compile(
-        r"^\s*"
-        r"((?:(?:unsigned|signed|const|volatile|static|struct|union|enum)\s+)*"
-        r"(?:(?:long\s+long|long|short|int|char|float|double|void|bool|"
-        r"__int\d+|_DWORD|_QWORD|_WORD|_BYTE|_BOOL|"
-        r"u?int\d+_t|size_t|ssize_t|"
-        r"undefined\d?|ulong|uint|ushort|uchar|"
-        r"\w+_t)\s*\**)"  # type with possible pointer
-        r")"
-        r"\s+"
-        r"(\w+)"  # variable name
-        r"\s*(?:\[[^\]]*\])?"  # optional array
-        r"\s*(?:=[^;]*)?"  # optional initializer
-        r"\s*;",  # semicolon
-        re.MULTILINE,
-    )
 
-    for match in decl_pattern.finditer(code):
-        type_str = match.group(1).strip()
-        var_name = match.group(2).strip()
+def _split_top_level_commas(s: str) -> list[str]:
+    """Split ``s`` on commas that are not nested inside (), [], or {}."""
+    parts: list[str] = []
+    depth = 0
+    cur: list[str] = []
+    for ch in s:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+        if ch == "," and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    if cur:
+        parts.append("".join(cur))
+    return parts
 
-        # Skip function-like names and common C keywords
-        if var_name in ("if", "else", "while", "for", "return", "switch", "case", "break"):
+
+def _find_definition_params(code: str, func_name: str) -> str | None:
+    """Raw parameter-list text of ``func_name``'s DEFINITION, or None.
+
+    The definition is the occurrence whose matching ``)`` is followed by ``{``
+    (a call or a prototype ending in ``;`` is not). Balanced-paren scan so
+    function-pointer parameters with nested parens are handled.
+    """
+    if not func_name:
+        return None
+    for m in re.finditer(r"\b" + re.escape(func_name) + r"\s*\(", code):
+        open_i = code.index("(", m.start())
+        depth = 0
+        close_i: int | None = None
+        for j in range(open_i, len(code)):
+            c = code[j]
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+                if depth == 0:
+                    close_i = j
+                    break
+        if close_i is None:
             continue
+        if code[close_i + 1 :].lstrip().startswith("{"):
+            return code[open_i + 1 : close_i]
+    return None
 
-        variables.append(
-            {
-                "name": var_name,
-                "type": list(normalize_type(type_str)),
-            }
-        )
 
-    return variables
+def _parse_param(param: str) -> tuple[str, str] | None:
+    """(name, RAW type) for one C parameter, or None for ``void``/unnamed."""
+    p = param.strip()
+    if not p or p == "void":
+        return None
+    # function pointer:  ret (*name)(args)  /  ret (*name[N])(args)
+    m = re.search(r"\(\s*\*+\s*(\w+)\s*(?:\[[^\]]*\])?\s*\)", p)
+    if m:
+        return m.group(1), (p[: m.start()] + "(*)" + p[m.end() :]).strip()
+    p = re.sub(r"\[[^\]]*\]\s*$", "", p).strip()  # drop a trailing array subscript
+    m = re.search(r"([A-Za-z_]\w*)\s*$", p)  # the last identifier is the name
+    if not m:
+        return None
+    name = m.group(1)
+    type_ = p[: m.start()].strip()
+    if not type_:  # a lone identifier is a type without a parameter name
+        return None
+    return name, type_
+
+
+def parse_c_variables(code: str, func_name: str) -> list[Any]:
+    """Best-effort structured ``VariableInfo`` list from decompiled C text.
+
+    Recovers function ARGUMENTS (with ABI ``arg_index``, name-independent) from
+    ``func_name``'s signature plus local declarations from the body, so a
+    decompiler that emits only C text (the LLM backends) is scored by the same
+    argument-position + name matching as one exposing structured variables —
+    instead of the name-only regex fallback, which never credited arguments (a
+    function whose only variables are its arguments therefore scored 0 despite
+    perfect argument types, e.g. ``wcomment(FILE *fp, int c)``).
+    """
+    from decbench.models.decompilation import VariableInfo
+
+    out: list[Any] = []
+    params = _find_definition_params(code, func_name)
+    argnames: set[str] = set()
+    if params is not None:
+        for i, raw in enumerate(_split_top_level_commas(params)):
+            parsed = _parse_param(raw)
+            if parsed is None:
+                # A non-void, un-nameable slot still occupies its ABI position.
+                token = raw.strip()
+                if token and token != "void":
+                    out.append(VariableInfo(name="", type=token, arg_index=i, kind="arg"))
+                continue
+            name, type_ = parsed
+            argnames.add(name)
+            out.append(VariableInfo(name=name, type=type_, arg_index=i, kind="arg"))
+    for name, type_ in _extract_local_decls(code):
+        if name in argnames:
+            continue
+        out.append(VariableInfo(name=name, type=type_, kind="stack"))
+    return out
 
 
 def _candidate_shifts(gt_offsets: list[int], decomp_offsets: list[int]) -> list[int]:
@@ -713,7 +817,11 @@ class TypeMatchMetric(Metric):
     # shift silently failed for IDA, scoring most of its stack vars as misses).
     # v3: uncommitted (width-only) types match a same-width GT scalar; recover
     # local_/var_ name-encoded stack offsets; pointers/aggregates stay strict.
-    cache_version = "3"
+    # v4: code-only decompilers (LLM backends) with no structured variables now
+    # get their C signature parsed into arguments (ABI position) + locals and run
+    # through the structured matcher — the old name-only regex fallback never
+    # credited arguments, zeroing functions whose only variables are their args.
+    cache_version = "4"
 
     weight = 1.0
     lower_is_better = False
@@ -799,6 +907,16 @@ class TypeMatchMetric(Metric):
         calibration_shift: int | None,
     ) -> MetricValue:
         gt_stack_vars = sum(1 for gv in ground_truth_vars if gv.get("rbp_offset"))
+
+        # Code-only decompilers (the LLM backends) expose no structured variables.
+        # Parse the emitted C into arguments (with ABI position) + locals so they
+        # get the same name-independent argument-position matching as everyone
+        # else, instead of the name-only regex fallback that never scored args.
+        if not decompiled.variables and decompiled.decompiled_code:
+            parsed = parse_c_variables(decompiled.decompiled_code, decompiled.name)
+            if parsed:
+                decompiled = decompiled.model_copy(update={"variables": parsed})
+
         decomp_stack_vars = sum(1 for v in decompiled.variables if _effective_offset(v) is not None)
 
         if decompiled.variables:
