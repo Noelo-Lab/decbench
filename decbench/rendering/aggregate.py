@@ -53,6 +53,13 @@ __all__ = [
 #: error banner. Kept in sync by ``docs/SITE_DATA_SCHEMA.md`` and tests.
 ALL_PRESET = "__all__"
 
+#: The preset on which the sample-set-only decompilers (codex/claude-code — the LLM
+#: agents, cost-gated to the ~250-function sample-set slice) are actually shown.
+#: Mirrors ``app.js``'s ``SAMPLE_SET_PRESET``; the two must stay in sync. Used by the
+#: normalize gate: those decompilers join the "every decompiler decompiled it" test
+#: only where their rows render (see :func:`_active_combos`).
+SAMPLE_SET_PRESET = "sample-set"
+
 #: Floats are emitted EXACTLY as computed — deliberately unrounded. Rounding used to
 #: happen here (3dp) and was documented as "lossless"; it was not. The client
 #: re-renders some values at FEWER places than it stored (``toFixed(2)`` for Compare
@@ -171,6 +178,13 @@ class _FunctionFacts:
 
     datasets: frozenset[str]
     all_decompiled: bool
+    #: ``all_decompiled`` with the sample-set-only decompilers ignored. Those backends
+    #: only ever attempt the sample-set slice, so requiring them everywhere would (and,
+    #: from 2026-07-22 until this field existed, DID) collapse every normalize=1 combo
+    #: to the sample-set intersection — optimized|1 went 7,850 -> 50 functions the day
+    #: codex landed. Both flags are selector-independent; :func:`_active_combos` picks
+    #: per preset.
+    all_full_coverage_decompiled: bool
     err_scope: tuple[bool, ...]
     err_errored: tuple[bool, ...]
     measurable: tuple[bool, ...]
@@ -191,6 +205,7 @@ def _function_facts(
     metrics: list[str],
     distance_metrics: list[str],
     ged_present: bool,
+    sample_set_only: frozenset[str] = frozenset(),
 ) -> _FunctionFacts:
     """Reduce one function to its combo-independent contribution."""
     measurable = tuple(_metric_measurable(func, m, decompilers, ged_present) for m in metrics)
@@ -202,6 +217,7 @@ def _function_facts(
     distances: list[tuple[float | None, ...]] = []
     compiles: list[bool | None] = []
     all_decompiled = True
+    all_full_coverage_decompiled = True
 
     for dec in decompilers:
         # Errors: a function is in scope for `dec` if it attempted it (present in the
@@ -212,6 +228,8 @@ def _function_facts(
 
         if not _decompiled_by(func, dec):
             all_decompiled = False
+            if dec not in sample_set_only:
+                all_full_coverage_decompiled = False
 
         fperf = func.perfects.get(dec) or {}
         flags = tuple(bool(fperf.get(m)) for m in metrics)
@@ -243,6 +261,7 @@ def _function_facts(
     return _FunctionFacts(
         datasets=frozenset(func.datasets),
         all_decompiled=all_decompiled,
+        all_full_coverage_decompiled=all_full_coverage_decompiled,
         err_scope=tuple(err_scope),
         err_errored=tuple(err_errored),
         measurable=measurable,
@@ -398,6 +417,13 @@ def _active_combos(
     decompiled — so scores compare like with like instead of rewarding a decompiler
     for skipping what it found hard.
 
+    "Every decompiler" means every decompiler *whose row the preset shows*: the
+    sample-set-only backends (codex/claude-code) attempt nothing outside the
+    sample-set slice, so they join the gate only on :data:`SAMPLE_SET_PRESET` —
+    where their rows render — and are ignored elsewhere. Requiring them everywhere
+    collapsed every ``|1`` combo to the sample-set intersection (optimized|1
+    7,850 -> 50) when codex landed on 2026-07-22.
+
     ``match_all`` is the preset-less fallback: every function joins the synthetic
     :data:`ALL_PRESET` combo whatever its (absent) tags say. It restores the old
     client's ``if (!state.dataset) return true;`` — see :func:`build_aggregates`.
@@ -408,7 +434,12 @@ def _active_combos(
     for name in preset_names:
         if match_all or name in facts.datasets:
             combos.append((name, False))
-            if facts.all_decompiled:
+            gated = (
+                facts.all_decompiled
+                if name == SAMPLE_SET_PRESET
+                else facts.all_full_coverage_decompiled
+            )
+            if gated:
                 combos.append((name, True))
     return combos
 
@@ -443,9 +474,12 @@ def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dic
     # the sample-set slice only, so on other presets they would be near-empty under
     # the shared denominator. The client (app.js) keeps their rows off non-sample-set
     # views; their data still ships. Match by exact id or base name, like `hidden`.
+    # Also fed to the normalize gate via _function_facts: off the sample-set preset
+    # these backends never gate the normalize=1 universe (see _active_combos).
     sample_set_only = [
         d for d in decompilers if is_hidden(d, content.site.sample_set_only_decompilers)
     ]
+    sample_set_only_set = frozenset(sample_set_only)
     metrics = function_data.metrics
     distance_metrics = content.ordered_metrics(metrics)
     presets = function_data.dataset_presets
@@ -466,7 +500,9 @@ def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dic
     for group in function_data.groups:
         for func in group.functions:
             total_functions += 1
-            facts = _function_facts(func, decompilers, metrics, distance_metrics, ged_present)
+            facts = _function_facts(
+                func, decompilers, metrics, distance_metrics, ged_present, sample_set_only_set
+            )
             for combo in _active_combos(facts, combo_names, match_all):
                 accumulators[combo].add(facts)
         for accumulator in accumulators.values():

@@ -242,6 +242,82 @@ def test_normalize_can_empty_a_group() -> None:
     assert aggregates["totals"]["binaries"] == 1, "totals are corpus-wide, not per-combo"
 
 
+def _data_with_codex(functions: list[FunctionRecord]) -> FunctionData:
+    """A dataset whose decompilers include a sample-set-only backend.
+
+    ``codex`` is on the REAL site.toml ``[decompilers] sample_set_only`` list (that is
+    what ``build_aggregates`` consults), so these fixtures exercise the normalize gate
+    exactly as the published site does. Presets include the real ``sample-set`` name.
+    """
+    return FunctionData(
+        decompilers=[*DECS, "codex"],
+        metrics=list(METRICS),
+        groups=[
+            BinaryGroup(
+                project="proj", opt_level="O0", binary="bin", labels=[], functions=functions
+            )
+        ],
+        dataset_presets=[
+            DatasetPreset(name="full", label="full", description=""),
+            DatasetPreset(name="sample-set", label="sample-set", description=""),
+        ],
+    )
+
+
+def test_sample_set_only_decompiler_does_not_gate_normalize_off_its_preset() -> None:
+    """codex skipping a function must not shrink normalize=1 off the sample-set view.
+
+    The LLM backends attempt ONLY the sample-set slice; from 2026-07-22 (codex lands)
+    until this rule, they sat in the all-decompiled gate for every preset and collapsed
+    each ``|1`` combo to the sample-set intersection (optimized|1: 7,850 -> 50). Off
+    the sample-set preset their rows are not even rendered, so they must not gate.
+    """
+    func = _func(
+        "everyone_but_codex",
+        values={d: {"byte_match": 1.0, "ged": 0.0, "type_match": 1.0} for d in DECS},
+        perfects={d: {"byte_match": True, "ged": True, "type_match": True} for d in DECS},
+        decompiled={"alpha": True, "beta": True, "codex": False},
+    )
+    aggregates = _build(_data_with_codex([func]))
+
+    normalized = aggregates["combos"][combo_key("full", True)]
+    assert normalized["functions"] == 1, "codex's cost-gate skip must not gate normalize"
+    assert normalized["per_metric"]["alpha"]["ged"] == [1, 1]
+
+    # A conventional decompiler failing still gates: like-with-like is preserved.
+    func_beta_failed = _func(
+        "beta_failed",
+        values={"alpha": {"byte_match": 1.0, "ged": 0.0, "type_match": 1.0}},
+        perfects={"alpha": {"byte_match": True, "ged": True, "type_match": True}},
+        decompiled={"alpha": True, "beta": False, "codex": False},
+    )
+    aggregates = _build(_data_with_codex([func_beta_failed]))
+    assert aggregates["combos"][combo_key("full", True)]["functions"] == 0
+
+
+def test_sample_set_only_decompiler_still_gates_the_sample_set_preset() -> None:
+    """On the sample-set preset the LLM rows ARE shown, so their failures gate there."""
+    all_three = _func(
+        "all_three",
+        values={d: {"ged": 0.0} for d in [*DECS, "codex"]},
+        perfects={d: {"ged": True} for d in [*DECS, "codex"]},
+        decompiled={"alpha": True, "beta": True, "codex": True},
+        datasets=["sample-set"],
+    )
+    codex_failed = _func(
+        "codex_failed",
+        values={d: {"ged": 0.0} for d in DECS},
+        perfects={d: {"ged": True} for d in DECS},
+        decompiled={"alpha": True, "beta": True, "codex": False},
+        datasets=["sample-set"],
+    )
+    aggregates = _build(_data_with_codex([all_three, codex_failed]))
+
+    assert aggregates["combos"][combo_key("sample-set", False)]["functions"] == 2
+    normalized = aggregates["combos"][combo_key("sample-set", True)]
+    assert normalized["functions"] == 1, "codex's real failure gates where its row renders"
+
+
 # -- presets ---------------------------------------------------------------
 
 
