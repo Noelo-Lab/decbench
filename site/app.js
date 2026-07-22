@@ -497,6 +497,21 @@ function totalFunctions() { return (AGG && AGG.totals && AGG.totals.functions) |
 // shows the raw counts next to the bar, so the pair is what it needs.
 function pairOf(map, key) { const c = map && map[key]; return c || [0, 0]; }
 function metricCell(result, d, m) { return pairOf((result.per_metric || {})[d], m); }
+
+// Decompilers to render as rows for the CURRENT preset. Backends in
+// AGG.sample_set_only (the LLM/coding-agent ones — codex/claude-code) ran on the
+// sample-set slice only, so their rows are shown ONLY when the sample-set preset is
+// selected; on every other view they are omitted (their data still ships, it is
+// just not rendered where the shared denominator would make them look near-empty).
+const SAMPLE_SET_PRESET = "sample-set";
+function visibleDecs() {
+    const all = ((AGG && AGG.decompilers) || []).slice();
+    const sso = (AGG && AGG.sample_set_only) || [];
+    if (!sso.length) return all;
+    const preset = state.dataset || defaultPresetName();
+    if (preset === SAMPLE_SET_PRESET) return all;
+    return all.filter(d => sso.indexOf(d) < 0);
+}
 function overallCell(result, d) { return pairOf(result.overall, d); }
 function errorCell(result, d) { return pairOf(result.errors, d); }
 // Compiles: share of a decompiler's byte_match-measured functions whose output
@@ -569,7 +584,7 @@ function sortValue(d, key, result) {
 function buildLeaderboard(result) {
     const tbl = document.getElementById("leaderboard-table");
     if (!tbl) return;
-    const decs = AGG.decompilers.slice(), metrics = orderedMetrics();
+    const decs = visibleDecs(), metrics = orderedMetrics();
     // Header. "Errors" = how often the decompiler failed/timed out on a
     // function it was asked to decompile (lower is better).
     const cols = [["__name__", "decompiler"], ["__overall__", "Union"]];
@@ -618,7 +633,7 @@ function buildLeaderboard(result) {
 function buildMetricsTable(result) {
     const tbl = document.getElementById("metrics-perfect-table");
     if (!tbl) return;
-    const decs = AGG.decompilers, metrics = orderedMetrics();
+    const decs = visibleDecs(), metrics = orderedMetrics();
     let head = "<th>decompiler</th>";
     for (const m of metrics) head += "<th>" + escapeHtml(metricShort(m)) + "</th>";
     head += '<th class="col-overall">Union</th><th>Errors</th>';
@@ -641,7 +656,7 @@ function buildMetricsTable(result) {
 function buildDistance(result) {
     const tbl = document.getElementById("distance-table");
     if (!tbl) return;
-    const decs = AGG.decompilers, metrics = orderedMetrics(), dist = result.distance || {};
+    const decs = visibleDecs(), metrics = orderedMetrics(), dist = result.distance || {};
     let head = "<th>decompiler</th>";
     for (const m of metrics) head += "<th>" + escapeHtml(metricShort(m)) + " dist</th>";
     tbl.querySelector("thead tr").innerHTML = head;

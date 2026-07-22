@@ -30,8 +30,8 @@
                 </button>
             </div>
         </div>
-            <div class="side-stats"><div class="side-stat"><span class="side-num" data-stat="functions">94,716</span> functions</div><div class="side-stat"><span class="side-num" data-stat="binaries">806</span> binaries</div><div class="side-stat"><span class="side-num">7</span> decompilers</div><div class="side-stat"><span class="side-num">3</span> metrics</div></div>
-            <div class="side-foot"><button class="ds-btn theme-toggle" id="theme-toggle" type="button" aria-label="toggle light or dark theme"><span class="th-to-light">[ light mode ]</span><span class="th-to-dark">[ dark mode ]</span></button><div class="side-foot-stamp">[ 2026-07-21 04:25 ]</div></div>
+            <div class="side-stats"><div class="side-stat"><span class="side-num" data-stat="functions">94,074</span> functions</div><div class="side-stat"><span class="side-num" data-stat="binaries">806</span> binaries</div><div class="side-stat"><span class="side-num">8</span> decompilers</div><div class="side-stat"><span class="side-num">3</span> metrics</div></div>
+            <div class="side-foot"><button class="ds-btn theme-toggle" id="theme-toggle" type="button" aria-label="toggle light or dark theme"><span class="th-to-light">[ light mode ]</span><span class="th-to-dark">[ dark mode ]</span></button><div class="side-foot-stamp">[ 2026-07-21 22:47 ]</div></div>
         </aside>
 
         <main class="main">
@@ -85,9 +85,9 @@ between. pick a difficulty, a decompiler, and a metric to highlight.</p>
     </section>
     <section class="view" id="view-history" data-view="history">
         <h2 class="view-title">historical</h2>
-        <p class="view-desc">per-metric perfect % across decompiler versions (x = version order,
-y = perfect %, one line per decompiler).</p>
-<div id="history-charts"></div>
+        <p class="view-desc">shows how each decompiler's metric scores change across versions.
+appears once &ge;2 versions have been benchmarked
+(e.g. ghidra@12.0 vs ghidra@12.1).</p>
     </section>
     <section class="view" id="view-about" data-view="about">
         <h2 class="view-title">decbench</h2>
@@ -464,7 +464,7 @@ that's reported here (per decompiler), not folded into the headline score.</p>
 <table id="dataset-projects"><thead><tr></tr></thead><tbody></tbody></table>
     </section>
             <div class="rule"></div>
-            <footer>DecBench v1.0 &mdash; decompiler benchmarking suite &middot; projects: base-passwd, bash, betaflight, bzip2, chibios, cleanflight, coreutils, crazyflie, cronie, dexter, diffutils, dpkg, e2fsprogs, findutils, freertos, gnutls, grep, gzip, iproute2, kmod, libacl, libbsd, libedit, libexpat, libopencm3, libselinux, minipig, mirai, mirai-win, mydoom, nuttx, openssh-portable, riot-os, rsyslog, shadow, sysvinit, tar, u-boot, x0r-usb, zlib</footer>
+            <footer>DecBench v1.0 &mdash; decompiler benchmarking suite &middot; projects: base-passwd, bash, betaflight, bzip2, chibios, cleanflight, coreutils, crazyflie, cronie, dash, dexter, diffutils, dpkg, e2fsprogs, findutils, freertos, gnutls, grep, gzip, iproute2, kmod, libacl, libbsd, libedit, libexpat, libopencm3, libselinux, minipig, mirai, mirai-win, mydoom, nuttx, openssh-portable, riot-os, rsyslog, shadow, sysvinit, tar, u-boot, x0r-usb, zlib</footer>
         </main>
     </div>
     <script>window.__DECBENCH_ROOT__ = "";</script>
