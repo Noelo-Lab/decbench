@@ -155,6 +155,7 @@ class SiteContent:
     banners: dict[str, str]
     side_stats: dict[str, str]
     hidden_decompilers: tuple[str, ...] = ()
+    sample_set_only_decompilers: tuple[str, ...] = ()
     pages_domain: str = ""
     """Custom domain the split site is served from (``[pages] domain``).
 
@@ -519,7 +520,9 @@ def _load_view(view_id: str, metrics: tuple[MetricSpec, ...]) -> ViewContent:
 def _load_site() -> SiteContent:
     """Parse ``site.toml``."""
     raw = _load_toml("site.toml")
-    hidden = tuple((raw.get("decompilers") or {}).get("hidden") or ())
+    decs = raw.get("decompilers") or {}
+    hidden = tuple(decs.get("hidden") or ())
+    sample_set_only = tuple(decs.get("sample_set_only") or ())
     return SiteContent(
         brand=Brand(**raw["brand"]),
         footer=Footer(**raw["footer"]),
@@ -527,6 +530,7 @@ def _load_site() -> SiteContent:
         banners=dict(raw["banners"]),
         side_stats=dict(raw["side_stats"]),
         hidden_decompilers=hidden,
+        sample_set_only_decompilers=sample_set_only,
         pages_domain=str((raw.get("pages") or {}).get("domain") or ""),
     )
 

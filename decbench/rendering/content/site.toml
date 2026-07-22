@@ -39,7 +39,17 @@ normalize_title = "Only count functions that EVERY decompiler decompiled success
 # `@`, so "phoenix" also hides any "phoenix@<version>". Edit + re-render to
 # change; no benchmark re-run needed.
 [decompilers]
-hidden = ["phoenix"]
+hidden = ["phoenix", "claude-code"]
+
+# Decompilers shown ONLY on the `sample-set` view. The LLM/coding-agent backends
+# (codex, claude-code) are run on the sample-set slice only, so on every other
+# preset (unoptimized/optimized/inlined/large) they would have near-zero coverage
+# and look artificially bad under the shared-denominator leaderboard. Listing them
+# here keeps their rows off those views and shows them only where the comparison is
+# fair (all decompilers cover the same 250 functions). Their data still ships in the
+# payload; it is just not rendered outside the sample-set preset. Base-name match,
+# same as `hidden`. (claude-code is currently also in `hidden` pending its re-run.)
+sample_set_only = ["codex", "claude-code"]
 
 # GitHub Pages custom domain. `decbench site build` writes it into the tree's
 # CNAME file; the authoritative routing for workflow deploys is the repo's Pages

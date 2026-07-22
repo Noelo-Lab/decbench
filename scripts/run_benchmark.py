@@ -119,9 +119,49 @@ DECOMPILER_TIMEOUT = {
     "binja": int(os.environ.get("DECBENCH_BINJA_TIMEOUT") or "1800"),
     "dewolf": int(os.environ.get("DECBENCH_DEWOLF_TIMEOUT") or "1200"),
     "r2dec": int(os.environ.get("DECBENCH_R2DEC_TIMEOUT") or "1800"),
+    # LLM / coding-agent backends: one agentic CLI call per function is slow
+    # (~minutes). The sample-set takes at most a few functions per binary, and
+    # the backend checkpoints after each function, so a large per-binary budget
+    # bounds a stuck call while still crediting finished functions.
+    "codex": int(os.environ.get("DECBENCH_CODEX_TIMEOUT") or "3600"),
+    "claude-code": int(os.environ.get("DECBENCH_CLAUDE_CODE_TIMEOUT") or "3600"),
 }
 _HERE = Path(__file__).resolve().parent
 _DECOMPILE_ONE = _HERE / "decompile_one.py"
+
+
+def _load_sampleset_manifest() -> dict[tuple[str, str, str], set[str]] | None:
+    """Load the ``DECBENCH_SAMPLESET_MANIFEST`` gate, or ``None`` if unset.
+
+    Restricts the whole run to the frozen ``sample-set`` slice (see
+    ``scripts/export_sample_set.py``): a decompiler is only ever asked to
+    decompile the listed function *names*, per ``(project, opt, binary_stem)``.
+    This is the cost gate for the LLM backends — with it set, codex/claude-code
+    run on ~250 functions instead of the whole corpus.
+    """
+    path = os.environ.get("DECBENCH_SAMPLESET_MANIFEST")
+    if not path:
+        return None
+    try:
+        data = json.loads(Path(path).read_text())
+    except Exception as e:  # noqa: BLE001
+        print(f"[sampleset] WARNING: could not read {path}: {e}; gate DISABLED", flush=True)
+        return None
+    gate: dict[tuple[str, str, str], set[str]] = {}
+    for e in data.get("functions", []):
+        gate.setdefault((e["project"], e["opt"], e["binary"]), set()).add(e["function"])
+    # Only the main process announces the gate; spawn workers re-import this
+    # module and would otherwise spam the log once per worker.
+    if multiprocessing.current_process().name == "MainProcess":
+        print(
+            f"[sampleset] gate ACTIVE: {len(data.get('functions', []))} functions "
+            f"across {len(gate)} binaries from {path}",
+            flush=True,
+        )
+    return gate
+
+
+SAMPLESET_GATE = _load_sampleset_manifest()
 
 
 def _kill_process_group(proc: "subprocess.Popen") -> None:
@@ -147,8 +187,16 @@ def _kill_process_group(proc: "subprocess.Popen") -> None:
         pass
 
 
-def project_source_functions(binary_path: Path, source_stems: set[str]) -> dict[int, str]:
+def project_source_functions(
+    binary_path: Path,
+    source_stems: set[str],
+    stem_out: dict[int, str] | None = None,
+) -> dict[int, str]:
     """Map ``low_pc -> name`` for functions DEFINED in the project's own sources.
+
+    If ``stem_out`` is given it is populated with ``low_pc -> source .i stem`` (the
+    matched translation unit), so the caller can extract source CFGs for ONLY the
+    files that actually contain the target functions instead of the whole project.
 
     Reads the binary's DWARF and keeps DW_TAG_subprogram entries that have a
     low_pc (i.e. are defined in this binary) AND whose decl_file basename stem
@@ -204,26 +252,42 @@ def project_source_functions(binary_path: Path, source_stems: set[str]) -> dict[
                 # object-prefixed naming some targets use (e.g. malware's
                 # `mydoom-main.i` <-> decl `main.c`), where the source stem is a
                 # `<prefix>-<decl>` / `<prefix>_<decl>` suffix.
-                if stem in source_stems or any(
-                    s.endswith("-" + stem) or s.endswith("_" + stem) for s in source_stems
-                ):
+                matched: str | None = None
+                if stem in source_stems:
+                    matched = stem
+                else:
+                    for s in source_stems:
+                        if s.endswith("-" + stem) or s.endswith("_" + stem):
+                            matched = s
+                            break
+                if matched is not None:
                     nm = attrs["DW_AT_name"].value
-                    addr2name[int(attrs["DW_AT_low_pc"].value)] = (
-                        nm.decode() if isinstance(nm, bytes) else nm
-                    )
+                    lp_addr = int(attrs["DW_AT_low_pc"].value)
+                    addr2name[lp_addr] = nm.decode() if isinstance(nm, bytes) else nm
+                    if stem_out is not None:
+                        stem_out[lp_addr] = matched
     except Exception:  # noqa: BLE001
         return {}
     return addr2name
 
 
-def extract_source_cfgs(project: Project, opt: OptimizationLevel) -> dict[str, dict]:
-    """Extract source CFGs for every preprocessed source, keyed by .i stem.
+def extract_source_cfgs(
+    project: Project,
+    opt: OptimizationLevel,
+    only_stems: set[str] | None = None,
+) -> dict[str, dict]:
+    """Extract source CFGs for the project's preprocessed sources, keyed by .i stem.
 
-    Runs once per (project, opt) and is reused for BOTH the decompile filter
-    (function names) and the GED metric (the CFGs themselves), so Joern only
-    parses each source file once.
+    The CFGs feed the GED metric. ``only_stems`` restricts Joern to just those
+    ``.i`` files — the ones that actually contain the functions being evaluated.
+    This is the big win for gated (e.g. sample-set) runs: a firmware project with
+    ~1000 source files is parsed for the ~4 files holding the sampled functions
+    instead of all of them (Joern over the full tree was the whole cost — minutes
+    to an hour per opt to score a handful of functions). ``None`` parses all.
     """
     sources = project.preprocessed_sources.get(opt, {})
+    if only_stems is not None:
+        sources = {n: p for n, p in sources.items() if n in only_stems}
     out: dict[str, dict] = {}
     if not sources:
         return out
@@ -531,7 +595,9 @@ def main() -> int:
             "  -- project    limit to the named projects\n\n"
             "Env: DECBENCH_DECOMPILERS, DECBENCH_REDO_DECOMPILERS, DECBENCH_WORKERS,\n"
             "     DECBENCH_DECOMPILE_TIMEOUT, DECBENCH_{KUNA,ANGR,PHOENIX,GHIDRA,BINJA}_TIMEOUT,\n"
-            "     DECBENCH_KUNA_MAX_FN_SECONDS, DECBENCH_DECOMPILE_ONLY, GHIDRA_INSTALL_DIR."
+            "     DECBENCH_KUNA_MAX_FN_SECONDS, DECBENCH_DECOMPILE_ONLY, GHIDRA_INSTALL_DIR,\n"
+            "     DECBENCH_SAMPLESET_MANIFEST (gate the run to the frozen sample-set slice;\n"
+            "       required for the LLM backends codex/claude-code — see docs/LLM_DECOMPILERS.md)."
         )
         return 0
     out_dir = Path(args[0]) if args else Path("results/sailr_full")
@@ -614,11 +680,20 @@ def main() -> int:
             source_stems = set(project.preprocessed_sources.get(opt, {}).keys())
             src_fn_names: dict[str, dict[int, str]] = {}
             kept_binaries = []
+            needed_stems: set[str] = set()  # source .i stems holding target functions
             for b in project.compiled_binaries[opt]:
-                fns = project_source_functions(b, source_stems)
+                addr_stem: dict[int, str] = {}
+                fns = project_source_functions(b, source_stems, stem_out=addr_stem)
+                # sample-set gate: keep only the frozen slice's function names for
+                # this (project, opt, binary), and skip binaries with none — so
+                # the expensive LLM backends never touch off-slice functions.
+                if SAMPLESET_GATE is not None:
+                    allowed = SAMPLESET_GATE.get((name, opt.value, b.stem))
+                    fns = {a: nm for a, nm in fns.items() if allowed and nm in allowed}
                 if fns:
                     src_fn_names[b.stem] = fns
                     kept_binaries.append(b)
+                    needed_stems.update(addr_stem[a] for a in fns if a in addr_stem)
             skipped = len(project.compiled_binaries[opt]) - len(kept_binaries)
             if not kept_binaries:
                 print(
@@ -633,8 +708,12 @@ def main() -> int:
             project.compiled_binaries[opt] = kept_binaries
             n = len(kept_binaries)
 
-            # 2) Extract source CFGs (for GED) only for the kept binaries' project.
-            src_cfgs = extract_source_cfgs(project, opt)
+            # 2) Extract source CFGs (for GED) — for a gated (sample-set) run, only
+            #    for the .i files that actually hold the target functions, so Joern
+            #    doesn't parse a whole firmware source tree to score a few functions.
+            src_cfgs = extract_source_cfgs(
+                project, opt, only_stems=needed_stems if SAMPLESET_GATE is not None else None
+            )
             n_filt = sum(len(v) for v in src_fn_names.values())
             print(
                 f"[{name}/{opt.value}] {len(src_cfgs)} sources; DWARF source-fn "

@@ -232,6 +232,28 @@ three families:
   container (or natively for r2dec) and split whole-program C into per-function
   results. Build images with `decbench decompiler-build <name>`; Dockerfiles in
   `docker/`.
+- **LLM / coding-agent** (`llm_dec.py`: `codex`, `claude-code`): drive a general
+  coding agent (OpenAI `codex` CLI / Anthropic `claude` CLI) as a decompiler —
+  one agentic CLI call per function, given the stripped binary + a shared prompt
+  (`LLM_DECOMPILE_PROMPT`) that BANS decompilers and allows only simple
+  disassemblers (objdump/readelf/…). Auth is inherited from the host login
+  (`~/.codex/auth.json` / `~/.claude/.credentials.json` or `ANTHROPIC_API_KEY`/
+  `OPENAI_API_KEY`); the optional `docker_image` config runs the CLI in a
+  container with those token dirs bind-mounted (`docker/llm-agents.Dockerfile`).
+  **Cost is controlled by only ever running on the `sample-set` slice**: freeze
+  it with `scripts/export_sample_set.py` (→ `sample_set_manifest.json`), then
+  `DECBENCH_SAMPLESET_MANIFEST=<manifest> DECBENCH_DECOMPILERS=codex,claude-code
+  python scripts/run_benchmark.py results/full_run` — the driver restricts each
+  binary's targets to the slice's function names and skips off-slice binaries;
+  the backend also caps per-binary agent calls. `DECBENCH_LLM_FN_WORKERS`
+  decompiles a binary's sampled functions concurrently. On the SITE they are
+  **sample-set-only** decompilers (`[decompilers] sample_set_only` in site.toml +
+  `visibleDecs()` in app.js): their rows show only on the sample-set view.
+  codex default model `gpt-5.6-sol`, claude-code `claude-opus-4-8`. NOTE: a
+  nested `claude` (benchmark launched from inside a Claude Code session) strips
+  `CLAUDE_CODE_*`, uses an isolated `CLAUDE_CONFIG_DIR`, and RE-SYNCS the OAuth
+  credentials each call (a one-time copy goes stale — rotated refresh token). The
+  backend does all of this automatically. Full guide: `docs/LLM_DECOMPILERS.md`.
 
 Key conventions (all families):
 - Addresses are stored in **ELF-file-space** (`lifted + min PT_LOAD vaddr`) so

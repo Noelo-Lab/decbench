@@ -23,6 +23,12 @@ with contextlib.suppress(ImportError):
 with contextlib.suppress(ImportError):
     from decbench.decompilers import dockerized  # noqa: F401
 
+# LLM / coding-agent backends (Codex, Claude Code). They shell out to the
+# `codex` / `claude` CLIs; the imports are cheap (heavy work is at call time).
+# Meant to run on the `sample-set` slice only — see docs/LLM_DECOMPILERS.md.
+with contextlib.suppress(ImportError):
+    from decbench.decompilers import llm_dec  # noqa: F401
+
 __all__ = [
     "Decompiler",
     "DecompilerConfig",

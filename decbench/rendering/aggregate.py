@@ -435,8 +435,17 @@ def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dic
     the pre-aggregation client did (``isActive()`` began ``if (!state.dataset) return
     true;``). Without it every view renders an error banner and zero numbers.
     """
+    from decbench.rendering.visibility import is_hidden
+
     content = load_content()
     decompilers = function_data.decompilers
+    # Decompilers rendered ONLY on the sample-set view (codex/claude-code): run on
+    # the sample-set slice only, so on other presets they would be near-empty under
+    # the shared denominator. The client (app.js) keeps their rows off non-sample-set
+    # views; their data still ships. Match by exact id or base name, like `hidden`.
+    sample_set_only = [
+        d for d in decompilers if is_hidden(d, content.site.sample_set_only_decompilers)
+    ]
     metrics = function_data.metrics
     distance_metrics = content.ordered_metrics(metrics)
     presets = function_data.dataset_presets
@@ -470,6 +479,8 @@ def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dic
         "projects_evaluated": scoreboard.projects_evaluated
         or sorted({group.project for group in function_data.groups}),
         "decompilers": decompilers,
+        # Decompilers the client shows only on the sample-set preset (see above).
+        "sample_set_only": sample_set_only,
         "decompiler_versions": function_data.decompiler_versions,
         # Official display names / links / prettified versions the client renders in
         # place of raw ids. Keyed by the same (hidden-filtered) decompiler ids, so

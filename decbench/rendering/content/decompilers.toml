@@ -77,6 +77,18 @@ license = "open-source"
 logo = true
 
 [[decompiler]]
+id = "codex"
+display_name = "OpenAI Codex"
+url = "https://openai.com/codex/"
+license = "closed-source"
+
+[[decompiler]]
+id = "claude-code"
+display_name = "Claude Code"
+url = "https://claude.com/claude-code"
+license = "closed-source"
+
+[[decompiler]]
 id = "retdec"
 display_name = "RetDec"
 url = "https://github.com/avast/retdec"
