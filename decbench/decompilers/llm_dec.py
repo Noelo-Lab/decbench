@@ -510,8 +510,12 @@ class _AgentDecompiler(Decompiler):
         t0 = time.time()
         with tempfile.TemporaryDirectory(prefix=f"llmdec_{self.name}_") as tmp:
             workdir = Path(tmp)
-            # Copy the (stripped) binary in so the agent can objdump it locally.
-            local = workdir / binary_path.name
+            # Copy the (stripped) binary in under a NEUTRAL name so the agent gets
+            # no identity signal from the filename. The original name (e.g. `grep`,
+            # `gzip`, `nuttx`) would tell an LLM exactly which open-source program
+            # it is looking at and let it recall the source from memory instead of
+            # reverse-engineering — an advantage a mechanical decompiler never gets.
+            local = workdir / "target.bin"
             shutil.copy2(binary_path, local)
             outfile = workdir / _OUTFILE
             prompt = self._build_prompt(binary_path, local.name, name, addr, outfile.name)
@@ -577,31 +581,57 @@ class _AgentDecompiler(Decompiler):
         elapsed: float,
         timed_out: bool,
     ) -> None:
-        """Persist the agent's per-function trace into ``<output_dir>/traces/``."""
-        if output_dir is None or not self._traces_enabled():
+        """Persist the agent's per-function trace.
+
+        Into ``$DECBENCH_LLM_TRACE_DIR/<decompiler>/`` when that is set (a single
+        collected folder), else ``<output_dir>/traces/``. Writes the prompt +
+        transcript + reconstructed C as ``.md``, plus the CLI's OWN full session log
+        (every objdump/tool call): the Claude session JSONL or the Codex rollout.
+        """
+        if not self._traces_enabled():
+            return
+        root = self._opt("trace_dir", "DECBENCH_LLM_TRACE_DIR", "")
+        if root:
+            trace_dir = Path(root) / self.id.replace("@", "-")
+        elif output_dir is not None:
+            trace_dir = Path(output_dir) / "traces"
+        else:
             return
         try:
-            trace_dir = Path(output_dir) / "traces"
             trace_dir.mkdir(parents=True, exist_ok=True)
-            stem = f"{self.id.replace('@', '-')}__{binary_path.stem}__{name}_0x{addr:x}"
+            label = self._trace_label(binary_path, name, addr)
             status = "TIMEOUT" if timed_out else ("ok" if code else "FAILED")
             body = (
-                f"# {self.id} trace — {binary_path.stem}::{name} @ 0x{addr:x}\n\n"
+                f"# {self.id} trace — {label}\n\n"
                 f"- model: {self._model()}\n"
+                f"- binary given to agent: target.bin (original: {binary_path.stem})\n"
                 f"- status: {status}\n"
                 f"- elapsed: {elapsed:.0f}s\n\n"
                 f"## Prompt\n\n```\n{prompt}\n```\n\n"
                 f"## Agent transcript (stdout/stderr)\n\n```\n{transcript.strip()}\n```\n\n"
                 f"## Reconstructed C\n\n```c\n{code or '(none — failed)'}\n```\n"
             )
-            (trace_dir / f"{stem}.md").write_text(body)
-            # claude persists a rich session JSONL (every objdump/tool call) under
-            # its isolated config, keyed by the sanitised working dir. Copy it.
-            self._copy_session_jsonl(workdir, trace_dir / f"{stem}.session.jsonl")
+            (trace_dir / f"{label}.md").write_text(body)
+            # The CLI's own session log carries every shell command it ran (the
+            # authoritative record for auditing tool use). claude: session JSONL
+            # under its config; codex: the rollout named by the session id.
+            self._copy_session_jsonl(workdir, transcript, trace_dir / f"{label}.session.jsonl")
         except Exception as e:  # noqa: BLE001 - tracing must never break a run
             _l.debug("llm/%s: trace save failed for %s: %s", self.name, name, e)
 
-    def _copy_session_jsonl(self, workdir: Path, dest: Path) -> None:
+    @staticmethod
+    def _trace_label(binary_path: Path, name: str, addr: int) -> str:
+        """``<opt>__<project>__<stem>__<func>_0x<addr>`` from the results-tree path."""
+        parts = binary_path.parts
+        opt = proj = ""
+        if "stripped" in parts:
+            i = parts.index("stripped")
+            if i >= 2:
+                opt, proj = parts[i - 2], parts[i - 1]
+        prefix = f"{opt}__{proj}__" if proj else ""
+        return f"{prefix}{binary_path.stem}__{name}_0x{addr:x}"
+
+    def _copy_session_jsonl(self, workdir: Path, transcript: str, dest: Path) -> None:
         """Copy the CLI's own session JSONL for this call (subclass hook)."""
         return
 
@@ -719,10 +749,46 @@ class CodexDecompiler(_AgentDecompiler):
 
     def _agent_env(self) -> dict[str, str]:
         env = dict(os.environ)
-        codex_home = self._opt("codex_home", "CODEX_HOME", "")
-        if codex_home:
-            env["CODEX_HOME"] = str(codex_home)
+        # Run under an ISOLATED CODEX_HOME whose skills/ dir is empty, so the
+        # `decompiler` skill (which drives IDA/Ghidra/Binary Ninja via DecLib) is
+        # not available — the LLM cannot fall back to a real decompiler even if it
+        # wanted to. Auth (auth.json) + config.toml are synced from ~/.codex.
+        env["CODEX_HOME"] = str(self._isolated_codex_home())
         return env
+
+    def _isolated_codex_home(self) -> Path:
+        """A decbench-owned CODEX_HOME with no skills (enforces the decompiler ban)."""
+        import contextlib
+
+        override = self._opt("codex_home", "DECBENCH_CODEX_HOME", "")
+        home = Path(override) if override else Path.home() / ".cache" / "decbench" / "codex-home"
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "skills").mkdir(exist_ok=True)  # empty -> no `decompiler` skill
+        src = Path.home() / ".codex"
+        for fn in ("auth.json", "config.toml"):
+            s, d = src / fn, home / fn
+            # Sync from ~/.codex only when it is newer, so codex's own in-place
+            # token refresh (into the isolated auth.json) is not clobbered.
+            if s.is_file() and (not d.exists() or s.stat().st_mtime > d.stat().st_mtime):
+                with contextlib.suppress(Exception):
+                    shutil.copy2(s, d)
+        return home
+
+    def _copy_session_jsonl(self, workdir: Path, transcript: str, dest: Path) -> None:
+        """Copy codex's rollout JSONL (all shell commands) — found by session id."""
+        try:
+            m = re.search(r"session id:\s*([0-9a-f-]{36})", transcript)
+            if not m:
+                return
+            sid = m.group(1)
+            home = self._isolated_codex_home()
+            rolls = list((home / "sessions").glob(f"**/*{sid}*.jsonl"))
+            if not rolls:
+                rolls = list((Path.home() / ".codex" / "sessions").glob(f"**/*{sid}*.jsonl"))
+            if rolls:
+                shutil.copy2(rolls[0], dest)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 @register_decompiler("claude-code")
@@ -745,6 +811,9 @@ class ClaudeCodeDecompiler(_AgentDecompiler):
             "text",
             # Let the agent run objdump and write the output file without prompts.
             "--dangerously-skip-permissions",
+            # Disable ALL skills so the `decompiler` skill (which drives real
+            # decompilers) is unavailable — enforces the decompiler ban.
+            "--disable-slash-commands",
             "--add-dir",
             str(workdir),
         ]
@@ -803,7 +872,7 @@ class ClaudeCodeDecompiler(_AgentDecompiler):
                 tmp.replace(dst)  # atomic — no torn read for a concurrent claude
         return cfg
 
-    def _copy_session_jsonl(self, workdir: Path, dest: Path) -> None:
+    def _copy_session_jsonl(self, workdir: Path, transcript: str, dest: Path) -> None:
         """Copy claude's session JSONL for this call (the full tool-call trace).
 
         Claude stores it under ``<config>/projects/<sanitised-cwd>/<uuid>.jsonl``,
