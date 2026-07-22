@@ -1,0 +1,41 @@
+# DecBench CPS target: Betaflight
+# Betaflight is a widely-used open-source flight-controller firmware for FPV
+# drones / multirotors. This builds the STM32F405 (ARM Cortex-M4F) unified
+# target, producing a bare-metal ARM flight-controller ELF.
+name = "betaflight"
+version = "4.5.1"
+
+source_remote = "https://github.com/betaflight/betaflight"
+remote_type = "git"
+package_dir = "betaflight"
+source_dir = "."
+
+post_download_cmds = []
+pre_make_cmds = []
+
+# Toolchain note: Betaflight normally fetches its OWN pinned arm-none-eabi-gcc via
+# `make arm_sdk_install` and HARD-PINS the version (mk/tools.mk:
+# GCC_REQUIRED_VERSION ?= 10.3.1) — if the system gcc differs it $(error)s out.
+# We make it use the system toolchain (gcc 13.2.1 in the toolchain image) by:
+#   1. NOT setting ARM_SDK_DIR, so it falls back to ARM_SDK_PREFIX ?= arm-none-eabi-
+#      (the system compiler on PATH), and
+#   2. overriding GCC_REQUIRED_VERSION on the make command line to match the
+#      installed compiler's `-dumpversion` (the override path the error message
+#      itself documents: "Override with GCC_REQUIRED_VERSION in mk/local.mk").
+# Flag injection: EXTRA_FLAGS is Betaflight's documented user-flag hook, appended
+# AFTER its own per-file -O2/-Os/-O0, so our opt level + -g + -save-temps win. We
+# forward decbench's $CFLAGS through it and add -Wno-error because the codebase
+# builds with -Werror and gcc 13.2 emits new warnings the older sources trip.
+# The board arch flags (-mcpu=cortex-m4 -mthumb -mfloat-abi=hard ...) come from
+# the STM32F405 target, untouched, so the ELF is ARM.
+# IMPORTANT: if a future image swaps the arm gcc, update GCC_REQUIRED_VERSION to
+# that compiler's `arm-none-eabi-gcc -dumpversion` (here: 13.2.1).
+make_cmd = 'make TARGET=STM32F405 DEBUG=GDB GCC_REQUIRED_VERSION=13.2.1 EXTRA_FLAGS="$CFLAGS -Wno-error"'
+
+labels = ["cps", "drone", "flight-controller", "avionics", "bare-metal", "cortex-m4", "stm32f4"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj", "-fno-lto"]
+c_compiler = "arm-none-eabi-gcc"
+target_arch = "arm"  # only collect the ARM hardware binaries (drop host tools)

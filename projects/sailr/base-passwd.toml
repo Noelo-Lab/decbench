@@ -1,0 +1,30 @@
+# DecBench Project Configuration: Debian base-passwd
+# Debian's base-passwd package, which ships the update-passwd CLI tool for
+# maintaining /etc/passwd and /etc/group. Labeled cli-tool + system since it is
+# a small command-line system administration utility.
+
+name = "base-passwd"
+version = "3.6.1"
+
+# Source configuration - salsa archive tarball (unpacked via shutil.unpack_archive)
+source_remote = "https://salsa.debian.org/debian/base-passwd/-/archive/debian/3.6.1/base-passwd-debian-3.6.1.tar.gz"
+remote_type = "tar"
+
+# Build directories
+package_dir = "base-passwd-debian-3.6.1"
+source_dir = "."
+
+# Build commands - no shipped ./configure, so generate it with autoreconf.
+# `make` (default `all`) recurses into the doc/ subdir, which builds HTML docs via
+# openjade and fails (Error 2: undefined SGML/DocBook elements). update-passwd is
+# the top-level program target (sbin_PROGRAMS), so build it directly to skip doc/man.
+post_download_cmds = ["autoreconf -v -f --install"]
+pre_make_cmds = ["./configure --disable-debconf --quiet"]
+make_cmd = "make update-passwd"
+
+labels = ["sailr", "cli-tool", "system"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

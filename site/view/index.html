@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- decbench:page -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DecBench Scoreboard</title>
+    <script>(function(){try{var q=new URLSearchParams(location.search).get('theme');var t=q||localStorage.getItem('decbench-theme')||'dark';if(t!=='light'&&t!=='dark')t='dark';document.documentElement.dataset.theme=t;if(q==='light'||q==='dark')localStorage.setItem('decbench-theme',q);}catch(e){}})();</script>
+    <meta property="og:site_name" content="DecBench">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="DecBench — view">
+    <meta property="og:description" content="Browse source vs decompiled code side-by-side. sample-set top 3: 1. Codex 52.4% · 2. Claude Code 45.6% · 3. angr 27.6%">
+    <meta property="og:url" content="https://decbench.com/view/">
+    <meta property="og:image" content="https://decbench.com/decbench_card.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="DecBench — view">
+    <meta name="twitter:description" content="Browse source vs decompiled code side-by-side. sample-set top 3: 1. Codex 52.4% · 2. Claude Code 45.6% · 3. angr 27.6%">
+    <meta name="twitter:image" content="https://decbench.com/decbench_card.png">
+    <link rel="stylesheet" href="../app.css">
+    <link rel="icon" type="image/png" href="../favicon.png">
+    <link rel="apple-touch-icon" href="../apple-touch-icon.png">
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="brand">
+                <div class="brand-prompt">$ decbench</div>
+                <div class="brand-title">DecBench</div>
+                <div class="brand-sub">decompiler benchmark</div>
+            </div>
+            <nav class="nav"><a class="nav-item" data-view="leaderboard" href="#leaderboard"><span class="nav-bullet">&gt;</span> leaderboard</a><a class="nav-item" data-view="distance" href="#distance"><span class="nav-bullet">&gt;</span> distance</a><a class="nav-item active" data-view="view" href="#view"><span class="nav-bullet">&gt;</span> view</a><a class="nav-item" data-view="about" href="#about"><span class="nav-bullet">&gt;</span> about</a><a class="nav-item" data-view="changelog" href="#changelog"><span class="nav-bullet">&gt;</span> changelog</a></nav>
+            
+        <div class="side-section">
+            <div class="side-label">dataset</div>
+            <div class="ds-controls"><button class="ds-btn active" data-dataset="unoptimized" title="unoptimized builds (O0) — surfaces simple structural differences">unoptimized</button><button class="ds-btn" data-dataset="optimized" title="optimized without inlining (O2-noinline)">optimized</button><button class="ds-btn" data-dataset="inlined" title="optimized WITH inlining (plain O2)">inlined</button><button class="ds-btn" data-dataset="large" title="large functions only (upper size tail), optimized without inlining">large</button><button class="ds-btn" data-dataset="sample-set" title="~250 functions evenly sampled across unoptimized/optimized/inlined/large/ARM-unoptimized and projects">sample-set</button></div>
+            <div class="ds-desc" id="dataset-desc"></div>
+            <div class="counter" id="function-counter"></div>
+            <div class="ds-controls" style="margin-top:0.6rem;">
+                <button class="ds-btn" id="normalize-btn"
+                        title="Only count functions that EVERY decompiler decompiled successfully (apples-to-apples).">
+                    normalize failures
+                </button>
+            </div>
+        </div>
+            <div class="side-stats"><div class="side-stat"><span class="side-num" data-stat="functions">94,716</span> functions</div><div class="side-stat"><span class="side-num" data-stat="binaries">806</span> binaries</div><div class="side-stat"><span class="side-num">9</span> decompilers</div><div class="side-stat"><span class="side-num">3</span> metrics</div></div>
+            <div class="side-foot"><button class="ds-btn theme-toggle" id="theme-toggle" type="button" aria-label="toggle light or dark theme"><span class="th-to-light">[ light mode ]</span><span class="th-to-dark">[ dark mode ]</span></button><div class="side-foot-stamp">[ 2026-07-22 17:12 ]</div></div>
+        </aside>
+
+        <main class="main">
+            
+            
+    <section class="view" id="view-leaderboard" data-view="leaderboard">
+        <h2 class="view-title">leaderboard</h2>
+        <p class="view-desc">Decompilers have advanced significantly over
+<a href="https://mahaloz.re/dec-history-pt1">the last 30 years</a>, quickly approaching the
+point where they can recover the exact source code from various binaries. This
+benchmark ranks decompilers by their ability to recover exact source code,
+measured across three metrics. All metrics are shown as the percentage of
+functions on which a decompiler achieves a perfect score. Decompilers are
+initially ranked by Union &mdash; their ability to score perfectly on
+<em>at least one</em> of those metrics. Click a column to sort.</p>
+<p class="view-desc">AI can also compete on these metrics, as seen on the
+<a href="https://decbench.com/leaderboard/?dataset=sample-set">sample-set leaderboard</a>
+where Codex and Claude Code take on the traditional decompilers. You can find
+more information about these metrics, datasets, and methodology on the
+<a href="https://decbench.com/about/">about page</a>. You can also view some sample results
+on the <a href="https://decbench.com/view/?dataset=sample-set&amp;tier=sample-set&amp;dec=codex&amp;metric=ged&amp;fn=base-passwd%2FO0%2Fupdate-passwd%3A%3Aread_shadow">view page</a>.</p>
+<div id="leaderboard-dataset-desc"></div><table id="leaderboard-table"><thead><tr></tr></thead><tbody></tbody></table>
+    </section>
+    <section class="view" id="view-distance" data-view="distance">
+        <h2 class="view-title">distance</h2>
+        <p class="view-desc">When a decompiler can't yet achieve a perfect score on a function, it can be
+helpful to understand the <em>distance</em> it is from perfection. For each
+metric, we measure distance as the number of edits required to convert that
+form of data into its source-code equivalent. For <strong>GED</strong>, that
+is the number of edits to control-flow structures. For
+<strong>types</strong>, that is the number of type-flips needed to reach
+ground truth. For <strong>recompilation</strong>, that is the number of
+assembly lines that must change to convert the recompiled assembly into the
+ground-truth assembly.</p>
+<p class="view-desc">Each cell shows the <em>mean</em>, the <em>median</em>, and how many functions
+are already at distance 0 (perfect), averaged over the functions each
+decompiler was scored on.</p>
+<p class="view-desc" id="distance-table-note">Over the selected dataset
+    (mean &middot; median &middot; #at-0 / #measured).</p>
+
+<table id="distance-table"><thead><tr></tr></thead><tbody></tbody></table>
+
+<p class="view-desc subset-note" id="distance-subset-note" hidden>rows below the
+break are <em>sample-set-only</em> backends (LLM coding agents): they are scored
+only on the ~250-function sample-set slice, so on this dataset their numbers
+cover just its overlap with that slice &mdash; not directly comparable to the
+full-coverage rows above.</p>
+
+<h3 class="sub">compiles</h3>
+<p class="view-desc">The share of each decompiler's byte_match-measured functions whose output
+actually <em>recompiled</em> after the uniform compilability-fixup pass &mdash; a
+fairness control, not a metric (type recovery is scored separately). The
+denominator is per-decompiler: functions where byte_match was measurable, so
+ARM / PE targets with no host recompiler never count against it. This rate moves
+with the selected dataset, like the columns on the leaderboard.</p>
+<table id="compile-table"><thead><tr></tr></thead><tbody></tbody></table>
+
+<p class="view-desc subset-note" id="compile-subset-note" hidden>rows below the
+break: sample-set-only backends &mdash; their rate covers only this dataset's
+overlap with the sample-set slice.</p>
+    </section>
+    <section class="view active" id="view-view" data-view="view">
+        <h2 class="view-title">view</h2>
+        <p class="view-desc">Original source next to a decompiler's output. <strong>Difficulty</strong> is
+derived from structural (GED) agreement across decompilers:
+<strong>easy</strong> &mdash; most decompilers recover the control flow
+perfectly; <strong>hard</strong> &mdash; the functions farthest from perfect
+for everyone (the old hall of shame); <strong>medium</strong> &mdash; in
+between. Pick a difficulty, a decompiler, and a metric to highlight.</p>
+<div class="controls">
+    <label for="view-difficulty">difficulty:</label>
+    <select id="view-difficulty"></select>
+    <label for="view-dec">decompiler:</label>
+    <select id="view-dec"></select>
+    <label for="view-metric">metric:</label>
+    <select id="view-metric"></select>
+</div>
+<div class="controls">
+    <label for="view-filter">filter:</label>
+    <input type="text" id="view-filter" placeholder="function / project / binary" size="28">
+    <label for="view-select">function:</label>
+    <select id="view-select"></select>
+    <span class="counter" id="view-counter"></span>
+</div>
+<div id="view-body"></div>
+    </section>
+    <section class="view" id="view-about" data-view="about">
+        <h2 class="view-title">decbench</h2>
+        <p class="view-desc">Over the last 30 years, binary decompilers have made the steady march towards
+<em>perfect decompilation</em>: where decompilers recover the exact source code.
+However, that <em>perfect</em> has yet to be measured meaningfully, and is often
+defined across multiple axes.</p>
+<p class="view-desc">DecBench is an experimental benchmark for comparing decompilers and modern LLMs
+on the task of recovering <em>exact</em> source code. This benchmark defines new
+metrics and datasets that represent the various directions of exactness for
+decompilers: structure, types, and precise recompilability. This benchmark is
+also <em>living</em>: as new decompiler/LLMs are released, their scores will be added
+to the leaderboard! Community feedback is welcome!</p>
+<p class="view-desc">It is created by the <a href="https://github.com/Noelo-Lab">Noelo Lab at the University of Georgia</a>,
+led by Dr. Zion Leonahenahe Basque. The project's
+<a href="https://github.com/noelo-lab/decbench">code</a> and
+<a href="https://huggingface.co/datasets/noelo-lab/decbench-dataset">data</a> are open
+source. Email <code>decbench@mahaloz.re</code> to get your decompiler added to the public
+site.</p>
+<h3 class="sub">why it exists</h3>
+<p class="view-desc">Other benchmarks have cropped up in the last two years. Many of these
+evaluations use approaches that are often uninformative about perfect
+decompilation, for example, "re-executability", which can often get full test
+cases to pass but can still be incorrect.</p>
+<p class="view-desc">DecBench uses metrics to quantify how often a decompiler recovers the exact
+source code of a function. Since measuring this with pure strings is
+inaccurate, we use multiple metrics described below.</p>
+<h3 class="sub">the three metrics</h3>
+<p class="view-desc">Decompilation has three separable goals, so we measure three things and report
+how often a decompiler gets each <em>perfect</em> &mdash; because a
+decompilation that is <em>nearly</em> right is still a thing you have to read
+twice. Expand the panel inside each card to see how the metric actually works.</p>
+        <div class="goal">
+            <div class="goal-head"><span class="num">[1]</span>Control-flow structure correctness</div>
+            <div class="goal-metric">metric: Structural Correctness (GED)</div>
+            <div class="goal-body"><p>Does the decompiled code branch and loop the same way the source does? We compare the control-flow graphs of the source and the decompilation with a Graph Edit Distance (GED) &mdash; the number of node/edge insertions, deletions, and substitutions needed to turn one CFG into the other.</p>
+<details class="metric-viz" open>
+<summary>how GED works: source &rarr; CFG &rarr; graph diff</summary>
+<div class="viz-wrap">
+
+<div class="viz-row">
+<div class="viz-rowlabel">A &middot; lift the source to a control-flow graph</div>
+<div class="viz-pipe">
+<span class="viz-chip is-in">source .c</span>
+<span class="viz-parrow">&mdash;<b>&nbsp;joern&nbsp;</b>&rarr;</span>
+<span class="viz-chip is-out">control-flow graph</span>
+<span class="viz-dim">&nbsp;(same lift is applied to every decompiler's C output)</span>
+</div>
+<div class="viz-grid">
+
+<div class="viz-panel">
+<div class="viz-panel-h is-src">source.c</div>
+<pre class="viz-code" data-lang="c"><code>// sum of |x[i]|
+int sum_abs(int *x, int n) {
+    int i, s = 0;
+    for (i = 0; i &lt; n; i++) {
+        if (x[i] &lt; 0)
+            s -= x[i];
+        else
+            s += x[i];
+    }
+    return s;
+}</code></pre>
+</div>
+
+<div class="viz-panel">
+<div class="viz-panel-h is-src">control-flow graph</div>
+<svg viewBox="0 0 360 300" role="img" aria-label="control-flow graph of sum_abs" style="max-width:100%;height:auto;display:block">
+<defs>
+<marker id="ga-g" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--text-muted)"/></marker>
+</defs>
+
+<line x1="180" y1="44" x2="180" y2="79" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#ga-g)"/>
+<line x1="168" y1="110" x2="112" y2="156" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#ga-g)"/>
+<line x1="192" y1="110" x2="248" y2="156" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#ga-g)"/>
+<line x1="101" y1="188" x2="160" y2="240" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#ga-g)"/>
+<line x1="259" y1="188" x2="200" y2="240" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#ga-g)"/>
+<path d="M139,251 C78,250 22,238 22,180 C22,120 74,101 137,101" fill="none" stroke="var(--text-muted)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ga-g)"/>
+<text x="68" y="130" font-size="9.5" fill="var(--text-muted)" text-anchor="middle">loop</text>
+<text x="104" y="139" font-size="9.5" fill="var(--text-muted)" text-anchor="end">&lt;0</text>
+<text x="234" y="139" font-size="9.5" fill="var(--text-muted)">&ge;0</text>
+
+<rect x="139" y="14"  width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="180" y="33"  font-size="12.5" fill="var(--text)" text-anchor="middle">entry</text>
+<rect x="139" y="80"  width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="180" y="99"  font-size="12.5" fill="var(--text)" text-anchor="middle">cond</text>
+<rect x="52"  y="158" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="93"  y="177" font-size="12.5" fill="var(--text)" text-anchor="middle">then</text>
+<rect x="226" y="158" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="267" y="177" font-size="12.5" fill="var(--text)" text-anchor="middle">else</text>
+<rect x="139" y="242" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="180" y="261" font-size="12.5" fill="var(--text)" text-anchor="middle">exit</text>
+</svg>
+<div class="viz-cap">green = the reference shape (dashed edge = loop back-edge)</div>
+</div>
+
+</div>
+</div>
+
+<div class="viz-row">
+<div class="viz-rowlabel">B &middot; the edit distance: reference vs a decompiler's CFG</div>
+<div class="viz-grid">
+
+<div class="viz-panel">
+<div class="viz-panel-h is-src">source CFG</div>
+<svg viewBox="0 0 360 300" role="img" aria-label="source control-flow graph" style="max-width:100%;height:auto;display:block">
+<defs>
+<marker id="gb-g" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--text-muted)"/></marker>
+</defs>
+<line x1="180" y1="44" x2="180" y2="79" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gb-g)"/>
+<line x1="168" y1="110" x2="112" y2="156" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gb-g)"/>
+<line x1="192" y1="110" x2="248" y2="156" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gb-g)"/>
+<line x1="101" y1="188" x2="160" y2="240" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gb-g)"/>
+<line x1="259" y1="188" x2="200" y2="240" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gb-g)"/>
+<path d="M139,251 C78,250 22,238 22,180 C22,120 74,101 137,101" fill="none" stroke="var(--text-muted)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#gb-g)"/>
+<text x="68" y="130" font-size="9.5" fill="var(--text-muted)" text-anchor="middle">loop</text>
+<rect x="139" y="14"  width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="180" y="33"  font-size="12.5" fill="var(--text)" text-anchor="middle">entry</text>
+<rect x="139" y="80"  width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="180" y="99"  font-size="12.5" fill="var(--text)" text-anchor="middle">cond</text>
+<rect x="52"  y="158" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="93"  y="177" font-size="12.5" fill="var(--text)" text-anchor="middle">then</text>
+<rect x="226" y="158" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="267" y="177" font-size="12.5" fill="var(--text)" text-anchor="middle">else</text>
+<rect x="139" y="242" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--green)" stroke-width="1.4"/><text x="180" y="261" font-size="12.5" fill="var(--text)" text-anchor="middle">exit</text>
+</svg>
+<div class="viz-cap">5 nodes &middot; 6 edges</div>
+</div>
+
+<div class="viz-panel">
+<div class="viz-panel-h is-dec">decompiled CFG</div>
+<svg viewBox="0 0 360 300" role="img" aria-label="decompiled control-flow graph with one inserted node" style="max-width:100%;height:auto;display:block">
+<defs>
+<marker id="gd-g" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--text-muted)"/></marker>
+<marker id="gd-r" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--red)"/></marker>
+</defs>
+
+<line x1="180" y1="44" x2="180" y2="79" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gd-g)"/>
+<line x1="168" y1="110" x2="112" y2="156" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gd-g)"/>
+<line x1="192" y1="110" x2="248" y2="156" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gd-g)"/>
+<line x1="101" y1="188" x2="160" y2="240" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gd-g)"/>
+<line x1="259" y1="188" x2="200" y2="240" stroke="var(--text-muted)" stroke-width="1.3" marker-end="url(#gd-g)"/>
+<path d="M139,251 C78,250 22,238 22,180 C22,120 74,101 137,101" fill="none" stroke="var(--text-muted)" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#gd-g)"/>
+<text x="68" y="130" font-size="9.5" fill="var(--text-muted)" text-anchor="middle">loop</text>
+
+<path d="M222,94 C332,102 332,182 302,214" fill="none" stroke="var(--red)" stroke-width="1.6" marker-end="url(#gd-r)"/>
+<line x1="252" y1="234" x2="224" y2="250" stroke="var(--red)" stroke-width="1.6" marker-end="url(#gd-r)"/>
+<rect x="252" y="214" width="70" height="28" rx="5" fill="var(--panel-red-tint)" stroke="var(--red)" stroke-width="1.5"/><text x="287" y="232" font-size="12" fill="var(--red)" text-anchor="middle">blk</text>
+
+<rect x="139" y="14"  width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1.3"/><text x="180" y="33"  font-size="12.5" fill="var(--text)" text-anchor="middle">entry</text>
+<rect x="139" y="80"  width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1.3"/><text x="180" y="99"  font-size="12.5" fill="var(--text)" text-anchor="middle">cond</text>
+<rect x="52"  y="158" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1.3"/><text x="93"  y="177" font-size="12.5" fill="var(--text)" text-anchor="middle">then</text>
+<rect x="226" y="158" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1.3"/><text x="267" y="177" font-size="12.5" fill="var(--text)" text-anchor="middle">else</text>
+<rect x="139" y="242" width="82" height="30" rx="5" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1.3"/><text x="180" y="261" font-size="12.5" fill="var(--text)" text-anchor="middle">exit</text>
+</svg>
+<div class="viz-cap">matched nodes grey &middot; <span style="color:var(--red)">inserted node + 2 edges red</span></div>
+</div>
+
+</div>
+
+<div class="viz-callout">
+GED = <span class="n">3</span> &nbsp;&mdash;&nbsp; 1 node insertion + 2 edge insertions to align the two CFGs
+</div>
+
+<div class="viz-score">
+<div><span class="viz-good big">GED = 0</span> <span class="viz-dim">&rarr; the two CFGs are graph-isomorphic &mdash; a perfect structural match.</span></div>
+<div class="perfect">Only control-flow shape is scored; node labels are ignored, so the signal is fair across decompilers.</div>
+</div>
+
+</div>
+
+<p class="viz-note">Structural Correctness (GED): Joern lifts both the original source and each decompiler's C output to control-flow graphs, then counts the fewest node/edge edits needed to make them isomorphic &mdash; <code>0</code> means an identical shape. Only control structure is scored, so the signal is fair across decompilers.</p>
+
+</div>
+</details> <span class="perfect">perfect = GED of 0 (graph-isomorphic control flow).</span></div>
+        </div>
+        <div class="goal">
+            <div class="goal-head"><span class="num">[2]</span>Type correctness</div>
+            <div class="goal-metric">metric: Type Correctness</div>
+            <div class="goal-body"><p>Did the decompiler recover the right variable and argument types? We match the decompiled variables against DWARF ground truth (arguments by ABI position, stack variables by calibrated offset, the rest by name) and score the fraction recovered correctly.</p>
+<details class="metric-viz" open>
+<summary>how type matching works: DWARF ground truth &harr; recovered variables</summary>
+<div class="viz-wrap">
+
+<svg viewBox="0 0 720 322" role="img" aria-label="stack-frame type matching between DWARF ground truth and decompiler output" style="max-width:100%;height:auto;display:block">
+<defs>
+<marker id="tm-g" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--green)"/></marker>
+<marker id="tm-a" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--amber)"/></marker>
+<marker id="tm-r" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="var(--red)"/></marker>
+</defs>
+
+
+<text x="24"  y="26" font-size="12.5" fill="var(--text)">DWARF ground truth <tspan fill="var(--text-muted)">(from -g build)</tspan></text>
+<text x="696" y="26" text-anchor="end" font-size="12.5" fill="var(--text)">decompiler output</text>
+<line x1="24"  y1="34" x2="310" y2="34" stroke="var(--border-dim)" stroke-width="1" stroke-dasharray="4 3"/>
+<line x1="410" y1="34" x2="696" y2="34" stroke="var(--border-dim)" stroke-width="1" stroke-dasharray="4 3"/>
+
+
+<text x="360" y="54" text-anchor="middle" font-size="10.5" fill="var(--text-muted)"><tspan fill="var(--text)" font-weight="bold">[1]</tspan> arguments &mdash; matched by ABI position</text>
+
+
+
+<rect x="24" y="62" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="34" y="80"  font-size="10" fill="var(--text-muted)">arg 0 &middot; %rdi</text>
+<text x="34" y="99"  font-size="13" fill="var(--text)">char *<tspan fill="var(--text-muted)">path</tspan></text>
+<rect x="410" y="62" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="420" y="80"  font-size="10" fill="var(--text-muted)">param a1</text>
+<text x="420" y="99"  font-size="13" fill="var(--green)">char *</text>
+<text x="686" y="94"  text-anchor="end" font-size="15" fill="var(--green)">&#10003;</text>
+
+<rect x="24" y="114" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="34" y="132" font-size="10" fill="var(--text-muted)">arg 1 &middot; %esi</text>
+<text x="34" y="151" font-size="13" fill="var(--text)">int <tspan fill="var(--text-muted)">mode</tspan></text>
+<rect x="410" y="114" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="420" y="132" font-size="10" fill="var(--text-muted)">param a2</text>
+<text x="420" y="151" font-size="13" fill="var(--amber)">uint</text>
+<text x="686" y="146" text-anchor="end" font-size="15" fill="var(--amber)">&#8800;</text>
+
+
+<text x="360" y="188" text-anchor="middle" font-size="10.5" fill="var(--text-muted)"><tspan fill="var(--text)" font-weight="bold">[2]</tspan> stack locals &mdash; by frame offset, <tspan fill="var(--text)" font-weight="bold">[3]</tspan> then by name</text>
+
+
+
+<rect x="24" y="196" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="34" y="214" font-size="10" fill="var(--text-muted)">local @ rbp-0x18</text>
+<text x="34" y="233" font-size="13" fill="var(--text)">size_t <tspan fill="var(--text-muted)">len</tspan></text>
+<rect x="410" y="196" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="420" y="214" font-size="10" fill="var(--text-muted)">var_28 @ rbp-0x28</text>
+<text x="420" y="233" font-size="13" fill="var(--green)">ulong</text>
+<text x="686" y="228" text-anchor="end" font-size="15" fill="var(--green)">&#10003;</text>
+
+<rect x="24" y="248" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="34" y="266" font-size="10" fill="var(--text-muted)">local @ rbp-0x20</text>
+<text x="34" y="285" font-size="13" fill="var(--text)">struct stat <tspan fill="var(--text-muted)">st</tspan></text>
+<rect x="410" y="248" width="286" height="46" rx="3" fill="var(--code-bg)" stroke="var(--code-border)" stroke-width="1"/>
+<text x="420" y="266" font-size="10" fill="var(--text-muted)">var_30 @ rbp-0x30</text>
+<text x="420" y="285" font-size="13" fill="var(--red)">undefined8</text>
+<text x="686" y="280" text-anchor="end" font-size="15" fill="var(--red)">&#10007;</text>
+
+
+<text x="360" y="80"  text-anchor="middle" font-size="9.5" fill="var(--green)"><tspan font-weight="bold">[1]</tspan> ABI 0</text>
+<line x1="310" y1="85"  x2="406" y2="85"  stroke="var(--green)" stroke-width="1.6" marker-end="url(#tm-g)"/>
+
+<text x="360" y="132" text-anchor="middle" font-size="9.5" fill="var(--amber)"><tspan font-weight="bold">[1]</tspan> int &#8800; uint</text>
+<line x1="310" y1="137" x2="406" y2="137" stroke="var(--amber)" stroke-width="1.6" marker-end="url(#tm-a)"/>
+
+<text x="360" y="214" text-anchor="middle" font-size="9.5" fill="var(--green)"><tspan font-weight="bold">[2]</tspan> offset +0x10</text>
+<line x1="310" y1="219" x2="406" y2="219" stroke="var(--green)" stroke-width="1.6" marker-end="url(#tm-g)"/>
+
+<text x="360" y="266" text-anchor="middle" font-size="9.5" fill="var(--red)"><tspan font-weight="bold">[3]</tspan> missed struct</text>
+<line x1="310" y1="271" x2="406" y2="271" stroke="var(--red)" stroke-width="1.6" marker-end="url(#tm-r)"/>
+</svg>
+
+<div class="viz-legend">
+<span class="pass"><span class="k">[1]</span> arguments by ABI position (name-independent)</span>
+<span class="pass"><span class="k">[2]</span> stack vars by calibrated frame offset</span>
+<span class="pass"><span class="k">[3]</span> remainder by exact name</span>
+<span class="pass"><span style="color:var(--green)">&#10003;</span> correct type &middot; <span style="color:var(--amber)">&#8800;</span> type mismatch &middot; <span style="color:var(--red)">&#10007;</span> missed</span>
+</div>
+
+<div class="viz-score">
+<div>score = <span class="viz-dim">matched-correct / recoverable</span> = <span class="viz-good">2</span> <span class="viz-dim">/</span> 4 = <span class="viz-warn big">0.50</span></div>
+<div class="perfect"><span class="viz-good">1.0</span> &rarr; every recoverable variable typed correctly = perfect</div>
+</div>
+
+<p class="viz-note">Only variables carrying a DWARF location count as <em>recoverable</em> &mdash; fully optimized-out vars are dropped for everyone, so the denominator is identical across decompilers. Arguments match by ABI position (name-independent, so angr's <code>a1</code>/<code>a2</code> get fair credit), stack locals by an auto-calibrated frame-offset shift (here <code>+0x10</code>, so ground-truth <code>-0x18</code> aligns to the decompiler's <code>-0x28</code>), and the remainder by exact name.</p>
+
+</div>
+</details> <span class="perfect">perfect = 1.0 (every recoverable variable typed correctly).</span></div>
+        </div>
+        <div class="goal">
+            <div class="goal-head"><span class="num">[3]</span>Recompilation correctness</div>
+            <div class="goal-metric">metric: Recompilation Bytematch</div>
+            <div class="goal-body"><p>Does the decompiled code recompile to the same machine code? We run a uniform compilability fixup (define decompiler pseudo-types, strip illegal symbol-version tokens, declare missing symbols) so every decompiler gets a fair shot at building, recompile each function with the original toolchain, and compare the resulting assembly &mdash; normalizing link-time-dependent operands (call/jump targets, PC-relative offsets) so only real differences count.</p>
+<p>The leaderboard's <strong>Compiles</strong> column reports the first half of this on its own &mdash; the share of a decompiler's output that the fixup got to build at all (before any assembly comparison). It is measured only where a matching recompiler exists (x86); ARM/PE firmware and malware abstain rather than count as failures.</p>
+<details class="metric-viz" open>
+<summary>how bytematch works: fixup &rarr; recompile &rarr; normalized asm diff</summary>
+<div class="viz-wrap">
+
+<div class="viz-row">
+<div class="viz-rowlabel">A &middot; rebuild the decompiler's own C, the same way the original was built</div>
+<div class="viz-pipe">
+<span class="viz-chip is-in">decompiled .c</span>
+<span class="viz-parrow">&mdash;<b>&nbsp;compilability fixup&nbsp;</b>&rarr;</span>
+<span class="viz-chip">buildable .c</span>
+<span class="viz-parrow">&mdash;<b>&nbsp;recompile&nbsp;</b>&rarr;</span>
+<span class="viz-chip is-out">assembly</span>
+<span class="viz-dim">&nbsp;(same toolchain &amp; -O flags as the source: x86&rarr;gcc, ARM&rarr;arm-eabi, PE&rarr;MinGW)</span>
+</div>
+<div class="viz-grid">
+
+<div class="viz-panel">
+<div class="viz-panel-h is-dec">decompiled .c &mdash; pseudo-types injected by the fixup</div>
+<pre class="viz-code" data-lang="c"><code>undefined4 scale(int a) {
+    uint x = a * 3;
+    log_val(x);
+    return x + limit;
+}</code></pre>
+<div class="viz-cap">The fixup adds only <code style="color:var(--green)">typedef</code>s for <span class="tok-type">undefined4</span>/<span class="tok-type">uint</span> &mdash; never rewrites logic</div>
+</div>
+
+<div class="viz-panel">
+<div class="viz-panel-h is-dec">recompiled assembly (-O2, x86-64)</div>
+<pre class="viz-code" data-lang="asm"><code>scale:
+    push   rbx
+    imul   ebx, edi, 3
+    mov    edi, ebx
+    call   log_val
+    mov    eax, ebx
+    add    eax, [rip+limit]
+    pop    rbx
+    ret</code></pre>
+</div>
+
+</div>
+</div>
+
+<div class="viz-row">
+<div class="viz-rowlabel">B &middot; diff the recompiled bytes against the original .text</div>
+<div class="viz-diff">
+<div class="dl-head"><span class="h-mk"></span><span>original .text</span><span>recompiled</span></div>
+<div class="dl-row dl-match"><span class="dl-mk">&#10003;</span><code class="dl-gt">push   rbx</code><code>push   rbx</code></div>
+<div class="dl-row dl-diff"><span class="dl-mk">&#10007;</span><code class="dl-gt">lea    ebx, [rdi+rdi*2]</code><code>imul   ebx, edi, 3</code></div>
+<div class="dl-row dl-match"><span class="dl-mk">&#10003;</span><code class="dl-gt">mov    edi, ebx</code><code>mov    edi, ebx</code></div>
+<div class="dl-row dl-norm"><span class="dl-mk">&#8776;</span><code class="dl-gt">call   <span class="dl-op">____</span></code><code>call   <span class="dl-op">____</span></code></div>
+<div class="dl-row dl-match"><span class="dl-mk">&#10003;</span><code class="dl-gt">mov    eax, ebx</code><code>mov    eax, ebx</code></div>
+<div class="dl-row dl-norm"><span class="dl-mk">&#8776;</span><code class="dl-gt">add    eax, [rip+<span class="dl-op">____</span>]</code><code>add    eax, [rip+<span class="dl-op">____</span>]</code></div>
+<div class="dl-row dl-match"><span class="dl-mk">&#10003;</span><code class="dl-gt">pop    rbx</code><code>pop    rbx</code></div>
+<div class="dl-row dl-match"><span class="dl-mk">&#10003;</span><code class="dl-gt">ret</code><code>ret</code></div>
+</div>
+
+<div class="viz-legend">
+<span class="pass"><span style="color:var(--green)">&#10003;</span> identical line</span>
+<span class="pass"><span style="color:var(--amber)">&#8776;</span> matches after normalizing a link-time operand (<span class="dl-op">____</span> = <code>call</code> target / <code>[rip+disp]</code>)</span>
+<span class="pass"><span style="color:var(--red)">&#10007;</span> real difference (edit distance = changed asm lines)</span>
+</div>
+
+<div class="viz-score">
+<div>byte_match = <span class="viz-dim">matching / total</span> = <span class="viz-good">7</span> <span class="viz-dim">/</span> 8 = <span class="viz-good big">0.88</span></div>
+<div class="perfect"><span class="viz-good">1.0</span> &rarr; recompiled assembly matches the original = perfect</div>
+</div>
+
+</div>
+
+<p class="viz-note">Recompilation Bytematch rebuilds the decompiler's own C the SAME way the original was built &mdash; toolchain and <code>-O*/-m*</code> flags read from the DWARF producer &mdash; then compares assembly line by line. A compilability fixup injects <em>only</em> what gcc reports missing (typedefs for pseudo-types like <code>undefined4</code>/<code>uint</code>, decls for implicit functions) and never rewrites logic. Link-time-dependent operands &mdash; <code>call</code>/branch targets and <code>[rip&plusmn;disp]</code> displacements &mdash; are normalized away, so an unlinked address difference is not a penalty. Type recovery is scored separately (type_match), so fixing types just to compile is fair.</p>
+
+</div>
+</details> <span class="perfect">perfect = 1.0 (recompiled assembly matches the original).</span></div>
+        </div><div class="recovered">
+    [ = ] When a function is perfect on <strong>at least one</strong> metric,
+    the decompiler has exactly recovered that aspect of the original source:
+    the control flow, the types, or code that recompiles to the same bytes.
+    That is the Union column on the leaderboard.
+</div>
+
+<h3 class="sub">the dataset</h3>
+<h3 class="sub">summary</h3>
+<div id="dataset-summary" class="goal"></div>
+
+<h3 class="sub">pipeline health (our own tooling)</h3>
+<p class="view-desc">GED depends on Joern parsing both the source and the decompiler output.
+When Joern fails on the <strong>source</strong>, that's our tooling &mdash; those
+functions are excluded from GED for every decompiler (never counted against
+them). When Joern fails on a single decompiler's <strong>output</strong>,
+that's reported here (per decompiler), not folded into the headline score.</p>
+<div id="joern-source" class="goal"></div>
+<table id="joern-output-table"><thead><tr></tr></thead><tbody></tbody></table>
+
+<h3 class="sub">projects</h3>
+<p class="view-desc" id="dataset-projects-note"></p>
+
+<table id="dataset-projects"><thead><tr></tr></thead><tbody></tbody></table>
+    </section>
+    <section class="view" id="view-changelog" data-view="changelog">
+        <h2 class="view-title">Changelog</h2>
+        <p class="view-desc">Significant changes to DecBench that introduce or update results.</p>
+<h3 class="sub">2026-07-22</h3>
+<ul>
+<li><strong>DecBench goes live</strong> with support for 7 traditional decompilers, 2 LLMs (partial), and 3 defining metrics.</li>
+<li>An expanded evaluation of AI agents is planned after credits are secured for running those evaluations.</li>
+</ul>
+    </section>
+            <div class="rule"></div>
+            <footer>DecBench v1.0 &mdash; decompiler benchmarking suite &middot; projects: base-passwd, bash, betaflight, bzip2, chibios, cleanflight, coreutils, crazyflie, cronie, dexter, diffutils, dpkg, e2fsprogs, findutils, freertos, gnutls, grep, gzip, iproute2, kmod, libacl, libbsd, libedit, libexpat, libopencm3, libselinux, minipig, mirai, mirai-win, mydoom, nuttx, openssh-portable, riot-os, rsyslog, shadow, sysvinit, tar, u-boot, x0r-usb, zlib</footer>
+        </main>
+    </div>
+    <script>window.__DECBENCH_ROOT__ = "../";</script>
+    <script src="../app.js"></script>
+</body>
+</html>

@@ -1,0 +1,34 @@
+# The metric registry: display names, short column labels, display order, and what
+# "perfect" means for each metric.
+#
+# This is the ONE source of truth. It replaces four copies that used to drift:
+# METRIC_DISPLAY_NAMES / METRIC_SHORT_NAMES / _METRIC_ORDER in html.py and
+# METRIC_NAMES / METRIC_SHORT / METRIC_ORDER in the inline JS.
+#
+# `order` sorts the metric columns (structure -> types -> recompilation). Metrics
+# present in a run but absent here are appended, in their given order.
+#
+# `perfect_definition` is the canonical wording. The `**perfect =**` line of the
+# matching goal card in metrics.md must repeat it exactly (tests/test_content.py
+# enforces this), so the explainer and the registry cannot drift apart.
+
+[[metric]]
+name = "ged"
+display_name = "Structural Correctness (GED)"
+short_name = "Structure"
+order = 1
+perfect_definition = "GED of 0 (graph-isomorphic control flow)."
+
+[[metric]]
+name = "type_match"
+display_name = "Type Correctness"
+short_name = "Types"
+order = 2
+perfect_definition = "1.0 (every recoverable variable typed correctly)."
+
+[[metric]]
+name = "byte_match"
+display_name = "Recompilation Bytematch"
+short_name = "Recompile"
+order = 3
+perfect_definition = "1.0 (recompiled assembly matches the original)."

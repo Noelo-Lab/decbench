@@ -1,0 +1,35 @@
+# DecBench CPS target: Crazyflie firmware (cf2)
+# Bitcraze Crazyflie 2.x nano-quadcopter flight firmware. Targets the on-board
+# STM32F405 (ARM Cortex-M4F) and runs on FreeRTOS, so the output is a bare-metal
+# ARM drone flight-controller ELF (cf2.elf).
+name = "crazyflie"
+version = "2024.10"
+
+source_remote = "https://github.com/bitcraze/crazyflie-firmware"
+remote_type = "git"
+package_dir = "crazyflie-firmware"
+source_dir = "."
+
+# Pull the vendored deps (CMSIS-DSP, FreeRTOS, libdw1000, unity, ...).
+post_download_cmds = ["git submodule update --init --recursive --depth 1"]
+# Generate the cf2 Kconfig (.config) before building.
+pre_make_cmds = ["make cf2_defconfig"]
+
+# Crazyflie uses a Linux-style Kbuild system that builds its OWN CFLAGS from
+# ARCH_CFLAGS (which carry -mcpu=cortex-m4 -mthumb -mfloat-abi=hard ... -g3 and
+# the opt level) and IGNORES the env CFLAGS. The kernel-style user injection
+# point is KCFLAGS (`KBUILD_CFLAGS += $(ARCH_CFLAGS) $(KCFLAGS)`), appended AFTER
+# ARCH_CFLAGS so our opt level / -save-temps win. We forward decbench's $CFLAGS
+# through KCFLAGS and add -Wno-error because the default -Os path sets -Werror
+# and a maybe-uninitialized warning in the bundled bosch BMP3 driver fires at
+# higher opt and would otherwise be fatal. Arch flags (so the ARM ELF) come from
+# the cf2 platform, untouched.
+make_cmd = 'make CC="$CC" KCFLAGS="$CFLAGS -Wno-error"'
+
+labels = ["cps", "drone", "flight-controller", "avionics", "bare-metal", "cortex-m4", "stm32f4"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "arm-none-eabi-gcc"
+target_arch = "arm"  # only collect the ARM hardware binaries (drop host tools)

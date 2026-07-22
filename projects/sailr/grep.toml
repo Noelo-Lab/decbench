@@ -1,0 +1,31 @@
+# DecBench Project Configuration: GNU Grep
+# GNU grep is a CLI tool for searching plain-text data for lines matching a
+# pattern; labels reflect its role as a parsing/text-processing command-line tool.
+
+name = "grep"
+version = "3.8"
+
+# Source configuration - use release tarball (includes pre-generated ./configure)
+source_remote = "https://mirrors.kernel.org/gnu/grep/grep-3.8.tar.xz"
+remote_type = "tar"
+
+# Build directories
+package_dir = "grep"
+source_dir = "src"
+
+# Build commands (no bootstrap needed with release tarball)
+post_download_cmds = []
+pre_make_cmds = ["./configure --quiet --disable-gcc-warnings"]
+make_cmd = "make"
+
+labels = ["sailr", "cli-tool", "parsing", "text-processing"]
+
+[compilation]
+# Optimization levels to compile
+optimization_levels = ["O0", "O2", "O2-noinline"]
+
+# Base compiler flags (O2-noinline adds -fno-inline at its own level)
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+
+# Compiler to use
+c_compiler = "gcc"

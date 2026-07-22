@@ -1,0 +1,35 @@
+# DecBench Project Configuration: libselinux
+# libselinux is the userspace SELinux library (libselinux.so). Labels mark it as
+# a sailr benchmark target in the library / security categories.
+
+name = "libselinux"
+version = "3.4"
+
+# Source configuration - use the standalone libselinux release tarball instead of
+# cloning the full SELinuxProject/selinux monorepo. It is make-only (no configure)
+# and builds against the installed libsepol-dev + libpcre2-dev.
+source_remote = "https://github.com/SELinuxProject/selinux/releases/download/3.4/libselinux-3.4.tar.gz"
+remote_type = "tar"
+
+# Build directories (package_dir documents the extracted dir; tar uses the single
+# extracted directory as the source root). source_dir "src" keeps parity with the
+# sailr recipe, collecting libselinux.so.1 plus the src/ .i files for metrics.
+package_dir = "libselinux-3.4"
+source_dir = "src"
+
+# Build commands. No configure step. The top-level Makefile detects PCRE2 via
+# pkg-config and exports PCRE_LDLIBS to subdirs, so the build must run from the
+# source root (decbench runs make_cmd there). src/Makefile sets `CFLAGS ?= ...`
+# and appends its own `override CFLAGS += -I../include ...`, so we pass CFLAGS/CC
+# as command-line overrides (which win over `?=` while preserving the appended
+# include/PCRE flags) to guarantee the opt level and -save-temps take effect.
+post_download_cmds = []
+pre_make_cmds = []
+make_cmd = 'make CFLAGS="$CFLAGS" CC="$CC"'
+
+labels = ["sailr", "library", "security"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

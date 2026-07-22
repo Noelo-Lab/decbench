@@ -1,0 +1,58 @@
+# Report chrome: brand block, sidebar, footer, banners.
+#
+# Every string in this file is emitted as HTML *verbatim* — the renderer does not
+# escape it — so entities (&mdash;, &middot;) and inline tags are intentional and
+# must stay written as HTML.
+
+[brand]
+prompt = "$ decbench"
+title = "DecBench"
+subtitle = "decompiler benchmark"
+
+[footer]
+# {version}  = scoreboard.version
+# {projects} = the comma-joined project list, or `projects_empty` when there are none.
+template = "DecBench v{version} &mdash; decompiler benchmarking suite &middot; projects: {projects}"
+projects_empty = "-"
+
+[banners]
+no_function_data = "[ note ] Interactive views unavailable: per-function data (function_results.json) not found next to the scoreboard."
+
+# Sidebar counters. Each label is emitted immediately after the <span> that holds
+# the number, so the LEADING SPACE in every label is significant.
+[side_stats]
+functions = " functions"
+binaries = " binaries"
+decompilers = " decompilers"
+metrics = " metrics"
+
+# Sidebar dataset selector.
+[sidebar]
+dataset_label = "dataset"
+normalize_label = "normalize failures"
+normalize_title = "Only count functions that EVERY decompiler decompiled successfully (apples-to-apples)."
+
+# Decompilers hidden from the SITE only. Their results stay in
+# function_results.json (nothing is deleted or re-run) — they are filtered out at
+# render time, so every table, chart, payload, and sample the site ships omits
+# them. A name here matches a decompiler id exactly OR by its base name before
+# `@`, so "phoenix" also hides any "phoenix@<version>". Edit + re-render to
+# change; no benchmark re-run needed.
+[decompilers]
+hidden = ["phoenix"]
+
+# Decompilers shown ONLY on the `sample-set` view. The LLM/coding-agent backends
+# (codex, claude-code) are run on the sample-set slice only, so on every other
+# preset (unoptimized/optimized/inlined/large) they would have near-zero coverage
+# and look artificially bad under the shared-denominator leaderboard. Listing them
+# here keeps their rows off those views and shows them only where the comparison is
+# fair (all decompilers cover the same 250 functions). Their data still ships in the
+# payload; it is just not rendered outside the sample-set preset. Base-name match,
+# same as `hidden`.
+sample_set_only = ["codex", "claude-code"]
+
+# GitHub Pages custom domain. `decbench site build` writes it into the tree's
+# CNAME file; the authoritative routing for workflow deploys is the repo's Pages
+# settings (Settings -> Pages -> Custom domain), which must carry the same value.
+[pages]
+domain = "decbench.com"

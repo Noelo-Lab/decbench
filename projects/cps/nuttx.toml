@@ -1,0 +1,53 @@
+# DecBench CPS target: NuttX (stm32f4discovery:nsh)
+# Apache NuttX is a POSIX/ANSI real-time operating system. This target builds
+# the STM32F4 Discovery (Cortex-M4) "nsh" (NuttShell) configuration with
+# arm-none-eabi-gcc: the NuttX kernel + drivers + NuttShell app linked into a
+# single bare-metal firmware ELF (nuttx).
+name = "nuttx"
+version = "nuttx-12.13.0"
+
+source_remote = "https://github.com/apache/nuttx"
+remote_type = "git"
+package_dir = "nuttx"
+source_dir = "."
+
+# NuttX needs the nuttx-apps repo checked out as a SIBLING of the nuttx clone
+# (the build references ../apps). post_download_cmds run with cwd = the nuttx
+# clone root, so cloning into ../apps places it correctly. We also need a
+# Kconfig backend: the toolchain image lacks kconfig-frontends, so install
+# kconfiglib (pip), which provides genconfig/olddefconfig that configure.sh and
+# `make olddefconfig` use. (--break-system-packages: the image's python is
+# PEP-668 externally-managed.)
+post_download_cmds = [
+  "git clone --branch nuttx-12.13.0 --depth 1 https://github.com/apache/nuttx-apps ../apps",
+  "pip3 install --quiet --break-system-packages kconfiglib",
+]
+
+# Configure the board, then fix two defconfig gaps that the missing
+# kconfig-tweak would normally handle: the host defaults to Windows (giving
+# HOSTEXEEXT=.exe + cygwin headers and breaking the host build tools) and no ARM
+# toolchain is selected (CROSSDEV empty -> host gcc is used for the cross
+# build). Force CONFIG_HOST_LINUX and CONFIG_ARM_TOOLCHAIN_GNU_EABI, then
+# normalize with `make olddefconfig`.
+pre_make_cmds = [
+  "./tools/configure.sh stm32f4discovery:nsh",
+  "sed -i '/CONFIG_HOST_WINDOWS/d; /CONFIG_HOST_SIM/d; /CONFIG_WINDOWS_NATIVE/d' .config",
+  "printf 'CONFIG_HOST_LINUX=y\\nCONFIG_ARM_TOOLCHAIN_GNU_EABI=y\\n' >> .config",
+  "make olddefconfig",
+]
+
+# NuttX sets its own arch flags (-mcpu=cortex-m4 -mthumb ...) and optimization
+# from Kconfig. EXTRAFLAGS is NuttX's documented hook: it is appended to the
+# per-file CFLAGS, so our -g/-fno-builtin/-save-temps=obj reach the compiler and
+# our -O2/-O0 (passed last) win the opt level, while the arch flags survive.
+# The linked ELF is ./nuttx; .i files (~1093) sit next to their .o objects under
+# source_dir=".". Verified: ELF 32-bit ARM, with debug_info, not stripped.
+make_cmd = 'make EXTRAFLAGS="$CFLAGS"'
+
+labels = ["cps", "rtos", "real-time-kernel", "bare-metal", "cortex-m4", "stm32f4discovery"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "arm-none-eabi-gcc"
+target_arch = "arm"  # only collect the ARM hardware binaries (drop host tools)

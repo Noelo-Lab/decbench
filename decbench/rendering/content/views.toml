@@ -1,0 +1,52 @@
+# The view registry: the ONE source of truth for which views exist, what the
+# sidebar calls them, and whether they need per-function data.
+#
+# Each `id` must have a matching `<id>.md` in this directory (the view's title,
+# prose, and static scaffold). Nav order is the order of the tables below.
+#
+# `requires_function_data = true` means the view is dropped from the nav — and its
+# section is not rendered — when the report has no function_results.json.
+#
+# `default = true` marks the view the site opens on when the URL carries no hash.
+# EXACTLY ONE view must set it (tests/test_content.py enforces this). It is config
+# rather than a hardcoded "leaderboard" in the renderer AND the client.
+
+[[view]]
+id = "leaderboard"
+nav_label = "leaderboard"
+requires_function_data = false
+# People come here for the numbers, so the numbers are the front page.
+default = true
+
+[[view]]
+id = "distance"
+nav_label = "distance"
+requires_function_data = true
+
+# The side-by-side code view (absorbed the old `compare` and `hardest` views):
+# source vs a chosen decompiler's output across easy/medium/hard difficulty
+# tiers, ~100 functions each.
+[[view]]
+id = "view"
+nav_label = "view"
+requires_function_data = true
+
+# The explainer page: why the benchmark exists, the three metrics (with their
+# goal cards + visualizations), and the dataset. It absorbed the old `metrics`
+# and `dataset` views. It sits after the data views — it explains the numbers —
+# and it needs no data (its dataset tables are filled lazily by app.js when
+# data exists, and stay empty otherwise). NOT the page the site opens on; that
+# is the leaderboard above (`default = true`).
+[[view]]
+id = "about"
+nav_label = "about"
+requires_function_data = false
+
+# The dated change log, last in the nav. Prose-only (no per-function data, no
+# generated table — app.js never touches it). The body is the repo-root
+# CHANGELOG.md injected at build time (see cli.py's site_build / report);
+# content/changelog.md is the fallback shipped for when that is absent.
+[[view]]
+id = "changelog"
+nav_label = "changelog"
+requires_function_data = false

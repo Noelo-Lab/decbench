@@ -1,0 +1,779 @@
+/* ==========================================================================
+   DecBench report stylesheet.
+
+   Extracted verbatim from decbench/rendering/html.py::_build_css().
+   ========================================================================== */
+
+/* ---- Vendored fonts (no third-party runtime dependency) ---- */
+@font-face {
+    font-family: 'Source Code Pro';
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+    src: url(fonts/source-code-pro-latin.woff2) format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: 'Source Code Pro';
+    font-style: normal;
+    font-weight: 600;
+    font-display: swap;
+    src: url(fonts/source-code-pro-latin.woff2) format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: 'Source Code Pro';
+    font-style: normal;
+    font-weight: 700;
+    font-display: swap;
+    src: url(fonts/source-code-pro-latin.woff2) format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* ---- Theme ----
+   Dark is the default look. Two theme surfaces share ONE token set: this :root
+   block IS the dark palette; the :root[data-theme="light"] block below re-inks
+   every token for a light ground. The choice is an explicit user opt-in — the
+   FOUC-free head script (html.py) stamps data-theme on <html> from
+   localStorage['decbench-theme'] (or a ?theme= debug param) before first paint;
+   there is NO OS-preference detection. Anything hard-coded outside these two
+   blocks is a theme leak, so keep palette values here (or derived from --line-rgb
+   / the tint tokens). app.js reads the chart tokens via getComputedStyle, so the
+   whole palette — chart chrome included — lives in this one file. */
+:root {
+    --bg: #000;
+    --code-bg: #141414;
+    --code-border: #545454;
+    --text: #DBDBDB;
+    --text-muted: #8a8a8a;
+    /* One ink channel drives every dashed rule, inverting hover and low-alpha
+       wash: --border-color and the rgba(var(--line-rgb), a) borders below all
+       follow it, so a single override in the light block re-inks them all. */
+    --line-rgb: 219, 219, 219;
+    --border-color: rgba(var(--line-rgb), 0.9);
+    --border-dim: rgba(var(--line-rgb), 0.4);
+    --green: #6ab04c;
+    --amber: #d4a72c;
+    --red: #c0504d;
+    /* License tags: dimmer than the --green/--amber score palette so they never
+       read as a bar (see .lic-open-source / .lic-closed-source). */
+    --lic-open: #7f9e63;
+    --lic-closed: #b39a54;
+    /* Diff-row washes (.dl-match/.dl-norm/.dl-diff, .cat-hl) + the red-tinted
+       "inserted node" panel in the about-page GED SVG. */
+    --tint-green: rgba(106, 176, 76, 0.10);
+    --tint-green-hl: rgba(106, 176, 76, 0.16);
+    --tint-amber: rgba(212, 167, 44, 0.10);
+    --tint-red: rgba(192, 80, 77, 0.14);
+    --dl-diff-fg: #e2938f;
+    --panel-red-tint: #1a0f0f;
+    /* Inset chrome under a code panel: a heavy black inset reads as depth on the
+       dark ground; on paper it becomes barely-there (a dark vignette would look
+       like grime), see the light override. */
+    --pre-shadow: rgba(0, 0, 0, 0.8);
+    --chart-grid: #333;
+    --chart-axis: #666;
+    --sidebar-w: 230px;
+}
+
+/* Light theme — terminal-on-paper. The SAME design system re-inked for a light
+   ground, NOT a naive invert: every token above is redeclared (except the ones
+   that derive from --line-rgb / the tint channel, which re-ink for free). The
+   --blue / --viz-* tokens are declared in the second :root block further down;
+   their light values live here too (this selector's higher specificity wins) so
+   ALL light overrides sit in one place. */
+:root[data-theme="light"] {
+    --bg: #f7f6f3;
+    --code-bg: #ececea;
+    --code-border: #b5b5b5;
+    --text: #1c1c1c;
+    --text-muted: #6b6b6b;
+    --line-rgb: 28, 28, 28;
+    --green: #3f7a2a;
+    --amber: #8f6a10;
+    --red: #a03832;
+    --blue: #2b6cb0;
+    --viz-type: #1f7a6d;
+    --viz-pp: #7d3aac;
+    --viz-call: #7a6410;
+    --lic-open: #4f6b3a;
+    --lic-closed: #7a6320;
+    --tint-green: rgba(63, 122, 42, 0.14);
+    --tint-green-hl: rgba(63, 122, 42, 0.18);
+    --tint-amber: rgba(143, 106, 16, 0.16);
+    --tint-red: rgba(160, 56, 50, 0.13);
+    --dl-diff-fg: #8f2f29;
+    --panel-red-tint: #f4e5e3;
+    --pre-shadow: rgba(0, 0, 0, 0.08);
+    --chart-grid: #ccc;
+    --chart-axis: #999;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { background: var(--bg); }
+body {
+    font-family: "Source Code Pro", ui-monospace, Menlo, Consolas, monospace;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    font-size: 15px;
+}
+a { color: var(--text); text-decoration: none; }
+.layout { display: flex; align-items: flex-start; min-height: 100vh; }
+
+/* ---- Sidebar ---- */
+.sidebar {
+    width: var(--sidebar-w);
+    min-width: var(--sidebar-w);
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
+    height: 100vh;
+    overflow-y: auto;
+    border-right: dashed 1px var(--border-color);
+    padding: 1.4rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+}
+.brand-prompt { color: var(--text-muted); font-size: 0.8em; }
+.brand-title { font-size: 1.35rem; font-weight: 700; letter-spacing: 0.02em; }
+.brand-sub { color: var(--text-muted); font-size: 0.78em; }
+.nav { display: flex; flex-direction: column; gap: 0.15rem; }
+.nav-item {
+    padding: 0.25rem 0.4rem;
+    font-size: 0.92em;
+    border: dashed 1px transparent;
+}
+.nav-bullet { color: var(--text-muted); }
+.nav-item:hover { color: var(--bg); background: var(--text); }
+.nav-item.active {
+    border-color: var(--border-color);
+    color: var(--green);
+}
+.nav-item.active .nav-bullet { color: var(--green); }
+.side-section { border-top: dashed 1px rgba(var(--line-rgb),0.25); padding-top: 0.9rem; }
+.side-label { color: var(--text-muted); font-size: 0.78em; margin-bottom: 0.4rem; }
+.ds-controls { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.ds-desc { color: var(--text-muted); font-size: 0.74em; margin-top: 0.4rem; line-height: 1.35; overflow-wrap: anywhere; }
+.side-stats { border-top: dashed 1px rgba(var(--line-rgb),0.25); padding-top: 0.9rem; font-size: 0.85em; }
+.side-stat { color: var(--text-muted); padding: 0.05rem 0; }
+.side-num { color: var(--text); font-weight: 700; }
+.side-foot { color: var(--text-muted); font-size: 0.78em; margin-top: auto; }
+
+/* ---- Theme toggle (sidebar foot) ----
+   A terminal-style button (.ds-btn) that flips the light/dark theme. Its LABEL is
+   driven purely by data-theme in CSS, so it reads correctly at first paint with no
+   JS flash: "[ light mode ]" while dark is active (a click switches TO light) and
+   "[ dark mode ]" once light is active. app.js wires only the click. */
+.theme-toggle { display: inline-block; margin-bottom: 0.55rem; }
+.theme-toggle .th-to-dark { display: none; }
+:root[data-theme="light"] .theme-toggle .th-to-light { display: none; }
+:root[data-theme="light"] .theme-toggle .th-to-dark { display: inline; }
+.side-foot-stamp { color: var(--text-muted); }
+
+/* ---- Main ---- */
+.main {
+    flex: 1;
+    min-width: 0;
+    padding: 1.8rem 2rem 3rem;
+}
+.view { display: none; }
+.view.active { display: block; }
+.rule { border: none; border-top: dashed 1px var(--border-color); margin: 1.4rem 0; }
+.banner {
+    border: dashed 1px var(--amber); color: var(--amber);
+    padding: 0.6rem 0.9rem; margin: 0 0 1rem; font-size: 0.9em;
+}
+h2.view-title { font-size: 1.3rem; font-weight: 700; margin-bottom: 0.2rem; }
+h2.view-title:before { content: "## "; color: var(--text-muted); }
+.view-desc { color: var(--text-muted); font-size: 0.88em; margin-bottom: 1.1rem; }
+h3.sub { font-size: 1rem; font-weight: 700; margin: 1.4rem 0 0.4rem; }
+h3.sub:before { content: "> "; color: var(--text-muted); }
+
+/* ---- Tables ---- */
+table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
+th, td {
+    text-align: left; padding: 0.45rem 0.8rem 0.45rem 0;
+    border-bottom: dashed 1px rgba(var(--line-rgb), 0.22);
+    vertical-align: middle;
+}
+th {
+    color: var(--text-muted); font-weight: 600; font-size: 0.82em;
+    border-bottom: dashed 1px var(--border-color); white-space: nowrap;
+}
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--text); }
+th .arrow { color: var(--green); }
+tr:last-child td { border-bottom: none; }
+.lb-rank { color: var(--text-muted); width: 2.6em; }
+.lb-name { font-weight: 700; font-size: 1.02em; }
+.lb-name .ver { color: var(--text-muted); font-weight: 400; font-size: 0.85em; }
+/* Linked decompiler names keep the terminal look: same color, underline on hover. */
+.lb-name a { color: inherit; text-decoration: none; }
+.lb-name a:hover { text-decoration: underline; }
+
+/* ---- Leaderboard stacked name cell (name / version / license) --------------
+   Only the leaderboard uses the stacked block (.lb-name-stacked); the metrics and
+   distance tables keep the compact inline `name <span.ver>` form above. The cell is
+   taller than one line, so the leaderboard top-aligns its cells (below) and the name
+   line — the thing the row is about — sits level with the rank and the metric bars. */
+.lb-name-stacked { vertical-align: top; }
+.lb-stack { display: flex; flex-direction: column; gap: 0.03rem; line-height: 1.25; }
+/* nowrap: "Binary Ninja" must not fold into a taller two-line row. */
+.lb-name-stacked .lb-nm { font-weight: 700; display: flex; align-items: center; white-space: nowrap; }
+.lb-name-stacked .ver,
+.lb-name-stacked .lic {
+    font-weight: 400; font-size: 0.72em; letter-spacing: 0.02em; white-space: nowrap;
+}
+.lb-name-stacked .ver { color: var(--text-muted); }
+/* License: a subtle lowercase tag, not a loud badge — a tinted line that keeps the
+   terminal look. open-source reads muted green, closed-source muted amber (both
+   dimmer than the --green/--amber score palette so they never compete with a bar). */
+.lb-name-stacked .lic { text-transform: lowercase; }
+.lic-open-source { color: var(--lic-open); }
+.lic-closed-source { color: var(--lic-closed); }
+/* Taller name rows: top-align the whole leaderboard row and nudge the single-line
+   cells down so they line up with the NAME (first) line of the stacked block. */
+#leaderboard-table td { vertical-align: top; }
+#leaderboard-table td.lb-rank,
+#leaderboard-table td.metric-cell { padding-top: 0.5rem; }
+td.metric-cell { white-space: nowrap; }
+.cell-pct { font-weight: 700; }
+.cell-count { color: var(--text-muted); font-size: 0.82em; }
+.bar-ascii { color: var(--text-muted); white-space: pre; letter-spacing: -0.02em; }
+.pct-high { color: var(--green); }
+.pct-mid { color: var(--amber); }
+.pct-low { color: var(--red); }
+.binrow:hover td { background: rgba(var(--line-rgb), 0.06); }
+/* Sample-set-only backends on the distance page: below a labeled dashed break,
+   muted — their numbers cover only this dataset's overlap with the sample-set
+   slice (see the .subset-note under each table). */
+.subset-break td {
+    border-bottom: none; color: var(--text-muted); font-size: 0.78em;
+    letter-spacing: 0.08em; text-align: center; padding: 0.6rem 0 0.25rem;
+    border-top: dashed 1px rgba(var(--line-rgb), 0.25);
+}
+.subset-row td { opacity: 0.6; }
+.binrow.subset-row:hover td { opacity: 0.9; }
+.subset-note { margin-top: 0.6rem; }
+.col-overall { border-left: dashed 1px rgba(var(--line-rgb),0.25); }
+.cat-btn.active { color: var(--bg); background: var(--green); border-style: solid; font-weight: 700; }
+tr.cat-hl td { background: var(--tint-green-hl); }
+
+/* ---- Buttons / inputs ---- */
+button, select, input[type=text] {
+    background: var(--bg); border: dashed 1px var(--border-color);
+    color: var(--text); padding: 0.25rem 0.6rem; cursor: pointer;
+    font-family: inherit; font-size: 0.88em;
+}
+button:hover, select:hover { color: var(--bg); background: var(--text); }
+.ds-btn { padding: 0.15rem 0.5rem; font-size: 0.82em; }
+.ds-btn.active { color: var(--bg); background: var(--text); border-style: solid; font-weight: 700; }
+.controls { display: flex; align-items: center; gap: 0.7rem; margin: 0.8rem 0; flex-wrap: wrap; font-size: 0.9em; }
+.controls label { color: var(--text-muted); }
+.counter { color: var(--text-muted); font-size: 0.82em; }
+
+/* ---- Collapsible metric visualizations (about page) ---- */
+details.metric-viz {
+    border: dashed 1px rgba(var(--line-rgb), 0.25);
+    padding: 0.45rem 0.8rem; margin: 0.7rem 0;
+}
+details.metric-viz summary {
+    cursor: pointer; color: var(--amber); font-size: 0.85em; user-select: none;
+}
+details.metric-viz summary:hover { color: var(--text); }
+details.metric-viz[open] summary { margin-bottom: 0.7rem; }
+
+/* ---- Metrics cards ---- */
+.goal {
+    border: dashed 1px rgba(var(--line-rgb),0.4);
+    padding: 0.9rem 1.1rem; margin: 0.9rem 0;
+}
+.goal-head { font-weight: 700; font-size: 1.02em; margin-bottom: 0.2rem; }
+.goal-head .num { color: var(--green); margin-right: 0.4rem; }
+.goal-metric { color: var(--amber); font-size: 0.82em; margin-bottom: 0.5rem; }
+.goal-body { color: var(--text); font-size: 0.88em; }
+.goal-body .perfect { color: var(--text-muted); }
+.formula { color: var(--text-muted); font-size: 0.82em; margin-top: 0.5rem; }
+.recovered {
+    border: dashed 1px var(--green); color: var(--green);
+    padding: 0.7rem 1rem; margin: 1.2rem 0; font-size: 0.9em;
+}
+
+/* ---- Code blocks / compare ---- */
+pre {
+    background: var(--code-bg); border: 0.1em solid var(--code-border);
+    box-shadow: inset 0 0 0.4em var(--pre-shadow);
+    padding: 0.7rem 0.9rem; overflow: auto; margin: 0.4rem 0;
+    font-size: 0.8em; line-height: 1.45; max-height: 560px;
+}
+pre code { font-family: Consolas, "Source Code Pro", monospace; color: var(--text); white-space: pre; }
+.code-label { color: var(--text-muted); font-size: 0.8em; margin: 0.6rem 0 0.1rem; }
+.cmp-grid { display: grid; gap: 0.8rem; margin-top: 0.6rem; }
+.cmp-col { min-width: 0; }
+.cmp-col h4 {
+    font-size: 0.9em; font-weight: 700; margin-bottom: 0.2rem;
+    border-bottom: dashed 1px var(--border-color); padding-bottom: 0.2rem;
+}
+.cmp-col.src h4 { color: var(--green); }
+.cmp-scores { font-size: 0.78em; color: var(--text-muted); margin: 0.2rem 0; }
+.cmp-scores .sc { margin-right: 0.7rem; }
+.cmp-meta { color: var(--text-muted); font-size: 0.82em; margin-bottom: 0.4rem; }
+
+/* ---- Hardest ---- */
+.hard-entry { border: dashed 1px rgba(var(--line-rgb),0.4); padding: 0.7rem 0.9rem; margin: 0.9rem 0; }
+.hard-head { font-size: 0.95em; margin-bottom: 0.2rem; }
+.hard-head .fn { font-weight: 700; }
+.hard-meta { color: var(--text-muted); font-size: 0.82em; margin-bottom: 0.3rem; }
+.hard-meta .tag { margin-right: 0.6rem; }
+.hard-meta .score-bad { color: var(--red); }
+
+/* ---- Charts ---- */
+.chart-block { margin: 1.2rem 0; }
+.chart-block h3 { font-size: 0.95em; font-weight: 600; margin-bottom: 0.3rem; }
+.chart-block h3:before { content: "> "; color: var(--text-muted); }
+svg { display: block; max-width: 100%; }
+.legend { font-size: 0.82em; color: var(--text-muted); margin-top: 0.3rem; }
+.legend .item { margin-right: 1rem; white-space: nowrap; }
+.legend .swatch { display: inline-block; width: 1.4em; height: 0.5em; vertical-align: middle; margin-right: 0.3rem; }
+footer { color: var(--text-muted); font-size: 0.82em; margin-top: 1.5rem; }
+
+@media (max-width: 820px) {
+    .layout { flex-direction: column; }
+    .sidebar { width: 100%; min-width: 0; height: auto; position: static;
+               border-right: none; border-bottom: dashed 1px var(--border-color); }
+    /* The layout is align-items:flex-start, so a column-direction .main is NOT
+       stretched — without an explicit width it grows to its widest content and
+       the whole page scrolls sideways. Pin it to the column's full width so wide
+       content (tables/SVGs/selects) overflows INSIDE .main, not the viewport. */
+    .main { padding: 1.2rem 1rem 3rem; width: 100%; }
+    .nav { flex-direction: row; flex-wrap: wrap; }
+    .side-foot { margin-top: 0.5rem; }
+}
+
+/* ==========================================================================
+   Metric-visualization + syntax-highlight additions.
+
+   Appended after the base rules above (see viz/NOTES.md). Everything here is
+   NEW and namespaced tok- / viz- / dl- so it cannot collide with the rules
+   above; a couple of view-page helpers (.src-*) are tacked on at the very end.
+   ========================================================================== */
+
+/* Dark values for the syntax/viz palette. Their LIGHT overrides live in the
+   :root[data-theme="light"] block near the top of this file (kept together with
+   the rest of the light palette; that selector's higher specificity wins). */
+:root {
+  --blue: #4a90d9;          /* chart blue — also numbers/immediates            */
+  --viz-type: #57b9ab;      /* types: a calm teal, distinct from kw/str        */
+  --viz-pp: #b083c9;        /* preprocessor / directives                       */
+  --viz-call: #d7cf94;      /* function calls: soft gold                       */
+}
+
+/* ---- Syntax token colours (dark terminal) ------------------------------- */
+.tok-com  { color: var(--text-muted); font-style: italic; }
+.tok-kw   { color: var(--amber); }
+.tok-type { color: var(--viz-type); }
+.tok-str  { color: var(--green); }
+.tok-num  { color: var(--blue); }
+.tok-imm  { color: var(--blue); }
+.tok-pp   { color: var(--viz-pp); }
+.tok-call { color: var(--viz-call); }
+.tok-mn   { color: var(--amber); }            /* asm mnemonic                 */
+.tok-reg  { color: var(--text); }             /* asm register: default text   */
+.tok-lbl  { color: var(--green); }            /* asm label / address          */
+
+/* ---- Code panels inside a visualization --------------------------------- */
+/* Strip base.css pre chrome: the .viz-panel provides the frame instead.     */
+pre.viz-code {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  max-height: 460px;
+  font-size: 0.82em;
+  line-height: 1.5;
+}
+pre.viz-code code {
+  color: var(--text);
+  font-family: "Source Code Pro", ui-monospace, Consolas, monospace;
+}
+
+/* ---- Visualization scaffold --------------------------------------------- */
+.viz-wrap { margin: 0.2rem 0 0.2rem; }
+
+.viz-row { margin: 0.9rem 0; }
+.viz-rowlabel {
+  color: var(--text-muted);
+  font-size: 0.8em;
+  letter-spacing: 0.03em;
+  margin: 0.2rem 0 0.5rem;
+}
+.viz-rowlabel::before { content: "> "; color: var(--text-muted); }
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+.viz-panel {
+  background: var(--code-bg);
+  border: dashed 1px rgba(var(--line-rgb), 0.28);
+  padding: 0.6rem 0.75rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.viz-panel-h {
+  color: var(--text-muted);
+  font-size: 0.78em;
+  letter-spacing: 0.03em;
+  margin-bottom: 0.5rem;
+}
+.viz-panel-h::before { content: "// "; color: var(--text-muted); }
+.viz-panel-h.is-src   { color: var(--green); }
+.viz-panel-h.is-dec   { color: var(--text); }
+.viz-panel svg { flex: 1; min-height: 0; }
+
+/* graph caption (under a CFG etc.) */
+.viz-cap {
+  color: var(--text-muted);
+  font-size: 0.76em;
+  text-align: center;
+  margin-top: 0.4rem;
+}
+
+/* ---- Pipeline chip strip (decompiled C -> fixup -> recompile -> asm) ----- */
+.viz-pipe {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.2rem 0 0.8rem;
+  font-size: 0.8em;
+}
+.viz-chip {
+  border: dashed 1px rgba(var(--line-rgb), 0.4);
+  padding: 0.15rem 0.5rem;
+  white-space: nowrap;
+  color: var(--text);
+}
+.viz-chip.is-in  { border-color: rgba(var(--line-rgb), 0.4); }
+.viz-chip.is-out { border-color: var(--amber); color: var(--amber); }
+.viz-parrow { color: var(--text-muted); white-space: nowrap; }
+.viz-parrow b { color: var(--green); font-weight: 600; }
+
+/* ---- Annotation callout + score strip ----------------------------------- */
+.viz-callout {
+  border: dashed 1px var(--red);
+  color: var(--red);
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85em;
+  display: inline-block;
+  margin-top: 0.7rem;
+}
+.viz-callout .n { font-weight: 700; }
+
+.viz-score {
+  border: dashed 1px rgba(var(--line-rgb), 0.4);
+  background: var(--code-bg);
+  padding: 0.55rem 0.85rem;
+  margin-top: 0.8rem;
+  font-size: 0.92em;
+  line-height: 1.7;
+}
+.viz-score .big { font-size: 1.15em; font-weight: 700; }
+.viz-score .perfect { color: var(--text-muted); font-size: 0.92em; }
+.viz-good { color: var(--green); font-weight: 700; }
+.viz-warn { color: var(--amber); font-weight: 700; }
+.viz-bad  { color: var(--red); font-weight: 700; }
+.viz-dim  { color: var(--text-muted); }
+
+/* ---- Explainer note ----------------------------------------------------- */
+.viz-note {
+  color: var(--text-muted);
+  font-size: 0.85em;
+  line-height: 1.55;
+  margin: 0.7rem 0 0.1rem;
+}
+.viz-note code { color: var(--viz-type); }
+.viz-legend {
+  color: var(--text-muted);
+  font-size: 0.82em;
+  margin-top: 0.6rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 1.1rem;
+}
+.viz-legend .pass { white-space: nowrap; }
+.viz-legend .k { font-weight: 700; color: var(--text); }
+
+/* ---- Assembly line diff -------------------------------------------------- */
+.viz-diff {
+  border: dashed 1px rgba(var(--line-rgb), 0.32);
+  font-size: 0.8em;
+  margin-top: 0.2rem;
+  overflow-x: auto;
+}
+.dl-head, .dl-row {
+  display: grid;
+  grid-template-columns: 1.9rem minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+}
+.dl-head {
+  color: var(--text-muted);
+  font-size: 0.92em;
+  border-bottom: dashed 1px rgba(var(--line-rgb), 0.32);
+}
+.dl-head span { padding: 0.3rem 0.7rem; }
+.dl-head .h-mk { text-align: center; padding-left: 0; padding-right: 0; }
+.dl-row code {
+  padding: 0.22rem 0.7rem;
+  white-space: pre;
+  color: var(--text);
+  font-family: "Source Code Pro", ui-monospace, Consolas, monospace;
+}
+.dl-row .dl-mk {
+  text-align: center;
+  font-weight: 700;
+  padding: 0.22rem 0;
+}
+.dl-row .dl-gt { border-right: dashed 1px rgba(var(--line-rgb), 0.18); }
+.dl-match { background: var(--tint-green); }
+.dl-match .dl-mk { color: var(--green); }
+.dl-norm  { background: var(--tint-amber); }
+.dl-norm  .dl-mk { color: var(--amber); }
+.dl-diff  { background: var(--tint-red); }
+.dl-diff  .dl-mk { color: var(--red); }
+.dl-diff  code { color: var(--dl-diff-fg); }
+.dl-op { color: var(--amber); }               /* normalized operand  ____     */
+
+/* ---- Narrow layout ------------------------------------------------------- */
+@media (max-width: 700px) {
+  .viz-grid { grid-template-columns: 1fr; }
+  .dl-head, .dl-row { grid-template-columns: 1.6rem 1fr 1fr; }
+  .dl-row code { font-size: 0.94em; }
+}
+
+/* ---- View-page code panels (source_status, set in renderViewEntry) ------- */
+/* A muted badge under the source heading when the source came from a .i, and  */
+/* the placeholder shown when no source could be captured at all.             */
+.src-badge {
+  display: inline-block;
+  color: var(--text-muted);
+  font-size: 0.76em;
+  border: dashed 1px rgba(var(--line-rgb), 0.28);
+  padding: 0.08rem 0.4rem;
+  margin: 0.1rem 0 0.35rem;
+}
+.cmp-col.src-missing .view-desc { margin: 0.35rem 0 0; }
+
+
+/* ==========================================================================
+   Decompiler logos  (the SHOW_LOGOS experiment — gated in app.js)
+
+   Each .dlogo-<id> carries its logo as a self-contained data: URI (no network,
+   CSP-safe, no external host). Logos are grayscale + dimmed at rest so a column
+   of colored favicons doesn't turn the strict mono table into a sticker sheet;
+   hovering a row reveals the logo's true colour. Only the leaderboard's stacked
+   name line prepends a .dlogo span, and only when SHOW_LOGOS is on AND the
+   registry marks the id with a logo — flip SHOW_LOGOS off in app.js and this
+   whole block simply goes unused.
+   ========================================================================== */
+.dlogo {
+  display: inline-block;
+  width: 1.35em;
+  height: 1.35em;
+  margin-right: 0.45em;
+  flex: 0 0 auto;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  /* Uniform, terminal-friendly at rest; full colour on row hover (below). */
+  filter: grayscale(1) brightness(1.5) contrast(0.95);
+  opacity: 0.72;
+  transition: filter 0.12s ease, opacity 0.12s ease;
+}
+.binrow:hover .dlogo { filter: none; opacity: 1; }
+
+/* Light theme: several marks (r2dec/dewolf/kuna) are RECOLOURED to light #DBDBDB
+   art for the dark ground — on paper they would vanish. Darken every logo to a
+   grey silhouette instead, and KEEP that filter on row hover (a light-art logo
+   has no useful full-colour form on a light page), so the column stays legible.
+   The colour-favicon marks (angr/ghidra/ida/binja) also darken to a clean grey,
+   matching the terminal-on-paper look rather than turning the table into stickers. */
+:root[data-theme="light"] .dlogo { filter: grayscale(1) brightness(0.4) contrast(1.1); opacity: 0.9; }
+:root[data-theme="light"] .binrow:hover .dlogo { filter: grayscale(1) brightness(0.4) contrast(1.1); opacity: 1; }
+
+/* angr — github.com/angr avatar (angr.io) */
+.dlogo-angr { background-image: url(data:image/png;base64,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); }
+/* Ghidra — NationalSecurityAgency/ghidra dragon logo (ghidra-sre.org), text cropped */
+.dlogo-ghidra { background-image: url(data:image/png;base64,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); }
+/* Hex-Rays/IDA — hex-rays.com favicon */
+.dlogo-ida { background-image: url(data:image/png;base64,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); }
+/* Binary Ninja — Vector35/binaryninja-api docs logo (binary.ninja) */
+.dlogo-binja { background-image: url(data:image/png;base64,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); }
+/* r2dec — radare2 (github.com/radareorg) mark, recoloured to light for the dark UI */
+.dlogo-r2dec { background-image: url(data:image/png;base64,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); }
+/* dewolf — fkie-cad/dewolf assets/logo-dark.svg, rasterised */
+.dlogo-dewolf { background-image: url(data:image/png;base64,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); }
+/* Kuna — maintainer-supplied mark (kuna.png), black art recoloured to --text for the dark UI */
+.dlogo-kuna { background-image: url(data:image/png;base64,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); }
+/* Codex — github.com/openai avatar (openai.com), black blossom recoloured to light art for the dark UI */
+.dlogo-codex { background-image: url(data:image/png;base64,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); }
+/* Claude Code — github.com/anthropics avatar (anthropic.com), logomark recoloured to light art for the dark UI */
+.dlogo-claude-code { background-image: url(data:image/png;base64,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); }
+
+
+/* ==========================================================================
+   Mobile: stack the wide results tables into per-row cards  (<= 700px)
+
+   On desktop the leaderboard / metrics / distance / compiles tables are wide
+   grids — one decompiler per row, ASCII-bar cells across. On a phone that runs
+   hundreds of px off the right edge, so below this breakpoint each row becomes
+   a self-contained dashed CARD:
+
+     - thead is hidden (column-sort is a header-click, so sorting is unavailable
+       on phones — accepted; rows keep their current sort order);
+     - the rank (leaderboard) + decompiler name form the card's header line;
+     - every other cell becomes a "label ....... value" row, the label taken from
+       the <td data-label> app.js stamps with the column's header text.
+
+   Only these four #ids are affected — the desktop rendering above and the 820px
+   sidebar-collapse block are untouched. The About page's two plain tables get a
+   lighter horizontal-scroll treatment further down. */
+@media (max-width: 700px) {
+  /* table / tbody / rows / cells all go block-level for the four bar tables. */
+  #leaderboard-table, #leaderboard-table > tbody,
+  #metrics-perfect-table, #metrics-perfect-table > tbody,
+  #distance-table, #distance-table > tbody,
+  #compile-table, #compile-table > tbody { display: block; width: 100%; }
+
+  /* Hide the header row (labels move onto each cell via data-label). Visually
+     hidden rather than display:none so the markup/contract is unchanged. */
+  #leaderboard-table > thead, #metrics-perfect-table > thead,
+  #distance-table > thead, #compile-table > thead {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
+
+  /* Each data row -> a dashed card. */
+  #leaderboard-table > tbody > tr, #metrics-perfect-table > tbody > tr,
+  #distance-table > tbody > tr, #compile-table > tbody > tr {
+    display: block;
+    border: dashed 1px var(--border-dim);
+    margin: 0.7rem 0;
+    padding: 0.45rem 0.7rem 0.55rem;
+  }
+  /* Kill the desktop last-row border rule; the card border owns the frame now. */
+  #leaderboard-table > tbody > tr:last-child > td,
+  #metrics-perfect-table > tbody > tr:last-child > td,
+  #distance-table > tbody > tr:last-child > td,
+  #compile-table > tbody > tr:last-child > td { border-bottom: none; }
+
+  /* ---- Card header: rank (leaderboard) + name, side by side ---------------- */
+  #leaderboard-table td.lb-rank {
+    display: inline-block; width: auto; vertical-align: top;
+    padding: 0 0.55rem 0.3rem 0; border: none;
+    color: var(--text-muted); font-weight: 700; font-size: 1.02em;
+  }
+  #leaderboard-table td.lb-name, #metrics-perfect-table td.lb-name,
+  #distance-table td.lb-name, #compile-table td.lb-name {
+    display: inline-block; width: auto; max-width: 100%; vertical-align: top;
+    padding: 0 0 0.3rem 0; border: none;
+  }
+
+  /* ---- Every labeled cell -> a "label ....... value" flex line ------------- */
+  #leaderboard-table td[data-label], #metrics-perfect-table td[data-label],
+  #distance-table td[data-label], #compile-table td[data-label] {
+    display: flex; flex-wrap: wrap; align-items: baseline;
+    column-gap: 0.45rem; row-gap: 0.05rem;
+    padding: 0.3rem 0; white-space: normal;
+    border-top: dashed 1px rgba(var(--line-rgb), 0.16);
+    border-bottom: none; border-left: none;   /* neutralize col-overall's left rule */
+  }
+  /* The label column: a fixed-width muted stub so every value (and its ASCII
+     bar) starts at the same x down the card. */
+  #leaderboard-table td[data-label]::before, #metrics-perfect-table td[data-label]::before,
+  #distance-table td[data-label]::before, #compile-table td[data-label]::before {
+    content: attr(data-label);
+    flex: 0 0 auto; min-width: 6.4em;
+    color: var(--text-muted); font-size: 0.82em; letter-spacing: 0.01em;
+    white-space: nowrap;
+  }
+  /* Distance labels are longer ("Recompile dist") — widen their stub to keep the
+     numbers aligned. */
+  #distance-table td[data-label]::before { min-width: 8.9em; }
+
+  /* Nothing inside a card may force the page wider than the phone: counts wrap
+     under their bar, long tokens break, and any residual pixel is clipped at the
+     body rather than shifting the whole layout sideways. */
+  #leaderboard-table td[data-label] .cell-count, #metrics-perfect-table td[data-label] .cell-count,
+  #distance-table td[data-label] .cell-count, #compile-table td[data-label] .cell-count {
+    white-space: normal; overflow-wrap: anywhere;
+  }
+  html, body { overflow-x: hidden; }
+
+  /* The counts hug the right edge (so the column reads as "label  bar %  count"),
+     and drop to their own line rather than overflow on a very narrow card. */
+  #leaderboard-table td[data-label] .cell-count,
+  #metrics-perfect-table td[data-label] .cell-count,
+  #distance-table td[data-label] .cell-count,
+  #compile-table td[data-label] .cell-count { margin-left: auto; white-space: nowrap; }
+  /* Keep the ASCII bar unbroken. */
+  #leaderboard-table td[data-label] .bar-ascii, #metrics-perfect-table td[data-label] .bar-ascii,
+  #compile-table td[data-label] .bar-ascii { white-space: pre; }
+
+  /* (The desktop leaderboard's top-align padding shims — lines ~240 — are
+     overridden by the td[data-label] and td.lb-rank padding rules above.) */
+
+  /* ---- About page: two plain tables -> horizontal scroll, no page overflow -- */
+  #dataset-projects, #joern-output-table {
+    display: block; width: 100%; overflow-x: auto; white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ---- About page: metric-viz SVGs.  Their inline style is max-width:100% only
+     (no `width`), and a percentage max-width is ignored while the browser sizes
+     the flex column by min-content — so the 360/720-unit viewBoxes propagate a
+     ~500px min-content up and widen the whole page. Pin an explicit width:100%
+     (mobile only; desktop keeps its natural sizing) to kill that. ------------- */
+  .metric-viz svg { width: 100%; height: auto; }
+  /* Legend entries are white-space:nowrap; one ("≈ matches after normalizing a
+     link-time-dependent operand") is wider than a phone — let them wrap. */
+  .viz-legend .pass { white-space: normal; }
+
+  /* ---- View page: the form controls. The function <select> is as wide as its
+     longest option ("proj/opt/bin :: fn"), which drags the layout off-screen;
+     let the controls shrink (min-width:0) and give the two wide ones their own
+     full-width row. ----------------------------------------------------------- */
+  .controls { gap: 0.5rem 0.6rem; }
+  .controls select, .controls input[type=text] { min-width: 0; max-width: 100%; }
+  #view-select { flex: 1 1 100%; }
+  #view-filter { flex: 1 1 12rem; }
+
+  /* ---- View page: stack source / decompiler code panels (inline style forces
+     2 cols; !important is the minimal way to override it on a phone). ---------- */
+  .cmp-grid { grid-template-columns: 1fr !important; }
+}
+
+/* ==========================================================================
+   Tablet / small-laptop band: horizontal-scroll the wide results tables.
+
+   Between the stacked-card phone layout (<=700px, above) and the width where
+   the ~1230px-wide desktop tables actually fit their column (roughly a >=1500px
+   viewport, sidebar included), the tables are wider than .main and — because
+   .main is width:100% with visible overflow — they push the whole PAGE sideways.
+   Let each scroll INSIDE its own box instead (display:block + overflow-x:auto),
+   so the body never scrolls horizontally at any width. Bounded to <=1499px so the
+   >=1500px desktop keeps its untouched display:table rendering (pixel-identical).
+   ========================================================================== */
+@media (min-width: 701px) and (max-width: 1499px) {
+  #leaderboard-table, #distance-table, #compile-table,
+  #metrics-perfect-table, #joern-output-table, #dataset-projects {
+    display: block; width: 100%; overflow-x: auto;
+  }
+}

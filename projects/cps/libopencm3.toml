@@ -1,0 +1,32 @@
+# DecBench CPS target: libopencm3 (examples)
+# libopencm3 is an open-source firmware peripheral library for ARM Cortex-M MCUs.
+# This target builds the STM32F4 (Cortex-M4) example firmware ELFs from the
+# libopencm3-examples repo, which bundles libopencm3 itself as a submodule.
+name = "libopencm3"
+version = "master"
+
+# libopencm3-examples has no release tags; it tracks master. It vendors the core
+# libopencm3 library as a git submodule (pulled by post_download_cmds).
+source_remote = "https://github.com/libopencm3/libopencm3-examples"
+remote_type = "git"
+package_dir = "libopencm3-examples"
+source_dir = "."
+
+# Pull the bundled libopencm3 library submodule.
+post_download_cmds = ["git submodule update --init --recursive --depth 1"]
+pre_make_cmds = []
+# The top Makefile recurses into examples for $(TARGETS); restrict to stm32/f4
+# (Cortex-M4) to keep the build focused. The build keeps its own arch flags
+# (-mcpu=cortex-m4 -mthumb -mfloat-abi=hard ...) in TGT_CFLAGS and appends our
+# CFLAGS after it ($(TGT_CFLAGS) $(CFLAGS)), so our -O2/-g/-save-temps win the
+# opt level without clobbering the arch flags. Verified: 38 ARM ELF executables
+# (with debug_info, not stripped) and 125 .i files.
+make_cmd = 'make TARGETS=stm32/f4 CC="$CC" CFLAGS="$CFLAGS"'
+
+labels = ["cps", "firmware-library", "peripheral-library", "bare-metal", "cortex-m4", "stm32f4"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "arm-none-eabi-gcc"
+target_arch = "arm"  # only collect the ARM hardware binaries (drop host tools)

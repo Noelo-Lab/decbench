@@ -1,0 +1,103 @@
+# The decompiler registry: official display names, project links, and version
+# prettifiers for the leaderboard / metrics / distance tables, the view page's
+# decompiler dropdown, and the historical legend.
+#
+# Each `[[decompiler]]` table has:
+#   id            the decompiler id as it appears in results (the raw backend name).
+#   display_name  the name shown on the site.
+#   url           optional project homepage; omit the key entirely when there is
+#                 none, and the name renders unlinked.
+#   license       "open-source" | "closed-source" — shown as a muted tag under the
+#                 name in the leaderboard's stacked name cell (default "": no tag).
+#   logo          true when a `.dlogo-<id>` background-image is shipped in app.css
+#                 for this backend (see the logo block there). Flows through the
+#                 registry so app.js knows which ids can show a logo; the whole
+#                 logo experiment is gated by SHOW_LOGOS in app.js. Default false.
+#   version_overrides  optional inline table mapping a RAW version string (as the
+#                 run recorded it, e.g. IDA's "920") to a prettier one ("9.2").
+#
+# Lookup is by exact id first, then by the base name before '@' — so a versioned
+# id like `ghidra@12.1` resolves to the `ghidra` entry (its version comes from the
+# run's own decompiler_versions, then through version_overrides). Ids with no
+# entry fall back to the raw id, unlinked (e.g. the `*-declib` comparison backends).
+
+[[decompiler]]
+id = "angr"
+display_name = "angr"
+url = "https://angr.io"
+license = "open-source"
+logo = true
+
+[[decompiler]]
+id = "ghidra"
+display_name = "Ghidra"
+url = "https://ghidra-sre.org"
+license = "open-source"
+logo = true
+
+[[decompiler]]
+id = "ida"
+display_name = "Hex-Rays"
+url = "https://hex-rays.com/ida-pro/"
+license = "closed-source"
+logo = true
+version_overrides = { "920" = "9.2" }
+
+[[decompiler]]
+id = "binja"
+display_name = "Binary Ninja"
+url = "https://binary.ninja"
+license = "closed-source"
+logo = true
+
+[[decompiler]]
+id = "kuna"
+display_name = "Kuna"
+license = "closed-source"
+logo = true
+
+[[decompiler]]
+id = "phoenix"
+display_name = "Phoenix (angr)"
+license = "open-source"
+
+[[decompiler]]
+id = "r2dec"
+display_name = "r2dec"
+url = "https://github.com/wargio/r2dec-js"
+license = "open-source"
+logo = true
+version_overrides = { "r2-6.0.8" = "r2 6.0.8" }
+
+[[decompiler]]
+id = "dewolf"
+display_name = "dewolf"
+url = "https://github.com/fkie-cad/dewolf"
+license = "open-source"
+logo = true
+
+[[decompiler]]
+id = "codex"
+display_name = "Codex"
+url = "https://openai.com/codex/"
+license = "closed-source"
+logo = true
+
+[[decompiler]]
+id = "claude-code"
+display_name = "Claude Code"
+url = "https://claude.com/claude-code"
+license = "closed-source"
+logo = true
+
+[[decompiler]]
+id = "retdec"
+display_name = "RetDec"
+url = "https://github.com/avast/retdec"
+license = "open-source"
+
+[[decompiler]]
+id = "reko"
+display_name = "Reko"
+url = "https://github.com/uxmal/reko"
+license = "open-source"

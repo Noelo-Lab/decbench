@@ -1,0 +1,29 @@
+# DecBench Project Configuration: GNU Gzip
+# gzip is a CLI data-compression tool (DEFLATE). Labels mark it as a sailr
+# benchmark target in the cli-tool / compression categories.
+
+name = "gzip"
+version = "1.12"
+
+# Source configuration - use release tarball (ships a pre-generated ./configure,
+# so no bootstrap/autogen network fetch is needed). sailr pinned the 1.12 zip.
+source_remote = "https://mirrors.kernel.org/gnu/gzip/gzip-1.12.tar.gz"
+remote_type = "tar"
+
+# Build directories (package_dir documents the extracted dir; tar uses the
+# single extracted directory as the source root). source_dir "." keeps parity
+# with the sailr recipe, collecting binaries from the whole tree.
+package_dir = "gzip-1.12"
+source_dir = "."
+
+# Build commands (no bootstrap needed with release tarball)
+post_download_cmds = []
+pre_make_cmds = ["./configure --quiet"]
+make_cmd = "make"
+
+labels = ["sailr", "cli-tool", "compression"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"

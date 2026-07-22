@@ -1,0 +1,50 @@
+# The dataset presets offered by the sidebar selector.
+#
+# Membership per function is computed in decbench/scoring/datasets.py
+# (`assign_datasets`) against the `name` field; this file owns only the
+# *presentation* (label + one-line description) and which preset the report opens
+# with.
+#
+# `description` is the one-liner under the sidebar selector (plain text — it is
+# set via textContent). `long_description` is the leaderboard's per-dataset
+# explainer paragraph, swapped in whenever the selected preset changes (app.js
+# fills #leaderboard-dataset-desc from it); it is FINAL INLINE HTML (<code> etc.
+# pass through), one paragraph, no block tags.
+#
+# `default = true` marks the preset selected on load. EXACTLY ONE preset must set
+# it (tests/test_content.py enforces this). It is explicit on purpose: the default
+# used to be positional (the first preset in the list), so reordering this file
+# silently changed which dataset the report opened with.
+#
+# Button order is the order of the tables below.
+
+[[preset]]
+name = "unoptimized"
+label = "unoptimized"
+description = "unoptimized builds (O0) — surfaces simple structural differences"
+long_description = "The UNOPTIMIZED dataset includes binaries that are compiled without optimizations and are stripped. These are the easiest targets in the benchmark."
+default = true
+
+[[preset]]
+name = "optimized"
+label = "optimized"
+description = "optimized without inlining (O2-noinline)"
+long_description = "The OPTIMIZED dataset includes binaries that are compiled with <code>O2</code> (or the equivalent on other compilers), with inlining disabled. This set is significantly harder and more representative of real-world binaries."
+
+[[preset]]
+name = "inlined"
+label = "inlined"
+description = "optimized WITH inlining (plain O2)"
+long_description = "The INLINED dataset includes binaries that are compiled with <code>O2</code>, with inlining enabled. This set is even harder than optimized binaries and represents the frontier of decompilation research."
+
+[[preset]]
+name = "large"
+label = "large"
+description = "large functions only (upper size tail), optimized without inlining"
+long_description = "The LARGE dataset includes only large functions from the OPTIMIZED dataset, which have been shown to be difficult for decompilers. This group represents the functions that reverse engineers are most likely to have difficulty with."
+
+[[preset]]
+name = "sample-set"
+label = "sample-set"
+description = "~250 functions evenly sampled across unoptimized/optimized/inlined/large/ARM-unoptimized and projects"
+long_description = "The SAMPLE-SET dataset is a sampled version of the entire benchmark (unoptimized, optimized, inlined, ...) meant to give decompiler developers a small but significant sample to improve upon. It also allows for cheaper runs for quick development. It is likely that a perfect score here will be a near-perfect score on all other datasets."

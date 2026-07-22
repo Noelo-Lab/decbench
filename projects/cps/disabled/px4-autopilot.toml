@@ -1,0 +1,54 @@
+# ============================================================================
+# DISABLED — this target is C++ (PX4 is ~50% C++) and decbench does not support
+# C++ yet (GED's source-CFG extractor / pyjoern is C-oriented, so it produces
+# no .i and cannot be scored). Parked in projects/cps/disabled/ so it is
+# excluded from every `projects/cps/*.toml` evaluation glob. Move it back up to
+# projects/cps/ to re-enable once C++ support lands. The recipe below is
+# verified-working (builds a real ARM Cortex-M7F ELF + DWARF).
+# ============================================================================
+# DecBench CPS target: PX4-Autopilot
+# PX4 is a widely-used open-source drone AUTOPILOT / flight-control stack.
+# Here it is cross-compiled for the Pixhawk FMUv5 flight controller
+# (STMicro STM32F765, ARM Cortex-M7F, NuttX RTOS) with arm-none-eabi-, which is
+# the realistic on-hardware build. Output ELF:
+# build/px4_fmu-v5_default/px4_fmu-v5_default.elf (ARM 32-bit Cortex-M7, DWARF).
+name = "px4-autopilot"
+version = "v1.15.4"
+
+source_remote = "https://github.com/PX4/PX4-Autopilot"
+remote_type = "git"
+package_dir = "PX4-Autopilot"
+source_dir = "."
+
+# PX4 builds via cmake + ninja (driven by its top-level Makefile). It needs its
+# large recursive submodule tree (NuttX, uORB libs, etc.). PX4 picks the cross
+# toolchain itself from the board (arm-none-eabi-gcc/g++ for the F765/NuttX
+# target) and controls its own optimization (board default -Os -g2), so it does
+# NOT consume decbench's $CC/$CFLAGS -- the opt level cannot be driven from
+# decbench. The ELF carries DWARF (-g), so type_match works; it is C/C++
+# compiled by cmake, so -save-temps does NOT reach it (no .i files).
+#
+# IMPORTANT: PX4's build generates a git-version header by parsing `git tag`
+# output of the main repo (vX.Y.Z) and the NuttX submodule (nuttx-X.Y.Z). A
+# `--depth 1` clone (which decbench uses) and `--depth 1` submodules have NO
+# tags, so the generator raises "IndexError: list index out of range" and the
+# build dies at step ~14/1324. post_download_cmds therefore (a) init submodules
+# and (b) fetch tags for the main repo and the NuttX submodule.
+post_download_cmds = [
+    "git submodule update --init --recursive --depth 1",
+    "git fetch --tags --depth 1 origin || true",
+    "git -C platforms/nuttx/NuttX/nuttx fetch --tags --depth 200 || true",
+]
+pre_make_cmds = []
+make_cmd = "make px4_fmu-v5_default"
+
+labels = ["cps", "autopilot", "avionics", "bare-metal", "cortex-m7", "px4-fmu-v5"]
+
+[compilation]
+# PX4 controls optimization internally (board default -Os -g2); decbench's opt
+# flags do not reach the compiler, so a single realistic level is used. The same
+# ELF is produced regardless of which level decbench requests.
+optimization_levels = ["O2"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "arm-none-eabi-gcc"
+target_arch = "arm"  # only collect the ARM hardware binaries (drop host tools)
