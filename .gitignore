@@ -150,3 +150,5 @@ testing/
 # stray top-level generated report (real ones live in results/)
 /report.html
 .claude/
+# LLM decompiler traces (prompt + transcript + CLI session log per function)
+/llm_traces/
