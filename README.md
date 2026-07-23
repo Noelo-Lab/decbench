@@ -105,6 +105,13 @@ This produces, under `results/sailr_full/`:
   **hardest** functions, per-decompiler **compile rates**)
 - `<opt>/<project>/{compiled,decompiled,evaluated}/` — intermediate artifacts
 
+The `compiled/` directories keep the preprocessed `.i` sources emitted at build
+time (`-save-temps=obj`) alongside the binaries — they are **required**, not
+build debris: GED's source-side CFGs are parsed exclusively from them, because
+Joern needs macro-expanded, ifdef-resolved code to parse completely (raw `.c`
+with unexpanded includes does not). Without the `.i` files, GED is silently
+skipped for the entire run.
+
 ### Re-scoring byte-match without re-decompiling
 
 Decompilation is the slow part. To re-score only byte-match over an existing tree

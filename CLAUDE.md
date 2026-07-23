@@ -475,6 +475,24 @@ label for the noinline variants.
   `function_results.json`, but anything else reading `scoreboard.decompilers`
   after a resume sees a partial list until the next full rebuild
   (`scripts/rebuild_function_data.py`).
+- **Preprocessed `.i` files are REQUIRED — GED's source CFGs come EXCLUSIVELY
+  from them.** `pipeline/evaluate.py` (via `project.preprocessed_sources`),
+  `scripts/run_benchmark.py`, and `pipeline/executor.py` (which globs
+  `compiled_dir/*.i`) all build the source-side CFGs by feeding `.i` files to
+  `utils/cfg.py extract_cfgs_from_source` (system headers stripped, then
+  pyjoern `parse_source`). `.i` over `.c` is deliberate: Joern needs
+  macro-expanded, ifdef-resolved code to parse completely — raw `.c` with
+  unexpanded includes parses incompletely. Without `.i` the pipeline takes the
+  "No preprocessed sources" branch and GED is silently None for every function
+  of the run — no error. byte_match/type_match don't use `.i`
+  (`requires_source_cfg = False`; gcc-recompile and DWARF respectively), and
+  sample source extraction only *falls back* to `.i` (see next bullet). So do
+  NOT disable `Project.emit_preprocessed` (default True,
+  `models/project.py`) or `-save-temps=obj` in the default `base_flags`
+  (`compilers/gcc.py`). The only `.i`-free evaluation path is the
+  published-dataset `--source-cfgs` flow (precomputed `source_cfgs/*.json`,
+  built FROM `.i` at publish time by `publish/cfg_export.py`) — and that path
+  cannot score type_match.
 - **Sample source extraction needs `.c`/`.i` next to the binary.** Compile now
   `rglob`s `.c` sources; older trees' samples used the preprocessed `.i` fallback
   (`SampleEntry.source_status` `"preprocessed"`). A rebuild via
