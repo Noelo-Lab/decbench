@@ -92,6 +92,16 @@ for d in sorted(agg):
     print(f"{d:9} {a['c']:>7} {a['o']/c:>9.3f} {a['n']/c:>9.3f} {a['imp']:>9} {a['wor']:>7}")
 
 if emit:
-    with open(root / "type_match_new.json", "w") as _of:
+    out_path = root / "type_match_new.json"
+    if args and out_path.is_file():
+        # Project-scoped run: MERGE into the existing overlay instead of
+        # overwriting it with only the scoped projects' entries — a scoped
+        # --emit used to silently shrink type_match_new.json to the projects it
+        # covered (the same silent-loss class as the GED clear-then-rewrite).
+        from decbench.results_store import merge_typematch_overlay
+
+        with open(out_path) as _if:
+            new_scores = merge_typematch_overlay(json.load(_if), new_scores)
+    with open(out_path, "w") as _of:
         json.dump(new_scores, _of)
-    print("\nwrote", root / "type_match_new.json")
+    print("\nwrote", out_path)

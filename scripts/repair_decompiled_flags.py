@@ -132,7 +132,7 @@ def prune_llm_off_slice(
 
 
 def main() -> None:
-    args = [a for a in sys.argv[1:] if a != "--apply"]
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
     apply = "--apply" in sys.argv[1:]
     root = Path(args[0] if args else "results/full_run")
 
@@ -163,7 +163,12 @@ def main() -> None:
         return
     # Round-trip sanity: the untouched heavyweight fields must survive the write.
     assert fd.samples is not None and fd.hardest is not None, "samples/hardest lost in round-trip"
-    fd.to_json(root / "function_results.json")
+    # Guarded write (decbench.results_store). Flag flips only ever ADD coverage;
+    # the LLM off-slice prune legitimately REMOVES phantom rows, which the guard
+    # will report — --allow-drops is the explicit sign-off for that.
+    from decbench.results_store import write_function_data_guarded
+
+    write_function_data_guarded(fd, root, allow_drops="--allow-drops" in sys.argv[1:])
     print(f"[repair] wrote {root / 'function_results.json'} ({total} changes)")
 
 

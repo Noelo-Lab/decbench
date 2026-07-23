@@ -48,7 +48,13 @@ from decbench.models.function_data import DatasetPreset
 if TYPE_CHECKING:
     from decbench.models.function_data import BinaryGroup, FunctionData, FunctionRecord
 
-__all__ = ["assign_datasets", "large_threshold", "PRESETS", "DEFAULT_SAMPLE_SEED"]
+__all__ = [
+    "assign_datasets",
+    "topup_sample_members",
+    "large_threshold",
+    "PRESETS",
+    "DEFAULT_SAMPLE_SEED",
+]
 
 # Fixed default seed for the `sample-set` sample so the selection is
 # reproducible across runs/machines. Override per call
@@ -149,6 +155,7 @@ def _sample_even(
     chosen_fns: set[int],
     used_bins: set[tuple[str, str, str]],
     rng: random.Random,
+    exclude_projects: frozenset[str] = frozenset(),
 ) -> list[tuple[BinaryGroup, FunctionRecord]]:
     """Pick up to ``quota`` records as a *seeded random*, evenly-spread sample.
 
@@ -170,6 +177,15 @@ def _sample_even(
     Records that are not :func:`_scoreable` are skipped during the scan (not
     pre-filtered from ``items``), so the shuffles — and every scoreable pick a
     prior run of the same seed made — stay identical.
+
+    ``exclude_projects`` skips an excluded project's candidates during the scan.
+    It is used ONLY by :func:`topup_sample_members` for the refill pass, whose
+    ``chosen_fns``/``used_bins`` already pin the surviving picks — so exclusion
+    there cannot perturb them. It must NOT be used for a full fresh draw across
+    all five buckets: ``chosen_fns``/``used_bins`` are shared and two bucket
+    pairs overlap (``unoptimized-arm`` ⊂ ``unoptimized``; ``large`` ⊂
+    ``optimized``), so excluding a project mid-draw diverges the rng for the
+    overlapping bucket and loses unrelated picks.
     """
     by_project: OrderedDict[str, list[tuple[BinaryGroup, FunctionRecord]]] = OrderedDict()
     ordered = sorted(
@@ -200,6 +216,8 @@ def _sample_even(
                 for j, (g, f) in enumerate(lst):
                     if id(f) in chosen_fns:
                         continue
+                    if g.project in exclude_projects:
+                        continue  # refill pass only: never pick the excluded project
                     if not _scoreable(f):
                         continue  # phantom/unmeasurable row: never worth a slot
                     if one_per_binary and _binkey(g) in used_bins:
@@ -218,22 +236,11 @@ def _sample_even(
     return picked
 
 
-def assign_datasets(
-    function_data: FunctionData,
-    sample_total: int = 250,
-    k: float = 1.0,
-    seed: int | None = None,
-) -> FunctionData:
-    """Tag every record with its dataset presets and set ``dataset_presets``.
-
-    The ``sample-set`` sample is a **seeded random** selection: deterministic
-    for a given seed (so the chosen targets are stable across runs), but
-    changeable. Seed resolution: ``seed`` arg > ``DECBENCH_SAMPLE_SEED`` env
-    var > :data:`DEFAULT_SAMPLE_SEED`.
-
-    Idempotent: re-running with the same seed re-derives identical membership.
-    """
-    rng = random.Random(_resolve_seed(seed))
+def _apply_opt_presets(
+    function_data: FunctionData, k: float
+) -> list[tuple[BinaryGroup, FunctionRecord]]:
+    """Tag the rule-based presets (unoptimized/optimized/inlined/large) and
+    return the ``(group, record)`` list. The sample-set tag is added separately."""
     threshold = large_threshold(function_data, k=k)
 
     def is_large(f: FunctionRecord) -> bool:
@@ -244,8 +251,6 @@ def assign_datasets(
     records: list[tuple[BinaryGroup, FunctionRecord]] = [
         (g, f) for g in function_data.groups for f in g.functions
     ]
-
-    # unoptimized / optimized / inlined / large are rule-based.
     for g, f in records:
         ds = []
         if g.opt_level == _O0:
@@ -257,15 +262,83 @@ def assign_datasets(
         elif g.opt_level == _O2:
             ds.append("inlined")
         f.datasets = ds
+    return records
+
+
+def _sample_buckets(
+    records: list[tuple[BinaryGroup, FunctionRecord]], k_threshold: float | None
+) -> OrderedDict[str, list[tuple[BinaryGroup, FunctionRecord]]]:
+    """The five sample-set category buckets, in draw order.
+
+    ``k_threshold`` is the precomputed ``large`` cutoff (``None`` -> fall back to
+    the ``large`` label). Kept a pure function of ``records`` so the top-up refill
+    builds the identical buckets the original draw used.
+    """
+
+    def is_large(f: FunctionRecord) -> bool:
+        if f.size is not None and k_threshold is not None:
+            return f.size >= k_threshold
+        return "large" in (f.labels or [])
+
+    return OrderedDict(
+        [
+            ("unoptimized", [(g, f) for g, f in records if g.opt_level == _O0]),
+            ("optimized", [(g, f) for g, f in records if g.opt_level == _O2_NOINLINE]),
+            ("inlined", [(g, f) for g, f in records if g.opt_level == _O2]),
+            ("large", [(g, f) for g, f in records if g.opt_level == _O2_NOINLINE and is_large(f)]),
+            ("unoptimized-arm", [(g, f) for g, f in records if g.opt_level == _O0 and _is_arm(g)]),
+        ]
+    )
+
+
+def assign_datasets(
+    function_data: FunctionData,
+    sample_total: int = 250,
+    k: float = 1.0,
+    seed: int | None = None,
+    sample_members: set[tuple[str, str, str, str]] | None = None,
+) -> FunctionData:
+    """Tag every record with its dataset presets and set ``dataset_presets``.
+
+    The ``sample-set`` sample is a **seeded random** selection: deterministic
+    for a given seed (so the chosen targets are stable across runs), but
+    changeable. Seed resolution: ``seed`` arg > ``DECBENCH_SAMPLE_SEED`` env
+    var > :data:`DEFAULT_SAMPLE_SEED`.
+
+    ``sample_members`` — the frozen membership, as ``(project, opt, binary,
+    function)`` keys (the ``sample_set_manifest.json`` shape; see
+    :func:`decbench.results_store.load_sample_manifest`): when given, the draw
+    is skipped entirely and exactly these functions are tagged ``sample-set``.
+    The manifest is the single source of truth wherever one exists — the seeded
+    draw is only the bootstrap for manifest-less trees. To remove a project from
+    an existing manifest, use :func:`topup_sample_members` (NOT a fresh draw with
+    an exclusion — that would perturb the seed and lose unrelated picks).
+
+    Idempotent: re-running with the same inputs re-derives identical membership.
+    """
+    records = _apply_opt_presets(function_data, k)
+
+    if sample_members is not None:
+        # Frozen membership: tag exactly the manifest's functions, no draw.
+        matched: set[tuple[str, str, str, str]] = set()
+        for g, f in records:
+            key = (g.project, g.opt_level, g.binary, f.function)
+            if key in sample_members:
+                if "sample-set" not in f.datasets:
+                    f.datasets.append("sample-set")
+                matched.add(key)
+        if len(matched) < len(sample_members):
+            print(
+                f"[datasets] WARNING: {len(sample_members) - len(matched)} sample-set "
+                "manifest entries have no matching record (renamed/removed data?)",
+                flush=True,
+            )
+        function_data.dataset_presets = [p.model_copy() for p in PRESETS]
+        return function_data
 
     # sample-set: even sample across five categories and across projects.
-    buckets: dict[str, list[tuple[BinaryGroup, FunctionRecord]]] = {
-        "unoptimized": [(g, f) for g, f in records if g.opt_level == _O0],
-        "optimized": [(g, f) for g, f in records if g.opt_level == _O2_NOINLINE],
-        "inlined": [(g, f) for g, f in records if g.opt_level == _O2],
-        "large": [(g, f) for g, f in records if g.opt_level == _O2_NOINLINE and is_large(f)],
-        "unoptimized-arm": [(g, f) for g, f in records if g.opt_level == _O0 and _is_arm(g)],
-    }
+    rng = random.Random(_resolve_seed(seed))
+    buckets = _sample_buckets(records, large_threshold(function_data, k=k))
     per_bucket = max(1, sample_total // len(buckets))
     chosen: set[int] = set()
     used_bins: set[tuple[str, str, str]] = set()
@@ -276,3 +349,64 @@ def assign_datasets(
 
     function_data.dataset_presets = [p.model_copy() for p in PRESETS]
     return function_data
+
+
+def topup_sample_members(
+    function_data: FunctionData,
+    base_members: set[tuple[str, str, str, str]],
+    exclude_projects: frozenset[str],
+    sample_total: int = 250,
+    k: float = 1.0,
+    seed: int | None = None,
+) -> set[tuple[str, str, str, str]]:
+    """Return a full sample-set membership that KEEPS the surviving base picks
+    and deterministically refills the slots freed by ``exclude_projects``.
+
+    The frozen manifest (``base_members``) is the source of truth for every pick
+    that is not from an excluded project — those are preserved verbatim, drift or
+    not. Only the freed slots are re-drawn, per category bucket, from the same
+    buckets, excluding the removed projects and every already-kept function/binary
+    (so the one-function-per-binary rule still holds). Deterministic for a given
+    seed; idempotent. This avoids the seed-perturbation that a fresh draw with an
+    exclusion would cause across the overlapping buckets (see :func:`_sample_even`).
+    """
+    records = _apply_opt_presets(function_data, k)
+    kept = {m for m in base_members if m[0] not in exclude_projects}
+    removed = {m for m in base_members if m[0] in exclude_projects}
+
+    buckets = _sample_buckets(records, large_threshold(function_data, k=k))
+
+    # Classify each removed pick into its FIRST-owning bucket (the same order the
+    # original draw used; `chosen` was shared across buckets so a record belonged
+    # to whichever bucket reached it first) — the refill draws that many fresh
+    # picks from the SAME bucket, so a removed "unoptimized" slot is replaced by
+    # another "unoptimized" function, etc.
+    refill_per_bucket: dict[str, int] = {name: 0 for name in buckets}
+    assigned: set[tuple[str, str, str, str]] = set()
+    # Pin the kept picks so the refill never reuses their functions/binaries.
+    chosen: set[int] = set()
+    used_bins: set[tuple[str, str, str]] = set()
+    for name, items in buckets.items():
+        for g, f in items:
+            key = (g.project, g.opt_level, g.binary, f.function)
+            if key in assigned:
+                continue
+            if key in kept:
+                assigned.add(key)
+                chosen.add(id(f))
+                used_bins.add(_binkey(g))
+            elif key in removed:
+                assigned.add(key)
+                refill_per_bucket[name] += 1
+
+    rng = random.Random(_resolve_seed(seed))
+    refilled: set[tuple[str, str, str, str]] = set()
+    for name, items in buckets.items():
+        need = refill_per_bucket[name]
+        if need <= 0:
+            continue
+        # exclude_projects here is safe: `chosen`/`used_bins` already pin every
+        # surviving pick, so skipping the removed project cannot perturb them.
+        for g, f in _sample_even(items, need, chosen, used_bins, rng, exclude_projects):
+            refilled.add((g.project, g.opt_level, g.binary, f.function))
+    return kept | refilled

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decbench.models.function_data import BinaryGroup, FunctionData, FunctionRecord
-from decbench.scoring.datasets import assign_datasets, large_threshold
+from decbench.scoring.datasets import assign_datasets, large_threshold, topup_sample_members
 
 
 def _make_data() -> FunctionData:
@@ -237,3 +237,108 @@ def test_legacy_tiny_seed_env_var_still_honoured(monkeypatch) -> None:
     fd_explicit = _make_data()
     assign_datasets(fd_explicit, sample_total=20, seed=888)
     assert _sample_keys(fd_env) == _sample_keys(fd_explicit)
+
+
+def test_assign_datasets_honors_manifest() -> None:
+    """A frozen manifest pins sample-set membership exactly — no seeded draw."""
+    fd = _make_many_binaries(n_bins=10)
+    members = {
+        ("p1", "O0", "p1_bin0", "p1_b0_f0"),
+        ("p2", "O0", "p2_bin3", "p2_b3_f2"),
+    }
+    assign_datasets(fd, sample_total=100, seed=1, sample_members=members)
+    tagged = {
+        (g.project, g.opt_level, g.binary, f.function)
+        for g in fd.groups
+        for f in g.functions
+        if "sample-set" in f.datasets
+    }
+    assert tagged == members
+    # Different seed, same manifest -> identical membership (seed is ignored).
+    fd2 = _make_many_binaries(n_bins=10)
+    assign_datasets(fd2, sample_total=100, seed=999, sample_members=members)
+    tagged2 = {
+        (g.project, g.opt_level, g.binary, f.function)
+        for g in fd2.groups
+        for f in g.functions
+        if "sample-set" in f.datasets
+    }
+    assert tagged2 == members
+
+
+def _make_multibucket(n_bins: int = 30) -> FunctionData:
+    """Fixture spanning every sample-set bucket: O0/O2/O2-noinline, an ARM
+    project (populates unoptimized-arm), and large functions (populate large).
+    The O0-only fixtures can't exercise the overlapping-bucket top-up path."""
+    groups = []
+    for proj in ("p1", "p2", "p3"):
+        arm = proj == "p3"
+        labels = ["cps", "cortex-m4"] if arm else []
+        for b in range(n_bins):
+            for opt in ("O0", "O2", "O2-noinline"):
+                funcs = [
+                    FunctionRecord(
+                        function=f"{proj}_{opt}_b{b}_f{i}", size=sz, values={"angr": {"ged": 1.0}}
+                    )
+                    for i, sz in enumerate([10, 30, 400])  # 400 -> large
+                ]
+                groups.append(
+                    BinaryGroup(
+                        project=proj,
+                        opt_level=opt,
+                        binary=f"{proj}_bin{b}",
+                        labels=labels,
+                        functions=funcs,
+                    )
+                )
+    return FunctionData(decompilers=["angr"], metrics=["ged"], groups=groups)
+
+
+def _members_of(fd: FunctionData) -> set[tuple[str, str, str, str]]:
+    return {
+        (g.project, g.opt_level, g.binary, f.function)
+        for g in fd.groups
+        for f in g.functions
+        if "sample-set" in (f.datasets or [])
+    }
+
+
+def test_sample_set_topup_preserves_picks_across_all_buckets() -> None:
+    """topup_sample_members KEEPS every non-excluded base pick and refills only the
+    freed slots — including when the excluded project touches the overlapping
+    `large`/`unoptimized-arm` buckets (the mirai-win removal top-up mechanism).
+    A fresh draw with an exclusion could NOT guarantee this (it perturbs the seed)."""
+    base_fd = _make_multibucket()
+    assign_datasets(base_fd, sample_total=50, seed=1337)
+    base_members = _members_of(base_fd)
+    # Exclude a NON-ARM project (like the real mirai-win): its picks land in the
+    # unoptimized/inlined/optimized/large buckets — all refillable from p2 — while
+    # the arm-only bucket (p3) is untouched, so the total is fully replenished.
+    excluded_project = "p1"
+    base_excluded = {m for m in base_members if m[0] == excluded_project}
+    # p1 must have picks in the overlapping large/optimized buckets to make the
+    # preservation test meaningful.
+    assert any(m[1] == "O2-noinline" for m in base_excluded), "need optimized/large picks"
+
+    fd = _make_multibucket()
+    topped = topup_sample_members(
+        fd, base_members, frozenset({excluded_project}), sample_total=50, seed=1337
+    )
+
+    assert not {m for m in topped if m[0] == excluded_project}, "excluded project never appears"
+    # EVERY non-excluded base pick is preserved verbatim — the invariant the
+    # review found violated by the old exclude-in-draw approach.
+    assert (base_members - base_excluded) <= topped
+    assert len(topped) == len(base_members), "total size preserved"
+    assert (topped - base_members) and all(
+        m[0] != excluded_project for m in (topped - base_members)
+    ), "freed slots refilled from other projects"
+
+
+def test_sample_set_topup_is_deterministic() -> None:
+    base_fd = _make_multibucket()
+    assign_datasets(base_fd, sample_total=50, seed=1337)
+    base_members = _members_of(base_fd)
+    a = topup_sample_members(_make_multibucket(), base_members, frozenset({"p3"}), seed=1337)
+    b = topup_sample_members(_make_multibucket(), base_members, frozenset({"p3"}), seed=1337)
+    assert a == b

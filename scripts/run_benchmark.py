@@ -44,25 +44,13 @@ import decbench.metrics  # noqa: F401,E402
 from decbench.models.decompilation import DecompilationResult, DecompilerMetadata
 from decbench.models.project import OptimizationLevel, Project
 from decbench.pipeline.evaluate import evaluate_project
-from decbench.pipeline.executor import PipelineExecutor, PipelineConfig
-from decbench.scoring.aggregator import aggregate_results
-from decbench.scoring.function_data_builder import build_function_data
-from decbench.scoring.scoreboard import build_scoreboard
+from decbench.pipeline.executor import PipelineConfig, PipelineExecutor
+
+# The project universe lives in decbench.results_store now (shared with the
+# canonical finalize); gather_tomls keeps its historical name here.
+from decbench.results_store import PROJECT_DIRS  # noqa: F401  (re-exported for callers)
+from decbench.results_store import gather_project_tomls as gather_tomls
 from decbench.utils.cfg import extract_cfgs_from_source
-
-# All benchmark project dirs (top-level *.toml only; cps/disabled/ excluded).
-# sailr = x86, cps = ARM firmware, malware = ARM/PE. Decompilation runs on the
-# host for all of them; byte_match abstains where the matching recompile
-# toolchain is absent (ARM/PE), so GED + type_match carry cps/malware.
-PROJECT_DIRS = [Path("projects/sailr"), Path("projects/cps"), Path("projects/malware")]
-
-
-def gather_tomls() -> list[Path]:
-    out: list[Path] = []
-    for d in PROJECT_DIRS:
-        out.extend(sorted(d.glob("*.toml")))
-    return sorted(out, key=lambda p: p.stem)
-
 
 OPT_LEVELS = [
     OptimizationLevel.O0,
@@ -163,7 +151,7 @@ def _load_sampleset_manifest() -> dict[tuple[str, str, str], set[str]] | None:
 SAMPLESET_GATE = _load_sampleset_manifest()
 
 
-def _kill_process_group(proc: "subprocess.Popen") -> None:
+def _kill_process_group(proc: subprocess.Popen) -> None:
     """SIGKILL the worker's whole process group.
 
     The worker is spawned with ``start_new_session=True`` so it leads its own
@@ -711,9 +699,15 @@ def main() -> int:
             # 2) Extract source CFGs (for GED) — for a gated (sample-set) run, only
             #    for the .i files that actually hold the target functions, so Joern
             #    doesn't parse a whole firmware source tree to score a few functions.
-            src_cfgs = extract_source_cfgs(
-                project, opt, only_stems=needed_stems if SAMPLESET_GATE is not None else None
-            )
+            #    DECOMPILE_ONLY skips evaluate, so the source CFGs are never used —
+            #    skip the (often multi-minute) Joern parse entirely then. A
+            #    downstream reeval_ged pass rebuilds them from its own cache anyway.
+            if os.environ.get("DECBENCH_DECOMPILE_ONLY") == "1":
+                src_cfgs = {}
+            else:
+                src_cfgs = extract_source_cfgs(
+                    project, opt, only_stems=needed_stems if SAMPLESET_GATE is not None else None
+                )
             n_filt = sum(len(v) for v in src_fn_names.values())
             print(
                 f"[{name}/{opt.value}] {len(src_cfgs)} sources; DWARF source-fn "
@@ -796,86 +790,46 @@ def main() -> int:
             flush=True,
         )
 
-    # ---- Final aggregation + scoreboard + interactive report ----
-    print("\nAggregating + building scoreboard...", flush=True)
-    aggregated = aggregate_results(all_evaluate)
-    scoreboard = build_scoreboard(
-        aggregated,
-        projects=[p.name for p in projects],
-        optimization_levels=[o.value for o in OPT_LEVELS],
-        decompilers=DECOMPILERS,
-    )
-    fd = build_function_data(all_evaluate, projects, all_decompile)
-    # GED overlay: the checkpoints' inline GED predates the reeval fixes
-    # (sanitized decompiled parses, per-TU source matching, non-finite dropped),
-    # and the published numbers are built on the reeval set (ged_new.json).
-    # Skipping this reverts the whole GED column to the stale inline values for
-    # every decompiler the reeval covered — which is exactly what the 2026-07-17
-    # r2dec resume finalize did (kuna 47%→22% etc.). update_ged is scoped:
-    # decompilers absent from ged_new.json (freshly evaluated this run) keep
-    # their inline values, minus non-finite entries.
-    from rebuild_function_data import update_byte_match, update_ged, update_type_match
+    # ---- Finalize: the CANONICAL rebuild (decbench.results_store) ----
+    # Always regenerates the derived files from EVERY checkpoint in the tree —
+    # a scoped `-- project` resume can no longer shrink function_results.json to
+    # this run's projects (the historical silent-drop path). Overlays are applied
+    # slice-scoped, the sample-set pins to the frozen manifest, and the coverage
+    # guard refuses any unexplained shrink (DECBENCH_ALLOW_DROPS=1 overrides).
+    print("\nFinalizing (canonical rebuild from ALL checkpoints)...", flush=True)
+    from decbench.results_store import CoverageRegressionError, finalize_tree
 
-    bm_tally: dict[str, dict] = {}
-    for stem, apply_overlay in (
-        ("ged_new", update_ged),
-        ("type_match_new", update_type_match),
-        ("byte_match_new", None),
-    ):
-        overlay_path = out_dir / f"{stem}.json"
-        if not overlay_path.exists():
-            print(
-                f"[finalize] WARNING: no {overlay_path} — that metric column is the "
-                "raw inline checkpoint values (stale for any decompiler evaluated "
-                "before the reeval fixes). Run the matching reeval script, then rebuild.",
-                flush=True,
-            )
-            continue
-        payload = json.loads(overlay_path.read_text())
-        if apply_overlay is None:
-            bm_tally = update_byte_match(fd, payload)
-            n = sum(t["tot"] for t in bm_tally.values())
-        else:
-            n = apply_overlay(fd, payload)
-        print(f"[finalize] overlaid {n} entries from {overlay_path}", flush=True)
-    # Populate the report's code-carrying extras: dataset tags (unoptimized/optimized/...),
-    # side-by-side Compare samples (with source), Hardest functions, and
-    # per-decompiler compile rates. Without this the report has no Compare view,
-    # no Hardest list, and no dataset selector.
+    # finalize_tree re-loads every checkpoint from disk; free the in-memory
+    # accumulators first so the two copies don't both sit in RAM at peak.
+    all_decompile.clear()
+    all_evaluate.clear()
     try:
-        from decbench.scoring.report_extras import attach_extras
-
-        attach_extras(
-            fd,
-            evaluation_results=all_evaluate,
-            decompile_results=all_decompile,
-            projects=projects,
+        fd, scoreboard = finalize_tree(
+            out_dir,
+            allow_drops=os.environ.get("DECBENCH_ALLOW_DROPS") == "1",
         )
-    except Exception as e:  # noqa: BLE001
-        print(f"[warn] attach_extras failed: {e}", flush=True)
-    # attach_extras derives compile rates from the inline (checkpoint) byte_match;
-    # for the overlaid decompilers the reeval tally is the published number.
-    if bm_tally:
-        fd.compile_rates.update({d: t["comp"] / t["tot"] for d, t in bm_tally.items() if t["tot"]})
-    fd_path = out_dir / "function_results.json"
-    fd.to_json(fd_path)
-    scoreboard.raw_data_path = fd_path
-    sb_path = out_dir / "scoreboard.toml"
-    scoreboard.to_toml(sb_path)
+    except CoverageRegressionError as e:
+        print(
+            f"\nFINALIZE BLOCKED: {e}\n"
+            "The run's checkpoints are safely written; fix the gap (or set "
+            "DECBENCH_ALLOW_DROPS=1) and re-run scripts/finalize_results.py.",
+            flush=True,
+        )
+        return 2
 
-    from decbench.scoring.scoreboard import render_scoreboard_text
     from decbench.rendering.html import render_html_report
+    from decbench.scoring.scoreboard import render_scoreboard_text
 
     print(render_scoreboard_text(scoreboard), flush=True)
     report_path = out_dir / "report.html"
     render_html_report(scoreboard, report_path, fd)
 
-    print(f"\nScoreboard:  {sb_path}", flush=True)
-    print(f"Func data:   {fd_path}", flush=True)
+    print(f"\nScoreboard:  {out_dir / 'scoreboard.toml'}", flush=True)
+    print(f"Func data:   {out_dir / 'function_results.json'}", flush=True)
     print(f"HTML report: {report_path}", flush=True)
     print(
-        f"Totals: {aggregated.total_binaries} binary-results, "
-        f"{aggregated.total_functions} distinct functions",
+        f"Totals: {len(fd.groups)} binary-results, "
+        f"{sum(len(g.functions) for g in fd.groups)} function rows",
         flush=True,
     )
     print("RUN_DRIVER_DONE", flush=True)

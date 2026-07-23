@@ -242,16 +242,25 @@ def main() -> None:
                 print(f"[ged] {done}/{len(pending)} (binary,dec) done", flush=True)
 
     merged: dict[str, dict] = {}
+    slices: list[str] = []
     for cp in ckpt_dir.glob("*.json"):
         key = cp.stem.replace("__", "::")
+        slices.append(key)
         for func, v in json.loads(cp.read_text()).items():
             merged[f"{key}::{func}"] = v
     out_path = root / "ged_new.json"
     out_path.write_text(json.dumps(merged))
+    # Sidecar: EVERY (opt, project, binary, dec) slice this reeval evaluated —
+    # including slices whose checkpoint is empty (nothing measurable in the
+    # artifact). The overlay merge (decbench.results_store.update_ged) uses this
+    # as its covered-slice set, so "evaluated, found nothing" clears stale inline
+    # values while "never evaluated" keeps them. Without the sidecar the merge
+    # falls back to inferring coverage from the entry keys (conservative).
+    (root / "ged_new.slices.json").write_text(json.dumps(sorted(slices)))
     perf = sum(1 for v in merged.values() if v.get("perfect"))
     print(
-        f"[ged] wrote {out_path} ({len(merged)} funcs, {perf} perfect "
-        f"= {100*perf/max(1,len(merged)):.1f}%)",
+        f"[ged] wrote {out_path} ({len(merged)} funcs over {len(slices)} slices, "
+        f"{perf} perfect = {100*perf/max(1,len(merged)):.1f}%)",
         flush=True,
     )
 

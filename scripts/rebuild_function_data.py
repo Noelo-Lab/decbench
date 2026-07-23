@@ -18,7 +18,6 @@ Usage:  python scripts/rebuild_function_data.py results/sailr_full
 from __future__ import annotations
 
 import json
-import math
 import re
 import sys
 from collections import Counter
@@ -26,6 +25,18 @@ from pathlib import Path
 
 from decbench.models.function_data import FunctionData, HardestEntry, SampleEntry
 from decbench.models.scoreboard import Scoreboard
+
+# The overlay merges live in decbench.results_store now (slice-scoped clears; see
+# its docstrings) — this script keeps its historical role of an overlay remerge
+# over an existing function_results.json, without touching checkpoints.
+from decbench.results_store import (
+    load_sample_manifest,
+    read_ged_overlay,
+    update_byte_match,
+    update_ged,
+    update_type_match,
+    write_function_data_guarded,
+)
 from decbench.scoring.datasets import assign_datasets
 from decbench.scoring.report_extras import (
     _log_exclusions,
@@ -77,59 +88,6 @@ class DiskReader:
             cf = self.root / opt / proj / "decompiled" / f"{dec}_{stem}.c"
             self._dec_cache[key] = split_functions(cf) if cf.exists() else {}
         return self._dec_cache[key]
-
-
-def update_byte_match(
-    fd: FunctionData, new: dict[str, dict], add_only: bool = False
-) -> dict[str, dict]:
-    """Merge freshly recomputed byte_match into the dataset.
-
-    For every (function, decompiler) that was decompiled (``values[dec]`` exists):
-    SET byte_match to the new value when one exists. When ``add_only`` is False
-    (default), also DROP any stale value with no fresh replacement so the column
-    is uniformly the new metric. When ``add_only`` is True, keep existing values
-    untouched and only ADD where ``new`` has a value — used to fold in a partial
-    reeval (e.g. the Docker ARM/PE recompile) without dropping the host-computed
-    x86 byte_match.
-    Returns per-dec compile tallies (over the newly merged values).
-
-    Like :func:`update_ged`, the stale-value drop is scoped to the decompilers
-    the reeval covered: one added after the reeval (r2dec/dewolf) has no fresh
-    entries at all, and an unscoped drop would wipe its whole healthy column.
-    """
-    covered = {key.split("::", 4)[3] for key in new}
-    tally = {d: {"comp": 0, "tot": 0} for d in fd.decompilers}
-    for g in fd.groups:
-        for f in g.functions:
-            for dec, mv in list(f.values.items()):
-                key = f"{g.opt_level}::{g.project}::{g.binary}::{dec}::{f.function}"
-                rec = new.get(key)
-                if rec is None:
-                    if not add_only and dec in covered:
-                        # No fresh value (artifact gone / abstained): drop any
-                        # stale value, distance, perfect and compile flag.
-                        mv.pop("byte_match", None)
-                        f.perfects.get(dec, {}).pop("byte_match", None)
-                        f.distances.get(dec, {}).pop("byte_match", None)
-                        f.compiles.pop(dec, None)
-                    continue
-                val = float(rec["value"])
-                mv["byte_match"] = val
-                f.perfects.setdefault(dec, {})["byte_match"] = val >= PERFECT["byte_match"]
-                compilable = bool(rec.get("compilable"))
-                f.compiles[dec] = compilable
-                if rec.get("dist") is not None:
-                    f.distances.setdefault(dec, {})["byte_match"] = float(rec["dist"])
-                else:
-                    # Non-compiling (or extract-failed): no fresh distance. Clear
-                    # any stale one so the distance view + a compile proxy can't
-                    # read a value left over from a prior computation.
-                    f.distances.get(dec, {}).pop("byte_match", None)
-                t = tally.setdefault(dec, {"comp": 0, "tot": 0})
-                t["tot"] += 1
-                if compilable:
-                    t["comp"] += 1
-    return tally
 
 
 def build_samples(fd: FunctionData, reader: DiskReader) -> list[SampleEntry]:
@@ -249,88 +207,6 @@ def recompute_scoreboard(fd: FunctionData, old: Scoreboard) -> Scoreboard:
     )
 
 
-def update_ged(fd: FunctionData, new: dict[str, dict]) -> int:
-    """Replace the GED column with the freshly recomputed values, per decompiler.
-
-    The reeval (``scripts/reeval_ged.py``) DROPS unmeasurable functions
-    (empty-prototype/degenerate source) and pairs each binary against its own
-    translation unit, so its output is the authoritative, collision-free GED set
-    for every decompiler it COVERS. Scoping matters: a decompiler evaluated
-    *after* the reeval (r2dec/dewolf added by an additive resume) has healthy
-    fresh values and NO ``ged_new.json`` entries — a blanket clear would wipe its
-    whole column (and an un-overlaid finalize did the inverse: it reverted the
-    covered six to the stale inline values; see the 2026-07-19 GED-collapse
-    post-mortem). So: covered decompilers are cleared then rewritten; uncovered
-    ones keep their values except non-finite entries, which are dropped for the
-    same excluded-from-the-denominator policy the reeval applies. Returns the
-    number of (function, decompiler) entries set.
-    """
-    covered = {key.split("::", 4)[3] for key in new}
-    for g in fd.groups:
-        for f in g.functions:
-            for dec, mv in f.values.items():
-                if dec in covered:
-                    mv.pop("ged", None)
-                elif not math.isfinite(mv.get("ged", 0.0)):
-                    mv.pop("ged", None)
-                    (f.perfects.get(dec) or {}).pop("ged", None)
-                    (f.distances.get(dec) or {}).pop("ged", None)
-            for dec in covered:
-                (f.perfects.get(dec) or {}).pop("ged", None)
-                (f.distances.get(dec) or {}).pop("ged", None)
-    n = 0
-    for g in fd.groups:
-        for f in g.functions:
-            for dec in fd.decompilers:
-                key = f"{g.opt_level}::{g.project}::{g.binary}::{dec}::{f.function}"
-                rec = new.get(key)
-                if rec is None:
-                    continue
-                val = float(rec["value"])
-                f.values.setdefault(dec, {})["ged"] = val
-                f.perfects.setdefault(dec, {})["ged"] = bool(rec.get("perfect", val == 0.0))
-                # GED distance IS the graph edit distance (the value itself).
-                f.distances.setdefault(dec, {})["ged"] = val
-                n += 1
-    return n
-
-
-def update_type_match(fd: FunctionData, new: dict[str, dict[str, float]]) -> int:
-    """Merge freshly recomputed type_match (from run checkpoints) in.
-
-    ``new`` is ``{decompiler: {"proj::opt::bin::fn": value}}`` (the shape emitted
-    by ``scripts/reeval_typematch.py``). For every covered (function, decompiler)
-    SET type_match + its perfect flag; entries with no fresh value are kept (the
-    reeval covers every checkpoint, so this is rare). Returns the number of
-    (function, decompiler) entries set. ged / byte_match / compile_rates are left
-    untouched.
-    """
-    n = 0
-    for g in fd.groups:
-        for f in g.functions:
-            for dec in fd.decompilers:
-                per = new.get(dec)
-                if not per:
-                    continue
-                rec = per.get(f"{g.project}::{g.opt_level}::{g.binary}::{f.function}")
-                if rec is None:
-                    continue
-                # Back-compat: older type_match_new.json stored a bare float; the
-                # new form is {"value": accuracy, "dist": type-flips (fp+fn)}.
-                if isinstance(rec, dict):
-                    val = float(rec["value"])
-                    dist = rec.get("dist")
-                else:
-                    val = float(rec)
-                    dist = None
-                f.values.setdefault(dec, {})["type_match"] = val
-                f.perfects.setdefault(dec, {})["type_match"] = val >= PERFECT["type_match"]
-                if dist is not None:
-                    f.distances.setdefault(dec, {})["type_match"] = float(dist)
-                n += 1
-    return n
-
-
 def main() -> None:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else "results/sailr_full")
     # --add-only: fold a PARTIAL byte_match_new (e.g. the Docker ARM/PE recompile)
@@ -343,6 +219,9 @@ def main() -> None:
     # --type-match: merge type_match_new.json (recomputed from checkpoints after a
     # calibration fix) instead of byte_match; keeps byte_match/ged/compile_rates.
     tm_mode = "--type-match" in sys.argv[2:]
+    # --allow-drops: let the coverage guard's regressions through (see
+    # decbench.results_store.write_function_data_guarded).
+    allow_drops = "--allow-drops" in sys.argv[2:]
     fd = FunctionData.from_json(root / "function_results.json")
     reader = DiskReader(root)
 
@@ -358,8 +237,10 @@ def main() -> None:
         n = update_type_match(fd, new)
         print(f"[rebuild] merged type_match for {n} (function,decompiler) entries", flush=True)
     elif ged_mode:
-        new = json.loads((root / "ged_new.json").read_text())
-        n = update_ged(fd, new)
+        payload, covered = read_ged_overlay(root)
+        if payload is None:
+            raise SystemExit(f"error: no ged_new.json in {root}")
+        n = update_ged(fd, payload, covered=covered)
         print(f"[rebuild] merged GED for {n} (function,decompiler) entries", flush=True)
     else:
         new = json.loads((root / "byte_match_new.json").read_text())
@@ -369,7 +250,9 @@ def main() -> None:
         rates_str = ", ".join(f"{d}={100*r:.1f}%" for d, r in (fd.compile_rates or {}).items())
         print(f"[rebuild] compile rates: {rates_str}", flush=True)
 
-    assign_datasets(fd)
+    # The frozen manifest (when the tree has one) is the single source of truth
+    # for sample-set membership; the seeded draw only runs on manifest-less trees.
+    assign_datasets(fd, sample_members=load_sample_manifest(root))
     fd.samples = build_samples(fd, reader)
     fd.hardest = build_hardest(fd, reader)
     src = sum(1 for s in fd.samples if s.source_code)
@@ -381,7 +264,7 @@ def main() -> None:
     old_sb = Scoreboard.from_toml(root / "scoreboard.toml")
     sb = recompute_scoreboard(fd, old_sb)
 
-    fd.to_json(root / "function_results.json")
+    write_function_data_guarded(fd, root, allow_drops=allow_drops)
     sb.to_toml(root / "scoreboard.toml")
     print("[rebuild] wrote function_results.json + scoreboard.toml", flush=True)
     for d in sb.decompilers:
