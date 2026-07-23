@@ -14,7 +14,7 @@ only ever sees the visible decompilers.
 
 The hidden set lives in ``content/site.toml`` (``[decompilers] hidden``). A name
 matches a decompiler id exactly OR by its base name before ``@``, so hiding
-``"phoenix"`` also hides any ``"phoenix@<version>"``.
+``"ghidra"`` would also hide any ``"ghidra@<version>"``.
 """
 
 from __future__ import annotations

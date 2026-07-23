@@ -57,11 +57,6 @@ license = "closed-source"
 logo = true
 
 [[decompiler]]
-id = "phoenix"
-display_name = "Phoenix (angr)"
-license = "open-source"
-
-[[decompiler]]
 id = "r2dec"
 display_name = "r2dec"
 url = "https://github.com/wargio/r2dec-js"

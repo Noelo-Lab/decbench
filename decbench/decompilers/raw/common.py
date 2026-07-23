@@ -220,7 +220,7 @@ def narrow_to_source(
 
 def _addr_matches(addr: int, target_addrs: set[int]) -> bool:
     """Whether ``addr`` corresponds to a DWARF target, tolerating the ARM Thumb
-    T-bit. DWARF ``low_pc`` is even; angr/phoenix report a Thumb function's entry
+    T-bit. DWARF ``low_pc`` is even; angr reports a Thumb function's entry
     with the LSB set (odd). Match the address as-is or with the Thumb bit cleared
     (and set, for the rare inverse) so Thumb functions narrow correctly instead
     of falling through to "decompile everything" and polluting the result with

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 _LINE_MARKER = re.compile(r'^#\s+\d+\s+"([^"]*)"')
 
 # Aggregate/array return type: ``unsigned int [4] name(`` -> ``unsigned int name(``.
-# angr/phoenix/ghidra render a by-value aggregate/array return as ``T [N] name(...)``
+# angr/ghidra render a by-value aggregate/array return as ``T [N] name(...)``
 # which is not valid C, so Joern parses NOTHING for such a function and it silently
 # drops out of GED's denominator. Anchored at line start (re.M) so it only ever
 # rewrites a top-level function SIGNATURE, never an in-body array declaration such as
@@ -37,7 +37,7 @@ def sanitize_decompiled_c(text: str) -> str:
     GED only cares about CFG *structure*, so these edits are purely to make the
     body parseable — they never touch control flow. Three tool-specific quirks:
 
-    * **Aggregate/array return type** (angr/phoenix/ghidra): ``T [N] name(...)``
+    * **Aggregate/array return type** (angr/ghidra): ``T [N] name(...)``
       is rewritten to ``T name(...)``. Anchored to the start of a line so a real
       in-body array declaration (``char buf[16];``) is never rewritten.
     * **Register annotation** (binja): `` @ rax`` (and friends) is stripped — ``@``

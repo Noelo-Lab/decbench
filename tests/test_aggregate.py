@@ -527,8 +527,8 @@ def test_rounding_would_move_a_rendered_value() -> None:
 
     Distances 4.0/5.0/5.0/5.0/5.0/5.0/5.0/4.749... are contrived so the mean lands on
     a 1dp half-boundary only AFTER a 3dp round. The client renders `toFixed(1)`:
-    the exact mean renders "4.7", the 3dp-rounded one renders "4.8". This is the
-    `full|1 phoenix type_match` cell from the real run, in miniature.
+    the exact mean renders "4.7", the 3dp-rounded one renders "4.8". This is a
+    real `full|1` type_match cell from a past run, in miniature.
     """
     mean = 4.749873609706775
     exact = f"{mean:.1f}"
@@ -681,15 +681,15 @@ def test_registry_carries_license_and_logo_flags() -> None:
     Both are presentation-only and emitted only when set (kept out of the payload
     otherwise), and `license` flows straight from decompilers.toml.
     """
-    registry = _build(_registry_data(["angr", "ida", "phoenix"]))["decompiler_registry"]
+    registry = _build(_registry_data(["angr", "ida", "retdec"]))["decompiler_registry"]
 
     assert registry["angr"]["license"] == "open-source"
     assert registry["angr"]["logo"] is True
     assert registry["ida"]["license"] == "closed-source"
     assert registry["ida"]["logo"] is True
-    # Phoenix ships no logo asset, so the flag is omitted rather than False.
-    assert registry["phoenix"]["license"] == "open-source"
-    assert "logo" not in registry["phoenix"]
+    # RetDec ships no logo asset, so the flag is omitted rather than False.
+    assert registry["retdec"]["license"] == "open-source"
+    assert "logo" not in registry["retdec"]
 
 
 def test_registry_covers_only_the_runs_decompilers() -> None:

@@ -23,7 +23,7 @@ from pathlib import Path
 
 from decbench.utils.results_tree import OPT_LEVELS, resolve_binary, split_functions
 
-DECOMPILERS = ("angr", "phoenix", "ghidra", "ida", "binja", "kuna", "r2dec", "dewolf")
+DECOMPILERS = ("angr", "ghidra", "ida", "binja", "kuna", "r2dec", "dewolf")
 
 
 def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:

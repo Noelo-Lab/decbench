@@ -43,11 +43,6 @@ class RawAngrDecompiler(Decompiler):
     name = "angr"
     display_name = "angr"
 
-    # Which structuring algorithm to drive angr with. ``None`` uses angr's
-    # default (currently SAILR). Subclasses set this to "Phoenix"/"DREAM" to
-    # benchmark a specific structurer as its own decompiler (see RawAngrPhoenix).
-    structurer: str | None = None
-
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
 
@@ -258,16 +253,6 @@ class RawAngrDecompiler(Decompiler):
                 return None
 
         dec_kwargs: dict[str, Any] = {"cfg": cfg.model}
-        if self.structurer is not None:
-            # Select a specific structuring algorithm via angr's options system
-            # (value is convert()ed to the structurer class by the option).
-            from angr.analyses.decompiler.decompilation_options import (
-                get_structurer_option,
-            )
-
-            opt = get_structurer_option()
-            if opt is not None:
-                dec_kwargs["options"] = [(opt, self.structurer)]
         dec = proj.analyses.Decompiler(func, **dec_kwargs)
         codegen = getattr(dec, "codegen", None)
         if codegen is None or not getattr(codegen, "text", None):
@@ -415,17 +400,3 @@ class RawAngrDecompiler(Decompiler):
             line_to_addrs.setdefault(line_no, set()).add(file_addr)
 
         return common.merge_line_addresses(line_to_addrs)
-
-
-@register_decompiler("phoenix")
-class RawAngrPhoenixDecompiler(RawAngrDecompiler):
-    """angr driven with the **Phoenix** structuring algorithm.
-
-    Same native angr pipeline as :class:`RawAngrDecompiler`, but forces the
-    Phoenix structurer instead of angr's default (SAILR), so the two appear as
-    distinct decompilers in the benchmark.
-    """
-
-    name = "phoenix"
-    display_name = "angr (Phoenix)"
-    structurer = "Phoenix"

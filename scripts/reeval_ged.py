@@ -35,7 +35,6 @@ from pathlib import Path
 # slice is tiny (~250 fns each) so covering them costs nearly nothing.
 DECOMPILERS = (
     "angr",
-    "phoenix",
     "ghidra",
     "ida",
     "binja",
@@ -158,7 +157,11 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
     # the entry would land on a universe row this decompiler never owned —
     # misattribution, not a score. Only emit functions the markers declare.
     markers = set(
-        re.findall(r"^// Function: (\S+) @ 0x[0-9a-fA-F]+\s*$", Path(c_path).read_text(errors="replace"), re.M)
+        re.findall(
+            r"^// Function: (\S+) @ 0x[0-9a-fA-F]+\s*$",
+            Path(c_path).read_text(errors="replace"),
+            re.M,
+        )
     )
     metric = GEDMetric()
     perfect_val = metric.perfect_value

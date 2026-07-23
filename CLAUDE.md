@@ -13,8 +13,7 @@ DecBench is a benchmarking suite for evaluating decompiler performance. It imple
   `source /home/mahaloz/.virtualenvs/decbench/bin/activate`.
 - Decompiler backends **available and working** on this machine (verified via
   the raw, declib-free interfaces — see Architecture): **angr** (pip),
-  **phoenix** (angr driven with the Phoenix structurer — a distinct decompiler;
-  plain `angr` uses angr's default SAILR structurer), **Ghidra 12.1** AND
+  **Ghidra 12.1** AND
   **Ghidra 12.0** (`/home/mahaloz/bin/ghidra_12.{1,0}`, via pyghidra; export
   `GHIDRA_INSTALL_DIR` for the unversioned default), **IDA Pro 9.2 idalib** (at
   `/home/mahaloz/ctf/tools/idapro_9.2`), **Binary Ninja 3.1** (install at
@@ -31,14 +30,10 @@ DecBench is a benchmarking suite for evaluating decompiler performance. It imple
   `raw/dewolf_driver.py`, configured under `[dewolf.versions.default]`).
   **RetDec/Reko** are Dockerized (`docker/`).
   `decbench list-decompilers` shows availability. The core benchmark set is
-  **angr, phoenix, ghidra, ida, binja** (+ kuna in the full run); **r2dec** and
-  **dewolf** are the newest additions. NOTE: **phoenix is hidden from the
-  published site** (`content/site.toml` `[decompilers] hidden`) but kept in
-  `function_results.json`.
-- **Phoenix** = `decbench/decompilers/raw/angr_raw.py::RawAngrPhoenixDecompiler`
-  (`structurer = "Phoenix"`). The base `RawAngrDecompiler` has a `structurer`
-  attr (None = SAILR default); set it via angr's `get_structurer_option()`
-  ("SAILR"/"Phoenix"/"DREAM").
+  **angr, ghidra, ida, binja** (+ kuna in the full run); **r2dec** and
+  **dewolf** are the newest additions. (The former angr-variant backend that
+  forced a non-default structurer was fully retired 2026-07-23; see
+  CHANGELOG.md.)
 - **Five Ghidra versions** are configured for multi-version (historical)
   benchmarking in `~/.config/decbench/decompilers.toml`: `ghidra@12.1`,
   `ghidra@12.0` (in `/home/mahaloz/bin/ghidra_12.{1,0}`), plus the historical
@@ -157,8 +152,8 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 
 # FULL run = EVERY project AND EVERY supported decompiler. A "full run" always
 # means all projects we support — projects/{sailr,cps,malware}/*.toml — decompiled
-# by all backends available on this machine: angr, phoenix, ghidra, ida, binja,
-# kuna, r2dec, and dewolf (phoenix is kept in the data but hidden from the site).
+# by all backends available on this machine: angr, ghidra, ida, binja,
+# kuna, r2dec, and dewolf (+ the LLM sample-set-only backends on their slice).
 # If a new project or decompiler is added, "full run" includes it too; scope down
 # only for a deliberate partial pass. (sailr x86 + cps ARM + malware ARM/PE.) Both
 # drivers gather projects/{sailr,cps,malware}/*.toml (gather_tomls(); cps/disabled/
@@ -177,7 +172,7 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 #        python3 scripts/compile_all.py results/full_run 8 <cps+malware stems...>
 #   4) one decompile+evaluate+report pass over everything (resumes per-project):
 #      DECBENCH_WORKERS=40 \
-#        DECBENCH_DECOMPILERS=angr,phoenix,ghidra,ida,binja,kuna,r2dec,dewolf \
+#        DECBENCH_DECOMPILERS=angr,ghidra,ida,binja,kuna,r2dec,dewolf \
 #        GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 #        python scripts/run_benchmark.py results/full_run
 #      (dewolf is slow + BN-based; for it, prefer several concurrent instances on

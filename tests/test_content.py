@@ -292,9 +292,9 @@ def test_decompiler_license_and_logo_are_parsed(content: Content) -> None:
     # Every registered backend declares a license; only some ship a logo asset.
     for spec in content.decompilers:
         assert spec.license in {"open-source", "closed-source"}, spec.id
-    # Phoenix/RetDec/Reko carry no logo (no .dlogo-<id> in app.css yet).
-    assert content.decompiler("phoenix").logo is False
+    # RetDec/Reko carry no logo (no .dlogo-<id> in app.css yet).
     assert content.decompiler("retdec").logo is False
+    assert content.decompiler("reko").logo is False
 
 
 def test_decompiler_lookup_matches_base_name_for_versioned_ids(content: Content) -> None:
@@ -311,11 +311,9 @@ def test_decompiler_lookup_returns_none_for_unknown_id(content: Content) -> None
 
 
 def test_decompiler_url_is_optional(content: Content) -> None:
-    """Kuna and Phoenix have no homepage yet, so they render unlinked."""
+    """Kuna has no homepage yet, so it renders unlinked."""
     kuna = content.decompiler("kuna")
     assert kuna is not None and kuna.url == ""
-    phoenix = content.decompiler("phoenix")
-    assert phoenix is not None and phoenix.url == ""
 
 
 # -- categories / site -----------------------------------------------------
