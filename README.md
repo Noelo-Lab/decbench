@@ -286,10 +286,10 @@ decompiler's identity is `name` or `name@version` (e.g. `ghidra@12.0` vs
 
 The canonical `angr`/`ghidra`/`ida`/`binja` backends drive each tool's own API
 directly (no `declib`). Additional backends run in Docker: **RetDec**, **Reko**,
-and **r2dec** (build images with `decbench decompiler-build <name>`). Two **LLM
-coding agents** — **codex** and **claude-code** — are also registered as
-decompilers, one agentic CLI call per function; they run on the `sample-set`
-slice only (see [docs/LLM_DECOMPILERS.md](docs/LLM_DECOMPILERS.md)).
+and **r2dec** (build images with `decbench decompiler-build <name>`). Three **LLM
+coding agents** — **codex**, **claude-code**, and **kimi-code** — are also
+registered as decompilers, one agentic CLI call per function; they run on the
+`sample-set` slice only (see [docs/LLM_DECOMPILERS.md](docs/LLM_DECOMPILERS.md)).
 
 ## Results
 

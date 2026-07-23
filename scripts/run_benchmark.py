@@ -125,6 +125,7 @@ DECOMPILER_TIMEOUT = {
     # bounds a stuck call while still crediting finished functions.
     "codex": int(os.environ.get("DECBENCH_CODEX_TIMEOUT") or "3600"),
     "claude-code": int(os.environ.get("DECBENCH_CLAUDE_CODE_TIMEOUT") or "3600"),
+    "kimi-code": int(os.environ.get("DECBENCH_KIMI_CODE_TIMEOUT") or "3600"),
 }
 _HERE = Path(__file__).resolve().parent
 _DECOMPILE_ONE = _HERE / "decompile_one.py"
@@ -136,8 +137,8 @@ def _load_sampleset_manifest() -> dict[tuple[str, str, str], set[str]] | None:
     Restricts the whole run to the frozen ``sample-set`` slice (see
     ``scripts/export_sample_set.py``): a decompiler is only ever asked to
     decompile the listed function *names*, per ``(project, opt, binary_stem)``.
-    This is the cost gate for the LLM backends — with it set, codex/claude-code
-    run on ~250 functions instead of the whole corpus.
+    This is the cost gate for the LLM backends — with it set,
+    codex/claude-code/kimi-code run on ~250 functions instead of the whole corpus.
     """
     path = os.environ.get("DECBENCH_SAMPLESET_MANIFEST")
     if not path:
@@ -597,7 +598,8 @@ def main() -> int:
             "     DECBENCH_DECOMPILE_TIMEOUT, DECBENCH_{KUNA,ANGR,PHOENIX,GHIDRA,BINJA}_TIMEOUT,\n"
             "     DECBENCH_KUNA_MAX_FN_SECONDS, DECBENCH_DECOMPILE_ONLY, GHIDRA_INSTALL_DIR,\n"
             "     DECBENCH_SAMPLESET_MANIFEST (gate the run to the frozen sample-set slice;\n"
-            "       required for the LLM backends codex/claude-code — see docs/LLM_DECOMPILERS.md)."
+            "       required for the LLM backends codex/claude-code/kimi-code — see\n"
+            "       docs/LLM_DECOMPILERS.md)."
         )
         return 0
     out_dir = Path(args[0]) if args else Path("results/sailr_full")

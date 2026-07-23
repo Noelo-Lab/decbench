@@ -1,4 +1,4 @@
-# LLM / coding-agent decompilers (Codex, Claude Code)
+# LLM / coding-agent decompilers (Codex, Claude Code, Kimi Code)
 
 DecBench can benchmark a **general coding agent driven as a decompiler**. For
 each target function the agent is handed the (stripped) binary and asked to
@@ -8,19 +8,20 @@ decompiler** and may only use simple disassemblers (`objdump`, `readelf`, `nm`,
 the exact list). Its C output is scored by GED / type_match / byte_match exactly
 like Ghidra or IDA.
 
-Two backends ship today (`decbench/decompilers/llm_dec.py`):
+Three backends ship today (`decbench/decompilers/llm_dec.py`):
 
 | id            | tool            | default model        | credentials |
 |---------------|-----------------|----------------------|-------------|
 | `codex`       | OpenAI Codex CLI| `gpt-5.6-sol`        | `~/.codex/auth.json` **or** `OPENAI_API_KEY` |
 | `claude-code` | Claude Code CLI | `claude-opus-4-8`    | `~/.claude/.credentials.json` **or** `ANTHROPIC_API_KEY` |
+| `kimi-code`   | Kimi Code CLI   | `kimi-code/k3`       | `~/.kimi-code/credentials/` (OAuth) or `api_key` in `~/.kimi-code/config.toml` |
 
 Pin a model as a version spec so it becomes its own scoreboard column:
-`-d codex@gpt-5.6-sol`, `-d claude-code@claude-opus-4-8`.
+`-d codex@gpt-5.6-sol`, `-d claude-code@claude-opus-4-8`, `-d kimi-code@kimi-code/k3`.
 
 ## The shared prompt
 
-Both backends share one instruction, `LLM_DECOMPILE_PROMPT` in
+All three backends share one instruction, `LLM_DECOMPILE_PROMPT` in
 `decbench/decompilers/llm_dec.py`: reconstruct original-source-faithful C for
 one function under the **hard tool policy** above, and write only that
 function's C to `decompiled.c`. Per-function specifics (binary path, entry
@@ -71,13 +72,17 @@ model = "gpt-5.6-sol"  # the gpt-5.6 variant a ChatGPT-account login allows
 
 [claude-code.versions.default]
 model = "claude-opus-4-8"
+
+[kimi-code.versions.default]
+model = "kimi-code/k3"   # the Kimi K3 alias a Kimi Code OAuth login exposes
+# kimi_code_home = "~/.cache/decbench/kimi-code-home"  # isolated KIMI_CODE_HOME
 ```
 
 Env equivalents: `DECBENCH_LLM_MODEL`, `DECBENCH_LLM_TIMEOUT`,
 `DECBENCH_LLM_MAX_FUNCS`, `DECBENCH_LLM_FN_WORKERS`,
 `DECBENCH_LLM_DOCKER_IMAGE`. Per-decompiler wall-clock in the driver:
-`DECBENCH_CODEX_TIMEOUT` / `DECBENCH_CLAUDE_CODE_TIMEOUT` (default 3600s per
-binary).
+`DECBENCH_CODEX_TIMEOUT` / `DECBENCH_CLAUDE_CODE_TIMEOUT` /
+`DECBENCH_KIMI_CODE_TIMEOUT` (default 3600s per binary).
 
 **Traces.** Every agent call is traced by default (disable with
 `DECBENCH_LLM_SAVE_TRACES=0` / `save_traces = false`): the prompt, transcript,
@@ -105,6 +110,15 @@ By default the backends run the CLI **on the host**, but under a
   copy goes stale. When those OAuth credentials exist, `ANTHROPIC_API_KEY` is
   dropped (a set key shadows the much faster OAuth login); force the API-key
   path with `DECBENCH_CLAUDE_USE_API_KEY=1`.
+- **kimi-code** points `KIMI_CODE_HOME` at `~/.cache/decbench/kimi-code-home`
+  (override: `DECBENCH_KIMI_CODE_HOME` / `kimi_code_home`) and passes an empty
+  `--skills-dir` (which replaces all discovered skill dirs for the launch), so
+  no user/project skill — e.g. a `decompiler` skill driving real decompilers —
+  can load; `config.toml` + `credentials/` are synced from `~/.kimi-code` only
+  when the host copy is newer, so kimi's in-place OAuth refresh isn't
+  clobbered. Kimi Code reads **no** API key from the shell env (`export
+  KIMI_API_KEY=...` is ignored) — auth is the OAuth store under
+  `$KIMI_CODE_HOME/credentials/` or an `api_key` written in `config.toml`.
 
 ## Running in the project container (token inheritance)
 
@@ -128,8 +142,10 @@ outside" (the `docker/llm-agents.Dockerfile` header shows the same invocation):
 ```
 docker run --rm -v <workdir>:/work -w /work \
   -v ~/.codex:/root/.codex:ro -v ~/.claude:/root/.claude:ro \
-  -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e CODEX_HOME=/root/.codex -e HOME=/root \
-  decbench/llm-agents:latest <codex exec ... | claude -p ...>
+  -v ~/.kimi-code:/root/.kimi-code:ro \
+  -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e CODEX_HOME=/root/.codex \
+  -e KIMI_CODE_HOME=/root/.kimi-code -e HOME=/root \
+  decbench/llm-agents:latest <codex exec ... | claude -p ... | kimi -p ...>
 ```
 
 ## How it fits the pipeline
@@ -145,7 +161,8 @@ parses the C signature into ABI-positioned arguments plus locals and scores
 them through the structured matcher (name-based text parsing only as a last
 resort). Before publishing, refresh the metric overlays as with any newly added
 decompiler — but note `scripts/reeval_ged.py` and `scripts/reeval_bytematch.py`
-hard-code a `DECOMPILERS` tuple that does **not** include `codex`/`claude-code`:
+hard-code a `DECOMPILERS` tuple that does **not** include the LLM backends
+(`codex`/`claude-code`/`kimi-code`):
 extend those tuples (and run `scripts/reeval_typematch.py`, which covers every
 decompiler in the checkpoints) so the overlays cover the LLM columns, then
 `scripts/rebuild_function_data.py`.
