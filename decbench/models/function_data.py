@@ -240,6 +240,12 @@ class FunctionData(BaseModel):
         "(how much of the GED pipeline fails due to our own tooling). Software-"
         "type categories are derived client-side from per-binary labels.",
     )
+    cost_info: dict = Field(
+        default_factory=dict,
+        description="Per-decompiler decompile-time + LLM token-usage FACTS for "
+        "the data page's cost section (scripts/compute_cost_info.py); prices "
+        "applied at render time from content/pricing.toml.",
+    )
     history: list[HistoryPoint] = Field(
         default_factory=list,
         description="Historical score samples across decompiler versions/time",

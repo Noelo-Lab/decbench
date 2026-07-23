@@ -1,0 +1,32 @@
+# LLM model list prices, USD per MILLION tokens (MTok), for the data page's
+# cost section.
+#
+# Prices are applied at RENDER time (rendering/aggregate._cost_block): the
+# results tree stores only token-count FACTS (FunctionData.cost_info, written by
+# scripts/compute_cost_info.py), so correcting a price here needs ONLY a
+# re-render (`decbench site build`) — no re-scan, no benchmark re-run.
+#
+# The four axes match decbench.scoring.cost's normalized token buckets:
+#   input_per_mtok         uncached input tokens
+#   cached_input_per_mtok  cache-read input tokens
+#   cache_write_per_mtok   cache-write (creation) input tokens (claude only;
+#                          codex sessions record no cache-write bucket)
+#   output_per_mtok        output tokens (codex: includes reasoning tokens)
+#
+# !!! PLACEHOLDER — maintainer: verify list prices before publishing.
+# All entries ship as 0.0 on purpose: an all-zero model is "unpriced"
+# (ModelPricing.is_priced == false) and renders as n/a — never as a bogus $0.00.
+
+[[model]]
+name = "claude-opus-4-8"
+input_per_mtok = 0.0
+cached_input_per_mtok = 0.0
+cache_write_per_mtok = 0.0
+output_per_mtok = 0.0
+
+[[model]]
+name = "gpt-5.6-sol"
+input_per_mtok = 0.0
+cached_input_per_mtok = 0.0
+cache_write_per_mtok = 0.0
+output_per_mtok = 0.0

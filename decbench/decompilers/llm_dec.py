@@ -430,7 +430,13 @@ class _AgentDecompiler(Decompiler):
         failed: list[str] = []
         lock = threading.Lock()
 
-        def _record(name: str, addr: int, code: str | None) -> None:
+        def _record(
+            name: str,
+            addr: int,
+            code: str | None,
+            elapsed: float | None = None,
+            tokens: dict[str, int] | None = None,
+        ) -> None:
             with lock:
                 if code:
                     result.functions[name] = FunctionDecompilation(
@@ -439,6 +445,11 @@ class _AgentDecompiler(Decompiler):
                         decompiled_code=code,
                         line_count=code.count("\n") + 1,
                         metadata=common.extract_metrics(code),
+                        # Structured cost capture (data page's cost section):
+                        # per-function wall time incl. tool use, and the call's
+                        # token usage when the session log parsed. Best-effort.
+                        time_seconds=elapsed,
+                        llm_tokens=tokens,
                     )
                 else:
                     failed.append(name)
@@ -448,12 +459,22 @@ class _AgentDecompiler(Decompiler):
                 common.dump_progress(progress_path, result)
 
         def _one(name: str, addr: int) -> None:
+            elapsed: float | None = None
+            tokens: dict[str, int] | None = None
+            t0 = time.time()
             try:
-                code = self._decompile_one(binary_path, name, addr, output_dir)
+                out = self._decompile_one(binary_path, name, addr, output_dir)
+                # Tolerant unpack: a subclass/test override may still return the
+                # bare code string from before the cost-capture tuple existed.
+                if isinstance(out, tuple):
+                    code, elapsed, tokens = out
+                else:
+                    code = out
             except Exception as e:  # noqa: BLE001
                 _l.warning("llm/%s: %s @ 0x%x failed: %s", self.name, name, addr, e)
                 code = None
-            _record(name, addr, code)
+                elapsed = time.time() - t0
+            _record(name, addr, code, elapsed, tokens)
 
         # A binary's sampled functions are independent agent calls, so run them
         # concurrently — a single-binary/multi-function project otherwise decompiles
@@ -507,8 +528,14 @@ class _AgentDecompiler(Decompiler):
 
     def _decompile_one(
         self, binary_path: Path, name: str, addr: int, output_dir: Path | None = None
-    ) -> str | None:
-        """Run the agent once for one function and return its C (or ``None``).
+    ) -> tuple[str | None, float, dict[str, int] | None]:
+        """Run the agent once for one function: ``(code, elapsed_s, tokens)``.
+
+        ``code`` is the reconstructed C (or ``None``); ``elapsed_s`` the call's
+        wall time including tool use; ``tokens`` the session's normalized token
+        usage (:func:`decbench.scoring.cost.parse_session_tokens`) or ``None``
+        when no session log was captured/parseable. The latter two feed the
+        structured cost fields on :class:`FunctionDecompilation`.
 
         When trace-saving is on (default; disable with ``DECBENCH_LLM_SAVE_TRACES=0``)
         and ``output_dir`` is known, the agent's full transcript — prompt, stdout,
@@ -556,7 +583,8 @@ class _AgentDecompiler(Decompiler):
             final = _rename_func(_sanitize(code), name) if code else None
             # Capture the trace BEFORE the temp dir (and the agent's session file
             # under it, for claude) is torn down.
-            self._save_trace(
+            elapsed = time.time() - t0
+            session = self._save_trace(
                 output_dir,
                 binary_path,
                 name,
@@ -565,10 +593,20 @@ class _AgentDecompiler(Decompiler):
                 prompt,
                 stdout,
                 final,
-                elapsed=time.time() - t0,
+                elapsed=elapsed,
                 timed_out=timed_out,
             )
-            return final
+            # Structured cost capture, best-effort: a token-parse failure must
+            # never break the decompilation itself.
+            tokens: dict[str, int] | None = None
+            if session is not None:
+                try:
+                    from decbench.scoring.cost import parse_session_tokens
+
+                    tokens = parse_session_tokens(session)
+                except Exception as e:  # noqa: BLE001
+                    _l.debug("llm/%s: token parse failed for %s: %s", self.name, name, e)
+            return final, elapsed, tokens
 
     def _traces_enabled(self) -> bool:
         return str(self._opt("save_traces", "DECBENCH_LLM_SAVE_TRACES", "1")).lower() not in (
@@ -589,23 +627,25 @@ class _AgentDecompiler(Decompiler):
         code: str | None,
         elapsed: float,
         timed_out: bool,
-    ) -> None:
-        """Persist the agent's per-function trace.
+    ) -> Path | None:
+        """Persist the agent's per-function trace; return the session log's path.
 
         Into ``$DECBENCH_LLM_TRACE_DIR/<decompiler>/`` when that is set (a single
         collected folder), else ``<output_dir>/traces/``. Writes the prompt +
         transcript + reconstructed C as ``.md``, plus the CLI's OWN full session log
         (every objdump/tool call): the Claude session JSONL or the Codex rollout.
+        Returns the copied ``*.session.jsonl`` path when one was captured (the
+        caller parses tokens from it), else ``None``.
         """
         if not self._traces_enabled():
-            return
+            return None
         root = self._opt("trace_dir", "DECBENCH_LLM_TRACE_DIR", "")
         if root:
             trace_dir = Path(root) / self.id.replace("@", "-")
         elif output_dir is not None:
             trace_dir = Path(output_dir) / "traces"
         else:
-            return
+            return None
         try:
             trace_dir.mkdir(parents=True, exist_ok=True)
             label = self._trace_label(binary_path, name, addr)
@@ -624,9 +664,12 @@ class _AgentDecompiler(Decompiler):
             # The CLI's own session log carries every shell command it ran (the
             # authoritative record for auditing tool use). claude: session JSONL
             # under its config; codex: the rollout named by the session id.
-            self._copy_session_jsonl(workdir, transcript, trace_dir / f"{label}.session.jsonl")
+            session = trace_dir / f"{label}.session.jsonl"
+            self._copy_session_jsonl(workdir, transcript, session)
+            return session if session.is_file() else None
         except Exception as e:  # noqa: BLE001 - tracing must never break a run
             _l.debug("llm/%s: trace save failed for %s: %s", self.name, name, e)
+        return None
 
     @staticmethod
     def _trace_label(binary_path: Path, name: str, addr: int) -> str:
