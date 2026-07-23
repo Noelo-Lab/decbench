@@ -15,6 +15,13 @@ Significant changes to DecBench that introduce or update results.
   checkpoint, merges the metric overlays per-slice (so a partial overlay can no
   longer erase data), and refuses any unexplained shrink in coverage. Kuna's
   optimized score is restored to its correct value.
+- Removed the **mirai-win** malware target. Despite its name (from theZoo's
+  "Win32.Mirai" directory), it was a second **Linux/ELF** Mirai variant built
+  with gcc — duplicating the existing `mirai` target's coverage while implying
+  Windows coverage the benchmark did not have. Its 141 function rows left every
+  score, and its 3 sample-set functions were replaced by a deterministic top-up
+  draw from the same categories (the other 247 sample-set picks are unchanged);
+  the LLM backends were re-run on just the 3 replacements.
 - Added a third LLM/coding-agent decompiler backend: **kimi-code** (Kimi Code
   CLI, default model `kimi-code/k3`), benchmarked on the sample-set slice like
   codex/claude-code.

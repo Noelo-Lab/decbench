@@ -114,8 +114,10 @@ DECBENCH_SMALL_DECOMPILERS="angr,ida,ghidra@12.0,ghidra@12.1" python scripts/run
 # (decbench has no C++ support yet — pyjoern/GED is C-only); their recipes are
 # verified-working and re-enable by moving the TOML back up to projects/cps/.
 #
-# Plus REAL MALWARE targets in projects/malware/*.toml (C, from theZoo): mirai,
-# mirai-win (ELF/gcc), mydoom, x0r-usb, minipig, dexter (PE/MinGW). These are
+# Plus REAL MALWARE targets in projects/malware/*.toml (C, from theZoo): mirai
+# (ELF/gcc), mydoom, x0r-usb, minipig, dexter (PE/MinGW). (mirai-win was removed
+# 2026-07-23: theZoo's "Win32.Mirai" is actually Linux/ELF sources — it
+# duplicated mirai and implied Windows coverage it didn't provide.) These are
 # COMPILED, NEVER EXECUTED, and ONLY inside the container: each sets
 # is_malware=true and compile_project REFUSES to build them on a bare host
 # (needs /.dockerenv or DECBENCH_ALLOW_MALWARE=1). download_cmd fetches+extracts
