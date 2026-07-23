@@ -18,9 +18,14 @@ requires_function_data = false
 # People come here for the numbers, so the numbers are the front page.
 default = true
 
+# Renamed from `distance` (2026-07-23): the page grew beyond the distance table
+# into four linkable sections — distance, compiles, pipeline health (moved from
+# about), and cost — so it is now the run-data page. Old `/distance/` URLs and
+# `#distance` hashes redirect (site.py's redirect stub + app.js's
+# LEGACY_HASH_VIEWS).
 [[view]]
-id = "distance"
-nav_label = "distance"
+id = "data"
+nav_label = "data"
 requires_function_data = true
 
 # The side-by-side code view (absorbed the old `compare` and `hardest` views):
