@@ -22,6 +22,14 @@ Significant changes to DecBench that introduce or update results.
   score, and its 3 sample-set functions were replaced by a deterministic top-up
   draw from the same categories (the other 247 sample-set picks are unchanged);
   the LLM backends were re-run on just the 3 replacements.
+- The distance page became the **data** page (`/data/`) with four linkable
+  sections — [distance](https://decbench.com/data/#distance),
+  [compiles](https://decbench.com/data/#compiles),
+  [pipeline health](https://decbench.com/data/#pipeline-health) (moved from the
+  about page), and a new [cost](https://decbench.com/data/#cost) section
+  reporting each decompiler's median/mean decompile time per function plus the
+  LLM backends' estimated API cost from recorded token usage. Old `/distance/`
+  links and `#distance` hashes redirect.
 - Added a third LLM/coding-agent decompiler backend: **kimi-code** (Kimi Code
   CLI, default model `kimi-code/k3`), benchmarked on the sample-set slice like
   codex/claude-code.

@@ -173,9 +173,8 @@ client-side recompute.
 | View | What it shows |
 |------|---------------|
 | **Leaderboard** | swebench-style ranked table — one row per decompiler, columns for Union + each metric's perfect % + errors; sortable by any column. The page the site opens on |
-| **Distance** | raw edit distance to a perfect result per metric (lower is better) — mean, median, and how many functions are already at 0; a finer signal than the leaderboard's perfect rate. Also holds the per-decompiler **Compiles** rate table |
+| **Data** | four linkable sections: **distance** (raw edit distance to a perfect result per metric — mean, median, #at-0; a finer signal than the perfect rate), **compiles** (the per-decompiler recompilation-rate table), **pipeline health** (Joern parse loss charged to our tooling), and **cost** (median/mean decompile time per function + estimated LLM API $, priced via `content/pricing.toml`). Renamed from *Distance*; old `/distance/` links redirect |
 | **View** | original source side-by-side with one chosen decompiler's output, across easy/medium/hard difficulty tiers (~100 functions each), with per-metric scores |
-| **Insights** | a maintainer's reading of what the numbers actually say |
 | **Changelog** | the dated change log, injected from the repo-root `CHANGELOG.md` at build time |
 | **About** | why the benchmark exists, the three metric goals (with visualizations), and the dataset/corpus tables |
 
@@ -187,13 +186,14 @@ done: no benchmark re-run, no Python.
 
 | File | Holds |
 |------|-------|
-| `<view>.md` | each view's title and prose — `leaderboard.md`, `distance.md`, `view.md`, `insights.md`, `changelog.md`, `about.md` |
+| `<view>.md` | each view's title and prose — `leaderboard.md`, `data.md`, `view.md`, `changelog.md`, `about.md` |
 | `site.toml` | brand block, sidebar, footer, banners, side stats, and which decompilers are site-hidden / sample-set-only |
 | `views.toml` | the view registry — which views exist, nav order + labels, which is `default`, which need function data |
 | `metrics.toml` | per-metric display name, short column label, order, and the definition of *perfect* |
 | `datasets.toml` | the 5 dataset presets' labels + descriptions, and which is `default` |
 | `decompilers.toml` | the decompiler registry — official display names, project links, and version labels, rendered wherever the site names a decompiler |
 | `categories.toml` | the software-type taxonomy on the About page's dataset tables |
+| `pricing.toml` | per-model USD/MTok list prices for the Data page's cost table — applied at render time against the token facts in `FunctionData.cost_info` (gathered by `decbench/scoring/cost.py` via `scripts/compute_cost_info.py`), so a price fix needs only a re-render |
 
 The `.md` conventions are documented in `leaderboard.md`'s header. A view's `id`
 in `views.toml` must match its `<id>.md`. `datasets.toml` owns only preset

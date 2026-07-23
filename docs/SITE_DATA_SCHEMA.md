@@ -22,27 +22,39 @@ site/
 ├── app.js
 ├── .nojekyll           # stop Pages from running Jekyll over the tree
 ├── leaderboard/index.html  # one subpage per VISIBLE view: the same skeleton, that
-├── distance/index.html     #   view marked active and its asset links prefixed with
-├── view/index.html         #   "../" (no <base> — that would break same-document SVG
-├── insights/index.html     #   url(#marker) refs and #anchors). Makes /leaderboard/,
-├── changelog/index.html    #   /distance/, ... directly linkable and reload-safe.
-├── about/index.html        #   (insights + changelog are prose-only views.)
+├── view/index.html         #   view marked active and its asset links prefixed with
+├── changelog/index.html    #   "../" (no <base> — that would break same-document SVG
+├── about/index.html        #   url(#marker) refs and #anchors). Makes /leaderboard/,
+│                           #   /data/, ... directly linkable and reload-safe.
+│                           #   (changelog is a prose-only view.)
+├── distance/index.html     # MARKER-LESS redirect stub: the distance view became
+│                           #   the data view (2026-07-23), and old /distance/
+│                           #   links canonicalize + hop to ../data/ preserving
+│                           #   ?query#hash. No page marker on purpose — the
+│                           #   stale-view prune must keep it (see below).
 ├── CNAME                   # custom domain (from site.toml [pages].domain)
 ├── favicon.png             # 64x64 tab icon      \ vendored under
 ├── apple-touch-icon.png    # 180x180 iOS icon    | assets/icons/, derived
 ├── decbench_card.png       # 1200x630 OG/Twitter share image  / from decbench_icon.png
 ├── fonts/                  # vendored Source Code Pro woff2 (offline render)
 └── data/
-    ├── aggregates.json # the 10 combos + registry. Loaded eagerly.
-    ├── dataset.json    # About page (corpus tables). Corpus-wide, selector-independent.
+    ├── index.html      # the DATA view's subpage — the `data` view id shares its
+    │                   #   directory with the payloads below (deliberate; the
+    │                   #   payload wipe runs first, the subpage is written after)
+    ├── aggregates.json # the 10 combos + registry + the global cost block. Eager.
+    ├── dataset.json    # About page tables + the data page's pipeline-health
+    │                   #   section. Corpus-wide, selector-independent.
     └── samples.json    # View page. Lazy — fetched on first view.
 ```
 
-Every page carries the comment marker `<!-- decbench:page -->`. On rebuild the writer
-prunes a subdirectory left by a removed/renamed view, but **only** when its
+Every generated page carries the comment marker `<!-- decbench:page -->`. On rebuild
+the writer prunes a subdirectory left by a removed/renamed view, but **only** when its
 `index.html` carries that marker — never an arbitrary directory (a `CNAME` folder, a
-hand-added page) a maintainer dropped in `site/`. `data/` and `fonts/` are wholly
-regenerated and wiped first.
+hand-added page) a maintainer dropped in `site/`. The `distance/index.html` redirect
+stub is deliberately marker-less so that prune keeps it (`site.py`'s
+`_LEGACY_REDIRECTS`); legacy `#distance` hashes are likewise routed client-side
+(`app.js`'s `LEGACY_HASH_VIEWS`). `data/` and `fonts/` are wholly regenerated and
+wiped first.
 
 `index.html` in **single-file mode** (`decbench report`) inlines every asset and every
 data file into one HTML document, so it still opens over `file://` where `fetch()` is
@@ -78,7 +90,7 @@ on a subpage), `og:image` (the absolute `decbench_card.png`) with `og:image:widt
 not a crawlable URL.
 
 The per-page `og:description` is derived from the freshly-computed `aggregates` payload
-(so `build_site` computes payloads first, then pages): the leaderboard/distance text
+(so `build_site` computes payloads first, then pages): the leaderboard/data-page text
 quotes the default-preset **top-3 by Union** over the on-screen decompilers
 (`aggregate.union_leaders`, excluding the sample-set-only backends), the view page
 quotes the sample-set top-3 (all decompilers), and each is kept ≤ 200 chars. Escaped
@@ -154,6 +166,16 @@ button (`#theme-toggle`) flips and persists it at runtime.
   "default_view": "leaderboard",                   // views.toml's `default = true`
   "totals": {"functions": 91483, "binaries": 806},  // corpus-wide, all presets
 
+  // GLOBAL, not per-combo (cost doesn't vary by preset/normalize) — see "Cost block".
+  "cost": {
+    "ghidra": {"time": {"mean_s": 0.21, "median_s": 0.19, "n_functions": 88000,
+                        "n_binaries": 790, "basis": "batch"}, "dollars": null},
+    "claude-code": {"time": {"mean_s": 240.1, "median_s": 197.0, "n_functions": 250,
+                             "basis": "per-function"},
+                    "dollars": {"total": 118.40, "per_function": 0.47,
+                                "model": "claude-opus-4-8", "estimated": true}}
+  },
+
   // Key: "<preset>|<normalize>" where normalize is "0" or "1".
   // A run with NO presets emits `"presets": []` plus the single reserved combo pair
   // "__all__|0" / "__all__|1" over the whole corpus (see "No presets" below).
@@ -166,7 +188,7 @@ button (`#theme-toggle`) flips and persists it at runtime.
       },
       "overall": {"angr": [111, 222]},   // Union column: decompiler -> [perfect, total]
       "errors":  {"angr": [5, 1000]},    // decompiler -> [errored, scope]
-      "compile": {"angr": [890, 1000]},  // Compiles rate (distance page): decompiler -> [compiled, byte_match-measured]
+      "compile": {"angr": [890, 1000]},  // Compiles rate (data page): decompiler -> [compiled, byte_match-measured]
       "distance": {                      // decompiler -> metric -> stats | null
         "angr": {"ged": {"mean": 3.25, "median": 2, "n": 5000, "at0": 1200}}
       }
@@ -190,8 +212,8 @@ an optional `url` (a project homepage; the client renders a link when present,
 `target=_blank rel=noopener`), an optional prettified `version`, an optional
 `license` (`"open-source"` / `"closed-source"`), and an optional `logo` flag. The
 client (`app.js`'s `decName`/`decUrl`/`decVersion`/`decHasLogo`) renders
-these in place of raw ids in the leaderboard, the metrics table, the distance page's
-distance and compile tables, and the view page's decompiler dropdown; name-sorting sorts
+these in place of raw ids in the leaderboard, the metrics table, the data page's
+distance/compile/cost tables, and the view page's decompiler dropdown; name-sorting sorts
 by `display_name`. It is **tolerant**: a missing registry, or an id with no entry, falls
 back to the raw id (unlinked), exactly like `metric_registry`.
 
@@ -211,6 +233,40 @@ it verbatim; the raw `decompiler_versions` map is kept for back-compat. Lookup i
 exact id, then base name before `@`, so a versioned id (`ghidra@12.1`) resolves to the
 `ghidra` entry. The registry is keyed by `decompilers` — the same list, already
 stripped of site-hidden backends — so it can never reintroduce a hidden decompiler.
+
+### Cost block
+
+The top-level `cost` map (decompiler id → entry) feeds the data page's `#cost` table.
+It is **global, not per-combo**: decompile time and dollars do not vary with the
+dataset preset or the normalize toggle, so it ships once and `app.js`'s `buildCost`
+renders it once at init, outside `refresh()`.
+
+Provenance is a two-layer split so a price fix never needs a re-scan:
+
+* **Facts** live in `FunctionData.cost_info`, written by
+  `scripts/compute_cost_info.py` via `decbench/scoring/cost.py` — batch decompile
+  times from the results tree's `decompiled/*.toml` headers (`basis: "batch"`,
+  per-function time = binary wall time / function count), and per-function LLM
+  times + token sums from the structured `FunctionDecompilation.time_seconds` /
+  `llm_tokens` fields (new runs) or the `$DECBENCH_LLM_TRACE_DIR` trace scan
+  (historical runs). Facts only — no dollar amounts are stored.
+* **Prices** live in `decbench/rendering/content/pricing.toml` (USD per MTok per
+  model) and are applied at RENDER time (`aggregate._cost_block`).
+
+Entry semantics:
+
+* `time.basis` is `"batch"` (traditional decompilers — an amortized rate) or
+  `"per-function"` (LLM agents — one timed agent call per function, tool use
+  included). The two are **not directly comparable**; the client renders them in
+  separate table halves.
+* `dollars` is always `null` for batch entries (no per-token cost). For LLM entries
+  it is `{"total", "per_function", "model", "estimated": true}` — an **estimate**
+  from recorded token usage at list prices — or `null` when the model is unknown,
+  unpriced (pricing.toml ships all-zero **placeholder** cards until the maintainer
+  verifies list prices; an unpriced model must render as n/a, never $0.00), or no
+  token data was captured.
+* Keyed off the visible `decompilers` list, so a site-hidden backend's cost never
+  ships; a decompiler with no cost facts is simply absent.
 
 ### No presets (`__all__`)
 
@@ -254,8 +310,8 @@ benchmark's fairness contract:
   had a recompile toolchain), so ARM/PE abstentions never enter it. This is the
   compilability-fixup success rate, and it moves with the dataset preset like the
   metric columns (O0 code compiles more readily than O2). It is rendered in its
-  own `#compile-table` on the **distance** page (it used to be a leaderboard
-  column); the combo key is unchanged.
+  own `#compile-table` in the **data** page's `#compiles` section (it used to be
+  a leaderboard column); the combo key is unchanged.
 * `normalize=1` additionally restricts to functions **every** decompiler decompiled —
   where "every" means every decompiler *whose rows the preset shows*: the
   sample-set-only backends (`sample_set_only`, e.g. codex/claude-code) attempt nothing
