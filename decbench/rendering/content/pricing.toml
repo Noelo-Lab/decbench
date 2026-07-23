@@ -13,20 +13,29 @@
 #                          codex sessions record no cache-write bucket)
 #   output_per_mtok        output tokens (codex: includes reasoning tokens)
 #
-# !!! PLACEHOLDER — maintainer: verify list prices before publishing.
-# All entries ship as 0.0 on purpose: an all-zero model is "unpriced"
-# (ModelPricing.is_priced == false) and renders as n/a — never as a bogus $0.00.
+# Prices below are published list prices as of 2026-07-23. The $ figures on the
+# cost page are labeled "estimated" — MAINTAINER: re-verify against the current
+# published price sheets before each publish (an all-zero model is treated as
+# "unpriced": ModelPricing.is_priced == false, and renders as n/a rather than a
+# bogus $0.00, so zero out a model you can no longer price).
 
+# Claude Opus 4.8 (claude-code default). Anthropic list price: $5 / $25 per MTok
+# in/out; cache read ≈ 0.1x input; the claude-code CLI records 1h ephemeral cache
+# writes, priced at 2x input.
 [[model]]
 name = "claude-opus-4-8"
-input_per_mtok = 0.0
-cached_input_per_mtok = 0.0
-cache_write_per_mtok = 0.0
-output_per_mtok = 0.0
+input_per_mtok = 5.00
+cached_input_per_mtok = 0.50
+cache_write_per_mtok = 10.00
+output_per_mtok = 25.00
 
+# GPT-5.6 Sol (codex default). OpenAI list price (July 2026): $5 / $30 per MTok
+# in/out; cache read retains the 90% input discount (0.1x); cache write ≈ 1.25x
+# input (codex session logs record no separate cache-write bucket, so this axis
+# is unused for codex today but set for completeness).
 [[model]]
 name = "gpt-5.6-sol"
-input_per_mtok = 0.0
-cached_input_per_mtok = 0.0
-cache_write_per_mtok = 0.0
-output_per_mtok = 0.0
+input_per_mtok = 5.00
+cached_input_per_mtok = 0.50
+cache_write_per_mtok = 6.25
+output_per_mtok = 30.00

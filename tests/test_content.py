@@ -187,19 +187,19 @@ def test_data_view_has_four_section_anchors(content: Content) -> None:
 
 
 def test_pricing_registry_loads(content: Content) -> None:
-    """pricing.toml parses into ModelPricing cards; the shipped entries are
-    PLACEHOLDERS (all-zero) and must read as unpriced — rendered n/a, not $0.00."""
+    """pricing.toml parses into ModelPricing cards for the two LLM decompiler
+    models, and the is_priced gate distinguishes a filled card from an all-zero
+    (unpriced -> rendered n/a, not $0.00) one."""
     from decbench.rendering.content import ModelPricing
 
     names = [p.name for p in content.pricing]
     assert "claude-opus-4-8" in names
     assert "gpt-5.6-sol" in names
-    for pricing in content.pricing:
-        assert not pricing.is_priced, f"{pricing.name} shipped with a real price"
     assert content.model_pricing("claude-opus-4-8") is not None
     assert content.model_pricing("no-such-model") is None
-    # A card with any non-zero axis is priced.
+    # The is_priced gate: any non-zero axis is priced; all-zero is unpriced.
     assert ModelPricing(name="x", output_per_mtok=15.0).is_priced
+    assert not ModelPricing(name="x").is_priced
 
 
 # -- metrics ---------------------------------------------------------------
