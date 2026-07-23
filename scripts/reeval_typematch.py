@@ -62,7 +62,7 @@ for proj in projects:
                     n = mv.value
                     # Emit EVERY freshly computed value (not only those already in
                     # function_results.json), so newly-recovered functions — e.g.
-                    # angr/phoenix ARM functions that were previously misnamed
+                    # angr ARM functions that were previously misnamed
                     # sub_* and had no type_match — are captured. The OLD-vs-NEW
                     # comparison stats below still only cover functions present in
                     # `old` (there is nothing to compare against otherwise).

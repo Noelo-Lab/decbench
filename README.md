@@ -34,7 +34,7 @@ DecBench runs a four-stage pipeline:
 ```
 Source Code (TOML config)
     --> Compile (gcc / cross / MinGW, multiple -O levels)
-    --> Decompile (angr, phoenix, Ghidra, IDA, Binary Ninja, ...)
+    --> Decompile (angr, Ghidra, IDA, Binary Ninja, ...)
     --> Evaluate (GED + Type Match + Byte Match)
     --> Scoreboard + HTML Report
 ```
@@ -277,7 +277,6 @@ decompiler's identity is `name` or `name@version` (e.g. `ghidra@12.0` vs
 `decbench list-decompilers` shows what's available on the current machine.
 
 - **angr** - Open-source binary analysis framework (default SAILR structurer)
-- **phoenix** - angr driven with the Phoenix structurer (a distinct decompiler)
 - **Ghidra** - NSA's open-source reverse engineering tool (via pyghidra)
 - **IDA Pro** - Commercial decompiler (via idalib, IDA 9+)
 - **Binary Ninja** - Commercial decompiler (headless, needs a license)

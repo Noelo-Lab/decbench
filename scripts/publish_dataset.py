@@ -16,7 +16,7 @@ Examples::
     python scripts/publish_dataset.py results/full_run
     python scripts/publish_dataset.py results/full_run --cfgs --cfg-workers 8
     python scripts/publish_dataset.py results/full_run --only-config sample-set --max-binaries 8
-    python scripts/publish_dataset.py results/full_run --no-exclusions  # include phoenix
+    python scripts/publish_dataset.py results/full_run --no-exclusions  # skip default exclusions
 """
 
 from __future__ import annotations

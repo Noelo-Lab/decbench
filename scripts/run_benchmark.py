@@ -94,9 +94,8 @@ DECOMPILE_TIMEOUT = int(os.environ.get("DECBENCH_DECOMPILE_TIMEOUT") or "300")
 # failures) while a faster one finishes. Small binaries finish in seconds, so the
 # large defaults only bite the ~10 big binaries (bash, openssh, coreutils, big
 # ARM firmware).
-#   - angr/phoenix: the angr engine runs ~15-20s/function; a big binary legit
-#     needs up to ~1h. angr previously got 3600s only via a one-off scoped rerun;
-#     phoenix (same engine) was left at 300s and truncated on 50/806 binaries.
+#   - angr: the angr engine runs ~15-20s/function; a big binary legit needs up
+#     to ~1h. angr previously got 3600s only via a one-off scoped rerun.
 #   - ghidra/binja: fast per function but a few large binaries still overrun 300s.
 #   - kuna: a Ghidra port that emits its JSON only at the very end (a kill yields
 #     ZERO functions), so it needs a budget above its slowest binary (~450s on
@@ -107,14 +106,13 @@ DECOMPILE_TIMEOUT = int(os.environ.get("DECBENCH_DECOMPILE_TIMEOUT") or "300")
 #     that can blow up on complex control flow (the paper's main timeout source);
 #     runs out-of-process in its own venv. A single stuck function can otherwise
 #     burn the whole budget with little recovered, so it is capped at 1200s —
-#     lower than angr/phoenix because dewolf's blowups are per-function hangs the
+#     lower than angr because dewolf's blowups are per-function hangs the
 #     cap exists to bound, not a slow-but-progressing whole-binary decompile.
 #   - r2dec: radare2 `aaa` analysis then per-function pseudo-C; `aaa` on a big
 #     binary can run minutes, so budget like ghidra/binja.
 DECOMPILER_TIMEOUT = {
     "kuna": int(os.environ.get("DECBENCH_KUNA_TIMEOUT") or "900"),
     "angr": int(os.environ.get("DECBENCH_ANGR_TIMEOUT") or "3600"),
-    "phoenix": int(os.environ.get("DECBENCH_PHOENIX_TIMEOUT") or "3600"),
     "ghidra": int(os.environ.get("DECBENCH_GHIDRA_TIMEOUT") or "1800"),
     "binja": int(os.environ.get("DECBENCH_BINJA_TIMEOUT") or "1800"),
     "dewolf": int(os.environ.get("DECBENCH_DEWOLF_TIMEOUT") or "1200"),
@@ -363,7 +361,7 @@ def _relabel_to_dwarf(
     new_funcs: dict[str, object] = {}
     for fd in list(result.functions.values()):
         # Resolve the DWARF name, tolerating two address-space mismatches:
-        #  - ARM/Thumb: angr/phoenix report a Thumb entry with the LSB set (odd),
+        #  - ARM/Thumb: angr reports a Thumb entry with the LSB set (odd),
         #    while DWARF low_pc is even (0x8008001 vs 0x8008000).
         #  - PE ImageBase: an RVA-based address needs + base to reach the VA.
         addr = int(fd.address)
@@ -595,7 +593,7 @@ def main() -> int:
             "  RESULTS_DIR   output tree (default results/sailr_full)\n"
             "  -- project    limit to the named projects\n\n"
             "Env: DECBENCH_DECOMPILERS, DECBENCH_REDO_DECOMPILERS, DECBENCH_WORKERS,\n"
-            "     DECBENCH_DECOMPILE_TIMEOUT, DECBENCH_{KUNA,ANGR,PHOENIX,GHIDRA,BINJA}_TIMEOUT,\n"
+            "     DECBENCH_DECOMPILE_TIMEOUT, DECBENCH_{KUNA,ANGR,GHIDRA,BINJA}_TIMEOUT,\n"
             "     DECBENCH_KUNA_MAX_FN_SECONDS, DECBENCH_DECOMPILE_ONLY, GHIDRA_INSTALL_DIR,\n"
             "     DECBENCH_SAMPLESET_MANIFEST (gate the run to the frozen sample-set slice;\n"
             "       required for the LLM backends codex/claude-code/kimi-code — see\n"

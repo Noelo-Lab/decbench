@@ -36,10 +36,10 @@ normalize_title = "Only count functions that EVERY decompiler decompiled success
 # function_results.json (nothing is deleted or re-run) — they are filtered out at
 # render time, so every table, chart, payload, and sample the site ships omits
 # them. A name here matches a decompiler id exactly OR by its base name before
-# `@`, so "phoenix" also hides any "phoenix@<version>". Edit + re-render to
-# change; no benchmark re-run needed.
+# `@`, so a bare name also hides any "<name>@<version>". Edit + re-render to
+# change; no benchmark re-run needed. Empty = nothing is hidden right now.
 [decompilers]
-hidden = ["phoenix"]
+hidden = []
 
 # Decompilers shown ONLY on the `sample-set` view. The LLM/coding-agent backends
 # (codex, claude-code, kimi-code) are run on the sample-set slice only, so on

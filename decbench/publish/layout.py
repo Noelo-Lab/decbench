@@ -53,10 +53,11 @@ DEFAULT_CONFIGS = ["sample-set", "large", "unoptimized", "optimized", "inlined",
 _FULL = "full"
 # `full` is not a scoring preset, so its description is the publisher's to own.
 _FULL_DESCRIPTION = "everything — all projects and opt levels (O0 + O2 + O2-noinline)"
-# Decompilers stripped from published datasets by default. phoenix (angr driven
-# with the Phoenix structurer) stays in the working tree's function_results.json
-# but is not published — the dataset mirror of the site's `[decompilers] hidden`.
-EXCLUDED_DECOMPILERS: tuple[str, ...] = ("phoenix",)
+# Decompilers stripped from published datasets by default — the dataset mirror
+# of the site's `[decompilers] hidden`. Empty since 2026-07-23, when the last
+# excluded backend was fully removed from the benchmark; the strip mechanism
+# stays for future use.
+EXCLUDED_DECOMPILERS: tuple[str, ...] = ()
 
 Logger = Callable[[str], None]
 

@@ -29,11 +29,11 @@ from decbench.publish.layout import (
 )
 
 KEPT = "angr"
-STRIPPED = "phoenix"
+STRIPPED = "hiddendec"
 
 
 def make_fd() -> FunctionData:
-    """Two-decompiler dataset with phoenix traces in every per-dec field."""
+    """Two-decompiler dataset with the stripped decompiler in every per-dec field."""
     per_dec_vals = {
         KEPT: {"ged": 0.0, "type_match": 1.0},
         STRIPPED: {"ged": 2.0, "type_match": 0.5},
@@ -75,7 +75,7 @@ def make_fd() -> FunctionData:
     ]
     return FunctionData(
         decompilers=[KEPT, STRIPPED],
-        decompiler_versions={KEPT: "9.2", STRIPPED: "9.2-phoenix"},
+        decompiler_versions={KEPT: "9.2", STRIPPED: "9.2-hidden"},
         metrics=["ged", "type_match"],
         perfect_values={"ged": 0.0, "type_match": 1.0},
         groups=[group],
@@ -148,9 +148,17 @@ def results_tree(tmp_path: Path) -> Path:
     return root
 
 
-def test_load_dataset_strips_default_exclusions(results_tree: Path):
-    assert STRIPPED in EXCLUDED_DECOMPILERS
+def test_default_exclusions_are_empty(results_tree: Path):
+    """EXCLUDED_DECOMPILERS is empty (the last excluded backend was fully
+    removed 2026-07-23), so a default load strips nothing — any future
+    exclusion must be a deliberate edit of the tuple."""
+    assert EXCLUDED_DECOMPILERS == ()
     fd = load_dataset(results_tree)
+    assert fd.decompilers == [KEPT, STRIPPED]
+
+
+def test_load_dataset_strips_explicit_exclusions(results_tree: Path):
+    fd = load_dataset(results_tree, exclude=(STRIPPED,))
     assert STRIPPED not in json.dumps(fd.model_dump(mode="json"))
     assert fd.decompilers == [KEPT]
     # Presets were still assigned after the strip.
