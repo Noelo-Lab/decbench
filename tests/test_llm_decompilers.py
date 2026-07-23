@@ -20,7 +20,7 @@ from decbench.models.decompilation import DecompilationResult
 
 
 def test_backends_register():
-    for name in ("codex", "claude-code"):
+    for name in ("codex", "claude-code", "kimi-code"):
         dec = DecompilerRegistry.get(name)
         assert dec.id == name
         assert dec.name == name
@@ -30,6 +30,10 @@ def test_versioned_spec_sets_model():
     dec = DecompilerRegistry.get("codex@gpt-5.6-sol")
     assert dec.id == "codex@gpt-5.6-sol"
     assert dec._model() == "gpt-5.6-sol"
+    # The kimi model alias itself contains a slash and a dash.
+    dec = DecompilerRegistry.get("kimi-code@kimi-code/k3")
+    assert dec.id == "kimi-code@kimi-code/k3"
+    assert dec._model() == "kimi-code/k3"
 
 
 def test_shared_prompt_states_the_policy():
@@ -122,7 +126,7 @@ def test_export_sample_set_shape():
     os.environ.get("DECBENCH_LLM_LIVE") != "1",
     reason="live agent call is opt-in (DECBENCH_LLM_LIVE=1) — paid + slow",
 )
-@pytest.mark.parametrize("name", ["codex", "claude-code"])
+@pytest.mark.parametrize("name", ["codex", "claude-code", "kimi-code"])
 def test_live_single_function(name, tmp_path):
     import shutil
     import subprocess

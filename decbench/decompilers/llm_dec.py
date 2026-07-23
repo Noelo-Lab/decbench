@@ -1,7 +1,8 @@
-"""LLM / coding-agent decompiler backends (Codex, Claude Code).
+"""LLM / coding-agent decompiler backends (Codex, Claude Code, Kimi Code).
 
-This family drives a **general coding agent** (OpenAI's ``codex`` CLI or
-Anthropic's ``claude`` CLI) as a decompiler: for each target function it hands
+This family drives a **general coding agent** (OpenAI's ``codex`` CLI,
+Anthropic's ``claude`` CLI, or Moonshot's ``kimi`` CLI) as a decompiler: for
+each target function it hands
 the agent the stripped binary and asks it to *manually* reconstruct the original
 C source — the agent is explicitly **forbidden from using any decompiler** and
 may only reach for simple disassemblers (``objdump``/``readelf``/``nm``/…). The
@@ -673,6 +674,10 @@ class _AgentDecompiler(Decompiler):
         token_dirs = (
             (home / ".codex", "/root/.codex"),
             (home / ".claude", "/root/.claude"),
+            (
+                Path(os.environ.get("KIMI_CODE_HOME") or home / ".kimi-code"),
+                "/root/.kimi-code",
+            ),
         )
         for host_dir, cont_dir in token_dirs:
             if host_dir.is_dir():
@@ -680,7 +685,15 @@ class _AgentDecompiler(Decompiler):
         for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
             if os.environ.get(key):
                 docker += ["-e", key]
-        docker += ["-e", "CODEX_HOME=/root/.codex", "-e", "HOME=/root", image]
+        docker += [
+            "-e",
+            "CODEX_HOME=/root/.codex",
+            "-e",
+            "KIMI_CODE_HOME=/root/.kimi-code",
+            "-e",
+            "HOME=/root",
+            image,
+        ]
         # Inside the container the workdir is /work, so rebuild the argv against it.
         argv = self._agent_argv(Path("/work"), prompt, model)
         return docker + argv, {"env": env}
@@ -893,5 +906,126 @@ class ClaudeCodeDecompiler(_AgentDecompiler):
             sessions = sorted(proj.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
             if sessions:
                 shutil.copy2(sessions[-1], dest)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+@register_decompiler("kimi-code")
+class KimiCodeDecompiler(_AgentDecompiler):
+    """Moonshot Kimi Code CLI driven as a manual decompiler (default model k3)."""
+
+    name = "kimi-code"
+    display_name = "Kimi Code"
+    cli = "kimi"
+    # ``kimi-code/k3`` is the Kimi K3 model alias a Kimi Code OAuth (membership)
+    # login exposes; such logins also carry ``kimi-code/kimi-for-coding``
+    # (-highspeed). Pin via spec/config, e.g. ``-d kimi-code@kimi-code/k3``.
+    default_model = "kimi-code/k3"
+    # Kimi Code reads NO credential from the shell environment (an exported
+    # ``KIMI_API_KEY`` is ignored): auth is the OAuth store under
+    # ``$KIMI_CODE_HOME/credentials/`` or an ``api_key`` in ``config.toml``. The
+    # single env channel it honors is the ``KIMI_MODEL_*`` family (synthesized
+    # provider) — all three are handled in is_available().
+    cred_files = ()
+    cred_env = ()
+
+    @staticmethod
+    def _real_home() -> Path:
+        """The user's live Kimi Code home (``KIMI_CODE_HOME`` or ``~/.kimi-code``)."""
+        env = os.environ.get("KIMI_CODE_HOME")
+        return Path(env) if env else Path.home() / ".kimi-code"
+
+    def is_available(self) -> bool:
+        if shutil.which(self.cli) is None:
+            return False
+        home = self._real_home()
+        creds = home / "credentials"
+        if creds.is_dir() and any(creds.glob("*.json")):
+            return True
+        # The env-synthesized provider — the only credential channel read from env.
+        if os.environ.get("KIMI_MODEL_NAME") and os.environ.get("KIMI_MODEL_API_KEY"):
+            return True
+        # An API-key provider written into config.toml ([providers.*] api_key /
+        # [providers.*.env] KIMI_API_KEY). Presence check only; never logged.
+        cfg = home / "config.toml"
+        return cfg.is_file() and "api_key" in cfg.read_text(errors="replace")
+
+    def _agent_argv(self, workdir: Path, prompt: str, model: str) -> list[str]:
+        argv = [
+            self.cli,
+            "-p",
+            prompt,
+            "--output-format",
+            "text",
+            # Point skill discovery at an EMPTY directory: --skills-dir replaces
+            # the auto-discovered user and project skill dirs for this launch,
+            # so a `decompiler` skill (which drives real decompilers) cannot
+            # load. ``-p`` already runs under the auto permission policy (no
+            # approval prompts) — the kimi equivalent of claude's
+            # --dangerously-skip-permissions.
+            "--skills-dir",
+            str(self._empty_skills_dir()),
+        ]
+        if model:
+            argv += ["-m", model]
+        return argv
+
+    def _agent_env(self) -> dict[str, str]:
+        env = dict(os.environ)
+        # Run under an ISOLATED KIMI_CODE_HOME so benchmark calls never touch
+        # the user's live sessions/state; credentials + config.toml are synced
+        # from ~/.kimi-code, and its skills/ dir stays empty as
+        # defense-in-depth behind --skills-dir.
+        env["KIMI_CODE_HOME"] = str(self._isolated_kimi_home())
+        return env
+
+    def _isolated_kimi_home(self) -> Path:
+        """A decbench-owned KIMI_CODE_HOME: no skills, synced auth + config."""
+        import contextlib
+
+        override = self._opt("kimi_code_home", "DECBENCH_KIMI_CODE_HOME", "")
+        home = (
+            Path(override) if override else Path.home() / ".cache" / "decbench" / "kimi-code-home"
+        )
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "skills").mkdir(exist_ok=True)  # empty -> no Kimi-specific user skills
+        (home / "no-skills").mkdir(exist_ok=True)  # the --skills-dir target
+        src = self._real_home()
+        # Sync config.toml (providers/models) and the OAuth credential store
+        # from ~/.kimi-code only when the host copy is newer, so kimi's own
+        # in-place token refresh (into the isolated copies) is not clobbered.
+        s, d = src / "config.toml", home / "config.toml"
+        if s.is_file() and (not d.exists() or s.stat().st_mtime > d.stat().st_mtime):
+            with contextlib.suppress(Exception):
+                shutil.copy2(s, d)
+        src_creds = src / "credentials"
+        if src_creds.is_dir():
+            dst_creds = home / "credentials"
+            dst_creds.mkdir(exist_ok=True)
+            for c in src_creds.glob("*.json"):
+                d = dst_creds / c.name
+                if not d.exists() or c.stat().st_mtime > d.stat().st_mtime:
+                    with contextlib.suppress(Exception):
+                        shutil.copy2(c, d)
+        return home
+
+    def _empty_skills_dir(self) -> Path:
+        return self._isolated_kimi_home() / "no-skills"
+
+    def _copy_session_jsonl(self, workdir: Path, transcript: str, dest: Path) -> None:
+        """Copy kimi's ``wire.jsonl`` (the complete agent record, every tool call).
+
+        Sessions live under ``<KIMI_CODE_HOME>/sessions/<workDirKey>/<sessionId>/
+        agents/main/wire.jsonl``; each backend call runs in a fresh temp workdir,
+        so the most recently written wire log is this call's.
+        """
+        try:
+            root = self._isolated_kimi_home() / "sessions"
+            wires = sorted(
+                root.glob("*/*/agents/main/wire.jsonl"),
+                key=lambda p: p.stat().st_mtime,
+            )
+            if wires:
+                shutil.copy2(wires[-1], dest)
         except Exception:  # noqa: BLE001
             pass

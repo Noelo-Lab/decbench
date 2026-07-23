@@ -240,8 +240,9 @@ three families:
   container (or natively for r2dec) and split whole-program C into per-function
   results. Build images with `decbench decompiler-build <name>`; Dockerfiles in
   `docker/`.
-- **LLM / coding-agent** (`llm_dec.py`: `codex`, `claude-code`): drive a coding
-  agent CLI (OpenAI `codex` / Anthropic `claude`) as a decompiler, one agentic
+- **LLM / coding-agent** (`llm_dec.py`: `codex`, `claude-code`, `kimi-code`):
+  drive a coding agent CLI (OpenAI `codex` / Anthropic `claude` / Moonshot
+  `kimi`) as a decompiler, one agentic
   call per function. **Cost is controlled by only ever running on the
   `sample-set` slice**: freeze it with `scripts/export_sample_set.py`
   (→ `sample_set_manifest.json`), then `DECBENCH_SAMPLESET_MANIFEST=<manifest>
@@ -249,7 +250,8 @@ three families:
   results/full_run`; `DECBENCH_LLM_FN_WORKERS` decompiles a binary's sampled
   functions concurrently. On the SITE they are **sample-set-only** decompilers
   (`[decompilers] sample_set_only` in site.toml + `visibleDecs()` in app.js).
-  Default models: codex `gpt-5.6-sol`, claude-code `claude-opus-4-8`. NOTE: a
+  Default models: codex `gpt-5.6-sol`, claude-code `claude-opus-4-8`, kimi-code
+  `kimi-code/k3`. NOTE: a
   nested `claude` (launched from inside a Claude Code session) needs an isolated
   `CLAUDE_CONFIG_DIR` + a per-call OAuth credential RE-SYNC (a one-time copy goes
   stale) — the backend does both automatically. Full guide: `docs/LLM_DECOMPILERS.md`.

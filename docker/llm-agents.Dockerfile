@@ -1,6 +1,6 @@
-# LLM coding-agent decompilers (Codex + Claude Code) in a container.
+# LLM coding-agent decompilers (Codex + Claude Code + Kimi Code) in a container.
 #
-# This image bundles both CLIs plus the *only* binary-inspection tools the
+# This image bundles the three CLIs plus the *only* binary-inspection tools the
 # agents are allowed to use (objdump/readelf/nm/strings/xxd/file). It carries NO
 # credentials: the decbench backend (decompilers/llm_dec.py, container mode) runs
 # it with the HOST's token dirs bind-mounted read-only and the API-key env vars
@@ -18,8 +18,10 @@
 # The backend adds, per agent call:
 #   docker run --rm -v <workdir>:/work -w /work \
 #     -v ~/.codex:/root/.codex:ro -v ~/.claude:/root/.claude:ro \
-#     -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e CODEX_HOME=/root/.codex -e HOME=/root \
-#     decbench/llm-agents:latest <codex exec ... | claude -p ...>
+#     -v ~/.kimi-code:/root/.kimi-code:ro \
+#     -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e CODEX_HOME=/root/.codex \
+#     -e KIMI_CODE_HOME=/root/.kimi-code -e HOME=/root \
+#     decbench/llm-agents:latest <codex exec ... | claude -p ... | kimi -p ...>
 #
 # To run it by hand for a smoke test:
 #   docker run --rm -v ~/.codex:/root/.codex:ro -e CODEX_HOME=/root/.codex \
@@ -37,13 +39,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
     && rm -rf /var/lib/apt/lists/*
 
-# The two coding-agent CLIs.
-RUN npm install -g @openai/codex @anthropic-ai/claude-code \
+# The three coding-agent CLIs.
+RUN npm install -g @openai/codex @anthropic-ai/claude-code @moonshot-ai/kimi-code \
     && npm cache clean --force
 
-# HOME defaults to /root; the backend mounts ~/.codex and ~/.claude there and
-# points CODEX_HOME at the mounted dir. Credentials never live in the image.
+# HOME defaults to /root; the backend mounts ~/.codex, ~/.claude and ~/.kimi-code
+# there and points CODEX_HOME/KIMI_CODE_HOME at the mounted dirs. Credentials
+# never live in the image.
 ENV HOME=/root \
-    CODEX_HOME=/root/.codex
+    CODEX_HOME=/root/.codex \
+    KIMI_CODE_HOME=/root/.kimi-code
 
 WORKDIR /work

@@ -91,6 +91,12 @@ license = "closed-source"
 logo = true
 
 [[decompiler]]
+id = "kimi-code"
+display_name = "Kimi Code"
+url = "https://www.kimi.com/code"
+license = "closed-source"
+
+[[decompiler]]
 id = "retdec"
 display_name = "RetDec"
 url = "https://github.com/avast/retdec"
