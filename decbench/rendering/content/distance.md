@@ -3,16 +3,16 @@
 # distance
 
 When a decompiler can't yet achieve a perfect score on a function, it can be
-helpful to understand the <em>distance</em> it is from perfection. For each
+helpful to understand the *distance* it is from perfection. For each
 metric, we measure distance as the number of edits required to convert that
-form of data into its source-code equivalent. For <strong>GED</strong>, that
+form of data into its source-code equivalent. For **GED**, that
 is the number of edits to control-flow structures. For
-<strong>types</strong>, that is the number of type-flips needed to reach
-ground truth. For <strong>recompilation</strong>, that is the number of
+**types**, that is the number of type-flips needed to reach
+ground truth. For **recompilation**, that is the number of
 assembly lines that must change to convert the recompiled assembly into the
 ground-truth assembly.
 
-Each cell shows the <em>mean</em>, the <em>median</em>, and how many functions
+Each cell shows the *mean*, the *median*, and how many functions
 are already at distance 0 (perfect), averaged over the functions each
 decompiler was scored on.
 
@@ -30,7 +30,7 @@ full-coverage rows above.</p>
 ### compiles
 
 The share of each decompiler's byte_match-measured functions whose output
-actually <em>recompiled</em> after the uniform compilability-fixup pass &mdash; a
+actually *recompiled* after the uniform compilability-fixup pass — a
 fairness control, not a metric (type recovery is scored separately). The
 denominator is per-decompiler: functions where byte_match was measurable, so
 ARM / PE targets with no host recompiler never count against it. This rate moves

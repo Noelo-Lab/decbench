@@ -7,6 +7,13 @@ sits near the end of the nav (just before changelog). The starting-page prose is
 split between the two — the
 short intro above the table lives in leaderboard.md, the long explainer is here.
 
+WRITE PLAIN MARKDOWN (the shared conventions live in leaderboard.md): prose is
+**bold**/*italic*/[links](url)/`code` with literal unicode punctuation (— · ≥),
+not <strong>/<em>/<a>/&mdash;. Raw HTML is only for the required scaffolds/hooks
+below (elements with ids, the <div class="recovered"> callout) and the
+hand-authored metric-viz "islands" — which markdown does NOT reach inside, so
+their contents stay hand-written HTML (leave them exactly as they are).
+
 This page absorbed the old `metrics` and `dataset` views, so it is the one
 place that explains WHY the benchmark exists, WHAT the three metrics measure
 (the `## [n]` goal cards below — the renderer turns each into a
@@ -19,7 +26,7 @@ GOAL CARDS. The `## [n] ...` sections are STRUCTURED:
   ## [n] <card title>              -> <div class="goal-head"><span class="num">[n]</span>...
   metric: <metric display name>    -> <div class="goal-metric">metric: ...
                                       Must match a `display_name` in metrics.toml.
-  <body prose + markup>            -> <div class="goal-body">...
+  <body prose, plain markdown>     -> <div class="goal-body">...
   **perfect =** <definition>       -> <span class="perfect">perfect = ...</span>
                                       Must repeat that metric's `perfect_definition`
                                       from metrics.toml verbatim; the test suite
@@ -68,14 +75,14 @@ inaccurate, we use multiple metrics described below.
 ### the three metrics
 
 Decompilation has three separable goals, so we measure three things and report
-how often a decompiler gets each <em>perfect</em> &mdash; because a
-decompilation that is <em>nearly</em> right is still a thing you have to read
+how often a decompiler gets each *perfect* — because a
+decompilation that is *nearly* right is still a thing you have to read
 twice. Expand the panel inside each card to see how the metric actually works.
 
 ## [1] Control-flow structure correctness
 metric: Structural Correctness (GED)
 
-Does the decompiled code branch and loop the same way the source does? We compare the control-flow graphs of the source and the decompilation with a Graph Edit Distance (GED) &mdash; the number of node/edge insertions, deletions, and substitutions needed to turn one CFG into the other.
+Does the decompiled code branch and loop the same way the source does? We compare the control-flow graphs of the source and the decompilation with a Graph Edit Distance (GED) — the number of node/edge insertions, deletions, and substitutions needed to turn one CFG into the other.
 
 <details class="metric-viz" open>
 <summary>how GED works: source &rarr; CFG &rarr; graph diff</summary>
@@ -310,9 +317,9 @@ Did the decompiler recover the right variable and argument types? We match the d
 ## [3] Recompilation correctness
 metric: Recompilation Bytematch
 
-Does the decompiled code recompile to the same machine code? We run a uniform compilability fixup (define decompiler pseudo-types, strip illegal symbol-version tokens, declare missing symbols) so every decompiler gets a fair shot at building, recompile each function with the original toolchain, and compare the resulting assembly &mdash; normalizing link-time-dependent operands (call/jump targets, PC-relative offsets) so only real differences count.
+Does the decompiled code recompile to the same machine code? We run a uniform compilability fixup (define decompiler pseudo-types, strip illegal symbol-version tokens, declare missing symbols) so every decompiler gets a fair shot at building, recompile each function with the original toolchain, and compare the resulting assembly — normalizing link-time-dependent operands (call/jump targets, PC-relative offsets) so only real differences count.
 
-The leaderboard's <strong>Compiles</strong> column reports the first half of this on its own &mdash; the share of a decompiler's output that the fixup got to build at all (before any assembly comparison). It is measured only where a matching recompiler exists (x86); ARM/PE firmware and malware abstain rather than count as failures.
+The leaderboard's **Compiles** column reports the first half of this on its own — the share of a decompiler's output that the fixup got to build at all (before any assembly comparison). It is measured only where a matching recompiler exists (x86); ARM/PE firmware and malware abstain rather than count as failures.
 
 <details class="metric-viz" open>
 <summary>how bytematch works: fixup &rarr; recompile &rarr; normalized asm diff</summary>
@@ -408,9 +415,9 @@ The leaderboard's <strong>Compiles</strong> column reports the first half of thi
 ### pipeline health (our own tooling)
 
 GED depends on Joern parsing both the source and the decompiler output.
-When Joern fails on the <strong>source</strong>, that's our tooling &mdash; those
+When Joern fails on the **source**, that's our tooling — those
 functions are excluded from GED for every decompiler (never counted against
-them). When Joern fails on a single decompiler's <strong>output</strong>,
+them). When Joern fails on a single decompiler's **output**,
 that's reported here (per decompiler), not folded into the headline score.
 
 <div id="joern-source" class="goal"></div>
