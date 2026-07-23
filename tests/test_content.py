@@ -92,11 +92,48 @@ def test_empty_states_are_parsed(content: Content) -> None:
 
 
 def test_inline_html_passes_through_unescaped(content: Content) -> None:
-    """The prose is final markup: tags and entities must survive rendering."""
-    body = content.view("leaderboard").body_html
-    assert "<em>at least one</em>" in body
-    assert "&mdash;" in body
-    assert "&amp;mdash;" not in body
+    """Prose is markdown now, but the scaffolds and hand-authored viz islands are
+    still final markup: their raw tags and entities must survive rendering
+    byte-for-byte (the renderer's verbatim text() must not re-escape them)."""
+    # A scaffold element (JS fills it) passes through verbatim — the view page's
+    # selector controls.
+    assert '<div class="controls">' in content.view("view").body_html
+    # The about page's .recovered callout is a raw-HTML styling hook, so its
+    # <strong> is passed through untouched (markdown is not parsed inside a
+    # raw-HTML block, so the tag is the only way to bold there).
+    assert "<strong>at least one</strong>" in content.view("about").outro_html
+    # The metric-viz islands keep their hand-authored entities — not double-escaped.
+    ged = next(g for g in content.view("about").goals if g.metric_key == "ged")
+    assert "&mdash;" in ged.body_html
+    assert "&amp;mdash;" not in ged.body_html
+
+
+def test_prose_renders_markdown_constructs(content: Content) -> None:
+    """View-body prose is authored as plain markdown: bold/italic/links/inline code
+    must render to real HTML, and literal unicode must not round-trip to entities.
+
+    Guards the markdown-first rule — the literal `**`/`*`/`[..]` must be gone, and
+    a bold run in a view body must become <strong>."""
+    lb = content.view("leaderboard").body_html
+    # *italic* -> <em>, and the literal markdown is consumed.
+    assert "<em>at least one</em>" in lb
+    assert "*at least one*" not in lb
+    # [text](url) -> <a href>.
+    assert '<a href="https://mahaloz.re/dec-history-pt1">the last 30 years</a>' in lb
+    # Literal unicode punctuation survives; it does NOT come back as an entity.
+    assert "—" in lb
+    assert "&mdash;" not in lb
+    # **bold** -> <strong> in a view body (the distance page).
+    di = content.view("distance").body_html
+    assert "<strong>GED</strong>" in di
+    assert "**GED**" not in di
+    # Inline `code` -> <code> (also the changelog injection path, which renders
+    # markdown bullets as lists).
+    injected = content.with_view("changelog", "# changelog\n\n- run `foo()` and **bar**.")
+    body = injected.view("changelog").body_html
+    assert "<code>foo()</code>" in body
+    assert "<strong>bar</strong>" in body
+    assert "<li>run <code>foo()</code> and <strong>bar</strong>.</li>" in body
 
 
 def test_convention_comments_are_stripped(content: Content) -> None:

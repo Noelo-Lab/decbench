@@ -192,6 +192,34 @@ h2.view-title:before { content: "## "; color: var(--text-muted); }
 h3.sub { font-size: 1rem; font-weight: 700; margin: 1.4rem 0 0.4rem; }
 h3.sub:before { content: "> "; color: var(--text-muted); }
 
+/* ---- Prose lists ----
+   Markdown bodies (the changelog's dated entries, any bulleted prose) render to
+   plain <ul>/<ol>. The browser default — ~40px indent and disc bullets — floats
+   the markers left of the terminal content column and clashes with the `## `/`> `
+   heading prefixes. Scope compact, muted, dash-marked lists to the content area so
+   a bullet reads like a terminal `- ` line and items sit under their date heading.
+   .view ul/ol/li here only ever match markdown output — no scaffold uses lists. */
+.view ul, .view ol {
+    margin: 0.45rem 0 1.1rem;
+    padding-left: 1.4em;
+    font-size: 0.9em;
+    line-height: 1.55;
+}
+.view li { margin: 0.3rem 0; }
+.view li::marker { color: var(--text-muted); }
+.view ul { list-style: none; }
+.view ul > li { position: relative; }
+.view ul > li::before {
+    content: "-";
+    position: absolute;
+    left: -1.4em;
+    color: var(--text-muted);
+}
+.view ol { list-style: decimal; }
+/* Nested lists share the gutter, don't compound the shrink, and lose the trailing
+   block margin so a sub-list hugs its parent item. */
+.view li > ul, .view li > ol { margin: 0.3rem 0 0; font-size: 1em; }
+
 /* ---- Tables ---- */
 table { width: 100%; border-collapse: collapse; font-size: 0.9em; }
 th, td {

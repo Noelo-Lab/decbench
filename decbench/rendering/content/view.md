@@ -11,11 +11,11 @@ the contract with app.js's initView/renderView.
 
 # view
 
-Original source next to a decompiler's output. <strong>Difficulty</strong> is
+Original source next to a decompiler's output. **Difficulty** is
 derived from structural (GED) agreement across decompilers:
-<strong>easy</strong> &mdash; most decompilers recover the control flow
-perfectly; <strong>hard</strong> &mdash; the functions farthest from perfect
-for everyone (the old hall of shame); <strong>medium</strong> &mdash; in
+**easy** — most decompilers recover the control flow
+perfectly; **hard** — the functions farthest from perfect
+for everyone (the old hall of shame); **medium** — in
 between. Pick a difficulty, a decompiler, and a metric to highlight.
 
 <div class="controls">
