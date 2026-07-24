@@ -1315,6 +1315,18 @@ function onHashChange() {
     const hash = (location.hash || "").replace("#", "");
     const name = resolveViewHash(hash);
     if (name) showView(name);
+    maybeScrollToHash();
+}
+// A section-anchor deep link (the data page's #distance / #compiles / #cost, incl.
+// the old /distance/ URL that now redirects to /data/#distance) must scroll to its
+// heading AFTER the async tables render: the browser's native on-load scroll fires
+// while those sections are still empty, so the heading has moved by the time the
+// content lands. Re-scroll once. A hash that names a VIEW (routing's job) is skipped.
+function maybeScrollToHash() {
+    const id = (location.hash || "").replace("#", "");
+    if (!id || validViews().indexOf(id) >= 0) return;
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView();
 }
 function initNav() {
     document.querySelectorAll(".nav-item").forEach(a => {
@@ -1422,6 +1434,9 @@ function init() {
         // Cost is combo-independent (AGG.cost is global, not per-combo), so it is
         // built once here rather than on every refresh().
         buildCost();
+        // Section anchors (e.g. a /distance/ -> /data/#distance redirect) scroll
+        // only now that the tables they point at have rendered.
+        maybeScrollToHash();
     }).catch(err => {
         ["leaderboard", "about", "data"].forEach(v => showBanner(v,
             "Could not load data/aggregates.json — " + err.message +

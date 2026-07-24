@@ -59,29 +59,31 @@ _SUBPAGE_HOP = "../"
 #: would vanish in production and nowhere else.
 _NOJEKYLL = ".nojekyll"
 
-#: Renamed views whose OLD URLs must keep working: old id -> current id. Each gets
-#: a marker-less redirect stub at ``<old>/index.html`` (see
-#: :func:`_write_legacy_redirects`). The distance page became the data page on
-#: 2026-07-23 (four linkable sections: distance / compiles / pipeline health /
-#: cost); ``/distance/`` links exist in the wild.
-_LEGACY_REDIRECTS = {"distance": "data"}
+#: Renamed views whose OLD URLs must keep working: old id -> (current view id,
+#: section anchor on that view). Each gets a marker-less redirect stub at
+#: ``<old>/index.html`` (see :func:`_write_legacy_redirects`). The distance page
+#: became the data page on 2026-07-23 (four linkable sections: distance /
+#: compiles / pipeline health / cost); ``/distance/`` links exist in the wild, so
+#: they land on the data page's ``#distance`` section rather than its top.
+_LEGACY_REDIRECTS = {"distance": ("data", "distance")}
 
 #: The redirect stub. Deliberately does NOT contain
 #: :data:`~decbench.rendering.html.SITE_PAGE_MARKER`: the subpage prune loop
 #: (:func:`_write_view_subpages`) deletes any non-current view directory whose
 #: index.html carries the marker, and this stub must survive every rebuild. The
-#: meta refresh is the no-JS fallback; the script hop preserves ``?query#hash``
-#: state (``?dataset=...`` deep links), which a meta refresh drops.
+#: meta refresh is the no-JS fallback; the script hop preserves ``?query`` deep
+#: links and honors an incoming ``#hash`` (a meta refresh drops both), defaulting
+#: to the section anchor so a bare ``/distance/`` link lands on the right section.
 _REDIRECT_STUB = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>DecBench &mdash; moved to /{target}/</title>
+<title>DecBench &mdash; moved to /{target}/#{anchor}</title>
 <link rel="canonical" href="{canonical}">
-<meta http-equiv="refresh" content="0; url=../{target}/">
-<script>location.replace("../{target}/" + location.search + location.hash);</script>
+<meta http-equiv="refresh" content="0; url=../{target}/#{anchor}">
+<script>location.replace("../{target}/" + location.search + (location.hash || "#{anchor}"))</script>
 </head>
-<body><p>This page moved to <a href="../{target}/">/{target}/</a>.</p></body>
+<body><p>This page moved to <a href="../{target}/#{anchor}">/{target}/#{anchor}</a>.</p></body>
 </html>
 """
 
@@ -174,14 +176,16 @@ def _write_legacy_redirects(out_dir: Path, current_view_ids: set[str], domain: s
     Skipped when the old id is (somehow) a current view again — a real view's
     subpage must never be clobbered by a redirect to somewhere else.
     """
-    for old_id, target in _LEGACY_REDIRECTS.items():
+    for old_id, (target, anchor) in _LEGACY_REDIRECTS.items():
         if old_id in current_view_ids:
             continue
+        # Canonicalize to the target VIEW (not the anchor): the section is one page.
         canonical = f"https://{domain}/{target}/" if domain else f"../{target}/"
         stub_dir = out_dir / old_id
         stub_dir.mkdir(exist_ok=True)
         (stub_dir / _INDEX).write_text(
-            _REDIRECT_STUB.format(target=target, canonical=canonical), encoding="utf-8"
+            _REDIRECT_STUB.format(target=target, anchor=anchor, canonical=canonical),
+            encoding="utf-8",
         )
 
 

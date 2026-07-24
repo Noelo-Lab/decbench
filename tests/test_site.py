@@ -247,8 +247,9 @@ def test_legacy_distance_redirect_stub(
     tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
 ) -> None:
     """The distance->data rename keeps old /distance/ links working via a stub
-    that hops to ../data/ — and, being MARKER-LESS, survives the stale-view prune
-    (which only deletes directories whose index.html carries the page marker)."""
+    that hops to ../data/#distance (the distance SECTION on the data page) — and,
+    being MARKER-LESS, survives the stale-view prune (which only deletes
+    directories whose index.html carries the page marker)."""
     from decbench.rendering.html import SITE_PAGE_MARKER
 
     out = tmp_path / "site"
@@ -259,12 +260,13 @@ def test_legacy_distance_redirect_stub(
     html = stub.read_text()
     assert "../data/" in html
     assert SITE_PAGE_MARKER not in html
-    # Canonicalizes to the new page on the configured domain, and preserves the
-    # query/hash state a deep link carries (the script hop; meta refresh drops it).
+    # Canonicalizes to the new PAGE (not the anchor), and lands on the distance
+    # SECTION: the script honors an incoming #hash but defaults to #distance, and
+    # preserves the ?query a deep link carries (meta refresh drops both).
     domain = load_content().site.pages_domain
     assert f'<link rel="canonical" href="https://{domain}/data/">' in html
-    assert '<meta http-equiv="refresh" content="0; url=../data/">' in html
-    assert 'location.replace("../data/" + location.search + location.hash)' in html
+    assert '<meta http-equiv="refresh" content="0; url=../data/#distance">' in html
+    assert 'location.replace("../data/" + location.search + (location.hash || "#distance"))' in html
 
     # A rebuild keeps the stub (the prune loop must treat it as a user page).
     build_site(scoreboard, function_data, out)
