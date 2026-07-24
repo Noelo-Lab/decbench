@@ -55,6 +55,7 @@ id = "kuna"
 display_name = "Kuna"
 license = "closed-source"
 logo = true
+version_overrides = { "0.1.0" = "v1.0" }
 
 [[decompiler]]
 id = "r2dec"

@@ -7,6 +7,7 @@ import statistics
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from decbench import __version__
 from decbench.models.scoreboard import (
     DecompilerScore,
     MetricScore,
@@ -22,7 +23,7 @@ def build_scoreboard_from_function_data(
     fd: FunctionData,
     name: str = "DecBench Scoreboard",
     description: str = "",
-    version: str = "1.0",
+    version: str = __version__,
 ) -> Scoreboard:
     """Build a scoreboard from the per-function dataset — the single source of
     truth shared by the HTML report and ``scoreboard.toml``.

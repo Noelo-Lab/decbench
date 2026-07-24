@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from decbench import __version__
+
 
 class MetricScore(BaseModel):
     """Score for a single metric for one decompiler."""
@@ -57,7 +59,7 @@ class Scoreboard(BaseModel):
 
     name: str = Field(default="DecBench Scoreboard")
     description: str = Field(default="")
-    version: str = Field(default="1.0")
+    version: str = Field(default=__version__)
 
     generated_at: datetime = Field(default_factory=datetime.now)
 

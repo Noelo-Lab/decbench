@@ -7,7 +7,9 @@ Three-metric evaluation:
 - Recompilation Bytematch: Assembly similarity after recompilation
 """
 
-__version__ = "1.0.0"
+# Two-digit versioning (major.minor). Must stay ABOVE the imports below:
+# models.scoreboard reads it at import time for the Scoreboard/footer version.
+__version__ = "1.1"
 
 from decbench.models.project import Project
 from decbench.models.decompilation import DecompilationResult, FunctionDecompilation
