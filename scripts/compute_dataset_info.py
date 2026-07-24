@@ -140,7 +140,11 @@ def main() -> None:
         "loc_by_project": loc_by_project,
         "joern": joern,
     }
-    fd.to_json(root / "function_results.json")
+    # Guarded write (decbench.results_store): this script only ADDS dataset_info,
+    # so any coverage regression the guard reports means the file changed under us.
+    from decbench.results_store import write_function_data_guarded
+
+    write_function_data_guarded(fd, root)
     print("[dataset] wrote dataset_info into function_results.json", flush=True)
     # Hard-exit so any still-running (slow/hung) Joern worker threads can't block
     # the interpreter from exiting on the thread join.

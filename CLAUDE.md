@@ -190,6 +190,10 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 # rates, recompute scoreboard). Used to refresh after a byte_match metric change:
 python scripts/reeval_bytematch.py results/sailr_full 40   # parallel, resumable -> byte_match_new.json
 python scripts/rebuild_function_data.py results/sailr_full # -> function_results.json + scoreboard.toml
+# CANONICAL rebuild of the derived files from ALL checkpoints + overlays
+# (guarded). --audit scans for silent coverage gaps:
+python scripts/finalize_results.py results/full_run [--audit|--render]
+#   [--exclude-project N] [--exclude-decompiler N] [--allow-drops]
 python scripts/compute_dataset_info.py results/sailr_full  # FunctionData.dataset_info (sole writer:
 #   About-page corpus LOC + Joern parse-health stats); run over a results tree after
 #   (re)building function_results.json — rebuild_function_data.py does NOT repopulate it.
@@ -450,26 +454,27 @@ label for the noinline variants.
 ## Gotchas
 
 - **The published metric numbers are the reeval OVERLAYS, not the checkpoint
-  inline values.** `results/<tree>/{ged,type_match,byte_match}_new.json` (from
+  inline values — and `function_results.json` is only ever written through
+  `decbench/results_store.py`.**
+  `results/<tree>/{ged,type_match,byte_match}_new.json` (from
   `scripts/reeval_{ged,typematch}.py` / `reeval_bytematch.py`) carry the
   corrected values (sanitized decompiled parses, per-TU source matching,
   non-finite dropped, compilability fixup); the per-project checkpoints still
   hold the ORIGINAL inline values from each decompiler's first evaluation.
-  `run_benchmark.py`'s finalize now re-applies all three overlays (scoped: a
-  decompiler with no overlay entries — freshly added r2dec/dewolf — keeps its
-  inline values). Before that fix, any additive resume silently reverted every
-  metric column to the stale inline set — a silent leaderboard-wide regression.
-  After adding a decompiler, refresh the overlays (the reeval
-  scripts' DECOMPILERS now include r2dec/dewolf) and re-run
-  `rebuild_function_data.py` before publishing.
-- **An additive resume leaves a SCOPED `scoreboard.toml`.**
-  `DECBENCH_DECOMPILERS=<one> scripts/run_benchmark.py <tree>` merges that
-  decompiler into every checkpoint and `function_results.json`, but the
-  `scoreboard.toml` it writes lists ONLY that run's decompilers.
-  The site renderer now takes its sidebar counts from
-  `function_results.json`, but anything else reading `scoreboard.decompilers`
-  after a resume sees a partial list until the next full rebuild
-  (`scripts/rebuild_function_data.py`).
+  The canonical rebuild is `scripts/finalize_results.py <tree>` (also what
+  `run_benchmark.py`'s finalize calls): ALL checkpoints (never scoped — a
+  `-- project` resume finalizes the whole tree and writes a full
+  `scoreboard.toml`, so the old "additive resume leaves a SCOPED scoreboard"
+  gotcha is fixed), overlays applied SLICE-scoped (a (opt×proj×bin×dec) slice
+  with no overlay entries keeps its inline values; `ged_new.slices.json` marks
+  evaluated-but-empty GED slices so they clear instead — the 2026-07-22
+  kuna@betaflight wipe class), sample-set pinned to `sample_set_manifest.json`,
+  and a COVERAGE GUARD that refuses any unexplained shrink of published
+  coverage (`--allow-drops` / `DECBENCH_ALLOW_DROPS=1` overrides;
+  `--exclude-project`/`--exclude-decompiler` whitelist intended removals).
+  `--audit` scans checkpoints/artifacts/overlays/published for silent gaps.
+  After adding a decompiler, refresh the overlays and re-finalize before
+  publishing.
 - **Preprocessed `.i` files are REQUIRED — GED's source CFGs come EXCLUSIVELY
   from them.** `pipeline/evaluate.py` (via `project.preprocessed_sources`),
   `scripts/run_benchmark.py`, and `pipeline/executor.py` (which globs
