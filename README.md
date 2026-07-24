@@ -62,21 +62,6 @@ decbench list-decompilers
 decbench list-metrics
 ```
 
-### Byte-match fairness (fixup + normalization)
-
-Raw decompiler output rarely recompiles as-is (pseudo-types like `undefined4`,
-illegal tokens like `GLIBC_2.2.5::stderr`), so naive recompilation scores almost
-everything 0. To measure *logic* recovery fairly, byte-match applies the same
-two passes to every decompiler: a **compilability fixup**
-(`decbench/metrics/fixup.py`) — a deterministic, gcc-diagnostic-driven
-self-repair loop that injects *only* what the compiler reports missing, never
-redefining what the decompiler declared (sailr O0 compile rates: ~20–79% raw →
-~83–95% fixed, per decompiler) — and **operand normalization**, which blanks
-link-time-dependent operands (branch/call targets, `[rip±x]` displacements)
-before diffing. Type recovery is scored separately (Type Correctness), so fixing
-types just to compile does not inflate this metric; each function also records
-whether it recompiled, surfaced as the per-decompiler **compile rate**.
-
 ## Generating results
 
 `decbench run` works for a single project, but real benchmark runs use the
@@ -111,18 +96,6 @@ build debris: GED's source-side CFGs are parsed exclusively from them, because
 Joern needs macro-expanded, ifdef-resolved code to parse completely (raw `.c`
 with unexpanded includes does not). Without the `.i` files, GED is silently
 skipped for the entire run.
-
-### Re-scoring byte-match without re-decompiling
-
-Decompilation is the slow part. To re-score only byte-match over an existing tree
-(reusing its stored `decompiled/*.c` and `compiled/` binaries), run the offline
-scripts, then re-render — `reeval_ged.py` / `reeval_typematch.py` work the same way:
-
-```bash
-python scripts/reeval_bytematch.py results/sailr_full 40      # -> byte_match_new.json (parallel, resumable)
-python scripts/rebuild_function_data.py results/sailr_full    # -> refreshed function_results.json + scoreboard.toml
-decbench report results/sailr_full/scoreboard.toml -o results/sailr_full/report.html
-```
 
 ## Rendering the site
 
@@ -161,23 +134,6 @@ The workflow triggers on pushes to `main` that touch `site/**`, failing loudly i
 `site/index.html` or `site/data/aggregates.json` is missing; the tree's data
 contract is [`docs/SITE_DATA_SCHEMA.md`](docs/SITE_DATA_SCHEMA.md).
 
-### Views
-
-The report is a **single-page app** (no server, no external assets — the web font
-is vendored) themed in a terminal aesthetic. A left **sidebar** switches views and
-holds a **dataset selector** (`unoptimized` / `optimized` / `inlined` / `large` /
-`sample-set`) plus a normalize-failures toggle. Every aggregate for those
-selectors is precomputed at build time, so switching is a lookup rather than a
-client-side recompute.
-
-| View | What it shows |
-|------|---------------|
-| **Leaderboard** | swebench-style ranked table — one row per decompiler, columns for Union + each metric's perfect % + errors; sortable by any column. The page the site opens on |
-| **Data** | four linkable sections: **distance** (raw edit distance to a perfect result per metric — mean, median, #at-0; a finer signal than the perfect rate), **compiles** (the per-decompiler recompilation-rate table), **pipeline health** (Joern parse loss charged to our tooling), and **cost** (median/mean decompile time per function + estimated LLM API $, priced via `content/pricing.toml`). Renamed from *Distance*; old `/distance/` links redirect |
-| **View** | original source side-by-side with one chosen decompiler's output, across easy/medium/hard difficulty tiers (~100 functions each), with per-metric scores |
-| **Changelog** | the dated change log, injected from the repo-root `CHANGELOG.md` at build time |
-| **About** | why the benchmark exists, the three metric goals (with visualizations), and the dataset/corpus tables |
-
 ### Editing the site's text
 
 **Every string a maintainer might want to reword lives in
@@ -202,27 +158,17 @@ in `views.toml` must match its `<id>.md`. `datasets.toml` owns only preset
 
 ## Finding improvement cases
 
-`decbench improvements` mines a results tree for the concrete functions where one
-decompiler beats another on a metric — a targeted to-do list for whoever is
-improving the losing decompiler. It reads the `function_results.json` produced by
-a run and, per function, compares a **base** decompiler (the winner) against a
-**target** (the one to improve), respecting the metric's direction.
+You are a decompiler developer and you want to find ways to improve your decompiler based on these results?
+Use the `improvement` command, which can help you find good starting cases. 
 
-The example below uses **GED** (structural correctness — CFG graph edit distance,
-where **lower is better** and `0` is a perfect structural match):
-
+The example below uses **GED** (structural correctness — CFG graph edit distance, where **lower is better** and `0` is a perfect structural match):
 ```bash
 # Where does angr (base) structurally beat ghidra (target)? -m ged is the default.
 decbench improvements results/sailr_full -b angr -t ghidra -m ged
-
-# Strongest signal only: functions angr recovers *perfectly* (GED == 0) while
-# ghidra does not — the clearest wins to learn from.
 decbench improvements results/sailr_full -b angr -t ghidra -m ged --perfect-only
 ```
 
-Each row locates the function on disk — binary, path to the compiled binary, and
-the function symbol + address — so you can jump straight to it:
-
+Each row locates the function on disk — binary, path to the compiled binary, and the function symbol + address — so you can jump straight to it:
 ```
 angr beats ghidra on 'ged' — 356 case(s)  [base-perfect only]
 metric: ged  (lower is better, perfect = 0)
@@ -231,12 +177,6 @@ showing 1 of 356, largest margin first
 ── libacl / O0 / getfacl ──  results/sailr_full/O0/libacl/compiled/getfacl
    0x281a  get_list   angr=0*  ghidra=38  Δ38
 ```
-
-`Δ` is how much better the base scored; `*` marks a perfect base score. Cases are
-ordered by the largest base advantage first. See `decbench improvements --help`
-for the full flag set (metric direction is applied automatically, `--limit`,
-JSON output); `RESULTS` may be a results directory or a `function_results.json`
-file directly.
 
 ## Published datasets
 
@@ -257,124 +197,3 @@ python scripts/publish_dataset.py results/full_run --dest ~/github/decbench-data
 
 See [docs/DATASET_PUBLISHING.md](docs/DATASET_PUBLISHING.md) for the repo layout,
 the publisher, and the lightweight consumer CLI.
-
-## Project Configuration
-
-Projects are defined via TOML files:
-
-```toml
-name = "coreutils"
-version = "9.4"
-source_remote = "https://ftp.gnu.org/gnu/coreutils/coreutils-9.4.tar.xz"
-remote_type = "tar"
-source_dir = "src"
-make_cmd = "make"
-pre_make_cmds = ["./configure --quiet"]
-
-[compilation]
-optimization_levels = ["O0", "O2"]
-base_flags = ["-g", "-fno-inline", "-fno-builtin"]
-```
-
-## Supported Decompilers
-
-Each backend subclasses the `Decompiler` ABC and registers by name; a
-decompiler's identity is `name` or `name@version` (e.g. `ghidra@12.0` vs
-`ghidra@12.1`), so multiple versions can be benchmarked as distinct columns.
-`decbench list-decompilers` shows what's available on the current machine.
-
-- **angr** - Open-source binary analysis framework (default SAILR structurer)
-- **Ghidra** - NSA's open-source reverse engineering tool (via pyghidra)
-- **IDA Pro** - Commercial decompiler (via idalib, IDA 9+)
-- **Binary Ninja** - Commercial decompiler (headless, needs a license)
-- **kuna** - experimental structuring backend
-- **dewolf** - FKIE-CAD's research decompiler (Binary-Ninja-based, run out of process)
-
-The canonical `angr`/`ghidra`/`ida`/`binja` backends drive each tool's own API
-directly (no `declib`). Additional backends run in Docker: **RetDec**, **Reko**,
-and **r2dec** (build images with `decbench decompiler-build <name>`). Three **LLM
-coding agents** — **codex**, **claude-code**, and **kimi-code** — are also
-registered as decompilers, one agentic CLI call per function; they run on the
-`sample-set` slice only (see [docs/LLM_DECOMPILERS.md](docs/LLM_DECOMPILERS.md)).
-
-## Results
-
-After running the pipeline, DecBench generates:
-
-- **Scoreboard** (`scoreboard.toml`) — machine-readable per-metric + overall scores
-- **Function data** (`function_results.json`) — per-function dataset embedded by the report
-- **HTML Report** — the interactive single-page site described in [Rendering the site](#rendering-the-site)
-- **Per-binary TOML files** — detailed per-function metric values
-
-`decbench run` also prints a text scoreboard to the terminal, e.g.:
-```
-============================================================
-  DecBench Scoreboard
-  Functions: 2,309 | Binaries: 2
-============================================================
-
-GED:
-  > angr                       48.8%
-
-BYTE_MATCH:
-  > angr                        1.7%
-
-TYPE_MATCH:
-  > angr                        0.0%
-
-UNION (perfect on at least one metric):
-  > angr                        0.0%
-============================================================
-```
-
-## Development
-
-```bash
-# Run tests
-pytest
-
-# Linting and formatting
-ruff check .
-black .
-mypy decbench
-```
-
-## Architecture
-
-```
-decbench/
-  pipeline/         # compile -> decompile -> evaluate orchestration
-  metrics/          # ged.py, type_match.py, byte_match.py, fixup.py
-  decompilers/      # raw angr/ghidra/ida/binja + dewolf, dockerized, LLM agents
-  compilers/        # gcc plugin
-  models/           # Pydantic data models
-  scoring/          # aggregation, scoreboard, datasets, report extras
-  rendering/        # the report + the deployable site
-    html.py         #   skeleton assembly only — no CSS, no JS, no prose
-    aggregate.py    #   build-time aggregation -> the site's JSON payloads
-    site.py         #   the split GitHub Pages tree (decbench site build)
-    content.py      #   loader for content/
-    content/        #   ALL editable text: *.md per view + site/views/metrics/
-                    #   datasets/decompilers/categories .toml
-    assets/         #   app.css, app.js, vendored font
-  utils/            # binfmt.py, source_extract.py, cfg.py
-  cli.py            # Click-based CLI
-scripts/            # scalable run drivers + offline metric re-eval/rebuild
-site/               # the built Pages tree, committed (see "Rendering the site")
-docs/               # ADDING_A_DECOMPILER.md, DATASET_PUBLISHING.md,
-                    # LLM_DECOMPILERS.md, SITE_DATA_SCHEMA.md
-```
-
-## Dependencies
-
-- Python 3.10+
-- [angr](https://angr.io/) - Binary analysis and decompilation
-- [pyjoern](https://github.com/angr/pyjoern) - Source CFG extraction
-- [cfgutils](https://github.com/angr/cfgutils) - Graph Edit Distance
-- [pyelftools](https://github.com/eliben/pyelftools) - ELF/DWARF parsing
-- [capstone](https://www.capstone-engine.org/) - Disassembly for byte matching
-- [diff-match-patch](https://github.com/google/diff-match-patch) - Assembly diffing
-
-## License
-
-MIT
