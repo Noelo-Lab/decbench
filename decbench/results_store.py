@@ -1,6 +1,6 @@
 """Canonical derivation of ``function_results.json`` from a results tree's fragments.
 
-A published results tree is layered (see ``docs/RESULTS_STORE.md``):
+A published results tree is layered:
 
 * **Raw inputs** — ``checkpoints/<project>.pkl`` (one pickle per project holding the
   decompile + inline-evaluate results) and the on-disk ``<opt>/<proj>/{compiled,
@@ -688,9 +688,11 @@ def audit_tree(root: Path, log: Log = print) -> list[CoverageGap]:
     fd_path = root / "function_results.json"
     published: dict[Slice, int] = {}
     published_names: dict[tuple[str, str, str], set[str]] = {}
+    published_decs: set[str] = set()
     if fd_path.exists():
         with open(fd_path) as fh:
             raw = json.load(fh)
+        published_decs = set(raw.get("decompilers") or [])
         for g in raw.get("groups", []):
             gkey = (g["opt_level"], g["project"], g["binary"])
             names = published_names.setdefault(gkey, set())
@@ -737,6 +739,8 @@ def audit_tree(root: Path, log: Log = print) -> list[CoverageGap]:
         del data
         for (optn, proj, stem, dec), names in sorted(ckpt_names.items()):
             base_dec = dec.split("@", 1)[0]
+            if published_decs and dec not in published_decs and base_dec not in published_decs:
+                continue  # decompiler intentionally removed from the dataset (e.g. phoenix)
             if base_dec in _LLM_BASENAMES and (
                 llm_slices is None or (proj, optn, stem) not in llm_slices
             ):
