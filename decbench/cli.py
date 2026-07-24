@@ -441,15 +441,17 @@ def report(scoreboard_path, output, function_data) -> None:
         console.print("[yellow]No function data found; generating static report.[/yellow]")
 
     # Re-tag the dataset presets (unoptimized/optimized/inlined/large/sample-set)
-    # on every render: membership is a pure, seeded function of the records, so
-    # re-deriving it is idempotent — and it is what lets a preset rename or a
-    # membership-rule change take effect on re-render without a benchmark re-run
-    # (data written before the rename carries stale tags otherwise).
+    # on every render so a preset rename or membership-rule change takes effect
+    # without a benchmark re-run. The sample-set is pinned to the tree's frozen
+    # manifest when one exists (the seeded draw no longer reproduces it once the
+    # records drift) — a fresh draw would tag functions the sample-set-only LLM
+    # backends never decompiled.
     if fd is not None:
         try:
+            from decbench.results_store import load_sample_manifest
             from decbench.scoring.datasets import assign_datasets
 
-            assign_datasets(fd)
+            assign_datasets(fd, sample_members=load_sample_manifest(Path(scoreboard_path).parent))
         except Exception:
             pass
 
@@ -507,12 +509,15 @@ def site_build(results_path, output) -> None:
     scoreboard = Scoreboard.from_toml(scoreboard_path)
     fd = FunctionData.from_json(fd_path)
 
-    # Re-tag dataset presets on every render (idempotent; membership is a pure
-    # seeded function of the records) so renames/rule changes take effect on
-    # re-render instead of serving tags baked in by an older decbench.
+    # Re-tag dataset presets on every render so renames/rule changes take effect
+    # on re-render instead of serving tags baked in by an older decbench. The
+    # sample-set is pinned to the tree's frozen manifest when one exists — the
+    # membership the LLM backends actually decompiled; a fresh seeded draw
+    # diverges from it once the records drift and near-zeroes their scores.
+    from decbench.results_store import load_sample_manifest
     from decbench.scoring.datasets import assign_datasets
 
-    assign_datasets(fd)
+    assign_datasets(fd, sample_members=load_sample_manifest(tree))
 
     # Materialize the View page's `sample-set` tier from THIS results tree: one
     # side-by-side entry per `sample-set` function, with decompiled code read from
