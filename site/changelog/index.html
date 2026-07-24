@@ -519,42 +519,13 @@ GED = <span class="n">3</span> &nbsp;&mdash;&nbsp; 1 node insertion + 2 edge ins
     </section>
     <section class="view active" id="view-changelog" data-view="changelog">
         <h2 class="view-title">Changelog</h2>
-        <p class="view-desc">Significant changes to DecBench that introduce or update results.</p>
+        <p class="view-desc">Significant changes to DecBench that introduce or update results, which can be viewable on the website.</p>
 <h3 class="sub">2026-07-23</h3>
 <ul>
-<li><strong>Corrected the <code>optimized</code> scores after a silent data-loss regression.</strong> Kuna
-had briefly dropped on the optimized set because a whole binary's
-optimized slice (betaflight, ~1700 perfect GED functions) fell out of the
-published data during a fragmented rebuild — the numbers were assembled from
-per-project checkpoints plus separate metric-overlay files, and a partial
-overlay silently wiped the slice with no error. The results pipeline now
-derives the published dataset through one guarded path
-(<code>decbench/results_store.py</code>) that always rebuilds from every project's
-checkpoint, merges the metric overlays per-slice (so a partial overlay can no
-longer erase data), and refuses any unexplained shrink in coverage. Kuna's
-optimized score is restored to its correct value.</li>
-<li>Removed the <strong>mirai-win</strong> malware target. Despite its name (from theZoo's
-"Win32.Mirai" directory), it was a second <strong>Linux/ELF</strong> Mirai variant built
-with gcc — duplicating the existing <code>mirai</code> target's coverage while implying
-Windows coverage the benchmark did not have. Its 141 function rows left every
-score, and its 3 sample-set functions were replaced by a deterministic top-up
-draw from the same categories (the other 247 sample-set picks are unchanged);
-the LLM backends were re-run on just the 3 replacements.</li>
-<li>The distance page became the <strong>data</strong> page (<code>/data/</code>) with four linkable
-sections — <a href="https://decbench.com/data/#distance">distance</a>,
-<a href="https://decbench.com/data/#compiles">compiles</a>,
-<a href="https://decbench.com/data/#pipeline-health">pipeline health</a> (moved from the
-about page), and a new <a href="https://decbench.com/data/#cost">cost</a> section
-reporting each decompiler's median/mean decompile time per function plus the
-LLM backends' estimated API cost from recorded token usage. Old <code>/distance/</code>
-links and <code>#distance</code> hashes redirect.</li>
-<li>Added a third LLM/coding-agent decompiler backend: <strong>kimi-code</strong> (Kimi Code
-CLI, default model <code>kimi-code/k3</code>), benchmarked on the sample-set slice like
-codex/claude-code.</li>
-<li>Fully retired the <strong>phoenix</strong> decompiler (angr driven with the Phoenix
-structurer). It was already hidden from the published site, so no published
-number moves; its harness (the <code>RawAngrPhoenixDecompiler</code> backend and the
-<code>structurer</code> override machinery), registry entry, and docs are removed.</li>
+<li>DecBench v1.1</li>
+<li>Update <code>Kuna</code> to version <code>v1.0</code>, which have shifted optimized results.</li>
+<li>What was previously the <code>distance</code> page is now the <code>data</code> page and contains new info on LLM costs.</li>
+<li>Removed <code>mirai-win</code> target since it is not actually Windows, but just Linux binaries (which the benchmark already has).</li>
 </ul>
 <h3 class="sub">2026-07-22</h3>
 <ul>
@@ -563,7 +534,7 @@ number moves; its harness (the <code>RawAngrPhoenixDecompiler</code> backend and
 </ul>
     </section>
             <div class="rule"></div>
-            <footer>DecBench v1.1 &mdash; decompiler benchmarking suite &middot; projects: base-passwd, bash, betaflight, bzip2, chibios, cleanflight, coreutils, crazyflie, cronie, dexter, diffutils, dpkg, e2fsprogs, findutils, freertos, gnutls, grep, gzip, iproute2, kmod, libacl, libbsd, libedit, libexpat, libopencm3, libselinux, minipig, mirai, mydoom, nuttx, openssh-portable, riot-os, rsyslog, shadow, sysvinit, tar, u-boot, x0r-usb, zlib</footer>
+            <footer>DecBench v1.0 &mdash; decompiler benchmarking suite &middot; projects: base-passwd, bash, betaflight, bzip2, chibios, cleanflight, coreutils, crazyflie, cronie, dexter, diffutils, dpkg, e2fsprogs, findutils, freertos, gnutls, grep, gzip, iproute2, kmod, libacl, libbsd, libedit, libexpat, libopencm3, libselinux, minipig, mirai, mydoom, nuttx, openssh-portable, riot-os, rsyslog, shadow, sysvinit, tar, u-boot, x0r-usb, zlib</footer>
         </main>
     </div>
     <script>window.__DECBENCH_ROOT__ = "../";</script>
