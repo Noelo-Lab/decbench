@@ -1,89 +1,43 @@
-<!--
-The "about" page — NOT the page the site opens on.
-
-If you came here to edit the text people see FIRST, you want leaderboard.md:
-the site opens on the leaderboard (`default = true` in views.toml) and this page
-sits near the end of the nav (just before changelog). The starting-page prose is
-split between the two — the
-short intro above the table lives in leaderboard.md, the long explainer is here.
-
-WRITE PLAIN MARKDOWN (the shared conventions live in leaderboard.md): prose is
-**bold**/*italic*/[links](url)/`code` with literal unicode punctuation (— · ≥),
-not <strong>/<em>/<a>/&mdash;. Raw HTML is only for the required scaffolds/hooks
-below (elements with ids, the <div class="recovered"> callout) and the
-hand-authored metric-viz "islands" — which markdown does NOT reach inside, so
-their contents stay hand-written HTML (leave them exactly as they are).
-
-This page absorbed the old `metrics` and `dataset` views, so it is the one
-place that explains WHY the benchmark exists, WHAT the three metrics measure
-(the `## [n]` goal cards below — the renderer turns each into a
-<div class="goal"> card; see the conventions in leaderboard.md), and WHAT the
-corpus is (the dataset scaffolds near the end, filled by app.js from
-data/dataset.json). The Joern pipeline-health scaffolds (the joern source div
-and output table) that used to sit here moved to data.md's `pipeline health`
-section on 2026-07-23 — same data/dataset.json payload, rendered by app.js's
-buildPipelineHealth.
-
-GOAL CARDS. The `## [n] ...` sections are STRUCTURED:
-
-  ## [n] <card title>              -> <div class="goal-head"><span class="num">[n]</span>...
-  metric: <metric display name>    -> <div class="goal-metric">metric: ...
-                                      Must match a `display_name` in metrics.toml.
-  <body prose, plain markdown>     -> <div class="goal-body">...
-  **perfect =** <definition>       -> <span class="perfect">perfect = ...</span>
-                                      Must repeat that metric's `perfect_definition`
-                                      from metrics.toml verbatim; the test suite
-                                      fails if the two drift apart.
-
-Each card carries a <details class="metric-viz"> block: a collapsible, inline-SVG
-visualization of how that metric works. They are hand-authored HTML — keep any
-line inside them from starting with "# " or "## ", which the content parser
-treats as section/card boundaries.
-
-File name, view id, and nav label all agree: about / #about / "about".
--->
-
 # decbench
 
-Over the last 30 years, binary decompilers have made the steady march towards
-_perfect decompilation_: where decompilers recover the exact source code.
-However, that _perfect_ has yet to be measured meaningfully, and is often
-defined across multiple axes.
+Over the last 30 years, binary decompilers have made the steady march towards _perfect decompilation_: where decompilers recover the exact source code.
+However, that _perfect_ has yet to be measured meaningfully, and is often defined across multiple axes.
 
-DecBench is an experimental benchmark for comparing decompilers and modern LLMs
-on the task of recovering _exact_ source code. This benchmark defines new
-metrics and datasets that represent the various directions of exactness for
-decompilers: structure, types, and precise recompilability. This benchmark is
-also _living_: as new decompiler/LLMs are released, their scores will be added
-to the leaderboard! Community feedback is welcome!
+DecBench is an experimental benchmark for comparing decompilers and modern LLMs on the task of recovering _exact_ source code. This benchmark uses new and previously known metrics (perfect match percentage) and datasets that represent the various directions of exactness for decompilers: control flow structure, types, and precise recompilability. 
+This benchmark is also _living_: as new decompiler/LLMs are released, their scores will be added to the leaderboard! Community feedback is welcome!
 
-It is created by the [Noelo Lab at the University of Georgia](https://github.com/Noelo-Lab),
-led by Dr. Zion Leonahenahe Basque. The project's
-[code](https://github.com/noelo-lab/decbench) and
-[data](https://huggingface.co/datasets/noelo-lab/decbench-dataset) are open
-source. Email `decbench@mahaloz.re` to get your decompiler added to the public
-site.
+It is created by the [Noelo Lab at the University of Georgia](https://github.com/Noelo-Lab), led by [Dr. Zion Leonahenahe Basque](https://www.zionbasque.com/). 
+The project's [code](https://github.com/noelo-lab/decbench) and [data](https://huggingface.co/datasets/noelo-lab/decbench-dataset) are open source. 
+Email `decbench@mahaloz.re` to get your decompiler added to the public site.
 
-### why it exists
+## why
 
-Other benchmarks have cropped up in the last two years. Many of these
-evaluations use approaches that are often uninformative about perfect
-decompilation, for example, "re-executability", which can often get full test
-cases to pass but can still be incorrect.
+There have been two other academic benchmarks in the past for end-to-end decompilers: [Decompile-Bench](https://proceedings.neurips.cc/paper_files/paper/2025/file/079cf13ae174c31f148207d94d213bdc-Paper-Datasets_and_Benchmarks_Track.pdf) and [DecompileBench](https://aclanthology.org/2025.findings-acl.1194.pdf) (yes, I know the names are confusing).
+These works establish their own take on the problem, and are worth a read.
+Both have limitations: one relies on readability metrics (which we've shown in [prior work to be flawed](https://www.usenix.org/system/files/usenixsecurity24-basque.pdf)) the other on metrics that sacrifice correctness for other achievements (passing a subset of testcases on recompilation).
 
-DecBench uses metrics to quantify how often a decompiler recovers the exact
-source code of a function. Since measuring this with pure strings is
-inaccurate, we use multiple metrics described below.
+DecBench uses metrics that place correctness as a first-class citizen and attempt to measure perfection on a function-level rather than a macro level.
+Ideally, perfect decompilation is that which is _correct_.
+Each metric you will find here attempts to measure the correctness across [three widely explored areas](https://decompilation.wiki/fundamentals/overview/).
+Once a decompiler approaches 100% on all three metrics, you can consider that it nearly always recovers perfect decompilation (at least for this dataset!).
 
-### the three metrics
+DecBench is also a response to static-benchmarks that often get outdated or fail to change when flaws are discovered.
+It is very likely there is bugs in the code that runs DecBench, or there is projects which pull too much weight than others.
+DecBench aims to change as the community changes: adding new decompilers, updating versions, and improving supported projects.
+As such, this is a living project, widely different from a paper and more similar to the popular [SWEBench](https://www.swebench.com/).
 
-Decompilation has three separable goals, so we measure three things and report
-how often a decompiler gets each *perfect* — because a
-decompilation that is *nearly* right is still a thing you have to read
-twice. Expand the panel inside each card to see how the metric actually works.
+## the three metrics
+
+We define three metrics that explore the three areas we believe are representative of "perfect" decompilation.
+1. Code Structure
+2. Types (args and vars)
+3. Byte-match Recompilability
+
+There are cases where these three metrics can conflict with each other.
+As such, decompilers are scored by `Union`: the overlap where at least one of these metrics is perfect.
 
 ## [1] Control-flow structure correctness
-metric: Structural Correctness (GED)
+metric: Graph Edit Distance
 
 Does the decompiled code branch and loop the same way the source does? We compare the control-flow graphs of the source and the decompilation with a Graph Edit Distance (GED) — the number of node/edge insertions, deletions, and substitutions needed to turn one CFG into the other.
 
