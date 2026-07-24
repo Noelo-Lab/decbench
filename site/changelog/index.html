@@ -165,38 +165,40 @@ between. Pick a difficulty, a decompiler, and a metric to highlight.</p>
     </section>
     <section class="view" id="view-about" data-view="about">
         <h2 class="view-title">decbench</h2>
-        <p class="view-desc">Over the last 30 years, binary decompilers have made the steady march towards
-<em>perfect decompilation</em>: where decompilers recover the exact source code.
-However, that <em>perfect</em> has yet to be measured meaningfully, and is often
-defined across multiple axes.</p>
-<p class="view-desc">DecBench is an experimental benchmark for comparing decompilers and modern LLMs
-on the task of recovering <em>exact</em> source code. This benchmark defines new
-metrics and datasets that represent the various directions of exactness for
-decompilers: structure, types, and precise recompilability. This benchmark is
-also <em>living</em>: as new decompiler/LLMs are released, their scores will be added
-to the leaderboard! Community feedback is welcome!</p>
-<p class="view-desc">It is created by the <a href="https://github.com/Noelo-Lab">Noelo Lab at the University of Georgia</a>,
-led by Dr. Zion Leonahenahe Basque. The project's
-<a href="https://github.com/noelo-lab/decbench">code</a> and
-<a href="https://huggingface.co/datasets/noelo-lab/decbench-dataset">data</a> are open
-source. Email <code>decbench@mahaloz.re</code> to get your decompiler added to the public
-site.</p>
-<h3 class="sub">why it exists</h3>
-<p class="view-desc">Other benchmarks have cropped up in the last two years. Many of these
-evaluations use approaches that are often uninformative about perfect
-decompilation, for example, "re-executability", which can often get full test
-cases to pass but can still be incorrect.</p>
-<p class="view-desc">DecBench uses metrics to quantify how often a decompiler recovers the exact
-source code of a function. Since measuring this with pure strings is
-inaccurate, we use multiple metrics described below.</p>
-<h3 class="sub">the three metrics</h3>
-<p class="view-desc">Decompilation has three separable goals, so we measure three things and report
-how often a decompiler gets each <em>perfect</em> — because a
-decompilation that is <em>nearly</em> right is still a thing you have to read
-twice. Expand the panel inside each card to see how the metric actually works.</p>
+        <p class="view-desc">Over the last 30 years, binary decompilers have made the steady march towards <em>perfect decompilation</em>: where decompilers recover the exact source code.
+However, that <em>perfect</em> has yet to be measured meaningfully, and is often defined across multiple axes.</p>
+<p class="view-desc">DecBench is an experimental benchmark for comparing decompilers and modern LLMs on the task of recovering <em>exact</em> source code. This benchmark uses new and previously known metrics (perfect match percentage) and datasets that represent the various directions of exactness for decompilers: control flow structure, types, and precise recompilability.
+This benchmark is also <em>living</em>: as new decompiler/LLMs are released, their scores will be added to the leaderboard! Community feedback is welcome!</p>
+<p class="view-desc">It is created by the <a href="https://github.com/Noelo-Lab">Noelo Lab at the University of Georgia</a>, led by <a href="https://www.zionbasque.com/">Dr. Zion Leonahenahe Basque</a>.
+The project's <a href="https://github.com/noelo-lab/decbench">code</a> and <a href="https://huggingface.co/datasets/noelo-lab/decbench-dataset">data</a> are open source.
+Email <code>decbench@mahaloz.re</code> to get your decompiler added to the public site.</p>
+<h2>why</h2>
+<p class="view-desc">There have been two other academic benchmarks in the past for end-to-end decompilers: <a href="https://proceedings.neurips.cc/paper_files/paper/2025/file/079cf13ae174c31f148207d94d213bdc-Paper-Datasets_and_Benchmarks_Track.pdf">Decompile-Bench</a> and <a href="https://aclanthology.org/2025.findings-acl.1194.pdf">DecompileBench</a> (yes, I know the names are confusing).
+These works establish their own take on the problem, and are worth a read.
+Both have limitations: one relies on readability metrics (which we've shown in <a href="https://www.usenix.org/system/files/usenixsecurity24-basque.pdf">prior work to be flawed</a>) the other on metrics that sacrifice correctness for other achievements (passing a subset of testcases on recompilation).</p>
+<p class="view-desc">DecBench uses metrics that place correctness as a first-class citizen and attempt to measure perfection on a function-level rather than a macro level.
+Ideally, perfect decompilation is that which is <em>correct</em>.
+Each metric you will find here attempts to measure the correctness across <a href="https://decompilation.wiki/fundamentals/overview/">three widely explored areas</a>.
+Once a decompiler approaches 100% on all three metrics, you can consider that it nearly always recovers perfect decompilation (at least for this dataset!).</p>
+<p class="view-desc">DecBench is also a response to static-benchmarks that often get outdated or fail to change when flaws are discovered.
+It is very likely there is bugs in the code that runs DecBench, or there is projects which pull too much weight than others.
+DecBench aims to change as the community changes: adding new decompilers, updating versions, and improving supported projects.
+As such, this is a living project, widely different from a paper and more similar to the popular <a href="https://www.swebench.com/">SWEBench</a>.</p>
+<h2>the three metrics</h2>
+<p class="view-desc">We define three metrics that explore the three areas we believe are representative of "perfect" decompilation.</p>
+<ol>
+<li>Code Structure</li>
+<li>Types (args and vars)</li>
+<li>Byte-match Recompilability</li>
+</ol>
+<p class="view-desc">There are cases where these three metrics can conflict with each other.
+As such, decompilers are scored by <code>Union</code>: the overlap where at least one of these metrics is perfect.</p>
+<p class="view-desc">None of these metrics, themselves are <strong>perfect and all come with limitations</strong>, ironically.
+That speaks to the difficulty of measuring this field.
+Find the extended metrics limitations <a href="#metric-limitations">below</a>.</p>
         <div class="goal">
             <div class="goal-head"><span class="num">[1]</span>Control-flow structure correctness</div>
-            <div class="goal-metric">metric: Structural Correctness (GED)</div>
+            <div class="goal-metric">metric: Graph Edit Distance</div>
             <div class="goal-body"><p>Does the decompiled code branch and loop the same way the source does? We compare the control-flow graphs of the source and the decompilation with a Graph Edit Distance (GED) — the number of node/edge insertions, deletions, and substitutions needed to turn one CFG into the other.</p>
 <details class="metric-viz" open>
 <summary>how GED works: source &rarr; CFG &rarr; graph diff</summary>
@@ -508,7 +510,29 @@ GED = <span class="n">3</span> &nbsp;&mdash;&nbsp; 1 node insertion + 2 edge ins
     That is the Union column on the leaderboard.
 </div>
 
-<h3 class="sub">the dataset</h3>
+<h2>metric limitations</h2>
+<p class="view-desc">Each metric comes with limitations, some due to the way they are measured, others due to their fundamental algorithm.</p>
+<p class="view-desc">he first, and most wide-reaching limitation, is that we attempt to collect all metrics from only the decompilation text.
+This is to assure that <em>all</em> decompilers can compete on the benchmark even when they do not expose deep APIs.
+This also allows LLMs to compete, which may have no way to return to you something like an address mapping for a line reliably.
+This can inject error because things like variables may be hard to align across samples, which has been <a href="https://arxiv.org/abs/2502.04536">explored in prior work</a>.</p>
+<h3 class="sub">Graph Edit Distance</h3>
+<p class="view-desc">The Graph Edit Distance (GED) algorithm we use is the <a href="https://github.com/mahaloz/cfgutils/blob/main/cfgutils/similarity/ged/vujosevic_janicic_ged.py">Vujosevic Janicic</a> algorithm (VJ-GED).
+Like most GED algorithms, this is an approximation, and in some cases can inject error (more distance than actually exists).
+However, the guarantee here is that a perfect graph will always be scored correctly since we do an isomorphic test first.</p>
+<p class="view-desc">There are other ways to inject error here.
+We largely use <a href="https://joern.io/">Joern</a> to parse the decompilation of each project.
+If Joern fails, we fail.
+There is also ways the <code>.i</code> files, which we parse, can have false information left behind by the compiler.
+When we sampled this process, we found it was small.</p>
+<h3 class="sub">Type Edit Distance</h3>
+<p class="view-desc">The fundamental flaw here is being unable to match a variable across a decompiler sample if the offset is not reported in the text.
+We attempt to get around this by using heuristics, but, it is a known problem.</p>
+<h3 class="sub">Recompilation Byte Edit Distance</h3>
+<p class="view-desc">The flaw here is that each function is evaluated alone.
+There are cases where cross-function compiler optimizations can make it impossible for a decompiler to achieve a perfect score.
+This is more common on the optimization dataset, and is a known limitation.</p>
+<h2>the dataset</h2>
 <h3 class="sub">summary</h3>
 <div id="dataset-summary" class="goal"></div>
 
@@ -520,6 +544,10 @@ GED = <span class="n">3</span> &nbsp;&mdash;&nbsp; 1 node insertion + 2 edge ins
     <section class="view active" id="view-changelog" data-view="changelog">
         <h2 class="view-title">Changelog</h2>
         <p class="view-desc">Significant changes to DecBench that introduce or update results, which can be viewable on the website.</p>
+<h3 class="sub">2026-07-24</h3>
+<ul>
+<li>Updated <code>about</code> to include other related works and some limitations of the benchmark metrics.</li>
+</ul>
 <h3 class="sub">2026-07-23</h3>
 <ul>
 <li>DecBench v1.1</li>
