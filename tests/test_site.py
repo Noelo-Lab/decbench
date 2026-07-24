@@ -638,3 +638,42 @@ def test_social_meta_absent_without_a_pages_domain(
     assert (out / "favicon.png").is_file()
     assert '<link rel="icon" type="image/png" href="favicon.png">' in index
     assert not (out / "CNAME").exists()
+
+
+# -- sample-set manifest pinning at build time -----------------------------
+
+
+def test_site_build_pins_sample_set_to_the_manifest(
+    tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
+) -> None:
+    """`decbench site build` re-tags presets, but the sample-set MUST come from the
+    tree's frozen ``sample_set_manifest.json`` (what the sample-set-only LLM backends
+    actually decompiled), never a fresh seeded draw — a fresh draw diverges once the
+    records drift and near-zeroes the LLM columns. The manifest here pins ONLY f1;
+    the fresh draw over this tiny fixture tags both functions, so a count of 1
+    proves the manifest won."""
+    from click.testing import CliRunner
+
+    from decbench.cli import main
+
+    tree = tmp_path / "results"
+    tree.mkdir()
+    scoreboard.to_toml(tree / "scoreboard.toml")
+    function_data.to_json(tree / "function_results.json")
+    (tree / "sample_set_manifest.json").write_text(
+        json.dumps(
+            {
+                "method": "sample-set",
+                "functions": [
+                    {"project": "proj", "opt": "O2", "binary": "bin1", "function": "f1"},
+                ],
+            }
+        )
+    )
+
+    out = tmp_path / "site"
+    result = CliRunner().invoke(main, ["site", "build", str(tree), "-o", str(out)])
+    assert result.exit_code == 0, result.output
+
+    aggregates = json.loads((out / "data" / "aggregates.json").read_text())
+    assert aggregates["combos"]["sample-set|0"]["functions"] == 1

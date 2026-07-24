@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 
 from decbench.models.function_data import BinaryGroup, FunctionData
 from decbench.models.scoreboard import Scoreboard
+from decbench.results_store import load_sample_manifest
 from decbench.scoring.datasets import PRESETS, assign_datasets
 from decbench.scoring.scoreboard import build_scoreboard_from_function_data
 from decbench.scoring.subset import SubsetManifest, filter_function_data
@@ -240,7 +241,9 @@ def load_dataset(
     stripped = strip_decompilers(fd, exclude)
     if stripped:
         logger.info("stripped excluded decompiler(s) from dataset: %s", ", ".join(stripped))
-    assign_datasets(fd, seed=seed)
+    # Pin the sample-set to the tree's frozen manifest when one exists; the
+    # seeded draw is only the bootstrap for manifest-less trees.
+    assign_datasets(fd, seed=seed, sample_members=load_sample_manifest(results_dir))
     return fd
 
 
