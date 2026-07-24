@@ -9,14 +9,14 @@
     <meta property="og:site_name" content="DecBench">
     <meta property="og:type" content="website">
     <meta property="og:title" content="DecBench — decompiler benchmark">
-    <meta property="og:description" content="Decompiler leaderboard — 1. Hex-Rays 47.9% · 2. Kuna 46.1% · 3. angr 45.5%. Perfect-function rate across 94,716 functions, 9 decompilers, 3 ground-truth metrics.">
+    <meta property="og:description" content="Decompiler leaderboard — 1. Hex-Rays 48.0% · 2. Kuna 46.1% · 3. angr 45.5%. Perfect-function rate across 94,575 functions, 9 decompilers, 3 ground-truth metrics.">
     <meta property="og:url" content="https://decbench.com/">
     <meta property="og:image" content="https://decbench.com/decbench_card.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="DecBench — decompiler benchmark">
-    <meta name="twitter:description" content="Decompiler leaderboard — 1. Hex-Rays 47.9% · 2. Kuna 46.1% · 3. angr 45.5%. Perfect-function rate across 94,716 functions, 9 decompilers, 3 ground-truth metrics.">
+    <meta name="twitter:description" content="Decompiler leaderboard — 1. Hex-Rays 48.0% · 2. Kuna 46.1% · 3. angr 45.5%. Perfect-function rate across 94,575 functions, 9 decompilers, 3 ground-truth metrics.">
     <meta name="twitter:image" content="https://decbench.com/decbench_card.png">
     <link rel="stylesheet" href="app.css">
     <link rel="icon" type="image/png" href="favicon.png">
@@ -44,8 +44,8 @@
                 </button>
             </div>
         </div>
-            <div class="side-stats"><div class="side-stat"><span class="side-num" data-stat="functions">94,716</span> functions</div><div class="side-stat"><span class="side-num" data-stat="binaries">806</span> binaries</div><div class="side-stat"><span class="side-num">9</span> decompilers</div><div class="side-stat"><span class="side-num">3</span> metrics</div></div>
-            <div class="side-foot"><button class="ds-btn theme-toggle" id="theme-toggle" type="button" aria-label="toggle light or dark theme"><span class="th-to-light">[ light mode ]</span><span class="th-to-dark">[ dark mode ]</span></button><div class="side-foot-stamp">[ 2026-07-23 22:48 ]</div></div>
+            <div class="side-stats"><div class="side-stat"><span class="side-num" data-stat="functions">94,575</span> functions</div><div class="side-stat"><span class="side-num" data-stat="binaries">803</span> binaries</div><div class="side-stat"><span class="side-num">9</span> decompilers</div><div class="side-stat"><span class="side-num">3</span> metrics</div></div>
+            <div class="side-foot"><button class="ds-btn theme-toggle" id="theme-toggle" type="button" aria-label="toggle light or dark theme"><span class="th-to-light">[ light mode ]</span><span class="th-to-dark">[ dark mode ]</span></button><div class="side-foot-stamp">[ 2026-07-23 23:57 ]</div></div>
         </aside>
 
         <main class="main">
@@ -511,6 +511,13 @@ derives the published dataset through one guarded path
 checkpoint, merges the metric overlays per-slice (so a partial overlay can no
 longer erase data), and refuses any unexplained shrink in coverage. Kuna's
 optimized score is restored to its correct value.</li>
+<li>Removed the <strong>mirai-win</strong> malware target. Despite its name (from theZoo's
+"Win32.Mirai" directory), it was a second <strong>Linux/ELF</strong> Mirai variant built
+with gcc — duplicating the existing <code>mirai</code> target's coverage while implying
+Windows coverage the benchmark did not have. Its 141 function rows left every
+score, and its 3 sample-set functions were replaced by a deterministic top-up
+draw from the same categories (the other 247 sample-set picks are unchanged);
+the LLM backends were re-run on just the 3 replacements.</li>
 <li>Added a third LLM/coding-agent decompiler backend: <strong>kimi-code</strong> (Kimi Code
 CLI, default model <code>kimi-code/k3</code>), benchmarked on the sample-set slice like
 codex/claude-code.</li>
@@ -522,7 +529,7 @@ codex/claude-code.</li>
 </ul>
     </section>
             <div class="rule"></div>
-            <footer>DecBench v1.0 &mdash; decompiler benchmarking suite &middot; projects: base-passwd, bash, betaflight, bzip2, chibios, cleanflight, coreutils, crazyflie, cronie, dexter, diffutils, dpkg, e2fsprogs, findutils, freertos, gnutls, grep, gzip, iproute2, kmod, libacl, libbsd, libedit, libexpat, libopencm3, libselinux, minipig, mirai, mirai-win, mydoom, nuttx, openssh-portable, riot-os, rsyslog, shadow, sysvinit, tar, u-boot, x0r-usb, zlib</footer>
+            <footer>DecBench v1.0 &mdash; decompiler benchmarking suite &middot; projects: base-passwd, bash, betaflight, bzip2, chibios, cleanflight, coreutils, crazyflie, cronie, dexter, diffutils, dpkg, e2fsprogs, findutils, freertos, gnutls, grep, gzip, iproute2, kmod, libacl, libbsd, libedit, libexpat, libopencm3, libselinux, minipig, mirai, mydoom, nuttx, openssh-portable, riot-os, rsyslog, shadow, sysvinit, tar, u-boot, x0r-usb, zlib</footer>
         </main>
     </div>
     <script>window.__DECBENCH_ROOT__ = "";</script>
