@@ -503,7 +503,7 @@ function metricCell(result, d, m) { return pairOf((result.per_metric || {})[d], 
 // sample-set slice only, so their rows are shown ONLY when the sample-set preset is
 // selected; on every other view they are omitted (their data still ships, it is
 // just not rendered where the shared denominator would make them look near-empty).
-// Exception: the distance page renders them everywhere via splitDecs() below —
+// Exception: the data page renders them everywhere via splitDecs() below —
 // separated and marked as partial-coverage instead of hidden.
 const SAMPLE_SET_PRESET = "sample-set";
 function visibleDecs() {
@@ -514,7 +514,7 @@ function visibleDecs() {
     if (preset === SAMPLE_SET_PRESET) return all;
     return all.filter(d => sso.indexOf(d) < 0);
 }
-// The same rows split into {main, subset} for the distance page's tables: off the
+// The same rows split into {main, subset} for the data page's tables: off the
 // sample-set preset the sample-set-only backends are NOT hidden there (unlike the
 // leaderboard) — they render below a dashed break, muted, because their numbers
 // cover only the part of the selected dataset that overlaps the sample-set slice.
@@ -530,7 +530,7 @@ function splitDecs() {
     };
 }
 // The dashed break labeling the sample-set-only rows, and the note shown with it
-// (the note's text lives in content/distance.md; it ships hidden and is revealed
+// (the note's text lives in content/data.md; it ships hidden and is revealed
 // only when subset rows are actually rendered).
 function subsetBreakRow(colspan) {
     return '<tr class="subset-break"><td colspan="' + colspan +
@@ -678,7 +678,7 @@ function buildMetricsTable(result) {
     tbl.querySelector("tbody").innerHTML = body;
 }
 
-// ---- Distance view (raw edit distance per metric; lower is better) ----
+// ---- Distance table (the data page's #distance section; lower is better) ----
 // mean/median/n/at0 are precomputed per combo; see SITE_DATA_SCHEMA.md. A null
 // cell means no function under this combo had a finite distance for that metric.
 function buildDistance(result) {
@@ -729,7 +729,7 @@ function buildDistance(result) {
     toggleSubsetNote("distance-subset-note", subRows.length > 0);
 }
 
-// ---- Compile-rate table (lives on the distance page) ----
+// ---- Compile-rate table (lives on the data page's #compiles section) ----
 // The per-decompiler Compiles rate — the share of a decompiler's
 // byte_match-measured functions whose output actually recompiled — moved off the
 // leaderboard to here. It is one number per decompiler (see aggregate.py's
@@ -760,6 +760,61 @@ function buildCompile(result) {
     toggleSubsetNote("compile-subset-note", subRows.length > 0);
 }
 
+// ---- Cost table (the data page's #cost section) ----
+// Reads AGG.cost — a GLOBAL, combo-independent block (decompile time and $ do
+// not vary with the dataset preset or the normalize toggle), so buildCost runs
+// ONCE from init() after the aggregates land, never from refresh(). Shape per
+// decompiler: {time: {mean_s, median_s, n_functions, [n_binaries,] basis},
+// dollars: {total, per_function, model, estimated} | null}. `basis` is "batch"
+// (binary wall-time / functions) for traditional decompilers and "per-function"
+// (agent call incl. tool use) for the LLM backends — the data.md prose warns the
+// two are not directly comparable, which is also why the rows split main vs
+// sample-set (the same static split the other tables draw with subsetBreakRow).
+function fmtSecs(s) {
+    return s >= 100 ? Math.round(s) + " s" : s.toFixed(1) + " s";
+}
+function buildCost() {
+    const tbl = document.getElementById("cost-table");
+    if (!tbl) return;
+    const cost = (AGG && AGG.cost) || {};
+    tbl.querySelector("thead tr").innerHTML =
+        "<th>decompiler</th><th>median time / fn</th><th>mean time / fn</th><th>est. cost</th>";
+    // Static split: LLM/sample-set-only backends below the break, always (cost is
+    // preset-independent, so unlike splitDecs() this does not consult the preset).
+    const all = ((AGG && AGG.decompilers) || []).filter(d => cost[d]);
+    const sso = (AGG && AGG.sample_set_only) || [];
+    const median = d => {
+        const t = cost[d].time || {};
+        return (t.median_s == null) ? Infinity : t.median_s;
+    };
+    const mkRows = ds => ds.slice().sort((a, b) => median(a) - median(b));
+    const timeCell = v => (v == null) ? "&mdash;" : fmtSecs(v);
+    const rowHtml = (d, isSubset) => {
+        const t = cost[d].time || {}, dol = cost[d].dollars;
+        // No dollars: em-dash for the batch rows (not applicable — no per-token
+        // cost), "n/a" for an LLM row (applicable but unpriced/no token data).
+        const dolCell = dol
+            ? '$' + dol.total.toFixed(2) + ' <span class="cell-count">($' +
+              dol.per_function.toFixed(2) + '/fn, est.)</span>'
+            : (isSubset ? 'n/a' : '&mdash;');
+        return '<tr class="binrow' + (isSubset ? ' subset-row' : '') +
+            '"><td class="lb-name" title="' + escapeHtml(decTip(d)) + '">' +
+            decNameHtml(d) + '</td>' +
+            '<td class="metric-cell" data-label="median time / fn">' + timeCell(t.median_s) + '</td>' +
+            '<td class="metric-cell" data-label="mean time / fn">' + timeCell(t.mean_s) + '</td>' +
+            '<td class="metric-cell" data-label="est. cost">' + dolCell + '</td></tr>';
+    };
+    const rows = mkRows(all.filter(d => sso.indexOf(d) < 0));
+    const subRows = mkRows(all.filter(d => sso.indexOf(d) >= 0));
+    let body = "";
+    for (const d of rows) body += rowHtml(d, false);
+    if (subRows.length) {
+        body += subsetBreakRow(4);
+        for (const d of subRows) body += rowHtml(d, true);
+    }
+    tbl.querySelector("tbody").innerHTML = body;
+}
+
 function updateStats(result) {
     const fnEl = document.querySelector('[data-stat="functions"]');
     if (fnEl) fnEl.textContent = result.functions.toLocaleString();
@@ -776,7 +831,7 @@ let lastResult = null;
 function refresh() {
     lastResult = currentCombo();
     if (!lastResult) {
-        ["leaderboard", "about", "distance"].forEach(v => showBanner(v,
+        ["leaderboard", "about", "data"].forEach(v => showBanner(v,
             "No precomputed aggregates for dataset '" + (state.dataset || FALLBACK_PRESET) +
             "' with normalize=" + (state.normalize ? "on" : "off") + "."));
         return;
@@ -797,7 +852,7 @@ function refresh() {
 // cached here and the table is re-rendered from it on preset change (refresh()).
 let _lastDataset = null;
 function buildDataset(ds) {
-    const cats = ds.categories || [], summary = ds.summary || {}, joern = ds.joern || {};
+    const cats = ds.categories || [], summary = ds.summary || {};
     // Category highlight buttons.
     const cc = document.getElementById("category-controls");
     if (cc) {
@@ -831,6 +886,18 @@ function buildDataset(ds) {
             '</strong> total source lines of code (project .c files)</div>' +
             '</div>';
     }
+    // Projects table: cache the payload, then render it preset-aware. refresh()
+    // calls renderDatasetProjects() again on preset change (no refetch).
+    _lastDataset = ds;
+    renderDatasetProjects();
+}
+
+// ---- Data page's pipeline-health section (corpus-wide; from data/dataset.json) ----
+// Split out of buildDataset when the joern scaffolds moved from the about page to
+// the data page (2026-07-23). Same lazy dataset.json payload — the fetch promise
+// is cached per file (loadData), so opening both pages fetches it once.
+function buildPipelineHealth(ds) {
+    const joern = ds.joern || {};
     // Pipeline health: source-side GED loss. A benchmark function has NO source
     // CFG iff no decompiler ever got a GED value for it (source CFGs are
     // decompiler-independent), so this is the share of functions GED cannot score
@@ -869,10 +936,6 @@ function buildDataset(ds) {
                 s[1] + ')</span></td></tr>';
         }).join("");
     }
-    // Projects table: cache the payload, then render it preset-aware. refresh()
-    // calls renderDatasetProjects() again on preset change (no refetch).
-    _lastDataset = ds;
-    renderDatasetProjects();
 }
 
 // The About page's projects table, filtered by the selected preset. Only the
@@ -1133,6 +1196,10 @@ function initThemeToggle() {
 // the metric registry these views label their columns and scores with.
 const LAZY_VIEWS = {
     about: {file: "dataset", body: "dataset-summary", render: buildDataset},
+    // The data page's pipeline-health section reads the SAME dataset.json as the
+    // about page — loadData caches the fetch promise per file, so whichever view
+    // opens first pays for it and the other reuses the promise.
+    data: {file: "dataset", body: "joern-source", render: buildPipelineHealth},
     view: {file: "samples", body: "view-body", render: initView}
 };
 const lazyStarted = {};
@@ -1169,6 +1236,19 @@ function showView(name) {
 function validViews() {
     return Array.from(document.querySelectorAll(".view")).map(v => v.getAttribute("data-view"));
 }
+// Renamed views: an old `#<hash>` deep link routes to the view's new id (e.g. the
+// distance page became the data page, 2026-07-23). Only consulted when the hash
+// is not itself a valid view id, so an in-page section anchor (#cost, #compiles)
+// that is NOT a view id still falls through to native scrolling untouched.
+const LEGACY_HASH_VIEWS = {distance: "data"};
+// The view a `#hash` names: the hash itself when it is a valid view id, its
+// legacy mapping when that resolves to one, else null (not a view hash).
+function resolveViewHash(hash) {
+    const views = validViews();
+    if (views.indexOf(hash) >= 0) return hash;
+    const mapped = LEGACY_HASH_VIEWS[hash];
+    return (mapped && views.indexOf(mapped) >= 0) ? mapped : null;
+}
 // The view a fresh load opens on when the URL names none. It is config —
 // views.toml's `default = true` — and reaches us through the DOM: the renderer
 // marks that section `active` (on a subpage, the subpage's own view), and routing
@@ -1190,12 +1270,12 @@ function pathView() {
     return validViews().indexOf(seg) >= 0 ? seg : null;
 }
 // Where a fresh load lands: a valid legacy `#hash` (so old site/#about links keep
-// working) wins; otherwise the renderer already marked the right section active
-// (a path subpage, or the inline default), so the DOM fallback covers it.
+// working, and a renamed view's old hash — #distance — still routes) wins;
+// otherwise the renderer already marked the right section active (a path
+// subpage, or the inline default), so the DOM fallback covers it.
 function routeTarget() {
     const hash = (location.hash || "").replace("#", "");
-    if (validViews().indexOf(hash) >= 0) return hash;
-    return defaultView();
+    return resolveViewHash(hash) || defaultView();
 }
 // The canonical URL for the current state. Split mode carries the view in the path;
 // inline mode leaves the path+hash alone and only attaches the query.
@@ -1223,15 +1303,18 @@ function onPopState() {
     // legacy `#hash` entry (the URL a pre-subpage deep link loaded with) names
     // its view in the hash, not the path — honor it exactly as routeTarget() did.
     const hash = (location.hash || "").replace("#", "");
-    const name = (validViews().indexOf(hash) >= 0 ? hash : null)
+    const name = resolveViewHash(hash)
         || pathView() || (AGG && AGG.default_view) || defaultView();
     if (name) showView(name);
 }
-// In-page `#view` links in the prose (e.g. about.md's "see distance") change the
-// hash without a popstate; route them in both delivery modes.
+// In-page `#view` links in the prose (e.g. about.md's "see the data page") change
+// the hash without a popstate; route them in both delivery modes. A hash that is
+// neither a view id nor a legacy view alias (e.g. the data page's own #cost /
+// #compiles section anchors) is left to the browser's native anchor scrolling.
 function onHashChange() {
     const hash = (location.hash || "").replace("#", "");
-    if (validViews().indexOf(hash) >= 0) showView(hash);
+    const name = resolveViewHash(hash);
+    if (name) showView(name);
 }
 function initNav() {
     document.querySelectorAll(".nav-item").forEach(a => {
@@ -1336,8 +1419,11 @@ function init() {
         AGG = agg;
         initDatasetSelector();
         refresh();
+        // Cost is combo-independent (AGG.cost is global, not per-combo), so it is
+        // built once here rather than on every refresh().
+        buildCost();
     }).catch(err => {
-        ["leaderboard", "about", "distance"].forEach(v => showBanner(v,
+        ["leaderboard", "about", "data"].forEach(v => showBanner(v,
             "Could not load data/aggregates.json — " + err.message +
             ". this view has no data."));
     });

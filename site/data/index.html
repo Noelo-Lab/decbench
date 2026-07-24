@@ -8,15 +8,15 @@
     <script>(function(){try{var q=new URLSearchParams(location.search).get('theme');var t=q||localStorage.getItem('decbench-theme')||'dark';if(t!=='light'&&t!=='dark')t='dark';document.documentElement.dataset.theme=t;if(q==='light'||q==='dark')localStorage.setItem('decbench-theme',q);}catch(e){}})();</script>
     <meta property="og:site_name" content="DecBench">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="DecBench — changelog">
-    <meta property="og:description" content="What changed in the DecBench benchmark and site.">
-    <meta property="og:url" content="https://decbench.com/changelog/">
+    <meta property="og:title" content="DecBench — data">
+    <meta property="og:description" content="The run&#x27;s data: edit distance from perfect per metric, compile rates, pipeline health, and decompile time + estimated LLM cost. 1. Hex-Rays 48.0% · 2. Kuna 46.1% · 3. angr 45.5%">
+    <meta property="og:url" content="https://decbench.com/data/">
     <meta property="og:image" content="https://decbench.com/decbench_card.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="DecBench — changelog">
-    <meta name="twitter:description" content="What changed in the DecBench benchmark and site.">
+    <meta name="twitter:title" content="DecBench — data">
+    <meta name="twitter:description" content="The run&#x27;s data: edit distance from perfect per metric, compile rates, pipeline health, and decompile time + estimated LLM cost. 1. Hex-Rays 48.0% · 2. Kuna 46.1% · 3. angr 45.5%">
     <meta name="twitter:image" content="https://decbench.com/decbench_card.png">
     <link rel="stylesheet" href="../app.css">
     <link rel="icon" type="image/png" href="../favicon.png">
@@ -30,7 +30,7 @@
                 <div class="brand-title">DecBench</div>
                 <div class="brand-sub">decompiler benchmark</div>
             </div>
-            <nav class="nav"><a class="nav-item" data-view="leaderboard" href="#leaderboard"><span class="nav-bullet">&gt;</span> leaderboard</a><a class="nav-item" data-view="data" href="#data"><span class="nav-bullet">&gt;</span> data</a><a class="nav-item" data-view="view" href="#view"><span class="nav-bullet">&gt;</span> view</a><a class="nav-item" data-view="about" href="#about"><span class="nav-bullet">&gt;</span> about</a><a class="nav-item active" data-view="changelog" href="#changelog"><span class="nav-bullet">&gt;</span> changelog</a></nav>
+            <nav class="nav"><a class="nav-item" data-view="leaderboard" href="#leaderboard"><span class="nav-bullet">&gt;</span> leaderboard</a><a class="nav-item active" data-view="data" href="#data"><span class="nav-bullet">&gt;</span> data</a><a class="nav-item" data-view="view" href="#view"><span class="nav-bullet">&gt;</span> view</a><a class="nav-item" data-view="about" href="#about"><span class="nav-bullet">&gt;</span> about</a><a class="nav-item" data-view="changelog" href="#changelog"><span class="nav-bullet">&gt;</span> changelog</a></nav>
             
         <div class="side-section">
             <div class="side-label">dataset</div>
@@ -69,7 +69,7 @@ more information about these metrics, datasets, and methodology on the
 on the <a href="https://decbench.com/view/?dataset=sample-set&amp;tier=sample-set&amp;dec=codex&amp;metric=ged&amp;fn=base-passwd%2FO0%2Fupdate-passwd%3A%3Aread_shadow">view page</a>.</p>
 <div id="leaderboard-dataset-desc"></div><table id="leaderboard-table"><thead><tr></tr></thead><tbody></tbody></table>
     </section>
-    <section class="view" id="view-data" data-view="data">
+    <section class="view active" id="view-data" data-view="data">
         <h2 class="view-title">data</h2>
         <p class="view-desc">Benchmark-run data beyond the leaderboard's perfect rates:
 <a href="#distance">distance</a> from perfection per metric,
@@ -517,7 +517,7 @@ GED = <span class="n">3</span> &nbsp;&mdash;&nbsp; 1 node insertion + 2 edge ins
 
 <table id="dataset-projects"><thead><tr></tr></thead><tbody></tbody></table>
     </section>
-    <section class="view active" id="view-changelog" data-view="changelog">
+    <section class="view" id="view-changelog" data-view="changelog">
         <h2 class="view-title">Changelog</h2>
         <p class="view-desc">Significant changes to DecBench that introduce or update results.</p>
 <h3 class="sub">2026-07-23</h3>
