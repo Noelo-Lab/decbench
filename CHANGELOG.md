@@ -2,6 +2,10 @@
 
 Significant changes to DecBench that introduce or update results, which can be viewable on the website.
 
+### 2026-07-24
+
+- Updated `about` to include other related works and some limitations of the benchmark metrics.
+
 ### 2026-07-23
 
 - DecBench v1.1

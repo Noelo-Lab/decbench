@@ -36,6 +36,10 @@ We define three metrics that explore the three areas we believe are representati
 There are cases where these three metrics can conflict with each other.
 As such, decompilers are scored by `Union`: the overlap where at least one of these metrics is perfect.
 
+None of these metrics, themselves are **perfect and all come with limitations**, ironically.
+That speaks to the difficulty of measuring this field.
+Find the extended metrics limitations [below](#metric-limitations).
+
 ## [1] Control-flow structure correctness
 metric: Graph Edit Distance
 
@@ -363,7 +367,36 @@ The leaderboard's **Compiles** column reports the first half of this on its own 
     That is the Union column on the leaderboard.
 </div>
 
-### the dataset
+## metric limitations
+
+Each metric comes with limitations, some due to the way they are measured, others due to their fundamental algorithm.
+
+he first, and most wide-reaching limitation, is that we attempt to collect all metrics from only the decompilation text.
+This is to assure that _all_ decompilers can compete on the benchmark even when they do not expose deep APIs.
+This also allows LLMs to compete, which may have no way to return to you something like an address mapping for a line reliably.
+This can inject error because things like variables may be hard to align across samples, which has been [explored in prior work](https://arxiv.org/abs/2502.04536).
+
+### Graph Edit Distance
+The Graph Edit Distance (GED) algorithm we use is the [Vujosevic Janicic](https://github.com/mahaloz/cfgutils/blob/main/cfgutils/similarity/ged/vujosevic_janicic_ged.py) algorithm (VJ-GED).
+Like most GED algorithms, this is an approximation, and in some cases can inject error (more distance than actually exists).
+However, the guarantee here is that a perfect graph will always be scored correctly since we do an isomorphic test first. 
+
+There are other ways to inject error here.
+We largely use [Joern](https://joern.io/) to parse the decompilation of each project.
+If Joern fails, we fail.
+There is also ways the `.i` files, which we parse, can have false information left behind by the compiler.
+When we sampled this process, we found it was small.
+
+### Type Edit Distance
+The fundamental flaw here is being unable to match a variable across a decompiler sample if the offset is not reported in the text.
+We attempt to get around this by using heuristics, but, it is a known problem.
+
+### Recompilation Byte Edit Distance
+The flaw here is that each function is evaluated alone.
+There are cases where cross-function compiler optimizations can make it impossible for a decompiler to achieve a perfect score.
+This is more common on the optimization dataset, and is a known limitation. 
+
+## the dataset
 
 ### summary
 
