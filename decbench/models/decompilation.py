@@ -66,6 +66,24 @@ class FunctionDecompilation(BaseModel):
         description="Additional metadata (gotos, bools, func_calls, etc.)",
     )
 
+    # Structured cost capture (optional — both default None so artifacts written
+    # before these fields existed still load). Feeds the data page's cost section
+    # via decbench.scoring.cost, which prefers these over the trace/artifact scans.
+    time_seconds: float | None = Field(
+        default=None,
+        description="Wall time spent decompiling THIS function, when the backend "
+        "measures per-function (the LLM agents: one agent call per function, "
+        "including tool use). None for batch backends, whose per-function rate "
+        "is amortized from DecompilerMetadata.total_time_seconds.",
+    )
+    llm_tokens: dict[str, int] | None = Field(
+        default=None,
+        description="Normalized token usage for this function's agent call "
+        "(input / cached_input / cache_write / output — see "
+        "decbench.scoring.cost.parse_session_tokens). None for non-LLM backends "
+        "or when the session log was unavailable/unparseable.",
+    )
+
     @property
     def has_gotos(self) -> bool:
         return self.metadata.get("gotos", 0) > 0
@@ -165,13 +183,21 @@ class DecompilationResult(BaseModel):
             "failed_functions": self.decompiler.failed_functions,
         }
 
-        # Add per-function metadata
+        # Add per-function metadata. The structured cost fields ride along when
+        # set (they round-trip through toml.load; scoring/cost.py's structured
+        # scan reads them back), and are omitted when None so batch backends'
+        # artifacts are byte-identical to before the fields existed.
         for name, func in self.functions.items():
-            data[f"functions.{name}"] = {
+            entry: dict[str, Any] = {
                 "address": hex(func.address),
                 "line_count": func.line_count,
                 **func.metadata,
             }
+            if func.time_seconds is not None:
+                entry["time_seconds"] = func.time_seconds
+            if func.llm_tokens is not None:
+                entry["llm_tokens"] = dict(func.llm_tokens)
+            data[f"functions.{name}"] = entry
 
         with open(path, "w") as f:
             toml.dump(data, f)

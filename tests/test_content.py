@@ -39,7 +39,7 @@ def test_view_registry_ids_are_unique(content: Content) -> None:
 def test_view_registry_covers_the_report(content: Content) -> None:
     assert [v.id for v in content.view_specs] == [
         "leaderboard",
-        "distance",
+        "data",
         "view",
         "about",
         "changelog",
@@ -49,7 +49,7 @@ def test_view_registry_covers_the_report(content: Content) -> None:
 def test_visible_views_drop_data_backed_views_without_data(content: Content) -> None:
     without = [v.id for v in content.visible_views(has_function_data=False)]
     with_data = [v.id for v in content.visible_views(has_function_data=True)]
-    # distance/view need per-function data; leaderboard, about, and the prose
+    # data/view need per-function data; leaderboard, about, and the prose
     # changelog do not.
     assert without == ["leaderboard", "about", "changelog"]
     assert with_data == [v.id for v in content.view_specs]
@@ -123,8 +123,8 @@ def test_prose_renders_markdown_constructs(content: Content) -> None:
     # Literal unicode punctuation survives; it does NOT come back as an entity.
     assert "—" in lb
     assert "&mdash;" not in lb
-    # **bold** -> <strong> in a view body (the distance page).
-    di = content.view("distance").body_html
+    # **bold** -> <strong> in a view body (the data page's distance section).
+    di = content.view("data").body_html
     assert "<strong>GED</strong>" in di
     assert "**GED**" not in di
     # Inline `code` -> <code> (also the changelog injection path, which renders
@@ -166,6 +166,40 @@ def test_with_view_reparses_only_the_named_view(content: Content) -> None:
     assert "an injected bullet." not in content.view("changelog").body_html
     # An unregistered id is a no-op (returns self, not a copy).
     assert content.with_view("does-not-exist", "# x") is content
+
+
+def test_data_view_has_four_section_anchors(content: Content) -> None:
+    """The data page's four sections are LINKABLE: raw-HTML <h3 class="sub" id=...>
+    headings (markdown ### renders without an id), plus the scaffolds app.js fills
+    — and the pipeline-health scaffolds live HERE now, not on the about page."""
+    body = content.view("data").body_html
+    for anchor in ("distance", "compiles", "pipeline-health", "cost"):
+        assert f'<h3 class="sub" id="{anchor}">' in body, anchor
+    # The section scaffolds app.js's builders target.
+    for scaffold in ("cost-table", "joern-source", "joern-output-table"):
+        assert f'id="{scaffold}"' in body, scaffold
+    # The pre-rename element ids are unchanged (the app.js contract).
+    for kept in ("distance-table", "distance-subset-note", "compile-table", "compile-subset-note"):
+        assert f'id="{kept}"' in body, kept
+    # ...and about.md no longer carries the joern scaffolds it used to.
+    about = content.view("about")
+    assert "joern-" not in about.body_html + about.outro_html + about.empty_html
+
+
+def test_pricing_registry_loads(content: Content) -> None:
+    """pricing.toml parses into ModelPricing cards for the two LLM decompiler
+    models, and the is_priced gate distinguishes a filled card from an all-zero
+    (unpriced -> rendered n/a, not $0.00) one."""
+    from decbench.rendering.content import ModelPricing
+
+    names = [p.name for p in content.pricing]
+    assert "claude-opus-4-8" in names
+    assert "gpt-5.6-sol" in names
+    assert content.model_pricing("claude-opus-4-8") is not None
+    assert content.model_pricing("no-such-model") is None
+    # The is_priced gate: any non-zero axis is priced; all-zero is unpriced.
+    assert ModelPricing(name="x", output_per_mtok=15.0).is_priced
+    assert not ModelPricing(name="x").is_priced
 
 
 # -- metrics ---------------------------------------------------------------

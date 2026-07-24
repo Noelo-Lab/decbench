@@ -19,7 +19,10 @@ place that explains WHY the benchmark exists, WHAT the three metrics measure
 (the `## [n]` goal cards below — the renderer turns each into a
 <div class="goal"> card; see the conventions in leaderboard.md), and WHAT the
 corpus is (the dataset scaffolds near the end, filled by app.js from
-data/dataset.json).
+data/dataset.json). The Joern pipeline-health scaffolds (the joern source div
+and output table) that used to sit here moved to data.md's `pipeline health`
+section on 2026-07-23 — same data/dataset.json payload, rendered by app.js's
+buildPipelineHealth.
 
 GOAL CARDS. The `## [n] ...` sections are STRUCTURED:
 
@@ -411,17 +414,6 @@ The leaderboard's **Compiles** column reports the first half of this on its own 
 ### summary
 
 <div id="dataset-summary" class="goal"></div>
-
-### pipeline health (our own tooling)
-
-GED depends on Joern parsing both the source and the decompiler output.
-When Joern fails on the **source**, that's our tooling — those
-functions are excluded from GED for every decompiler (never counted against
-them). When Joern fails on a single decompiler's **output**,
-that's reported here (per decompiler), not folded into the headline score.
-
-<div id="joern-source" class="goal"></div>
-<table id="joern-output-table"><thead><tr></tr></thead><tbody></tbody></table>
 
 ### projects
 

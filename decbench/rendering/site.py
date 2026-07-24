@@ -59,6 +59,34 @@ _SUBPAGE_HOP = "../"
 #: would vanish in production and nowhere else.
 _NOJEKYLL = ".nojekyll"
 
+#: Renamed views whose OLD URLs must keep working: old id -> (current view id,
+#: section anchor on that view). Each gets a marker-less redirect stub at
+#: ``<old>/index.html`` (see :func:`_write_legacy_redirects`). The distance page
+#: became the data page on 2026-07-23 (four linkable sections: distance /
+#: compiles / pipeline health / cost); ``/distance/`` links exist in the wild, so
+#: they land on the data page's ``#distance`` section rather than its top.
+_LEGACY_REDIRECTS = {"distance": ("data", "distance")}
+
+#: The redirect stub. Deliberately does NOT contain
+#: :data:`~decbench.rendering.html.SITE_PAGE_MARKER`: the subpage prune loop
+#: (:func:`_write_view_subpages`) deletes any non-current view directory whose
+#: index.html carries the marker, and this stub must survive every rebuild. The
+#: meta refresh is the no-JS fallback; the script hop preserves ``?query`` deep
+#: links and honors an incoming ``#hash`` (a meta refresh drops both), defaulting
+#: to the section anchor so a bare ``/distance/`` link lands on the right section.
+_REDIRECT_STUB = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DecBench &mdash; moved to /{target}/#{anchor}</title>
+<link rel="canonical" href="{canonical}">
+<meta http-equiv="refresh" content="0; url=../{target}/#{anchor}">
+<script>location.replace("../{target}/" + location.search + (location.hash || "#{anchor}"))</script>
+</head>
+<body><p>This page moved to <a href="../{target}/#{anchor}">/{target}/#{anchor}</a>.</p></body>
+</html>
+"""
+
 
 def build_site(
     scoreboard: Scoreboard,
@@ -130,6 +158,35 @@ def build_site(
         _write_json(out_dir / _DATA_DIR / f"{name}.json", payload)
 
     _write_view_subpages(scoreboard, function_data, content, out_dir, view_social)
+    # LAST, after the subpage prune: the stubs are marker-less on purpose (the
+    # prune only deletes marked pages), but writing them after keeps the ordering
+    # obvious and correct even if that invariant ever changes.
+    current = {spec.id for spec in content.visible_views(function_data is not None)}
+    _write_legacy_redirects(out_dir, current, content.site.pages_domain)
+
+
+def _write_legacy_redirects(out_dir: Path, current_view_ids: set[str], domain: str) -> None:
+    """Write a redirect stub for each renamed view's OLD URL (``_LEGACY_REDIRECTS``).
+
+    ``site/distance/index.html`` etc.: a standalone page that canonicalizes to and
+    hops (meta refresh + a script that preserves query/hash) to the view's new
+    home. It carries NO ``SITE_PAGE_MARKER``, so the stale-view prune in
+    :func:`_write_view_subpages` treats it like a hand-added page and keeps it.
+
+    Skipped when the old id is (somehow) a current view again — a real view's
+    subpage must never be clobbered by a redirect to somewhere else.
+    """
+    for old_id, (target, anchor) in _LEGACY_REDIRECTS.items():
+        if old_id in current_view_ids:
+            continue
+        # Canonicalize to the target VIEW (not the anchor): the section is one page.
+        canonical = f"https://{domain}/{target}/" if domain else f"../{target}/"
+        stub_dir = out_dir / old_id
+        stub_dir.mkdir(exist_ok=True)
+        (stub_dir / _INDEX).write_text(
+            _REDIRECT_STUB.format(target=target, anchor=anchor, canonical=canonical),
+            encoding="utf-8",
+        )
 
 
 def _write_view_subpages(
@@ -282,12 +339,11 @@ def _view_descriptions(aggregates: dict[str, Any]) -> dict[str, str]:
         view += f" sample-set top 3: {sample_top3}"
     return {
         "leaderboard": leaderboard,
-        "distance": f"How far from perfect: mean edit distance per metric. {unopt_top3}",
-        "view": view,
-        "insights": (
-            f"What the benchmark data actually says — findings across "
-            f"{n_decompilers} decompilers."
+        "data": (
+            f"The run's data: edit distance from perfect per metric, compile rates, "
+            f"pipeline health, and decompile time + estimated LLM cost. {unopt_top3}"
         ),
+        "view": view,
         "changelog": "What changed in the DecBench benchmark and site.",
         "about": (
             "How DecBench works: three ground-truth metrics (control flow, types, "

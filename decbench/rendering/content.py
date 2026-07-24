@@ -18,6 +18,9 @@ The files:
   concern and lives in :mod:`decbench.scoring.datasets`; the two are joined at
   render time, so preset text is editable without re-running the benchmark.
 * ``categories.toml`` — the software-type taxonomy of the Dataset page.
+* ``pricing.toml`` — per-model USD/MTok list prices for the data page's cost
+  section, applied at render time against the token facts in
+  ``FunctionData.cost_info`` (so a price fix needs only a re-render).
 * ``<view>.md`` — each view's title, prose, and static scaffold.
 
 Markdown conventions (documented in the files themselves, parsed here):
@@ -48,6 +51,7 @@ __all__ = [
     "Footer",
     "GoalCard",
     "MetricSpec",
+    "ModelPricing",
     "Sidebar",
     "SiteContent",
     "ViewContent",
@@ -273,6 +277,37 @@ class DecompilerSpec:
 
 
 @dataclass(frozen=True)
+class ModelPricing:
+    """USD list prices per MILLION tokens for one LLM (``pricing.toml``).
+
+    Prices are applied at RENDER time against the token-count facts in
+    ``FunctionData.cost_info`` (see :mod:`decbench.scoring.cost`), so a price fix
+    needs only a re-render. An all-zero entry is a shipped *placeholder*:
+    :attr:`is_priced` is false and the renderer emits no dollar figure for it —
+    never a bogus $0.00.
+    """
+
+    name: str
+    input_per_mtok: float = 0.0
+    cached_input_per_mtok: float = 0.0
+    cache_write_per_mtok: float = 0.0
+    output_per_mtok: float = 0.0
+
+    @property
+    def is_priced(self) -> bool:
+        """Whether any real (non-placeholder) price is set."""
+        return any(
+            price > 0
+            for price in (
+                self.input_per_mtok,
+                self.cached_input_per_mtok,
+                self.cache_write_per_mtok,
+                self.output_per_mtok,
+            )
+        )
+
+
+@dataclass(frozen=True)
 class Category:
     """One software type, and the binary labels that place a project in it."""
 
@@ -291,6 +326,7 @@ class Content:
     dataset_presets: tuple[DatasetPresetSpec, ...]
     categories: tuple[Category, ...] = ()
     decompilers: tuple[DecompilerSpec, ...] = ()
+    pricing: tuple[ModelPricing, ...] = ()
 
     # -- views -------------------------------------------------------------
     def view(self, view_id: str) -> ViewContent:
@@ -385,6 +421,14 @@ class Content:
             if spec.id == base:
                 fallback = spec
         return fallback
+
+    # -- model pricing -----------------------------------------------------
+    def model_pricing(self, name: str) -> ModelPricing | None:
+        """The price card for a model id (exact match), or ``None`` if unknown."""
+        for pricing in self.pricing:
+            if pricing.name == name:
+                return pricing
+        return None
 
 
 def _read(name: str) -> str:
@@ -597,6 +641,16 @@ def load_content() -> Content:
         )
         for d in _load_toml("decompilers.toml")["decompiler"]
     )
+    pricing = tuple(
+        ModelPricing(
+            name=m["name"],
+            input_per_mtok=float(m.get("input_per_mtok", 0.0)),
+            cached_input_per_mtok=float(m.get("cached_input_per_mtok", 0.0)),
+            cache_write_per_mtok=float(m.get("cache_write_per_mtok", 0.0)),
+            output_per_mtok=float(m.get("output_per_mtok", 0.0)),
+        )
+        for m in _load_toml("pricing.toml").get("model") or ()
+    )
     views = {spec.id: _load_view(spec.id, metrics) for spec in view_specs}
     return Content(
         site=_load_site(),
@@ -606,4 +660,5 @@ def load_content() -> Content:
         dataset_presets=presets,
         categories=categories,
         decompilers=decompilers,
+        pricing=pricing,
     )

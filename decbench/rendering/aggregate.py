@@ -481,6 +481,85 @@ def _active_combos(
     return combos
 
 
+def _llm_dollars(content: Content, entry: dict[str, Any]) -> dict[str, Any] | None:
+    """Estimated USD for one LLM backend's recorded token usage, or ``None``.
+
+    ``entry`` is a ``cost_info["llm"]`` fact blob (:mod:`decbench.scoring.cost`):
+    normalized token buckets x the model's per-MTok list prices from
+    ``content/pricing.toml``. One formula serves both CLIs because the scan
+    already normalized them — claude records all four buckets; codex has no
+    cache-write bucket (0) and its ``input`` was already reduced by
+    ``cached_input``. ``None`` — rendered as n/a, never $0.00 — when the model is
+    unknown, unpriced (an all-zero placeholder card), or there is no token data.
+    """
+    tokens = entry.get("tokens")
+    model = entry.get("model")
+    if not tokens or not model:
+        return None
+    pricing = content.model_pricing(str(model))
+    if pricing is None or not pricing.is_priced:
+        return None
+    total = (
+        tokens.get("input", 0) * pricing.input_per_mtok
+        + tokens.get("cached_input", 0) * pricing.cached_input_per_mtok
+        + tokens.get("cache_write", 0) * pricing.cache_write_per_mtok
+        + tokens.get("output", 0) * pricing.output_per_mtok
+    ) / 1e6
+    functions = int(entry.get("functions") or 0)
+    return {
+        "total": total,
+        "per_function": total / functions if functions else 0.0,
+        "model": model,
+        "estimated": True,
+    }
+
+
+def _cost_block(content: Content, function_data: FunctionData) -> dict[str, Any]:
+    """The payload's top-level ``cost`` block — GLOBAL, not per-combo.
+
+    Cost does not vary with the dataset preset or the normalize toggle (a
+    decompiler's wall time is what it is), so unlike every table above it is
+    emitted once at the payload's top level and the client builds it once, not
+    per refresh.
+
+    Keyed off ``function_data.decompilers`` — already stripped of the site-hidden
+    backends by the callers — so ``cost_info`` facts for a hidden decompiler
+    never ship. A decompiler with no cost facts is simply absent (the client
+    skips it). LLM (``per-function``) entries are written after the batch ones,
+    so a backend present in both keeps the honest per-function timing.
+    """
+    info = function_data.cost_info or {}
+    visible = set(function_data.decompilers)
+    out: dict[str, Any] = {}
+    for dec, entry in (info.get("decompile_time") or {}).items():
+        if dec not in visible:
+            continue
+        out[dec] = {
+            "time": {
+                "mean_s": entry.get("per_fn_mean_s"),
+                "median_s": entry.get("per_fn_median_s"),
+                "n_functions": entry.get("functions"),
+                "n_binaries": entry.get("binaries"),
+                "basis": "batch",
+            },
+            "dollars": None,  # a traditional decompiler has no per-token cost
+        }
+    for dec, entry in (info.get("llm") or {}).items():
+        if dec not in visible:
+            continue
+        elapsed = entry.get("elapsed") or {}
+        out[dec] = {
+            "time": {
+                "mean_s": elapsed.get("mean_s"),
+                "median_s": elapsed.get("median_s"),
+                "n_functions": entry.get("functions"),
+                "basis": "per-function",
+            },
+            "dollars": _llm_dollars(content, entry),
+        }
+    return out
+
+
 def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dict[str, Any]:
     """Precompute every aggregate the site needs — ``data/aggregates.json``.
 
@@ -587,6 +666,9 @@ def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dic
         # subset of. It can exceed every combo's count — a group whose function list
         # is empty is never active anywhere.
         "totals": {"functions": total_functions, "binaries": len(function_data.groups)},
+        # GLOBAL, not per-combo: decompile time and estimated LLM $ do not vary by
+        # preset/normalize, so the data page's cost table ships once up here.
+        "cost": _cost_block(content, function_data),
         "combos": {
             combo_key(name, normalize): accumulator.result()
             for (name, normalize), accumulator in accumulators.items()

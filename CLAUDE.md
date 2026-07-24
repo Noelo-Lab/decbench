@@ -199,6 +199,11 @@ python scripts/finalize_results.py results/full_run [--audit|--render]
 python scripts/compute_dataset_info.py results/sailr_full  # FunctionData.dataset_info (sole writer:
 #   About-page corpus LOC + Joern parse-health stats); run over a results tree after
 #   (re)building function_results.json — rebuild_function_data.py does NOT repopulate it.
+python scripts/compute_cost_info.py results/full_run llm_traces  # FunctionData.cost_info (sole
+#   writer: the data page's cost section FACTS — batch decompile times from decompiled/*.toml
+#   headers + LLM per-fn times/tokens via scoring/cost.py, structured fields preferred over the
+#   trace scan). Prices are NOT stored: content/pricing.toml is applied at render time, so a
+#   price fix needs only a re-render. Like dataset_info, re-run after a function_results rebuild.
 #   NOTE: the on-disk results tree may be a PARTIAL snapshot (some projects have
 #   no decompiled .c); rebuild DROPS byte_match for functions whose artifact is
 #   gone so the column is uniformly the new metric (per-metric denominators
@@ -345,22 +350,31 @@ type_match and byte_match use it, so they work on the PE (MinGW) malware targets
 aesthetic: black bg, Source Code Pro mono, dashed rules, ASCII bars). `html.py` is
 **skeleton assembly only** — it holds NO CSS, NO JS, NO prose. Layout:
 - `content/` - **ALL maintainer-editable text.** `<view>.md` per view
-  (leaderboard, distance, **view**, insights, changelog, **about**) + `site.toml`
+  (leaderboard, **data**, **view**, changelog, **about**) + `site.toml`
   (brand/footer/banners/sidebar/side_stats, and `[decompilers] hidden` = the
   site-hidden decompilers) `views.toml` (view registry: id, nav label,
   `requires_function_data`, which is `default`), `metrics.toml` (display
   name/short name/order/perfect definition — the ONE source of truth),
   `datasets.toml` (the 5 presets' label+description+`default`), `categories.toml`
-  (software-type taxonomy). Loaded by `content.py` (`load_content()`) into frozen
-  dataclasses. NOTE the view set was consolidated: the old `metrics` + `dataset`
-  views merged into **about** (which now carries the metric goal cards with
-  collapsible SVG visualizations AND the dataset tables), and `compare` +
-  `hardest` merged into **view** (source vs one decompiler across easy/medium/hard
-  difficulty tiers — `scoring/view_samples.py`; ~100 samples/tier in
-  `samples.json`, and `hardest.json` is no longer shipped). The 5 presets are
-  now `unoptimized` (default) / `optimized` (O2-noinline) / `inlined` (O2) /
-  `large` / `sample-set` (250 fns; `scoring/datasets.py`). The Compiles rate
-  renders on the **distance** page; the old Historical view was removed
+  (software-type taxonomy), `pricing.toml` (per-model USD/MTok list prices for
+  the cost table — applied at RENDER time against `FunctionData.cost_info`'s
+  token facts, so a price fix is a re-render; ships all-zero PLACEHOLDER cards
+  that render n/a until the maintainer fills them in). Loaded by `content.py`
+  (`load_content()`) into frozen dataclasses. NOTE the view set was
+  consolidated: the old `metrics` + `dataset` views merged into **about** (which
+  now carries the metric goal cards with collapsible SVG visualizations AND the
+  dataset tables), and `compare` + `hardest` merged into **view** (source vs one
+  decompiler across easy/medium/hard difficulty tiers —
+  `scoring/view_samples.py`; ~100 samples/tier in `samples.json`, and
+  `hardest.json` is no longer shipped). The 5 presets are now `unoptimized`
+  (default) / `optimized` (O2-noinline) / `inlined` (O2) / `large` /
+  `sample-set` (250 fns; `scoring/datasets.py`). The old **distance** view is
+  now the **data** view (2026-07-23) with four linkable sections — distance,
+  compiles (the Compiles rate renders there), pipeline health (moved from
+  about), and cost (per-fn decompile time + estimated LLM $, facts gathered by
+  `scoring/cost.py` into `FunctionData.cost_info` via
+  `scripts/compute_cost_info.py`); old `/distance/` URLs and `#distance` hashes
+  redirect. The old Historical view was removed
   2026-07-22 (HistoryPoint data + `ingest_history.py` remain, just unshipped).
   A view's `id` MUST have a matching `<id>.md`; exactly one view and one preset
   must set `default = true` (`tests/test_content.py` enforces both).

@@ -30,7 +30,7 @@
                 <div class="brand-title">DecBench</div>
                 <div class="brand-sub">decompiler benchmark</div>
             </div>
-            <nav class="nav"><a class="nav-item" data-view="leaderboard" href="#leaderboard"><span class="nav-bullet">&gt;</span> leaderboard</a><a class="nav-item" data-view="distance" href="#distance"><span class="nav-bullet">&gt;</span> distance</a><a class="nav-item" data-view="view" href="#view"><span class="nav-bullet">&gt;</span> view</a><a class="nav-item active" data-view="about" href="#about"><span class="nav-bullet">&gt;</span> about</a><a class="nav-item" data-view="changelog" href="#changelog"><span class="nav-bullet">&gt;</span> changelog</a></nav>
+            <nav class="nav"><a class="nav-item" data-view="leaderboard" href="#leaderboard"><span class="nav-bullet">&gt;</span> leaderboard</a><a class="nav-item" data-view="data" href="#data"><span class="nav-bullet">&gt;</span> data</a><a class="nav-item" data-view="view" href="#view"><span class="nav-bullet">&gt;</span> view</a><a class="nav-item active" data-view="about" href="#about"><span class="nav-bullet">&gt;</span> about</a><a class="nav-item" data-view="changelog" href="#changelog"><span class="nav-bullet">&gt;</span> changelog</a></nav>
             
         <div class="side-section">
             <div class="side-label">dataset</div>
@@ -69,9 +69,16 @@ more information about these metrics, datasets, and methodology on the
 on the <a href="https://decbench.com/view/?dataset=sample-set&amp;tier=sample-set&amp;dec=codex&amp;metric=ged&amp;fn=base-passwd%2FO0%2Fupdate-passwd%3A%3Aread_shadow">view page</a>.</p>
 <div id="leaderboard-dataset-desc"></div><table id="leaderboard-table"><thead><tr></tr></thead><tbody></tbody></table>
     </section>
-    <section class="view" id="view-distance" data-view="distance">
-        <h2 class="view-title">distance</h2>
-        <p class="view-desc">When a decompiler can't yet achieve a perfect score on a function, it can be
+    <section class="view" id="view-data" data-view="data">
+        <h2 class="view-title">data</h2>
+        <p class="view-desc">Benchmark-run data beyond the leaderboard's perfect rates:
+<a href="#distance">distance</a> from perfection per metric,
+how often decompiled output <a href="#compiles">compiles</a> again,
+<a href="#pipeline-health">pipeline health</a> (what our own tooling loses), and the
+<a href="#cost">cost</a> of producing each decompiler's output.</p>
+<h3 class="sub" id="distance">distance</h3>
+
+<p class="view-desc">When a decompiler can't yet achieve a perfect score on a function, it can be
 helpful to understand the <em>distance</em> it is from perfection. For each
 metric, we measure distance as the number of edits required to convert that
 form of data into its source-code equivalent. For <strong>GED</strong>, that
@@ -94,7 +101,8 @@ only on the ~250-function sample-set slice, so on this dataset their numbers
 cover just its overlap with that slice &mdash; not directly comparable to the
 full-coverage rows above.</p>
 
-<h3 class="sub">compiles</h3>
+<h3 class="sub" id="compiles">compiles</h3>
+
 <p class="view-desc">The share of each decompiler's byte_match-measured functions whose output
 actually <em>recompiled</em> after the uniform compilability-fixup pass — a
 fairness control, not a metric (type recovery is scored separately). The
@@ -106,6 +114,29 @@ with the selected dataset, like the columns on the leaderboard.</p>
 <p class="view-desc subset-note" id="compile-subset-note" hidden>rows below the
 break: sample-set-only backends &mdash; their rate covers only this dataset's
 overlap with the sample-set slice.</p>
+
+<h3 class="sub" id="pipeline-health">pipeline health (our own tooling)</h3>
+
+<p class="view-desc">GED depends on Joern parsing both the source and the decompiler output.
+When Joern fails on the <strong>source</strong>, that's our tooling — those
+functions are excluded from GED for every decompiler (never counted against
+them). When Joern fails on a single decompiler's <strong>output</strong>,
+that's reported here (per decompiler), not folded into the headline score.</p>
+<div id="joern-source" class="goal"></div>
+<table id="joern-output-table"><thead><tr></tr></thead><tbody></tbody></table>
+
+<h3 class="sub" id="cost">cost</h3>
+
+<p class="view-desc">What each decompiler's output <em>costs</em> to produce. The two halves of the table
+are <strong>not directly comparable</strong>: traditional decompilers are timed from
+whole-binary batch decompilation (a binary's wall time divided by its function
+count), while the LLM coding agents are timed per function — one agentic call
+each, including all their tool use (objdump runs, reasoning, retries). The
+dollar figures are <strong>estimates</strong>: recorded token usage from the sample-set run,
+priced at public list prices at render time — not billed amounts. <code>-</code> means
+not applicable or no data (traditional decompilers have no per-token cost;
+an unpriced model shows n/a rather than $0.00).</p>
+<table id="cost-table"><thead><tr></tr></thead><tbody></tbody></table>
     </section>
     <section class="view" id="view-view" data-view="view">
         <h2 class="view-title">view</h2>
@@ -481,15 +512,6 @@ GED = <span class="n">3</span> &nbsp;&mdash;&nbsp; 1 node insertion + 2 edge ins
 <h3 class="sub">summary</h3>
 <div id="dataset-summary" class="goal"></div>
 
-<h3 class="sub">pipeline health (our own tooling)</h3>
-<p class="view-desc">GED depends on Joern parsing both the source and the decompiler output.
-When Joern fails on the <strong>source</strong>, that's our tooling — those
-functions are excluded from GED for every decompiler (never counted against
-them). When Joern fails on a single decompiler's <strong>output</strong>,
-that's reported here (per decompiler), not folded into the headline score.</p>
-<div id="joern-source" class="goal"></div>
-<table id="joern-output-table"><thead><tr></tr></thead><tbody></tbody></table>
-
 <h3 class="sub">projects</h3>
 <p class="view-desc" id="dataset-projects-note"></p>
 
@@ -518,9 +540,21 @@ Windows coverage the benchmark did not have. Its 141 function rows left every
 score, and its 3 sample-set functions were replaced by a deterministic top-up
 draw from the same categories (the other 247 sample-set picks are unchanged);
 the LLM backends were re-run on just the 3 replacements.</li>
+<li>The distance page became the <strong>data</strong> page (<code>/data/</code>) with four linkable
+sections — <a href="https://decbench.com/data/#distance">distance</a>,
+<a href="https://decbench.com/data/#compiles">compiles</a>,
+<a href="https://decbench.com/data/#pipeline-health">pipeline health</a> (moved from the
+about page), and a new <a href="https://decbench.com/data/#cost">cost</a> section
+reporting each decompiler's median/mean decompile time per function plus the
+LLM backends' estimated API cost from recorded token usage. Old <code>/distance/</code>
+links and <code>#distance</code> hashes redirect.</li>
 <li>Added a third LLM/coding-agent decompiler backend: <strong>kimi-code</strong> (Kimi Code
 CLI, default model <code>kimi-code/k3</code>), benchmarked on the sample-set slice like
 codex/claude-code.</li>
+<li>Fully retired the <strong>phoenix</strong> decompiler (angr driven with the Phoenix
+structurer). It was already hidden from the published site, so no published
+number moves; its harness (the <code>RawAngrPhoenixDecompiler</code> backend and the
+<code>structurer</code> override machinery), registry entry, and docs are removed.</li>
 </ul>
 <h3 class="sub">2026-07-22</h3>
 <ul>

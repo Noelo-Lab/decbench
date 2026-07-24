@@ -37,9 +37,10 @@ from decbench.rendering.site import build_site
 DATA_FILES = ["aggregates", "dataset", "samples"]
 
 # One `<view>/index.html` subpage per visible view (all five, given data), so
-# /leaderboard/, /distance/, ... are directly linkable. `changelog` is a
-# prose-only view (no per-function data, no generated table).
-VIEW_IDS = ["leaderboard", "distance", "view", "about", "changelog"]
+# /leaderboard/, /data/, ... are directly linkable. `changelog` is a prose-only
+# view (no per-function data, no generated table). The `data` subpage shares its
+# directory with the data/*.json payloads — deliberate (see SITE_DATA_SCHEMA.md).
+VIEW_IDS = ["leaderboard", "data", "view", "about", "changelog"]
 
 
 @pytest.fixture
@@ -141,6 +142,8 @@ def test_build_site_writes_the_documented_tree(
         "fonts/source-code-pro-latin.woff2",
         *(f"data/{name}.json" for name in DATA_FILES),
         *(f"{view}/index.html" for view in VIEW_IDS),
+        # The marker-less redirect stub keeping old /distance/ links alive.
+        "distance/index.html",
     }
 
 
@@ -233,11 +236,41 @@ def test_rebuild_removes_stale_data_files(
 def test_each_visible_view_gets_a_subpage(
     tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
 ) -> None:
-    """`/leaderboard/`, `/distance/`, ... are directories a reader can link to."""
+    """`/leaderboard/`, `/data/`, ... are directories a reader can link to."""
     out = tmp_path / "site"
     build_site(scoreboard, function_data, out)
     for view in VIEW_IDS:
         assert (out / view / "index.html").is_file(), view
+
+
+def test_legacy_distance_redirect_stub(
+    tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
+) -> None:
+    """The distance->data rename keeps old /distance/ links working via a stub
+    that hops to ../data/#distance (the distance SECTION on the data page) — and,
+    being MARKER-LESS, survives the stale-view prune (which only deletes
+    directories whose index.html carries the page marker)."""
+    from decbench.rendering.html import SITE_PAGE_MARKER
+
+    out = tmp_path / "site"
+    build_site(scoreboard, function_data, out)
+
+    stub = out / "distance" / "index.html"
+    assert stub.is_file()
+    html = stub.read_text()
+    assert "../data/" in html
+    assert SITE_PAGE_MARKER not in html
+    # Canonicalizes to the new PAGE (not the anchor), and lands on the distance
+    # SECTION: the script honors an incoming #hash but defaults to #distance, and
+    # preserves the ?query a deep link carries (meta refresh drops both).
+    domain = load_content().site.pages_domain
+    assert f'<link rel="canonical" href="https://{domain}/data/">' in html
+    assert '<meta http-equiv="refresh" content="0; url=../data/#distance">' in html
+    assert 'location.replace("../data/" + location.search + (location.hash || "#distance"))' in html
+
+    # A rebuild keeps the stub (the prune loop must treat it as a user page).
+    build_site(scoreboard, function_data, out)
+    assert stub.is_file()
 
 
 def test_subpage_carries_prefixed_assets_and_opens_on_its_own_view(

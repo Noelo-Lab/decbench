@@ -15,6 +15,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from decbench.models.function_data import (
     BinaryGroup,
     DatasetPreset,
@@ -766,3 +768,194 @@ def test_dataset_joern_source_loss_is_scoped_to_decompiled_functions() -> None:
     )
     dataset = build_dataset_page(_data([lost, never_decompiled]))
     assert dataset["joern"]["source"] == {"lost": 1, "total": 1}
+
+
+# -- the cost block (global, not per-combo) ---------------------------------
+
+
+def _priced_content(models: dict[str, dict]):
+    """A Content whose pricing registry is replaced with the given price cards."""
+    from dataclasses import replace
+
+    from decbench.rendering.content import ModelPricing, load_content
+
+    pricing = tuple(ModelPricing(name=name, **prices) for name, prices in models.items())
+    return replace(load_content(), pricing=pricing)
+
+
+def _cost_data(cost_info: dict, decompilers: list[str] | None = None) -> FunctionData:
+    data = _data([_func("f", values={}, perfects={})])
+    data.cost_info = cost_info
+    if decompilers is not None:
+        data.decompilers = decompilers
+    return data
+
+
+def test_cost_block_is_top_level_and_empty_without_cost_info() -> None:
+    """`cost` ships GLOBALLY (not per-combo — it doesn't vary by preset/normalize),
+    and an old function_results.json with no cost_info yields an empty block."""
+    aggregates = _build(_data([_func("f", values={}, perfects={})]))
+    assert aggregates["cost"] == {}
+    for combo in aggregates["combos"].values():
+        assert "cost" not in combo
+
+
+def test_cost_block_batch_time_passthrough_and_no_dollars() -> None:
+    """A traditional decompiler gets its batch timing verbatim and null dollars."""
+    from decbench.rendering.aggregate import _cost_block
+    from decbench.rendering.content import load_content
+
+    info = {
+        "decompile_time": {
+            "alpha": {
+                "total_s": 100.0,
+                "functions": 200,
+                "binaries": 4,
+                "per_fn_mean_s": 0.5,
+                "per_fn_median_s": 0.4,
+                "basis": "batch",
+            },
+            # Not in function_data.decompilers => never shipped (hidden backends).
+            "ghost": {
+                "total_s": 1.0,
+                "functions": 1,
+                "binaries": 1,
+                "per_fn_mean_s": 1.0,
+                "per_fn_median_s": 1.0,
+                "basis": "batch",
+            },
+        },
+        "llm": {},
+    }
+    cost = _cost_block(load_content(), _cost_data(info))
+    assert set(cost) == {"alpha"}
+    assert cost["alpha"]["time"] == {
+        "mean_s": 0.5,
+        "median_s": 0.4,
+        "n_functions": 200,
+        "n_binaries": 4,
+        "basis": "batch",
+    }
+    assert cost["alpha"]["dollars"] is None
+
+
+def _llm_entry(model: str, tokens: dict | None) -> dict:
+    return {
+        "model": model,
+        "functions": 10,
+        "failed": 1,
+        "elapsed": {"mean_s": 120.0, "median_s": 100.0, "total_s": 1200.0},
+        "tokens": tokens,
+    }
+
+
+def test_cost_block_claude_dollar_formula() -> None:
+    """claude: input*pin + cached*pcache + cache_write*pwrite + output*pout, /1e6."""
+    from decbench.rendering.aggregate import _cost_block
+
+    content = _priced_content(
+        {
+            "model-c": dict(
+                input_per_mtok=10.0,
+                cached_input_per_mtok=1.0,
+                cache_write_per_mtok=12.5,
+                output_per_mtok=40.0,
+            )
+        }
+    )
+    tokens = {
+        "input": 1_000_000,
+        "cached_input": 2_000_000,
+        "cache_write": 400_000,
+        "output": 100_000,
+        "sessions": 10,
+    }
+    info = {"decompile_time": {}, "llm": {"alpha": _llm_entry("model-c", tokens)}}
+    cost = _cost_block(content, _cost_data(info))
+    dollars = cost["alpha"]["dollars"]
+    # 10 + 2 + 0.4*12.5 + 0.1*40 = 21.0
+    assert dollars["total"] == pytest.approx(21.0)
+    assert dollars["per_function"] == pytest.approx(2.1)  # / 10 functions
+    assert dollars["model"] == "model-c"
+    assert dollars["estimated"] is True
+    assert cost["alpha"]["time"] == {
+        "mean_s": 120.0,
+        "median_s": 100.0,
+        "n_functions": 10,
+        "basis": "per-function",
+    }
+
+
+def test_cost_block_codex_dollar_formula() -> None:
+    """codex: no cache-write bucket, and `input` is already cached-normalized in
+    the scan — so the shared formula prices exactly input+cached+output."""
+    from decbench.rendering.aggregate import _cost_block
+
+    content = _priced_content(
+        {
+            "model-x": dict(
+                input_per_mtok=2.0,
+                cached_input_per_mtok=0.5,
+                cache_write_per_mtok=99.0,  # must not matter: cache_write is 0
+                output_per_mtok=8.0,
+            )
+        }
+    )
+    tokens = {
+        "input": 500_000,
+        "cached_input": 4_000_000,
+        "cache_write": 0,
+        "output": 250_000,
+        "sessions": 10,
+    }
+    info = {"decompile_time": {}, "llm": {"alpha": _llm_entry("model-x", tokens)}}
+    dollars = _cost_block(content, _cost_data(info))["alpha"]["dollars"]
+    # 0.5*2 + 4*0.5 + 0.25*8 = 5.0
+    assert dollars["total"] == pytest.approx(5.0)
+    assert dollars["per_function"] == pytest.approx(0.5)
+
+
+def test_cost_block_unpriced_or_unknown_model_has_null_dollars() -> None:
+    """A placeholder (all-zero) price card or an unknown model renders n/a — the
+    block must emit null, never a bogus $0.00."""
+    from decbench.rendering.aggregate import _cost_block
+
+    content = _priced_content({"placeholder": {}})  # all-zero => not is_priced
+    tokens = {"input": 1, "cached_input": 1, "cache_write": 1, "output": 1, "sessions": 1}
+    info = {
+        "decompile_time": {},
+        "llm": {
+            "alpha": _llm_entry("placeholder", tokens),
+            "beta": _llm_entry("never-heard-of-it", tokens),
+        },
+    }
+    cost = _cost_block(content, _cost_data(info))
+    assert cost["alpha"]["dollars"] is None
+    assert cost["beta"]["dollars"] is None
+    # No token data at all is also null (time still ships).
+    info = {"decompile_time": {}, "llm": {"alpha": _llm_entry("placeholder", None)}}
+    assert _cost_block(content, _cost_data(info))["alpha"]["dollars"] is None
+
+
+def test_cost_block_llm_entry_wins_over_batch_for_the_same_decompiler() -> None:
+    """An LLM backend whose binaries also wrote batch headers keeps the honest
+    per-function timing (the batch rate divides concurrent wall time)."""
+    from decbench.rendering.aggregate import _cost_block
+    from decbench.rendering.content import load_content
+
+    info = {
+        "decompile_time": {
+            "alpha": {
+                "total_s": 10.0,
+                "functions": 10,
+                "binaries": 1,
+                "per_fn_mean_s": 1.0,
+                "per_fn_median_s": 1.0,
+                "basis": "batch",
+            }
+        },
+        "llm": {"alpha": _llm_entry("some-model", None)},
+    }
+    cost = _cost_block(load_content(), _cost_data(info))
+    assert cost["alpha"]["time"]["basis"] == "per-function"
+    assert cost["alpha"]["time"]["median_s"] == 100.0
