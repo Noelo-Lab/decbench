@@ -10,10 +10,8 @@ decompiler API directly:
 * variables from ``cfunc.lvars`` (args carry ``is_arg_var``; stack lvars carry
   a frame location)
 
-IDA is **not functional on this machine** (only an unusable IDA 8.0 exists and
-``idapro`` imports but cannot open a database here), so this backend is written
-to be correct but ``is_available()`` reports ``False`` unless a real, working
-IDA 9+ ``idalib`` is present. The module never imports IDA at import time.
+Availability is detected at runtime and requires a working IDA 9+ ``idalib``.
+The module never imports IDA at import time.
 """
 
 from __future__ import annotations
@@ -293,7 +291,11 @@ class RawIDADecompiler(Decompiler):
             return None
 
         variables = self._extract_variables(cfunc)
-        line_mappings = self._extract_line_mappings(cfunc, code)
+        line_mappings = self._extract_line_mappings(
+            cfunc,
+            elf_base,
+            self._ida_image_base(),
+        )
         metadata = common.extract_metrics(code)
 
         return FunctionDecompilation(
@@ -328,8 +330,12 @@ class RawIDADecompiler(Decompiler):
         except Exception:  # noqa: BLE001
             return variables
 
-        arg_position = 0
-        for lvar in lvars:
+        arg_positions = {
+            int(local_index): position
+            for position, local_index in enumerate(cfunc.argidx)
+        }
+        stack_delta = int(cfunc.get_stkoff_delta())
+        for index, lvar in enumerate(lvars):
             try:
                 name = str(getattr(lvar, "name", "") or "")
                 tinfo = lvar.type() if hasattr(lvar, "type") else None
@@ -343,7 +349,7 @@ class RawIDADecompiler(Decompiler):
                         except Exception:  # noqa: BLE001
                             type_str = ""
                 size = int(lvar.width) if getattr(lvar, "width", None) else None
-                is_arg = bool(getattr(lvar, "is_arg_var", False))
+                is_arg = index in arg_positions
             except Exception:  # noqa: BLE001
                 continue
 
@@ -355,16 +361,15 @@ class RawIDADecompiler(Decompiler):
                         stack_offset=None,
                         size=size,
                         kind="arg",
-                        arg_index=arg_position,
+                        arg_index=arg_positions[index],
                     )
                 )
-                arg_position += 1
             else:
                 stack_offset = None
                 try:
                     loc = lvar.location
                     if loc is not None and loc.is_stkoff():
-                        stack_offset = int(loc.stkoff())
+                        stack_offset = int(loc.stkoff()) - stack_delta
                 except Exception:  # noqa: BLE001
                     stack_offset = None
                 variables.append(
@@ -379,38 +384,32 @@ class RawIDADecompiler(Decompiler):
         return variables
 
     @staticmethod
-    def _extract_line_mappings(cfunc: Any, code: str) -> list[LineMapping]:
-        """Best-effort line mappings from the Hex-Rays pseudocode item map.
-
-        Each ``cfunc.get_pseudocode()`` line carries a syntax tree; the
-        ``cfunc.treeitems`` / ``ctree_item`` machinery maps tree items to EAs.
-        IDA's EA == ELF-file-space address, so no translation is needed. This
-        is best-effort and returns ``[]`` if the API shape differs.
-        """
+    def _extract_line_mappings(
+        cfunc: Any,
+        elf_base: int,
+        image_base: int,
+    ) -> list[LineMapping]:
+        """Map 1-based pseudocode lines to ELF-file-space instruction addresses."""
         try:
-            sv = cfunc.get_pseudocode()
-        except Exception:  # noqa: BLE001
-            return []
-        if not sv:
-            return []
-
-        line_to_addrs: dict[int, set[int]] = {}
-        try:
-            import ida_hexrays
-            import ida_lines
-
-            for line_no in range(len(sv)):
-                line = sv[line_no].line
-                # Find the item anchored at the start of this line, if any.
-                anchor = ida_hexrays.ctree_anchor_t()
-                # Strip color tags to compute positions is non-trivial; instead
-                # use the citem-to-ea map via the function's eamap when present.
-                _ = (line, anchor, ida_lines)  # documented best-effort path
+            if not cfunc.get_pseudocode():
+                return []
+            eamap = cfunc.get_eamap()
         except Exception:  # noqa: BLE001
             return []
 
-        # Fall back to the function-wide EA map when available: maps EA ->
-        # list of citems; we instead need item -> line, which IDA does not
-        # expose cleanly here, so we leave line mappings empty rather than
-        # emit incorrect data.
+        line_to_addrs: dict[int, set[int]] = {
+            1: {(int(cfunc.entry_ea) - image_base) + elf_base}
+        }
+        try:
+            for ida_ea, items in eamap.items():
+                file_addr = (int(ida_ea) - image_base) + elf_base
+                for item in items:
+                    try:
+                        _x, zero_based_line = cfunc.find_item_coords(item)
+                    except Exception:  # noqa: BLE001
+                        continue
+                    line_to_addrs.setdefault(int(zero_based_line) + 1, set()).add(file_addr)
+        except Exception:  # noqa: BLE001
+            return []
+
         return common.merge_line_addresses(line_to_addrs)
