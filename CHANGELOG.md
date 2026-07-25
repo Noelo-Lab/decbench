@@ -2,6 +2,11 @@
 
 Significant changes to DecBench that introduce or update results, which can be viewable on the website.
 
+### 2026-07-25
+
+- External submissions: `decbench evalkit export` packages the frozen 250-function sample-set as an anonymized eval kit outside decompiler authors can score against, and `decbench evalkit ingest` brings their packaged results back as a new sample-set-only leaderboard column (see `docs/EXTERNAL_SUBMISSIONS.md`).
+- Repaired the sample-set to a true 250: 7 of the frozen picks were rows no decompiler could score (5 of them relabel-duplicate CRT/TLS-callback names with no DWARF anchor at all), so they were dead slots that scored for nobody. `scripts/export_sample_set.py --drop-unscoreable` drops them and refills their slots from the same category buckets, preserving every other pick verbatim. All 250 now resolve to real DWARF addresses across 224 binaries.
+
 ### 2026-07-24
 
 - Updated `about` to include other related works and some limitations of the benchmark metrics.

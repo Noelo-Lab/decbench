@@ -30,9 +30,18 @@ run this BEFORE stripping the project from the tree. ``--base MANIFEST`` verifie
 exactly that: every base pick outside the excluded projects must survive, else the
 export aborts (``--allow-drift`` overrides).
 
+``--drop-unscoreable`` (with ``--base``) additionally drops base picks that no
+longer resolve to a scoreable row — no metric value from any decompiler, or the
+row is gone entirely — and refills their slots from the same buckets. This is
+the repair path for the five valueless phantom picks (decompiler-invented
+relabel-duplicate names with no DWARF anchor) frozen into the published 2026-07
+manifest: it restores the manifest to a *true* 250 scoreable functions while
+preserving every valid pick verbatim.
+
 Usage:
     export_sample_set.py <results_tree | function_results.json> [-o OUT] [--seed N]
         [--exclude-project NAME]... [--base MANIFEST] [--allow-drift]
+        [--drop-unscoreable]
 
 Default OUT is ``<tree>/sample_set_manifest.json``.
 """
@@ -95,10 +104,26 @@ def topup_from_base(
     base_members: set[tuple[str, str, str, str]],
     exclude_projects: frozenset[str],
     seed: int | None = None,
+    exclude_members: frozenset[tuple[str, str, str, str]] = frozenset(),
 ) -> SubsetManifest:
     """Keep a base manifest's surviving picks and refill the freed slots."""
-    members = topup_sample_members(fd, base_members, exclude_projects, seed=seed)
+    members = topup_sample_members(
+        fd, base_members, exclude_projects, seed=seed, exclude_members=exclude_members
+    )
     return _manifest_from_members(members)
+
+
+def unscoreable_members(
+    fd: FunctionData, base_members: set[tuple[str, str, str, str]]
+) -> frozenset[tuple[str, str, str, str]]:
+    """Base picks that cannot contribute to any metric: rows with no value from
+    any decompiler (the :func:`~decbench.scoring.datasets._scoreable` criterion)
+    or rows that no longer exist in ``function_results.json`` at all."""
+    rows: dict[tuple[str, str, str, str], bool] = {}
+    for g in fd.groups:
+        for f in g.functions:
+            rows[(g.project, g.opt_level, g.binary, f.function)] = any(f.values.values())
+    return frozenset(m for m in base_members if not rows.get(m, False))
 
 
 def _key(e: dict) -> tuple[str, str, str, str]:
@@ -106,18 +131,24 @@ def _key(e: dict) -> tuple[str, str, str, str]:
 
 
 def diff_against_base(
-    manifest: SubsetManifest, base_path: Path, exclude_projects: frozenset[str]
+    manifest: SubsetManifest,
+    base_path: Path,
+    exclude_projects: frozenset[str],
+    exclude_members: frozenset[tuple[str, str, str, str]] = frozenset(),
 ) -> tuple[int, list[dict], list[dict], list[dict]]:
     """(kept, dropped_excluded, added, MISSING) vs a previous manifest.
 
-    ``MISSING`` — base picks from non-excluded projects that the new draw lost:
-    the drift the top-up mechanism promises cannot happen; non-empty means the
-    underlying data changed under the manifest (abort unless ``--allow-drift``).
+    ``MISSING`` — base picks from non-excluded projects (and not explicitly
+    dropped via ``exclude_members``) that the new draw lost: the drift the
+    top-up mechanism promises cannot happen; non-empty means the underlying
+    data changed under the manifest (abort unless ``--allow-drift``).
     """
     base = json.loads(base_path.read_text()).get("functions", [])
     new_keys = {_key(e) for e in manifest.functions}
-    base_keep = [e for e in base if e["project"] not in exclude_projects]
-    dropped = [e for e in base if e["project"] in exclude_projects]
+    base_keep = [
+        e for e in base if e["project"] not in exclude_projects and _key(e) not in exclude_members
+    ]
+    dropped = [e for e in base if e["project"] in exclude_projects or _key(e) in exclude_members]
     missing = [e for e in base_keep if _key(e) not in new_keys]
     kept = len(base_keep) - len(missing)
     base_keys = {_key(e) for e in base}
@@ -135,6 +166,7 @@ def main() -> int:
     seed: int | None = None
     base: Path | None = None
     allow_drift = False
+    drop_unscoreable = False
     exclude: set[str] = set()
     i = 1
     while i < len(args):
@@ -153,6 +185,9 @@ def main() -> int:
         elif args[i] == "--allow-drift":
             allow_drift = True
             i += 1
+        elif args[i] == "--drop-unscoreable":
+            drop_unscoreable = True
+            i += 1
         else:
             raise SystemExit(f"error: unknown arg {args[i]!r}")
     if out is None:
@@ -169,15 +204,26 @@ def main() -> int:
             "stripping the project from the tree"
         )
 
+    if drop_unscoreable and (base is None or not base.is_file()):
+        raise SystemExit("error: --drop-unscoreable requires --base MANIFEST")
+
+    drop_members: frozenset[tuple[str, str, str, str]] = frozenset()
     if base is not None and base.is_file():
         # Top-up: preserve the base manifest's surviving picks, refill freed slots.
         base_members = {_key(e) for e in json.loads(base.read_text()).get("functions", [])}
-        manifest = topup_from_base(fd, base_members, excluded, seed=seed)
+        if drop_unscoreable:
+            drop_members = unscoreable_members(fd, base_members)
+            for m in sorted(drop_members):
+                print(f"  x unscoreable: {m[0]}/{m[1]}/{m[2]}::{m[3]}")
+            print(f"[export] --drop-unscoreable: dropping {len(drop_members)} base picks")
+        manifest = topup_from_base(
+            fd, base_members, excluded, seed=seed, exclude_members=drop_members
+        )
     else:
         manifest = collect_sample_set(fd, seed=seed, exclude_projects=excluded)
 
     if base is not None and base.is_file():
-        kept, dropped, added, missing = diff_against_base(manifest, base, excluded)
+        kept, dropped, added, missing = diff_against_base(manifest, base, excluded, drop_members)
         print(f"vs base {base}: kept={kept} dropped(excluded)={len(dropped)} added={len(added)}")
         for e in dropped:
             print(f"  - dropped: {e['project']}/{e['opt']}/{e['binary']}::{e['function']}")

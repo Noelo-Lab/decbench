@@ -654,6 +654,8 @@ class CoverageGap:
         )
 
 
+# Built-in sample-set-only backends, kept for trees whose old checkpoints predate
+# the DecompilerMetadata.extra["slice_scoped"] flag (which audit_tree also honors).
 _LLM_BASENAMES = {"codex", "claude-code", "kimi-code"}
 
 
@@ -682,7 +684,9 @@ def audit_tree(root: Path, log: Log = print) -> list[CoverageGap]:
       case): re-decompile or accept as a recorded failure.
     * **PARTIAL** — published values < 50% of what checkpoint/artifact hold.
 
-    The LLM sample-set backends are only audited on their manifest slice.
+    The LLM sample-set backends — and any decompiler whose checkpoint
+    ``DecompilerMetadata.extra`` carries ``slice_scoped=True`` (external evalkit
+    submissions) — are only audited on their manifest slice.
     """
     root = Path(root)
     fd_path = root / "function_results.json"
@@ -729,6 +733,7 @@ def audit_tree(root: Path, log: Log = print) -> list[CoverageGap]:
             continue
         ckpt_names: dict[Slice, set[str]] = {}
         per_dec_opts: dict[tuple[str, str], dict[str, int]] = {}
+        scoped_decs: set[str] = set()
         for opt, bins in (data.get("decompile") or {}).items():
             optn = getattr(opt, "value", str(opt))
             for stem, decs in (bins or {}).items():
@@ -736,15 +741,18 @@ def audit_tree(root: Path, log: Log = print) -> list[CoverageGap]:
                     names = set((getattr(dr, "functions", {}) or {}).keys())
                     ckpt_names[(optn, project, stem, dec)] = names
                     per_dec_opts.setdefault((stem, dec), {})[optn] = len(names)
+                    extra = getattr(getattr(dr, "decompiler", None), "extra", None) or {}
+                    if extra.get("slice_scoped"):
+                        scoped_decs.add(dec)
         del data
         for (optn, proj, stem, dec), names in sorted(ckpt_names.items()):
             base_dec = dec.split("@", 1)[0]
             if published_decs and dec not in published_decs and base_dec not in published_decs:
                 continue  # decompiler intentionally removed from the dataset (e.g. phoenix)
-            if base_dec in _LLM_BASENAMES and (
+            if (base_dec in _LLM_BASENAMES or dec in scoped_decs) and (
                 llm_slices is None or (proj, optn, stem) not in llm_slices
             ):
-                continue  # off-slice LLM sparsity is by design
+                continue  # off-slice sparsity is by design (sample-set-only backend)
             key: Slice = (optn, proj, stem, dec)
             markers = _artifact_marker_names(root / optn / proj / "decompiled" / f"{dec}_{stem}.c")
             pubnames = published_names.get((optn, proj, stem))

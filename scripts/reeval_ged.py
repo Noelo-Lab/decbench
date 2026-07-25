@@ -44,6 +44,11 @@ DECOMPILERS = (
     "codex",
     "claude-code",
 )
+# DECBENCH_REEVAL_DECOMPILERS (comma list, e.g. "angr,mydec") overrides the default tuple.
+if os.environ.get("DECBENCH_REEVAL_DECOMPILERS"):
+    DECOMPILERS = tuple(
+        d.strip() for d in os.environ["DECBENCH_REEVAL_DECOMPILERS"].split(",") if d.strip()
+    )
 OPT_LEVELS = ("O0", "O2", "O2-noinline")
 SRC_OPT = "O0"  # source CFGs are opt-independent; extract once from here
 

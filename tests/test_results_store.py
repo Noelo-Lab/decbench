@@ -20,6 +20,7 @@ from decbench.models.metrics import MetricResult, MetricValue
 from decbench.models.project import OptimizationLevel
 from decbench.results_store import (
     CoverageRegressionError,
+    audit_tree,
     coverage_counts,
     coverage_regressions,
     finalize_tree,
@@ -263,6 +264,56 @@ def test_finalize_preserves_dataset_info_and_history(tmp_path: Path) -> None:
     reloaded = FunctionData.from_json(root / "function_results.json")
     assert reloaded.dataset_info == {"total_loc": 123}
     assert [h.decompiler for h in reloaded.history] == ["ghidra"]
+
+
+def test_audit_tree_scopes_slice_scoped_decompilers(tmp_path: Path) -> None:
+    """A decompiler whose checkpoint ``DecompilerMetadata.extra`` carries
+    ``slice_scoped=True`` (external evalkit submissions) is audited ONLY on the
+    manifest slice, exactly like the built-in LLM sample-set backends."""
+    root = tmp_path / "tree"
+    (root / "checkpoints").mkdir(parents=True)
+
+    def _dr(dec: str, *, scoped: bool) -> DecompilationResult:
+        fn = FunctionDecompilation(name="main", address=0x1000, decompiled_code="int main(){}\n")
+        return DecompilationResult(
+            binary_path=Path("/nonexistent/alphabin"),
+            binary_name="alphabin",
+            decompiler=DecompilerMetadata(
+                decompiler_name=dec,
+                extra={"slice_scoped": True} if scoped else {},
+            ),
+            functions={"main": fn},
+        )
+
+    ckpt = {
+        "decompile": {
+            OptimizationLevel.O0: {
+                "alphabin": {
+                    "mydec": _dr("mydec", scoped=True),
+                    "angr": _dr("angr", scoped=False),
+                }
+            },
+            OptimizationLevel.O2: {"alphabin": {"mydec": _dr("mydec", scoped=True)}},
+        },
+        "evaluate": {},
+    }
+    (root / "checkpoints" / "alpha.pkl").write_bytes(pickle.dumps(ckpt))
+    # Manifest covers ONLY the O2 slice: mydec's O0 checkpoint data is off-slice.
+    (root / "sample_set_manifest.json").write_text(
+        json.dumps(
+            {
+                "functions": [
+                    {"project": "alpha", "opt": "O2", "binary": "alphabin", "function": "main"}
+                ]
+            }
+        )
+    )
+
+    gaps = audit_tree(root, log=lambda _msg: None)
+    flagged = {(g.decompiler, g.opt) for g in gaps}
+    assert ("angr", "O0") in flagged  # unscoped decompiler: audited everywhere
+    assert ("mydec", "O0") not in flagged  # slice_scoped + off-manifest: by design
+    assert ("mydec", "O2") in flagged  # slice_scoped + on-manifest: still audited
 
 
 def test_finalize_tree_strips_excluded_decompilers(tmp_path: Path) -> None:

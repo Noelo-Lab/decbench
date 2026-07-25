@@ -24,6 +24,11 @@ from pathlib import Path
 from decbench.utils.results_tree import OPT_LEVELS, resolve_binary, split_functions
 
 DECOMPILERS = ("angr", "ghidra", "ida", "binja", "kuna", "r2dec", "dewolf")
+# DECBENCH_REEVAL_DECOMPILERS (comma list, e.g. "angr,mydec") overrides the default tuple.
+if os.environ.get("DECBENCH_REEVAL_DECOMPILERS"):
+    DECOMPILERS = tuple(
+        d.strip() for d in os.environ["DECBENCH_REEVAL_DECOMPILERS"].split(",") if d.strip()
+    )
 
 
 def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:

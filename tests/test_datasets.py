@@ -342,3 +342,81 @@ def test_sample_set_topup_is_deterministic() -> None:
     a = topup_sample_members(_make_multibucket(), base_members, frozenset({"p3"}), seed=1337)
     b = topup_sample_members(_make_multibucket(), base_members, frozenset({"p3"}), seed=1337)
     assert a == b
+
+
+def test_topup_refills_a_dropped_arm_pick_from_the_arm_bucket() -> None:
+    """A dropped `unoptimized-arm` pick must be replaced by another ARM function,
+    not by a general `unoptimized` one.
+
+    The buckets overlap (unoptimized-arm subset of unoptimized) and each is
+    quota-limited, so crediting a removed pick to the FIRST bucket that contains
+    it charges every ARM slot to plain `unoptimized` — the ARM sub-quota the
+    bucket exists to guarantee then shrinks silently on every repair.
+    """
+    base_fd = _make_multibucket()
+    assign_datasets(base_fd, sample_total=50, seed=1337)
+    base_members = _members_of(base_fd)
+    arm_picks = {m for m in base_members if m[0] == "p3"}  # p3 is the ARM project
+    assert arm_picks, "fixture must sample the ARM project"
+    victim = sorted(m for m in arm_picks if m[1] == "O0")[0]
+
+    fd = _make_multibucket()
+    for g in fd.groups:
+        for f in g.functions:
+            if (g.project, g.opt_level, g.binary, f.function) == victim:
+                f.values = {}  # unscoreable, so the refill cannot re-pick it
+
+    topped = topup_sample_members(
+        fd, base_members, frozenset(), seed=1337, exclude_members=frozenset({victim})
+    )
+    assert len(topped) == len(base_members)
+    added = topped - base_members
+    assert added, "the freed slot was refilled"
+    assert all(
+        m[0] == "p3" and m[1] == "O0" for m in added
+    ), f"ARM slot must be refilled from the ARM bucket, got {sorted(added)}"
+
+
+def test_topup_refills_a_dropped_pick_whose_row_vanished() -> None:
+    """A dropped pick that no longer exists in the dataset still frees a slot.
+
+    Such a key appears in no bucket, so the classification scan cannot see it;
+    without an opt-level fallback its slot is never refilled and the manifest
+    silently ends up short of its nominal size.
+    """
+    base_fd = _make_multibucket()
+    assign_datasets(base_fd, sample_total=50, seed=1337)
+    base_members = _members_of(base_fd)
+    ghost = ("p1", "O0", "p1_bin0", "function_that_no_longer_exists")
+    with_ghost = base_members | {ghost}
+
+    topped = topup_sample_members(
+        _make_multibucket(), with_ghost, frozenset(), seed=1337, exclude_members=frozenset({ghost})
+    )
+    assert ghost not in topped
+    assert len(topped) == len(with_ghost), "the vanished pick's slot is refilled, not lost"
+
+
+def test_sample_set_topup_drops_excluded_members_and_refills() -> None:
+    """exclude_members drops SPECIFIC base picks (the phantom-repair path: the five
+    valueless picks frozen into the published manifest) and refills their slots,
+    preserving every other pick verbatim — total size unchanged."""
+    base_fd = _make_multibucket()
+    assign_datasets(base_fd, sample_total=50, seed=1337)
+    base_members = _members_of(base_fd)
+    victims = frozenset(sorted(base_members)[:3])
+
+    # Simulate the phantoms: the victims' rows lose every metric value, so the
+    # refill (which skips unscoreable rows) can never re-pick them.
+    fd = _make_multibucket()
+    for g in fd.groups:
+        for f in g.functions:
+            if (g.project, g.opt_level, g.binary, f.function) in victims:
+                f.values = {}
+
+    topped = topup_sample_members(fd, base_members, frozenset(), seed=1337, exclude_members=victims)
+    assert not (topped & victims), "dropped members never reappear"
+    assert (base_members - victims) <= topped, "every other base pick preserved verbatim"
+    assert len(topped) == len(base_members), "freed slots are refilled"
+    for m in topped - base_members:
+        assert m not in victims
