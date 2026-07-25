@@ -88,6 +88,12 @@ decbench report scoreboard.toml     # Generate HTML report (interactive if
 decbench dataset save results/sailr_full sailr   # snapshot compiled binaries (no recompile later)
 decbench dataset materialize sailr results/reuse # lay back out, then: decbench run --skip-compile
 decbench subset results/sailr_full/function_results.json  # large-function subset manifest
+# External submissions (sample-set only): export the frozen 250-fn manifest as an
+# anonymized kit for outside decompiler authors; ingest their packaged results.zip as
+# a new slice-scoped column (then overlays/finalize/content edits/site build — see
+# docs/EXTERNAL_SUBMISSIONS.md):
+decbench evalkit export results/full_run          # -> decbench-evalkit-sample-set[.zip]
+decbench evalkit ingest results.zip results/full_run --id mydec
 # Find per-function improvement targets: functions where a BASE decompiler beats
 # a TARGET on a metric (respects each metric's direction; --perfect-only = base is
 # a perfect match, e.g. GED 0). Reads a results tree's function_results.json and

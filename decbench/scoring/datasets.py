@@ -156,6 +156,7 @@ def _sample_even(
     used_bins: set[tuple[str, str, str]],
     rng: random.Random,
     exclude_projects: frozenset[str] = frozenset(),
+    exclude_members: frozenset[tuple[str, str, str, str]] = frozenset(),
 ) -> list[tuple[BinaryGroup, FunctionRecord]]:
     """Pick up to ``quota`` records as a *seeded random*, evenly-spread sample.
 
@@ -181,8 +182,10 @@ def _sample_even(
     ``exclude_projects`` skips an excluded project's candidates during the scan.
     It is used ONLY by :func:`topup_sample_members` for the refill pass, whose
     ``chosen_fns``/``used_bins`` already pin the surviving picks — so exclusion
-    there cannot perturb them. It must NOT be used for a full fresh draw across
-    all five buckets: ``chosen_fns``/``used_bins`` are shared and two bucket
+    there cannot perturb them. ``exclude_members`` is the per-function analogue
+    (same refill-only caveat): it stops the refill from re-picking a member that
+    was explicitly dropped from the base manifest. It must NOT be used for a
+    full fresh draw across all five buckets: ``chosen_fns``/``used_bins`` are shared and two bucket
     pairs overlap (``unoptimized-arm`` ⊂ ``unoptimized``; ``large`` ⊂
     ``optimized``), so excluding a project mid-draw diverges the rng for the
     overlapping bucket and loses unrelated picks.
@@ -218,6 +221,8 @@ def _sample_even(
                         continue
                     if g.project in exclude_projects:
                         continue  # refill pass only: never pick the excluded project
+                    if (g.project, g.opt_level, g.binary, f.function) in exclude_members:
+                        continue  # refill pass only: never re-pick a dropped member
                     if not _scoreable(f):
                         continue  # phantom/unmeasurable row: never worth a slot
                     if one_per_binary and _binkey(g) in used_bins:
@@ -358,9 +363,11 @@ def topup_sample_members(
     sample_total: int = 250,
     k: float = 1.0,
     seed: int | None = None,
+    exclude_members: frozenset[tuple[str, str, str, str]] = frozenset(),
 ) -> set[tuple[str, str, str, str]]:
     """Return a full sample-set membership that KEEPS the surviving base picks
-    and deterministically refills the slots freed by ``exclude_projects``.
+    and deterministically refills the slots freed by ``exclude_projects`` /
+    ``exclude_members``.
 
     The frozen manifest (``base_members``) is the source of truth for every pick
     that is not from an excluded project — those are preserved verbatim, drift or
@@ -369,25 +376,35 @@ def topup_sample_members(
     (so the one-function-per-binary rule still holds). Deterministic for a given
     seed; idempotent. This avoids the seed-perturbation that a fresh draw with an
     exclusion would cause across the overlapping buckets (see :func:`_sample_even`).
+
+    ``exclude_members`` drops specific base picks (rather than whole projects) —
+    the repair path for the five valueless phantom picks frozen into the
+    published 2026-07 manifest (see :func:`_scoreable`): each dropped pick frees
+    its slot in its first-owning bucket and is refilled from that same bucket.
     """
     records = _apply_opt_presets(function_data, k)
-    kept = {m for m in base_members if m[0] not in exclude_projects}
-    removed = {m for m in base_members if m[0] in exclude_projects}
+    kept = {m for m in base_members if m[0] not in exclude_projects and m not in exclude_members}
+    removed = {m for m in base_members if m[0] in exclude_projects or m in exclude_members}
 
     buckets = _sample_buckets(records, large_threshold(function_data, k=k))
 
-    # Classify each removed pick into its FIRST-owning bucket (the same order the
-    # original draw used; `chosen` was shared across buckets so a record belonged
-    # to whichever bucket reached it first) — the refill draws that many fresh
-    # picks from the SAME bucket, so a removed "unoptimized" slot is replaced by
-    # another "unoptimized" function, etc.
+    # Classify each removed pick into its MOST-SPECIFIC owning bucket, so the
+    # refill draws its replacement from the same bucket. The buckets overlap
+    # (`large` ⊂ `optimized`, `unoptimized-arm` ⊂ `unoptimized`) and each is
+    # quota-limited, so a pick the broad bucket left unpicked can still have
+    # been drawn by the specific one. Crediting the FIRST (broadest) match
+    # would zero the specific buckets' refill counts — every record is in one
+    # of the first three by opt level — and silently convert e.g. an ARM slot
+    # into a general unoptimized one, shrinking the sub-quota the bucket exists
+    # to guarantee. The refill loop below still runs in draw order so the rng
+    # stream is unchanged.
     refill_per_bucket: dict[str, int] = {name: 0 for name in buckets}
     assigned: set[tuple[str, str, str, str]] = set()
     # Pin the kept picks so the refill never reuses their functions/binaries.
     chosen: set[int] = set()
     used_bins: set[tuple[str, str, str]] = set()
-    for name, items in buckets.items():
-        for g, f in items:
+    for name in reversed(list(buckets)):
+        for g, f in buckets[name]:
             key = (g.project, g.opt_level, g.binary, f.function)
             if key in assigned:
                 continue
@@ -399,14 +416,26 @@ def topup_sample_members(
                 assigned.add(key)
                 refill_per_bucket[name] += 1
 
+    # A removed pick whose record is GONE from the dataset entirely (a dropped
+    # or renamed function) appears in no bucket, so the loop above cannot credit
+    # it and its slot would silently vanish, leaving the manifest short. Charge
+    # those to the bucket their opt level belongs to.
+    _OPT_BUCKET = {_O0: "unoptimized", _O2_NOINLINE: "optimized", _O2: "inlined"}
+    for key in sorted(removed - assigned):
+        bucket = _OPT_BUCKET.get(key[1])
+        if bucket is not None:
+            refill_per_bucket[bucket] += 1
+
     rng = random.Random(_resolve_seed(seed))
     refilled: set[tuple[str, str, str, str]] = set()
     for name, items in buckets.items():
         need = refill_per_bucket[name]
         if need <= 0:
             continue
-        # exclude_projects here is safe: `chosen`/`used_bins` already pin every
-        # surviving pick, so skipping the removed project cannot perturb them.
-        for g, f in _sample_even(items, need, chosen, used_bins, rng, exclude_projects):
+        # exclude_projects/exclude_members here are safe: `chosen`/`used_bins`
+        # already pin every surviving pick, so the skips cannot perturb them.
+        for g, f in _sample_even(
+            items, need, chosen, used_bins, rng, exclude_projects, exclude_members
+        ):
             refilled.add((g.project, g.opt_level, g.binary, f.function))
     return kept | refilled
