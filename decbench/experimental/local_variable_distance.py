@@ -7,9 +7,10 @@ import contextlib
 import re
 import struct
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import networkx as nx
 
@@ -33,9 +34,7 @@ class VariableEvidence:
         data["addresses"] = [f"0x{x:x}" for x in sorted(self.addresses)]
         data["stack_offsets"] = list(self.stack_offsets)
         data["lines"] = list(self.lines)
-        data["live_ranges"] = [
-            [f"0x{start:x}", f"0x{end:x}"] for start, end in self.live_ranges
-        ]
+        data["live_ranges"] = [[f"0x{start:x}", f"0x{end:x}"] for start, end in self.live_ranges]
         return data
 
 
@@ -213,9 +212,7 @@ def match_variables(
     source_all = sorted(source, key=lambda var: var.identity)
     decompiled_all = sorted(decompiled, key=lambda var: var.identity)
     observable = [
-        var
-        for var in source_all
-        if var.addresses or var.stack_offsets or var.arg_index is not None
+        var for var in source_all if var.addresses or var.stack_offsets or var.arg_index is not None
     ]
     unobservable = [var for var in source_all if var not in observable]
     source_by_id = {var.identity: var for var in observable}
@@ -226,14 +223,9 @@ def match_variables(
 
     def accept(source_id: str, decompiled_id: str, stage: str, score: float) -> None:
         intersection = tuple(
-            sorted(
-                source_by_id[source_id].addresses
-                & decompiled_by_id[decompiled_id].addresses
-            )
+            sorted(source_by_id[source_id].addresses & decompiled_by_id[decompiled_id].addresses)
         )
-        matches.append(
-            VariableMatch(source_id, decompiled_id, stage, score, intersection)
-        )
+        matches.append(VariableMatch(source_id, decompiled_id, stage, score, intersection))
         remaining_source.remove(source_id)
         remaining_decompiled.remove(decompiled_id)
 
@@ -255,14 +247,10 @@ def match_variables(
             )
 
     source_stack = [
-        source_by_id[key]
-        for key in remaining_source
-        if source_by_id[key].stack_offsets
+        source_by_id[key] for key in remaining_source if source_by_id[key].stack_offsets
     ]
     decompiled_stack = [
-        decompiled_by_id[key]
-        for key in remaining_decompiled
-        if decompiled_by_id[key].stack_offsets
+        decompiled_by_id[key] for key in remaining_decompiled if decompiled_by_id[key].stack_offsets
     ]
     shift = _stack_shift(source_stack, decompiled_stack)
     if shift is not None:
@@ -282,8 +270,7 @@ def match_variables(
         exact_pairs = sorted(
             (source_id, next(iter(targets)))
             for source_id, targets in source_neighbors.items()
-            if len(targets) == 1
-            and len(decompiled_neighbors[next(iter(targets))]) == 1
+            if len(targets) == 1 and len(decompiled_neighbors[next(iter(targets))]) == 1
         )
         for source_id, decompiled_id in exact_pairs:
             if source_id in remaining_source and decompiled_id in remaining_decompiled:
@@ -298,9 +285,7 @@ def match_variables(
                 accept(source_id, decompiled_id, "stack", 1.0)
 
     remaining_source_vars = [source_by_id[key] for key in sorted(remaining_source)]
-    remaining_decompiled_vars = [
-        decompiled_by_id[key] for key in sorted(remaining_decompiled)
-    ]
+    remaining_decompiled_vars = [decompiled_by_id[key] for key in sorted(remaining_decompiled)]
     weights = _address_weights(remaining_source_vars, remaining_decompiled_vars)
     edges: dict[tuple[str, str], tuple[float, tuple[int, ...]]] = {}
     for source_var in remaining_source_vars:
@@ -345,13 +330,9 @@ def match_variables(
             decompiled_rows = decompiled_rank[decompiled_id]
             if source_rows[0][0] != decompiled_id or decompiled_rows[0][0] != source_id:
                 continue
-            source_gap = (
-                score - source_rows[1][1] if len(source_rows) > 1 else float("inf")
-            )
+            source_gap = score - source_rows[1][1] if len(source_rows) > 1 else float("inf")
             decompiled_gap = (
-                score - decompiled_rows[1][1]
-                if len(decompiled_rows) > 1
-                else float("inf")
+                score - decompiled_rows[1][1] if len(decompiled_rows) > 1 else float("inf")
             )
             if source_gap < ambiguity_margin or decompiled_gap < ambiguity_margin:
                 continue
@@ -397,12 +378,8 @@ def mask_elf_metadata(binary_path: Path, output_path: Path) -> None:
 
     shstr_header = shoff + shstrndx * shentsize
     word = "Q" if elf_class == 2 else "I"
-    strings_offset = struct.unpack_from(
-        endian + word, data, shstr_header + offset_field
-    )[0]
-    strings_size = struct.unpack_from(
-        endian + word, data, shstr_header + size_field
-    )[0]
+    strings_offset = struct.unpack_from(endian + word, data, shstr_header + offset_field)[0]
+    strings_size = struct.unpack_from(endian + word, data, shstr_header + size_field)[0]
     strings = data[strings_offset : strings_offset + strings_size]
 
     for index in range(shnum):
@@ -411,13 +388,13 @@ def mask_elf_metadata(binary_path: Path, output_path: Path) -> None:
         if name_offset >= len(strings):
             continue
         end = strings.find(b"\0", name_offset)
-        name = bytes(strings[name_offset : end if end >= 0 else None]).decode(
-            "ascii", "replace"
-        )
-        if (
-            name.startswith(".debug")
-            or name in {".symtab", ".strtab", ".gdb_index", ".gnu_debuglink"}
-        ):
+        name = bytes(strings[name_offset : end if end >= 0 else None]).decode("ascii", "replace")
+        if name.startswith(".debug") or name in {
+            ".symtab",
+            ".strtab",
+            ".gdb_index",
+            ".gnu_debuglink",
+        }:
             struct.pack_into(endian + "II", data, header, 0, 0)
     output_path.write_bytes(data)
     output_path.chmod(binary_path.stat().st_mode)
@@ -451,9 +428,7 @@ def _die_ranges(
     if ranges_attr is None:
         return fallback
     try:
-        entries = dwarfinfo.range_lists().get_range_list_at_offset(
-            ranges_attr.value, die.cu
-        )
+        entries = dwarfinfo.range_lists().get_range_list_at_offset(ranges_attr.value, die.cu)
     except Exception:
         return fallback
     cu_low = die.cu.get_top_DIE().attributes.get("DW_AT_low_pc")
@@ -465,9 +440,7 @@ def _die_ranges(
         elif entry.is_absolute:
             ranges.append((int(entry.begin_offset), int(entry.end_offset)))
         else:
-            ranges.append(
-                (base + int(entry.begin_offset), base + int(entry.end_offset))
-            )
+            ranges.append((base + int(entry.begin_offset), base + int(entry.end_offset)))
     return tuple(ranges) or fallback
 
 
@@ -514,9 +487,7 @@ def _location_info(
         if entry.is_absolute:
             live_ranges.append((int(entry.begin_offset), int(entry.end_offset)))
         else:
-            live_ranges.append(
-                (base + int(entry.begin_offset), base + int(entry.end_offset))
-            )
+            live_ranges.append((base + int(entry.begin_offset), base + int(entry.end_offset)))
     return tuple(sorted(offsets)), tuple(live_ranges)
 
 
@@ -538,9 +509,7 @@ def _decl_location(die: Any, line_program: Any) -> tuple[str | None, int | None]
 def _source_lines(source_path: Path, preprocessed_path: Path | None) -> dict[tuple[str, int], str]:
     lines = {
         (source_path.name, number): text
-        for number, text in enumerate(
-            source_path.read_text(errors="replace").splitlines(), start=1
-        )
+        for number, text in enumerate(source_path.read_text(errors="replace").splitlines(), start=1)
     }
     if preprocessed_path is None:
         return lines
@@ -585,6 +554,7 @@ def extract_source_evidence(
     *,
     preprocessed_path: Path | None = None,
     include_inlined: bool = False,
+    function_address: int | None = None,
 ) -> FunctionEvidence:
     from elftools.elf.elffile import ELFFile
 
@@ -592,15 +562,19 @@ def extract_source_evidence(
     with binary_path.open("rb") as stream:
         elf = ELFFile(stream)
         dwarfinfo = elf.get_dwarf_info()
-        found = next(
-            (
-                (cu, die)
-                for cu in dwarfinfo.iter_CUs()
-                for die in cu.iter_DIEs()
-                if die.tag == "DW_TAG_subprogram" and _die_name(die) == function_name
-            ),
-            None,
-        )
+        found = None
+        for cu in dwarfinfo.iter_CUs():
+            for die in cu.iter_DIEs():
+                if die.tag != "DW_TAG_subprogram" or _die_name(die) != function_name:
+                    continue
+                if function_address is not None:
+                    ranges = _die_ranges(die, dwarfinfo)
+                    if not any(begin == function_address for begin, _end in ranges):
+                        continue
+                found = (cu, die)
+                break
+            if found is not None:
+                break
         if found is None:
             raise ValueError(f"DWARF function {function_name!r} not found")
         cu, function_die = found
@@ -626,11 +600,7 @@ def extract_source_evidence(
         entries = line_program.header["file_entry"]
         for entry in line_program.get_entries():
             state = entry.state
-            if (
-                state is None
-                or state.end_sequence
-                or not start <= int(state.address) < end
-            ):
+            if state is None or state.end_sequence or not start <= int(state.address) < end:
                 continue
             actual = int(state.file) if cu["version"] >= 5 else int(state.file) - 1
             location: tuple[str, int] | None = None
@@ -758,8 +728,7 @@ def extract_ida_evidence(
             variable_lines[index].add(int(zero_based_line) + 1)
 
     arg_positions = {
-        int(local_index): position
-        for position, local_index in enumerate(cfunc.argidx)
+        int(local_index): position for position, local_index in enumerate(cfunc.argidx)
     }
     variables: list[VariableEvidence] = []
     stack_delta = int(cfunc.get_stkoff_delta())
@@ -775,9 +744,7 @@ def extract_ida_evidence(
         size = int(local.width) if getattr(local, "width", None) else None
         var_lines = tuple(sorted(variable_lines.get(index, set())))
         addresses = frozenset(
-            address
-            for line in var_lines
-            for address in line_addresses.get(line, set())
+            address for line in var_lines for address in line_addresses.get(line, set())
         )
         variables.append(
             VariableEvidence(
@@ -802,7 +769,65 @@ def extract_ida_evidence(
         end,
         variables,
         code="\n".join(lines),
-        line_addresses={
-            line: frozenset(addresses) for line, addresses in line_addresses.items()
-        },
+        line_addresses={line: frozenset(addresses) for line, addresses in line_addresses.items()},
+    )
+
+
+def extract_decompiler_evidence(
+    function: Any,
+    *,
+    backend: str,
+    function_name: str | None = None,
+    function_end: int | None = None,
+) -> FunctionEvidence:
+    base_backend = backend.split("@", 1)[0]
+    line_addresses = {
+        int(mapping.line_number): frozenset(int(address) for address in mapping.addresses)
+        for mapping in function.line_mappings
+    }
+    code_lines = function.decompiled_code.splitlines()
+    variables: list[VariableEvidence] = []
+    for index, variable in enumerate(function.variables):
+        if not variable.name:
+            continue
+        lines = {int(line) for line in getattr(variable, "line_numbers", [])}
+        if not lines and base_backend not in {"ida", "ghidra"}:
+            token = re.compile(r"\b" + re.escape(variable.name) + r"\b")
+            lines = {
+                line_number
+                for line_number, text in enumerate(code_lines, start=1)
+                if token.search(text)
+            }
+        addresses = {int(address) for address in getattr(variable, "addresses", [])}
+        if not addresses:
+            addresses = {
+                address for line in lines for address in line_addresses.get(line, frozenset())
+            }
+        stack_offsets = (int(variable.stack_offset),) if variable.stack_offset is not None else ()
+        variables.append(
+            VariableEvidence(
+                identity=f"{backend}:{index}",
+                name=variable.name,
+                addresses=frozenset(addresses),
+                stack_offsets=stack_offsets,
+                size=variable.size,
+                kind="arg" if variable.kind == "arg" else "local",
+                arg_index=variable.arg_index,
+                lines=tuple(sorted(lines)),
+            )
+        )
+    observed_addresses = {address for addresses in line_addresses.values() for address in addresses}
+    start = int(function.address)
+    end = (
+        int(function_end)
+        if function_end is not None
+        else max(observed_addresses, default=start) + 1
+    )
+    return FunctionEvidence(
+        function_name or function.name,
+        start,
+        end,
+        variables,
+        code=function.decompiled_code,
+        line_addresses=line_addresses,
     )

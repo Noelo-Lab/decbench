@@ -178,15 +178,15 @@ class RawIDADecompiler(Decompiler):
                     requested = {n for (n, _a) in functions}
                     enumerated = [(n, a) for (n, a) in enumerated if n in requested]
                 enumerated = common.narrow_to_source(
-                    enumerated, function_names, backend="ida",
+                    enumerated,
+                    function_names,
+                    backend="ida",
                     binary_name=binary_path.name,
                 )
                 for func_name, file_addr in enumerated:
                     func_result = None
                     try:
-                        func_result = self._decompile_one(
-                            func_name, file_addr, elf_base
-                        )
+                        func_result = self._decompile_one(func_name, file_addr, elf_base)
                     except Exception as e:  # noqa: BLE001
                         _l.debug("ida-raw: failed to decompile %s: %s", func_name, e)
                     if func_result is not None:
@@ -290,12 +290,21 @@ class RawIDADecompiler(Decompiler):
         if not code:
             return None
 
-        variables = self._extract_variables(cfunc)
+        variables, local_indices = self._extract_variables_with_indices(cfunc)
         line_mappings = self._extract_line_mappings(
             cfunc,
             elf_base,
             self._ida_image_base(),
         )
+        line_addresses = {mapping.line_number: set(mapping.addresses) for mapping in line_mappings}
+        for local_index, lines in self._extract_variable_lines(cfunc).items():
+            index = local_indices.get(local_index)
+            if index is None:
+                continue
+            variables[index].line_numbers = sorted(lines)
+            variables[index].addresses = sorted(
+                {address for line in lines for address in line_addresses.get(line, set())}
+            )
         metadata = common.extract_metrics(code)
 
         return FunctionDecompilation(
@@ -317,6 +326,13 @@ class RawIDADecompiler(Decompiler):
 
     @staticmethod
     def _extract_variables(cfunc: Any) -> list[VariableInfo]:
+        variables, _local_indices = RawIDADecompiler._extract_variables_with_indices(cfunc)
+        return variables
+
+    @staticmethod
+    def _extract_variables_with_indices(
+        cfunc: Any,
+    ) -> tuple[list[VariableInfo], dict[int, int]]:
         """Pull arguments (ABI order) and stack locals from ``cfunc.lvars``.
 
         Hex-Rays ``lvar_t`` objects expose ``is_arg_var``, ``name``, ``width``
@@ -325,14 +341,14 @@ class RawIDADecompiler(Decompiler):
         ``stkoff()``).
         """
         variables: list[VariableInfo] = []
+        local_indices: dict[int, int] = {}
         try:
             lvars = cfunc.get_lvars()
         except Exception:  # noqa: BLE001
-            return variables
+            return variables, local_indices
 
         arg_positions = {
-            int(local_index): position
-            for position, local_index in enumerate(cfunc.argidx)
+            int(local_index): position for position, local_index in enumerate(cfunc.argidx)
         }
         stack_delta = int(cfunc.get_stkoff_delta())
         for index, lvar in enumerate(lvars):
@@ -354,6 +370,7 @@ class RawIDADecompiler(Decompiler):
                 continue
 
             if is_arg:
+                local_indices[index] = len(variables)
                 variables.append(
                     VariableInfo(
                         name=name,
@@ -372,6 +389,7 @@ class RawIDADecompiler(Decompiler):
                         stack_offset = int(loc.stkoff()) - stack_delta
                 except Exception:  # noqa: BLE001
                     stack_offset = None
+                local_indices[index] = len(variables)
                 variables.append(
                     VariableInfo(
                         name=name,
@@ -381,7 +399,7 @@ class RawIDADecompiler(Decompiler):
                         kind="stack",
                     )
                 )
-        return variables
+        return variables, local_indices
 
     @staticmethod
     def _extract_line_mappings(
@@ -397,9 +415,7 @@ class RawIDADecompiler(Decompiler):
         except Exception:  # noqa: BLE001
             return []
 
-        line_to_addrs: dict[int, set[int]] = {
-            1: {(int(cfunc.entry_ea) - image_base) + elf_base}
-        }
+        line_to_addrs: dict[int, set[int]] = {1: {(int(cfunc.entry_ea) - image_base) + elf_base}}
         try:
             for ida_ea, items in eamap.items():
                 file_addr = (int(ida_ea) - image_base) + elf_base
@@ -413,3 +429,22 @@ class RawIDADecompiler(Decompiler):
             return []
 
         return common.merge_line_addresses(line_to_addrs)
+
+    @staticmethod
+    def _extract_variable_lines(cfunc: Any) -> dict[int, set[int]]:
+        try:
+            import ida_hexrays
+        except Exception:  # noqa: BLE001
+            return {}
+
+        variable_lines: dict[int, set[int]] = {}
+        for item in cfunc.treeitems:
+            try:
+                if item.op != ida_hexrays.cot_var:
+                    continue
+                index = int(item.cexpr.v.idx)
+                _x, zero_based_line = cfunc.find_item_coords(item)
+                variable_lines.setdefault(index, set()).add(int(zero_based_line) + 1)
+            except Exception:  # noqa: BLE001
+                continue
+        return variable_lines

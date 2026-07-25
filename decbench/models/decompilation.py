@@ -38,6 +38,14 @@ class VariableInfo(BaseModel):
         default=None,
         description="Positional index for function arguments (ABI order)",
     )
+    line_numbers: list[int] = Field(
+        default_factory=list,
+        description="Decompiler output lines containing references to this variable",
+    )
+    addresses: list[int] = Field(
+        default_factory=list,
+        description="ELF-file-space addresses on lines referencing this variable",
+    )
 
 
 class FunctionDecompilation(BaseModel):

@@ -5,13 +5,21 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from decbench.decompilers.raw.ghidra_raw import RawGhidraDecompiler
 from decbench.decompilers.raw.ida_raw import RawIDADecompiler
 from decbench.experimental.local_variable_distance import (
     VariableEvidence,
+    extract_decompiler_evidence,
     match_variables,
+)
+from decbench.models.decompilation import (
+    FunctionDecompilation,
+    LineMapping,
+    VariableInfo,
 )
 
 
@@ -108,10 +116,7 @@ def test_overlap_matching_is_name_blind_and_deterministic() -> None:
     baseline = match_variables(source, decompiled)
     renamed = match_variables(
         [replace(var, name=f"renamed_{index}") for index, var in enumerate(reversed(source))],
-        [
-            replace(var, name=f"synthetic_{index}")
-            for index, var in enumerate(reversed(decompiled))
-        ],
+        [replace(var, name=f"synthetic_{index}") for index, var in enumerate(reversed(decompiled))],
     )
     assert _pairs(baseline) == _pairs(renamed)
     assert _pairs(baseline) == {
@@ -166,6 +171,159 @@ def test_ida_line_mappings_are_one_based_and_rebased() -> None:
     assert by_line[5] == [0x1020, 0x1030]
 
 
+def test_ida_variable_lines_skip_only_the_bad_tree_item(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "ida_hexrays", SimpleNamespace(cot_var=1))
+    good_a = SimpleNamespace(
+        op=1,
+        cexpr=SimpleNamespace(v=SimpleNamespace(idx=2)),
+        line=3,
+    )
+    bad = SimpleNamespace(
+        op=1,
+        cexpr=SimpleNamespace(v=SimpleNamespace(idx=9)),
+        line=None,
+    )
+    good_b = SimpleNamespace(
+        op=1,
+        cexpr=SimpleNamespace(v=SimpleNamespace(idx=2)),
+        line=7,
+    )
+
+    def find_item_coords(item):
+        if item.line is None:
+            raise ValueError
+        return 0, item.line
+
+    cfunc = SimpleNamespace(
+        treeitems=[good_a, bad, good_b],
+        find_item_coords=find_item_coords,
+    )
+    assert RawIDADecompiler._extract_variable_lines(cfunc) == {2: {4, 8}}
+
+
+class _FakeAddress:
+    def __init__(self, offset: int):
+        self.offset = offset
+
+    def getOffset(self):
+        return self.offset
+
+
+class _FakeLine:
+    def __init__(self, number: int):
+        self.number = number
+
+    def getLineNumber(self):
+        return self.number
+
+
+class _FakeSymbol:
+    def __init__(self, symbol_id: int):
+        self.symbol_id = symbol_id
+
+    def getId(self):
+        return self.symbol_id
+
+    def getName(self):
+        return "v7"
+
+
+class _FakeToken:
+    def __init__(self, line: int, address: int, symbol_id: int | None = None):
+        self.line = _FakeLine(line)
+        self.address = _FakeAddress(address)
+        self.symbol_id = symbol_id
+
+    def numChildren(self):
+        return 0
+
+    def getLineParent(self):
+        return self.line
+
+    def getMinAddress(self):
+        return self.address
+
+    def isVariableRef(self):
+        return self.symbol_id is not None
+
+    def getHighSymbol(self, high):
+        return _FakeSymbol(self.symbol_id) if self.symbol_id is not None else None
+
+    def getText(self):
+        return "v7" if self.symbol_id is not None else "="
+
+
+class _FakeGroup:
+    def __init__(self, children):
+        self.children = children
+
+    def numChildren(self):
+        return len(self.children)
+
+    def Child(self, index):
+        return self.children[index]
+
+
+class _FakeGhidraResult:
+    def getCCodeMarkup(self):
+        return _FakeGroup([_FakeToken(5, 0x5020, 7), _FakeToken(5, 0x5030)])
+
+
+def test_ghidra_markup_maps_variable_tokens_and_line_addresses() -> None:
+    mappings, variable_lines = RawGhidraDecompiler._extract_markup_evidence(
+        _FakeGhidraResult(),
+        object(),
+        {7: 0},
+        elf_base=0x1000,
+        image_base=0x5000,
+    )
+    assert mappings == [LineMapping(line_number=5, addresses=[0x1020, 0x1030])]
+    assert variable_lines == {0: {5}}
+
+
+def test_saved_decompiler_evidence_uses_native_variable_addresses() -> None:
+    function = FunctionDecompilation(
+        name="FUN_1000",
+        address=0x1000,
+        decompiled_code=(
+            "int FUN_1000(int param_1) {\n"
+            "    int declaration_only;\n"
+            "    return param_1;\n"
+            "}"
+        ),
+        line_count=4,
+        line_mappings=[
+            LineMapping(line_number=1, addresses=[0x1000]),
+            LineMapping(line_number=2, addresses=[0x1002]),
+            LineMapping(line_number=3, addresses=[0x1004]),
+        ],
+        variables=[
+            VariableInfo(
+                name="param_1",
+                type="int",
+                kind="arg",
+                arg_index=0,
+                line_numbers=[1, 3],
+                addresses=[0x1004],
+            ),
+            VariableInfo(name="declaration_only", type="int"),
+            VariableInfo(name="", type="int"),
+        ],
+    )
+    evidence = extract_decompiler_evidence(
+        function,
+        backend="ghidra@12.1",
+        function_name="main",
+        function_end=0x1010,
+    )
+    assert evidence.name == "main"
+    assert evidence.end == 0x1010
+    assert len(evidence.variables) == 2
+    assert evidence.variables[0].identity == "ghidra@12.1:0"
+    assert evidence.variables[0].addresses == frozenset({0x1004})
+    assert evidence.variables[1].addresses == frozenset()
+
+
 def test_grep_main_demo(tmp_path: Path) -> None:
     required = [
         Path("testing/grep"),
@@ -200,9 +358,7 @@ def test_grep_main_demo(tmp_path: Path) -> None:
     assert all(line >= 2462 for line in source["argc"]["lines"])
     assert all(line >= 2462 for line in source["matcher"]["lines"])
     assert all(
-        line >= 2462
-        for variable in evidence["source"]["variables"]
-        for line in variable["lines"]
+        line >= 2462 for variable in evidence["source"]["variables"] for line in variable["lines"]
     )
     assert all(variable["name"] for variable in evidence["decompiled"]["variables"])
     assert source["num_operands"]["addresses"] == [
