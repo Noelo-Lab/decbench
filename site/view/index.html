@@ -9,14 +9,14 @@
     <meta property="og:site_name" content="DecBench">
     <meta property="og:type" content="website">
     <meta property="og:title" content="DecBench — view">
-    <meta property="og:description" content="Browse source vs decompiled code side-by-side. sample-set top 3: 1. Codex 53.5% · 2. Claude Code 46.5% · 3. angr 28.0%">
+    <meta property="og:description" content="Browse source vs decompiled code side-by-side. sample-set top 3: 1. Codex 53.6% · 2. Claude Code 47.2% · 3. angr 28.8%">
     <meta property="og:url" content="https://decbench.com/view/">
     <meta property="og:image" content="https://decbench.com/decbench_card.png">
     <meta property="og:image:width" content="1200">
     <meta property="og:image:height" content="630">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="DecBench — view">
-    <meta name="twitter:description" content="Browse source vs decompiled code side-by-side. sample-set top 3: 1. Codex 53.5% · 2. Claude Code 46.5% · 3. angr 28.0%">
+    <meta name="twitter:description" content="Browse source vs decompiled code side-by-side. sample-set top 3: 1. Codex 53.6% · 2. Claude Code 47.2% · 3. angr 28.8%">
     <meta name="twitter:image" content="https://decbench.com/decbench_card.png">
     <link rel="stylesheet" href="../app.css">
     <link rel="icon" type="image/png" href="../favicon.png">
@@ -45,7 +45,7 @@
             </div>
         </div>
             <div class="side-stats"><div class="side-stat"><span class="side-num" data-stat="functions">94,575</span> functions</div><div class="side-stat"><span class="side-num" data-stat="binaries">803</span> binaries</div><div class="side-stat"><span class="side-num">9</span> decompilers</div><div class="side-stat"><span class="side-num">3</span> metrics</div></div>
-            <div class="side-foot"><button class="ds-btn theme-toggle" id="theme-toggle" type="button" aria-label="toggle light or dark theme"><span class="th-to-light">[ light mode ]</span><span class="th-to-dark">[ dark mode ]</span></button><div class="side-foot-stamp">[ 2026-07-23 23:57 ]</div></div>
+            <div class="side-foot"><button class="ds-btn theme-toggle" id="theme-toggle" type="button" aria-label="toggle light or dark theme"><span class="th-to-light">[ light mode ]</span><span class="th-to-dark">[ dark mode ]</span></button><div class="side-foot-stamp">[ 2026-07-25 21:43 ]</div></div>
         </aside>
 
         <main class="main">
@@ -544,6 +544,11 @@ This is more common on the optimization dataset, and is a known limitation.</p>
     <section class="view" id="view-changelog" data-view="changelog">
         <h2 class="view-title">Changelog</h2>
         <p class="view-desc">Significant changes to DecBench that introduce or update results, which can be viewable on the website.</p>
+<h3 class="sub">2026-07-25</h3>
+<ul>
+<li>External submissions: <code>decbench evalkit export</code> packages the frozen 250-function sample-set as an anonymized eval kit outside decompiler authors can score against, and <code>decbench evalkit ingest</code> brings their packaged results back as a new sample-set-only leaderboard column (see <code>docs/EXTERNAL_SUBMISSIONS.md</code>).</li>
+<li>Repaired the sample-set to a true 250: 7 of the frozen picks were rows no decompiler could score (5 of them relabel-duplicate CRT/TLS-callback names with no DWARF anchor at all), so they were dead slots that scored for nobody. <code>scripts/export_sample_set.py --drop-unscoreable</code> drops them and refills their slots from the same category buckets, preserving every other pick verbatim. All 250 now resolve to real DWARF addresses across 224 binaries.</li>
+</ul>
 <h3 class="sub">2026-07-24</h3>
 <ul>
 <li>Updated <code>about</code> to include other related works and some limitations of the benchmark metrics.</li>
