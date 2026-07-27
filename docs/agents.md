@@ -1,7 +1,7 @@
 # AGENTS
 
 Guidance for coding agents (Claude Code, Codex, …) working in this repository.
-This file holds only the **mandatory** knowledge. Everything lookupable lives
+This file holds only the **mandatory** knowledge. Everything else lives
 in `docs/` — read the matching doc before working in an area.
 
 ## Project Overview
@@ -90,16 +90,12 @@ Key conventions:
 
 ## Critical rules (violating these silently corrupts results)
 
-- **The published metric numbers are the reeval OVERLAYS, not the checkpoint
-  inline values.** `function_results.json` is only ever written through
+- **The published metric numbers are the reeval OVERLAYS**, not the checkpoint
+  inline values. `function_results.json` is only ever written through
   `decbench/results_store.py`; the canonical rebuild is
   `scripts/finalize_results.py <tree>` (coverage-guarded; `--audit` scans for
   silent gaps). After adding a decompiler, refresh the overlays and
   re-finalize before publishing. Full flow: `docs/benchmarking.md`.
-- **Preprocessed `.i` files are REQUIRED** — GED's source-side CFGs come
-  exclusively from them; without `.i` GED is silently None for the whole run,
-  no error. Never disable `Project.emit_preprocessed` or `-save-temps=obj`.
-  Details: `docs/metrics.md`.
 - **Multiprocessing must use `spawn`/`forkserver`, never `fork`** — forking
   workers after angr's threads start deadlocks them. All `scripts/` drivers
   set `spawn`; any new parallel driver must too.
@@ -117,6 +113,11 @@ Key conventions:
 - **Canonical decompiler names are the raw (declib-free) backends**; the
   declib ones are `*-declib`. Drivers must `import decbench.decompilers` (the
   whole package) so every backend registers.
+- **When pushing to the website**, first verify that nothing extreme has changed. 
+  An example is a decompiler in the new site have 50% less functions decompiled 
+  than in the last update, or drastically changing rank. This can happen, but
+  should only occur when MAJOR changes to the benchmark occur, like adding a 
+  new metric or deleting many projects from the dataset.
 
 ## Coding Standards
 
@@ -126,3 +127,7 @@ Key conventions:
   `CFLAGS ?=` so the pipeline's env CFLAGS (which carry the opt level) take
   effect
 - PEP 8 with 100 character lines
+- One pull request per feature
+- Autonomous updates to CHANGELOG.md is illegal. You can make a suggestion in the PR description, but these should be edited by human maintainers.
+- After making changes to code, we should verify that the docs remain up-to-date with those changes
+

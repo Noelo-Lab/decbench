@@ -26,9 +26,9 @@ DecBench evaluates decompilers using three core metrics:
 | **Type Correctness** | Variable type recovery | Compares decompiled variable types against DWARF debug info |
 | **Recompilation Bytematch** | Recompilable, semantically-equivalent code | Recompiles each decompiled function with the **original toolchain** (matching its format/arch/opt flags) after a compilability **fixup** pass, then diffs the assembly via Jaccard similarity with linker-dependent operands normalized away |
 
-A **Union** score tracks the percentage of functions where a decompiler achieves a perfect match on *one of three* metrics — i.e. the source was "perfect" by one direction.
+A **Union** score tracks the percentage of functions where a decompiler achieves a perfect match on *one of three* metrics, i.e. the source was "perfect" by one direction.
 
-Full methodology — fairness passes, denominators, caching — is in [docs/metrics.md](docs/metrics.md).
+Full methodology, including fairness edits to decompilers, is in [docs/metrics.md](docs/metrics.md).
 
 ## Quickstart
 DecBench runs a three-stage pipeline (plus reporting):
@@ -63,6 +63,27 @@ decbench report results/scoreboard.toml -o report.html
 decbench list-decompilers
 decbench list-metrics
 ```
+
+### Compete externally
+
+If you have a decompiler you would like to add to DecBench, but would prefer to not open-source it or add a [harness](./decbench/decompilers/raw/), you can compete on the 250-function [sample-set](https://decbench.com/leaderboard/?dataset=sample-set) dataset.
+
+You can compete on it by downloading the dataset, decompiling each requested function, and sending back the zip to `decbench@mahaloz.re` or opening an issue.
+
+```bash
+# download the dataset
+curl -L https://huggingface.co/datasets/noelo-lab/decbench-dataset/resolve/main/kits/decbench-evalkit-sample-set.zip -o kit.zip && unzip kit.zip
+
+# follow the README and decompile requested functions
+cd decbench-evalkit-sample-set && cat README.md
+
+# package and send the results 
+python package.py 
+```
+
+
+
+
 
 ## Generating results
 
