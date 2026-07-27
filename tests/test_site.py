@@ -39,7 +39,7 @@ DATA_FILES = ["aggregates", "dataset", "samples"]
 # One `<view>/index.html` subpage per visible view (all five, given data), so
 # /leaderboard/, /data/, ... are directly linkable. `changelog` is a prose-only
 # view (no per-function data, no generated table). The `data` subpage shares its
-# directory with the data/*.json payloads — deliberate (see SITE_DATA_SCHEMA.md).
+# directory with the data/*.json payloads — deliberate (see docs/site.md).
 VIEW_IDS = ["leaderboard", "data", "view", "about", "changelog"]
 
 
@@ -124,7 +124,7 @@ def function_data() -> FunctionData:
 def test_build_site_writes_the_documented_tree(
     tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
 ) -> None:
-    """The tree is the contract in docs/SITE_DATA_SCHEMA.md; pages.yml deploys it."""
+    """The tree is the contract in docs/site.md; pages.yml deploys it."""
     out = tmp_path / "site"
     build_site(scoreboard, function_data, out)
 

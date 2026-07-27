@@ -25,7 +25,7 @@ with contextlib.suppress(ImportError):
 
 # LLM / coding-agent backends (Codex, Claude Code). They shell out to the
 # `codex` / `claude` CLIs; the imports are cheap (heavy work is at call time).
-# Meant to run on the `sample-set` slice only — see docs/LLM_DECOMPILERS.md.
+# Meant to run on the `sample-set` slice only — see docs/decompilers.md.
 with contextlib.suppress(ImportError):
     from decbench.decompilers import llm_dec  # noqa: F401
 

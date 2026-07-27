@@ -1,7 +1,7 @@
 """Publish a completed DecBench results tree as a HuggingFace-style dataset.
 
 This package implements *component 2* of the dataset-publishing contract
-(``docs/DATASET_PUBLISHING.md``): it reads a results tree (e.g.
+(``docs/dataset-publishing.md``): it reads a results tree (e.g.
 ``results/full_run``) anchored on its ``function_results.json`` and lays the
 data out into a dataset-repo root:
 

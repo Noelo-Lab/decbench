@@ -11,7 +11,7 @@
  * which functions land in a decompiler's denominator, what Union (the summary
  * column, still keyed `overall` in the payload) and normalize restrict to — are
  * the benchmark's contract and now live server-side. They are
- * specified in docs/SITE_DATA_SCHEMA.md ("Denominator semantics"); do not infer
+ * specified in docs/site.md ("Denominator semantics"); do not infer
  * them from this file, which can no longer enforce them.
  *
  * Two delivery modes, one code path (see loadData):
@@ -679,7 +679,7 @@ function buildMetricsTable(result) {
 }
 
 // ---- Distance table (the data page's #distance section; lower is better) ----
-// mean/median/n/at0 are precomputed per combo; see SITE_DATA_SCHEMA.md. A null
+// mean/median/n/at0 are precomputed per combo; see docs/site.md. A null
 // cell means no function under this combo had a finite distance for that metric.
 function buildDistance(result) {
     const tbl = document.getElementById("distance-table");

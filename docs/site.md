@@ -1,17 +1,197 @@
-# DecBench site data schema
+# The report and the site — rendering architecture + data schema
 
-The site is a static SPA whose every aggregate view is **precomputed server-side**.
-Nothing per-function is shipped except the bounded, code-carrying `samples` list.
+`decbench/rendering/` produces both the single-file HTML report
+(`decbench report`) and the deployable GitHub Pages tree
+(`decbench site build`). This doc covers the rendering architecture, the
+build/deploy flow, and — in the second half — the **normative data contract**
+for the deployed tree.
 
-## Why precomputed
+## Rendering architecture (`decbench/rendering/`)
 
-Every aggregate the report renders is a pure function of two selectors — the **dataset
-preset** (`unoptimized` / `optimized` / `inlined` / `large` / `sample-set`) and the
-**normalize-failures** toggle — so all `5 x 2 = 10` combinations are computed once, at
-build time (rationale and measurements: CLAUDE.md's "Why precompute").
+Themed after mahaloz.re (terminal aesthetic: black bg, Source Code Pro mono,
+dashed rules, ASCII bars). `html.py` is **skeleton assembly only** — it holds
+NO CSS, NO JS, NO prose. Layout:
 
-Consequence: adding a *new* client-side filter dimension requires a re-render
-(`decbench site build`), not just a page reload. That is the deliberate trade.
+- `content/` — **ALL maintainer-editable text.** `<view>.md` per view
+  (leaderboard, **data**, **view**, changelog, **about**) + `site.toml`
+  (brand/footer/banners/sidebar/side_stats, and `[decompilers] hidden` = the
+  site-hidden decompilers), `views.toml` (view registry: id, nav label,
+  `requires_function_data`, which is `default`), `metrics.toml` (display
+  name/short name/order/perfect definition — the ONE source of truth),
+  `datasets.toml` (the 5 presets' label+description+`default`),
+  `categories.toml` (software-type taxonomy), `pricing.toml` (per-model
+  USD/MTok list prices for the cost table — applied at RENDER time against
+  `FunctionData.cost_info`'s token facts, so a price fix is a re-render;
+  ships all-zero PLACEHOLDER cards that render n/a until the maintainer fills
+  them in), PLUS `decompilers.toml` — the decompiler registry (id → official
+  display_name/url/version_overrides, e.g. ida→"Hex-Rays" + "920"→"9.2");
+  shipped into `aggregates.json` as `decompiler_registry` (hidden decompilers
+  gated out), rendered as linked names + versions everywhere `app.js` names a
+  decompiler. Loaded by `content.py` (`load_content()`) into frozen
+  dataclasses.
+- `assets/` — `app.css`, `app.js`, and a **vendored** Source Code Pro woff2
+  (no Google Fonts CDN — the report must render offline). The scaffold's
+  element ids (`leaderboard-table`, `view-<id>`, ...) are the contract with
+  `app.js`; renaming one silently blanks a view. `app.js` also carries a
+  self-contained C/asm syntax highlighter (`hlC`/`hlAsm`/
+  `applyStaticHighlights`; token classes `tok-*` in app.css) — every
+  `<pre data-lang="c|asm">` in static content and the view page's code panels
+  are highlighted with it; NO third-party highlighter.
+- `aggregate.py` — **precomputes every aggregate at BUILD time.** Every view
+  is a pure function of exactly 2 selectors (dataset preset × normalize-
+  failures toggle) = 5×2 = **10 combos**, keyed `"<preset>|<0|1>"`. Semantics
+  are ported *verbatim* from the old client-side `recompute()`/
+  `buildDistance()`/`buildDataset()` — they are the **fairness contract**
+  (shared denominators), and JS quirks are reproduced on purpose (marked
+  `JS parity`, e.g. global `isFinite(null) === true`). A "fix" here silently
+  moves published numbers.
+- `site.py` — the split Pages tree (`build_site`); its only writer.
+- Two delivery modes share ONE skeleton (`build_page`) — the only difference
+  is the `PageAssets` passed in: **inline** (`decbench report`, everything
+  embedded because `file://` CORS-blocks `fetch()`) vs **split**
+  (`decbench site build`, linked assets + lazy payloads).
+
+**View history** (for anyone confused by old names): the view set was
+consolidated — the old `metrics` + `dataset` views merged into **about**
+(which carries the metric goal cards with collapsible SVG visualizations AND
+the dataset tables), and `compare` + `hardest` merged into **view** (source vs
+one decompiler across easy/medium/hard difficulty tiers —
+`scoring/view_samples.py`; ~100 samples/tier in `samples.json`, and
+`hardest.json` is no longer shipped). The 5 presets are `unoptimized`
+(default) / `optimized` (O2-noinline) / `inlined` (O2) / `large` /
+`sample-set` (250 fns; `scoring/datasets.py`). The old **distance** view is
+now the **data** view (2026-07-23) with four linkable sections — distance,
+compiles (the Compiles rate renders there), pipeline health (moved from
+about), and cost (per-fn decompile time + estimated LLM $, facts gathered by
+`scoring/cost.py` into `FunctionData.cost_info` via
+`scripts/compute_cost_info.py`); old `/distance/` URLs and `#distance` hashes
+redirect. The old Historical view was removed 2026-07-22 (HistoryPoint data +
+`ingest_history.py` remain, just unshipped).
+
+Content rules:
+
+- A view's `id` MUST have a matching `<id>.md`; exactly one view and one
+  preset must set `default = true` (`tests/test_content.py` enforces both).
+- **Raw-HTML islands**: `<details class="metric-viz">...</details>` blocks
+  pass through markdown VERBATIM (`content.py _render_with_islands` — mistune
+  would otherwise wrap SVG children in `<p>` inside `<svg>`, which browsers
+  refuse to draw, silently breaking the about page). No line inside an island
+  may start with `# `/`## `; blank lines are fine.
+- Editing `datasets.toml`/`metrics.toml` (preset labels + descriptions,
+  metric names, perfect definitions) takes effect on **re-render alone — no
+  benchmark re-run**: preset *text* is content, while preset *membership* is
+  scoring (`scoring/datasets.py`), joined at render time. Adding a new
+  client-side **filter dimension** is the exception — aggregates are
+  precomputed per (preset × normalize) combo, so that needs a re-render
+  (`decbench site build`), not just a page reload.
+
+**Labels** are derived by `scoring/labels.py`: auto opt-level labels (`O0`/
+`O2` + `optimized`/`unoptimized`), project labels from `ProjectConfig.labels`
+/ `binary_labels` (TOML), and per-function auto labels (`large` ≥ 100
+decompiled lines — distinct from the `large` *preset*, which is the
+size-bell-curve upper tail in `scoring/datasets.py`).
+
+**Preset membership** is tagged server-side by `scoring/datasets.py`
+(`assign_datasets`; "large" = upper tail of the size bell curve). The
+code-carrying extras (`samples`, `hardest`, `compile_rates`) are built by
+`scoring/report_extras.py` (`build_samples`/`build_hardest`/
+`compute_compile_rates`, wired in `attach_extras` AFTER datasets are
+assigned). Models in `models/function_data.py` (`SampleEntry`,
+`compile_rates`).
+
+### Why precompute
+
+The old report embedded every `FunctionRecord` — ~98.5 MB of JSON the browser
+re-scanned on every click — and a fresh single-file report exceeded GitHub's
+**100 MiB** per-file push limit, so it could not be committed at all.
+Precomputing the 10 combos shrinks `aggregates.json` to tens of KiB. Only
+`samples.json` and `dataset.json` are fetched lazily, when their view opens.
+
+## Site build + deploy
+
+Two commands render the **same page** from the same skeleton and the same
+content; they differ only in how it is delivered:
+
+| Command | Output | Use it when |
+|---------|--------|-------------|
+| `decbench report` | one self-contained `.html` (~7.1 MB) | you want a single file to open locally, email, or archive — CSS, JS, font and all data are inlined, so it works over `file://` |
+| `decbench site build` | a split tree in `site/` (~7.0 MB) | you are publishing to GitHub Pages — assets and data are separate files the browser caches, and only ~0.10 MB loads before first paint |
+
+```bash
+# Single self-contained file. Takes a SCOREBOARD path; if a sibling
+# function_results.json exists, the report is fully interactive.
+decbench report results/full_run/scoreboard.toml -o results/full_run/report.html
+
+# Deployable Pages tree. Takes a RESULTS TREE, and requires its
+# function_results.json — every view is computed from per-function data.
+decbench site build results/full_run -o site/
+```
+
+`decbench site build` (CLI in `cli.py`) takes a RESULTS TREE, not a
+scoreboard — `scoreboard.toml` is also accepted and resolved to its parent —
+and REQUIRES `function_results.json`, since the site is entirely data-driven
+(`decbench report` can still fall back to scoreboard-only tables). `data/`
+and `fonts/` are wiped per build: stale JSON on a live site is worse than
+missing JSON, because nothing reports it. Emits `.nojekyll` (Jekyll silently
+drops `_`-prefixed paths).
+
+**Linkable URLs**: the build also writes a `site/<view>/index.html` per
+visible view (asset links prefixed `../` directly — deliberately NO
+`<base href>`, which would break same-document SVG `url(#marker)` refs and
+`#anchors` — plus the `window.__DECBENCH_ROOT__` stamp; stale view dirs are
+pruned only when their index.html carries `SITE_PAGE_MARKER`), so
+`/leaderboard/` etc. deep-link; client state lives in query params
+(`?dataset=<preset>&norm=1`, and on the view page
+`?tier=&dec=&metric=&fn=<proj>/<opt>/<bin>::<func>`); legacy `#<view>` hashes
+still route.
+
+Payload writers use `json.dumps(..., allow_nan=False)` — browsers parse JSON
+strictly, and `function_results.json` CAN contain `ged: Infinity` (non-finite
+sample values are dropped by `aggregate._finite_sample`; anything else
+non-finite fails the build loudly instead of shipping a payload `JSON.parse`
+rejects).
+
+**`.github/workflows/pages.yml` is deploy-ONLY** — CI CANNOT generate the
+site (needs the decompilers + ~1.9 GB Joern + ~15 GB of binaries); the
+maintainer builds locally and commits `site/` (no longer gitignored), and the
+workflow only uploads it, failing if `site/index.html` or
+`site/data/aggregates.json` is missing. The workflow triggers on pushes to
+`main` that touch `site/**`.
+
+**Republishing after results change** (new runs, new decompiler columns,
+score updates — anything that touches `scoreboard.toml` /
+`function_results.json`; remember the overlays → finalize flow in
+benchmarking.md runs FIRST) is three steps:
+
+```bash
+decbench site build results/full_run -o site/      # 1. build locally
+git add site && git commit -m 'site: refresh'      # 2. commit it (site/ is deliberately NOT gitignored)
+git push                                           # 3. Actions deploys it
+```
+
+Before pushing, sanity-check the fresh build against the live site: nothing
+extreme should change — e.g. a decompiler losing half its decompiled
+functions, or a drastic rank flip — unless a MAJOR benchmark change (new
+metric, many projects added/removed) explains it. See the critical rules in
+`docs/agents.md`.
+
+---
+
+# The site data schema
+
+The site is a static SPA whose every aggregate view is **precomputed
+server-side**. Nothing per-function is shipped except the bounded,
+code-carrying `samples` list. Everything below is the normative contract the
+build (`site.py`, its only writer) and the client (`app.js`) implement
+against.
+
+Every aggregate the report renders is a pure function of two selectors — the
+**dataset preset** (`unoptimized` / `optimized` / `inlined` / `large` /
+`sample-set`) and the **normalize-failures** toggle — so all `5 x 2 = 10`
+combinations are computed once, at build time (rationale and measurements:
+"Why precompute" above). Consequence: adding a *new* client-side filter
+dimension requires a re-render (`decbench site build`), not just a page
+reload. That is the deliberate trade.
 
 ## Layout
 

@@ -9,7 +9,7 @@ delivery. The single-file report inlines everything because it must open over
   embedded C between them) are fetched only when their view is opened, so first
   paint costs ``aggregates.json`` alone.
 
-The tree is specified in ``docs/SITE_DATA_SCHEMA.md``; this module is its only
+The tree is specified in ``docs/site.md``; this module is its only
 writer. It is built locally by a maintainer and committed — see
 ``.github/workflows/pages.yml``, which deploys but never generates.
 """

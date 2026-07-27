@@ -18,7 +18,7 @@ the design:
   gates *which* functions reach the backend (``DECBENCH_SAMPLESET_MANIFEST`` in
   ``scripts/run_benchmark.py``), and the backend adds a belt-and-suspenders
   per-binary hard cap (:data:`_DEFAULT_MAX_FUNCS`) so a mis-configured run can
-  never fan out across the whole corpus. See ``docs/LLM_DECOMPILERS.md``.
+  never fan out across the whole corpus. See ``docs/decompilers.md``.
 * **Auth.** The CLIs authenticate with the host user's own credentials
   (``~/.codex/auth.json`` / ``~/.claude/.credentials.json`` or
   ``ANTHROPIC_API_KEY``/``OPENAI_API_KEY``). Run on the host, the subprocess

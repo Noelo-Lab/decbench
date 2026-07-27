@@ -733,7 +733,7 @@ def evalkit_export(tree, output, dataset, manifest, seed, make_zip, allow_unreso
         console.print(
             "Upload: copy the zip into the dataset repo checkout under kits/ "
             "(~/github/decbench-dataset) and git-lfs push; contributors download it "
-            "from the HuggingFace dataset repo (see docs/EXTERNAL_SUBMISSIONS.md)."
+            "from the HuggingFace dataset repo (see docs/decompilers.md)."
         )
 
 

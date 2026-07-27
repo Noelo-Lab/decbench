@@ -585,7 +585,7 @@ def main() -> int:
             "     DECBENCH_KUNA_MAX_FN_SECONDS, DECBENCH_DECOMPILE_ONLY, GHIDRA_INSTALL_DIR,\n"
             "     DECBENCH_SAMPLESET_MANIFEST (gate the run to the frozen sample-set slice;\n"
             "       required for the LLM backends codex/claude-code/kimi-code — see\n"
-            "       docs/LLM_DECOMPILERS.md)."
+            "       docs/decompilers.md)."
         )
         return 0
     out_dir = Path(args[0]) if args else Path("results/sailr_full")
