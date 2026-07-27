@@ -24,11 +24,12 @@ static site (https://decbench.com).
 ## Environment
 
 - Use the `decbench` virtualenv at `/home/mahaloz/.virtualenvs/decbench`
-  (Python 3.10; decbench installed editable). Activate with
+  (Python 3.14; decbench installed editable). Activate with
   `source /home/mahaloz/.virtualenvs/decbench/bin/activate`.
-- All benchmark backends work on this machine: angr, ghidra (12.1/12.0 + three
-  historical versions), ida (9.2 idalib), binja (3.1), r2dec, dewolf,
-  retdec/reko (docker), and the LLM agent backends.
+- Benchmark backends working on this machine: angr, ghidra (12.1/12.0 + three
+  historical versions), ida (9.2 idalib), binja (5.3), kuna, r2dec, dewolf,
+  and the codex/claude-code LLM agents. retdec/reko need their Docker images
+  built first, and kimi-code needs a Kimi OAuth login.
   `decbench list-decompilers` shows live availability; install paths,
   licenses, and per-version config are in `docs/benchmarking.md`.
 - Docker works here (no sudo needed).

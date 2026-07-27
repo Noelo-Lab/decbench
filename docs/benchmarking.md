@@ -9,8 +9,10 @@ decompiler in [decompilers.md](decompilers.md).
 ## Machine environment
 
 - Use the `decbench` virtualenv at `/home/mahaloz/.virtualenvs/decbench`
-  (Python 3.10; decbench installed editable). Activate with
-  `source /home/mahaloz/.virtualenvs/decbench/bin/activate`.
+  (Python 3.14; decbench installed editable). Activate with
+  `source /home/mahaloz/.virtualenvs/decbench/bin/activate`. (The package
+  itself supports >=3.10 per pyproject.toml; only the dewolf sidecar venv
+  still runs 3.10.)
 - Docker works here (no sudo needed); used for the RetDec/Reko/r2dec images
   and the `decbench-compile` cross-compile image.
 - `pygraphviz` builds against the system `libgraphviz-dev` (installed).
@@ -30,10 +32,11 @@ structurer was fully retired 2026-07-23; see CHANGELOG.md.)
 - **Ghidra 12.1 and 12.0** — `/home/mahaloz/bin/ghidra_12.{1,0}`, via
   pyghidra; export `GHIDRA_INSTALL_DIR` for the unversioned default.
 - **IDA Pro 9.2 idalib** — at `/home/mahaloz/ctf/tools/idapro_9.2`.
-- **Binary Ninja 3.1** — install at `/home/mahaloz/ctf/tools/binja/binaryninja`;
-  added to the venv via a `binaryninja.pth` in site-packages; needs a license
-  at `~/.binaryninja/license.dat` — a Commercial/Ultimate license is required
-  for headless use, and it must cover v3.1.
+- **Binary Ninja 5.3** (core 5.3.9757) — install at
+  `/home/mahaloz/ctf/tools/binja/binaryninja`; added to the venv via a
+  `binaryninja.pth` in site-packages; needs a license at
+  `~/.binaryninja/license.dat` — a Commercial/Ultimate license is required
+  for headless use, and it must cover the installed version.
 - **r2dec** — radare2; the benchmark path is the REAL r2dec plugin via the
   `decbench/r2dec` Docker image — native `pdc` is a fallback whose asm-like
   output yields no Joern CFG, so `pdd` is required for GED.
@@ -41,10 +44,13 @@ structurer was fully retired 2026-07-23; see CHANGELOG.md.)
   PROCESS in its own py3.10 venv at `/home/mahaloz/.virtualenvs/dewolf` with
   the repo at `/home/mahaloz/ctf/tools/dewolf`; see `raw/dewolf_raw.py` +
   `raw/dewolf_driver.py`, configured under `[dewolf.versions.default]`.
-- **RetDec / Reko** — Dockerized (`docker/`); build an image with
-  `decbench decompiler-build <name>`.
+- **RetDec / Reko** — Dockerized (`docker/`); their images are NOT currently
+  built on this machine (`list-decompilers` shows N) — build one with
+  `decbench decompiler-build <name>` first.
 - **codex / claude-code / kimi-code** — LLM coding-agent backends,
-  sample-set-only; see [decompilers.md](decompilers.md).
+  sample-set-only; see [decompilers.md](decompilers.md). codex and
+  claude-code are logged in and available; kimi-code shows N until a Kimi
+  OAuth login exists on this machine.
 
 ### Five Ghidra versions (multi-version / historical benchmarking)
 
