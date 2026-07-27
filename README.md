@@ -68,7 +68,8 @@ decbench list-metrics
 
 If you have a decompiler you would like to add to DecBench, but would prefer to not open-source it or add a [harness](./decbench/decompilers/raw/), you can compete on the 250-function [sample-set](https://decbench.com/leaderboard/?dataset=sample-set) dataset.
 
-You can compete on it by downloading the dataset, decompiling each requested function, and sending back the zip to `decbench@mahaloz.re` or opening an issue.
+You can compete on it by downloading the dataset, decompiling each requested function, and sending back the zip to `decbench@mahaloz.re` or opening an issue. 
+This does not require installing decbench, and does not require you to build the site.
 
 ```bash
 # download the dataset
@@ -80,10 +81,6 @@ cd decbench-evalkit-sample-set && cat README.md
 # package and send the results 
 python package.py 
 ```
-
-
-
-
 
 ## Generating results
 
