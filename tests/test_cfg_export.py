@@ -236,6 +236,51 @@ def test_export_matches_the_pipeline_resolution(project_tree) -> None:
             assert exported[name]["degenerate"] is is_degenerate_source_cfg(cfg)
 
 
+def test_functions_filter_keeps_only_the_binary_own_functions(project_tree) -> None:
+    """The published JSONs carry a binary's scored functions, not the whole project."""
+    root, dest = project_tree(
+        {
+            "cat": {"main": chain(3), "usage": chain(2)},
+            "libutil": {"xalloc": chain(7), "xrealloc": chain(4)},
+        }
+    )
+    cfg_export.export_project_cfgs(
+        root,
+        dest,
+        "proj",
+        {"O2": ["cat"]},
+        functions={("O2", "cat"): {"main", "xalloc"}},
+    )
+    assert set(read_export(dest, "cat")) == {"main", "xalloc"}
+
+
+def test_functions_filter_is_applied_after_resolution(project_tree) -> None:
+    """Filtering must not change which body a surviving name resolves to.
+
+    ``cat`` keeps only ``main``; the cross-TU fallback still has to see every TU
+    while resolving, so ``main`` is ``cat``'s 3-block body and not ``ls``'s.
+    """
+    root, dest = project_tree(
+        {
+            "cat": {"main": chain(3)},
+            "ls": {"main": chain(10)},
+        }
+    )
+    cfg_export.export_project_cfgs(
+        root, dest, "proj", {"O2": ["cat"]}, functions={("O2", "cat"): {"main"}}
+    )
+    exported = read_export(dest, "cat")
+    assert set(exported) == {"main"}
+    assert len(exported["main"]["nodes"]) == 3
+
+
+def test_no_filter_keeps_the_whole_resolved_map(project_tree) -> None:
+    """``functions=None`` stays the full project-wide name set."""
+    root, dest = project_tree({"cat": {"main": chain(3)}, "libutil": {"xalloc": chain(7)}})
+    cfg_export.export_project_cfgs(root, dest, "proj", {"O2": ["cat"]})
+    assert set(read_export(dest, "cat")) == {"main", "xalloc"}
+
+
 def test_existing_json_is_not_rewritten_without_overwrite(project_tree) -> None:
     """The export stays resumable: present JSONs are left alone."""
     root, dest = project_tree({"cat": {"main": chain(3)}})

@@ -258,6 +258,15 @@ DiGraph's nodes are relabeled to `0..n-1` (stable order); Joern parses are
 parsed once (Joern spawns a JVM per parse — the dominant cost; see the module
 docstring), and an existing `<stem>.json` is skipped unless `--overwrite`.
 
+Each JSON holds only the functions **that binary** is scored on
+(`publish_dataset.py::_cfg_functions` passes `group.all_functions` as the
+`functions` filter). The filter is applied AFTER resolution, so it never changes
+which body a surviving name maps to — the cross-TU fallback still sees every TU.
+Storing the project-wide name set in every binary instead multiplies the export
+~11x (1.02M function entries vs 94k, ≈5.1 GB vs ≈0.5 GB) for names that binary
+can never be scored on. Calling `export_all_cfgs` without `functions` keeps the
+full map.
+
 `degenerate` records `is_degenerate_source_cfg` at export time. It has to be
 stored because the predicate distinguishes a real one-block body from an empty
 prototype by looking for a non-`Nop` statement, and statements are exactly what

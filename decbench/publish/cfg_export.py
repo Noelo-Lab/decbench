@@ -33,7 +33,7 @@ import hashlib
 import json
 import logging
 import multiprocessing as mp
-from collections.abc import Callable
+from collections.abc import Callable, Collection, Mapping
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -55,6 +55,9 @@ logger = logging.getLogger(__name__)
 Logger = Callable[[str], None]
 
 CfgSerial = tuple[list[int], list[list[int]], dict[str, str], list[int], list[int], bool]
+
+# (opt, stem) -> the function names that binary's JSON should keep.
+FunctionFilter = Mapping[tuple[str, str], Collection[str]]
 
 
 class RealStatement:
@@ -252,6 +255,7 @@ def export_project_cfgs(
     project: str,
     stems_by_opt: dict[str, list[str]],
     *,
+    functions: FunctionFilter | None = None,
     overwrite: bool = False,
     generator: str = "pyjoern",
 ) -> dict[tuple[str, str], str]:
@@ -263,6 +267,10 @@ def export_project_cfgs(
     cross-TU fallback needs every TU of the project. Parses are deduplicated
     across opts via a project-local cache. Existing JSONs are skipped unless
     ``overwrite``.
+
+    ``functions`` maps ``(opt, stem)`` to the function names to keep, applied
+    AFTER resolution so it never changes which body a name resolves to. Omit it
+    to store the whole project-wide name set in every binary's JSON.
     """
     out: dict[tuple[str, str], str] = {}
     cache: dict[str, dict[str, DiGraph]] = {}  # type: ignore[type-arg]
@@ -275,7 +283,11 @@ def export_project_cfgs(
         resolved = _resolved_cfgs_for_opt(root, project, opt, pending, cache) if pending else {}
         for stem, target in targets.items():
             if stem in resolved:
-                _write_cfg_json(target, opt, project, stem, resolved[stem], generator)
+                keep = functions.get((opt, stem)) if functions is not None else None
+                cfgs = resolved[stem]
+                if keep is not None:
+                    cfgs = {name: c for name, c in cfgs.items() if name in keep}
+                _write_cfg_json(target, opt, project, stem, cfgs, generator)
             out[(opt, stem)] = target.relative_to(dest).as_posix()
     return out
 
@@ -286,6 +298,7 @@ def export_all_cfgs(
     stems_by_project_opt: dict[str, dict[str, list[str]]],
     *,
     workers: int = 1,
+    functions: dict[tuple[str, str, str], Collection[str]] | None = None,
     overwrite: bool = False,
     generator: str = "pyjoern",
     log: Logger = print,
@@ -295,12 +308,19 @@ def export_all_cfgs(
     Parallelizes across **projects** (one worker per project) so each worker
     keeps its own cross-opt parse cache. Uses a ``spawn`` context (fork is unsafe
     once threaded libs are imported, per the repo's multiprocessing guidance).
+    ``functions`` is the ``(opt, project, stem) -> names to keep`` filter, sliced
+    per project before it is handed to a worker.
     """
     results: dict[tuple[str, str, str], str] = {}
 
     def _record(project: str, per: dict[tuple[str, str], str]) -> None:
         for (opt, stem), rel in per.items():
             results[(opt, project, stem)] = rel
+
+    def _for(project: str) -> FunctionFilter | None:
+        if functions is None:
+            return None
+        return {(o, s): names for (o, p, s), names in functions.items() if p == project}
 
     if workers and workers > 1 and len(stems_by_project_opt) > 1:
         ctx = mp.get_context("spawn")
@@ -312,6 +332,7 @@ def export_all_cfgs(
                     dest,
                     project,
                     sbo,
+                    functions=_for(project),
                     overwrite=overwrite,
                     generator=generator,
                 ): project
@@ -330,7 +351,13 @@ def export_all_cfgs(
                 _record(
                     project,
                     export_project_cfgs(
-                        root, dest, project, sbo, overwrite=overwrite, generator=generator
+                        root,
+                        dest,
+                        project,
+                        sbo,
+                        functions=_for(project),
+                        overwrite=overwrite,
+                        generator=generator,
                     ),
                 )
                 log(f"[cfg] {project}: done")
