@@ -4,8 +4,8 @@ Significant changes to DecBench that introduce or update results, which can be v
 
 ### 2026-07-25
 
-- External submissions: `decbench evalkit export` packages the frozen 250-function sample-set as an anonymized eval kit outside decompiler authors can score against, and `decbench evalkit ingest` brings their packaged results back as a new sample-set-only leaderboard column (see `docs/decompilers.md`).
-- Repaired the sample-set to a true 250: 7 of the frozen picks were rows no decompiler could score (5 of them relabel-duplicate CRT/TLS-callback names with no DWARF anchor at all), so they were dead slots that scored for nobody. `scripts/export_sample_set.py --drop-unscoreable` drops them and refills their slots from the same category buckets, preserving every other pick verbatim. All 250 now resolve to real DWARF addresses across 224 binaries.
+- Fixed a caching bug in `sample-set` that prevented Codex/CC from having 3 samples graded/shown in the UI. Their scores have changed slightly.
+- External submission to DecBench are now open and can be done for closed source or private decompilers. See the [README note](https://github.com/Noelo-Lab/decbench#compete-externally) for how.
 
 ### 2026-07-24
 
