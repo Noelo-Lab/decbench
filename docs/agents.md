@@ -130,5 +130,6 @@ Key conventions:
 - PEP 8 with 100 character lines
 - One pull request per feature
 - Autonomous updates to CHANGELOG.md is illegal. You can make a suggestion in the PR description, but these should be edited by human maintainers.
-- After making changes to code, we should verify that the docs remain up-to-date with those changes
+- After making changes to code, we should verify that the docs remain up-to-date with those changes.
+- We want to minimize the inline comments we do in our code. Only in the rarest cases where code is especially confusing or a hack should we have inline comments. Comments in the headers of files is ok. Comments in the function prototype is also ok, but should be minimal. 
 
