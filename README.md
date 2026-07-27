@@ -115,48 +115,13 @@ binaries. They are **required**, not build debris: GED's source-side CFGs are
 parsed exclusively from them, and without the `.i` files GED is silently
 skipped for the entire run (why: [docs/metrics.md](docs/metrics.md)).
 
-## Rendering the site
+## Republishing the site
 
-Two commands render the **same page** from the same skeleton and the same
-content; they differ only in how it is delivered.
-
-| Command | Output | Use it when |
-|---------|--------|-------------|
-| `decbench report` | one self-contained `.html` (~7.1 MB) | you want a single file to open locally, email, or archive — CSS, JS, font and all data are inlined, so it works over `file://` |
-| `decbench site build` | a split tree in `site/` (~7.0 MB) | you are publishing to GitHub Pages — assets and data are separate files the browser caches, and only ~0.10 MB loads before first paint |
-
-```bash
-# Single self-contained file. Takes a SCOREBOARD path; if a sibling
-# function_results.json exists, the report is fully interactive.
-decbench report results/full_run/scoreboard.toml -o results/full_run/report.html
-
-# Deployable Pages tree. Takes a RESULTS TREE, and requires its
-# function_results.json — every view is computed from per-function data.
-decbench site build results/full_run -o site/
-```
-
-### Publishing to GitHub Pages
-
-CI **never builds the site** — the maintainer builds locally and commits the
-tree; [`.github/workflows/pages.yml`](.github/workflows/pages.yml) only uploads
-what is already in `site/`.
-
-```bash
-decbench site build results/full_run -o site/      # 1. build locally
-git add site && git commit -m 'site: refresh'      # 2. commit it (site/ is deliberately NOT gitignored)
-git push                                           # 3. Actions deploys it
-```
-
-The tree's data contract — and why CI cannot build it — is in
-[`docs/site.md`](docs/site.md).
-
-### Editing the site's text
-
-**Every string a maintainer might want to reword lives in
-`decbench/rendering/content/` — not in `html.py`.** Edit a file there, re-render,
-done: no benchmark re-run, no Python. The per-file breakdown (view prose, the
-metric/preset/decompiler registries, pricing) is in
-[docs/site.md](docs/site.md).
+Most users never need to build the site. It only needs republishing when the
+published results change — new runs, new decompilers, updated scores. CI never
+builds it: the tree under `site/` is built locally, committed, and deployed by
+Actions. The build + publish guide (delivery modes, the three-step publish
+flow, and where the site's text lives) is in [docs/site.md](docs/site.md).
 
 ## Finding improvement cases
 

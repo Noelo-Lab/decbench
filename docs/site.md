@@ -109,13 +109,31 @@ Precomputing the 10 combos shrinks `aggregates.json` to tens of KiB. Only
 
 ## Site build + deploy
 
-`decbench site build <results-tree> -o site/` (CLI in `cli.py`; takes a
-RESULTS TREE, not a scoreboard — `scoreboard.toml` is also accepted and
-resolved to its parent — and REQUIRES `function_results.json`, since the site
-is entirely data-driven; `decbench report` can still fall back to
-scoreboard-only tables). `data/` and `fonts/` are wiped per build: stale JSON
-on a live site is worse than missing JSON, because nothing reports it. Emits
-`.nojekyll` (Jekyll silently drops `_`-prefixed paths).
+Two commands render the **same page** from the same skeleton and the same
+content; they differ only in how it is delivered:
+
+| Command | Output | Use it when |
+|---------|--------|-------------|
+| `decbench report` | one self-contained `.html` (~7.1 MB) | you want a single file to open locally, email, or archive — CSS, JS, font and all data are inlined, so it works over `file://` |
+| `decbench site build` | a split tree in `site/` (~7.0 MB) | you are publishing to GitHub Pages — assets and data are separate files the browser caches, and only ~0.10 MB loads before first paint |
+
+```bash
+# Single self-contained file. Takes a SCOREBOARD path; if a sibling
+# function_results.json exists, the report is fully interactive.
+decbench report results/full_run/scoreboard.toml -o results/full_run/report.html
+
+# Deployable Pages tree. Takes a RESULTS TREE, and requires its
+# function_results.json — every view is computed from per-function data.
+decbench site build results/full_run -o site/
+```
+
+`decbench site build` (CLI in `cli.py`) takes a RESULTS TREE, not a
+scoreboard — `scoreboard.toml` is also accepted and resolved to its parent —
+and REQUIRES `function_results.json`, since the site is entirely data-driven
+(`decbench report` can still fall back to scoreboard-only tables). `data/`
+and `fonts/` are wiped per build: stale JSON on a live site is worse than
+missing JSON, because nothing reports it. Emits `.nojekyll` (Jekyll silently
+drops `_`-prefixed paths).
 
 **Linkable URLs**: the build also writes a `site/<view>/index.html` per
 visible view (asset links prefixed `../` directly — deliberately NO
@@ -137,7 +155,25 @@ rejects).
 site (needs the decompilers + ~1.9 GB Joern + ~15 GB of binaries); the
 maintainer builds locally and commits `site/` (no longer gitignored), and the
 workflow only uploads it, failing if `site/index.html` or
-`site/data/aggregates.json` is missing.
+`site/data/aggregates.json` is missing. The workflow triggers on pushes to
+`main` that touch `site/**`.
+
+**Republishing after results change** (new runs, new decompiler columns,
+score updates — anything that touches `scoreboard.toml` /
+`function_results.json`; remember the overlays → finalize flow in
+benchmarking.md runs FIRST) is three steps:
+
+```bash
+decbench site build results/full_run -o site/      # 1. build locally
+git add site && git commit -m 'site: refresh'      # 2. commit it (site/ is deliberately NOT gitignored)
+git push                                           # 3. Actions deploys it
+```
+
+Before pushing, sanity-check the fresh build against the live site: nothing
+extreme should change — e.g. a decompiler losing half its decompiled
+functions, or a drastic rank flip — unless a MAJOR benchmark change (new
+metric, many projects added/removed) explains it. See the critical rules in
+`docs/agents.md`.
 
 ---
 
