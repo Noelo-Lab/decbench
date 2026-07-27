@@ -7,7 +7,7 @@ import contextlib
 import re
 import struct
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -45,6 +45,8 @@ class VariableMatch:
     stage: str
     score: float
     intersection: tuple[int, ...] = ()
+    source_runner_up_gap: float | None = None
+    decompiled_runner_up_gap: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -221,11 +223,29 @@ def match_variables(
     remaining_decompiled = set(decompiled_by_id)
     matches: list[VariableMatch] = []
 
-    def accept(source_id: str, decompiled_id: str, stage: str, score: float) -> None:
+    def accept(
+        source_id: str,
+        decompiled_id: str,
+        stage: str,
+        score: float,
+        *,
+        source_runner_up_gap: float | None = None,
+        decompiled_runner_up_gap: float | None = None,
+    ) -> None:
         intersection = tuple(
             sorted(source_by_id[source_id].addresses & decompiled_by_id[decompiled_id].addresses)
         )
-        matches.append(VariableMatch(source_id, decompiled_id, stage, score, intersection))
+        matches.append(
+            VariableMatch(
+                source_id,
+                decompiled_id,
+                stage,
+                score,
+                intersection,
+                source_runner_up_gap,
+                decompiled_runner_up_gap,
+            )
+        )
         remaining_source.remove(source_id)
         remaining_decompiled.remove(decompiled_id)
 
@@ -330,13 +350,23 @@ def match_variables(
             decompiled_rows = decompiled_rank[decompiled_id]
             if source_rows[0][0] != decompiled_id or decompiled_rows[0][0] != source_id:
                 continue
-            source_gap = score - source_rows[1][1] if len(source_rows) > 1 else float("inf")
-            decompiled_gap = (
-                score - decompiled_rows[1][1] if len(decompiled_rows) > 1 else float("inf")
-            )
-            if source_gap < ambiguity_margin or decompiled_gap < ambiguity_margin:
+            source_gap = score - source_rows[1][1] if len(source_rows) > 1 else None
+            decompiled_gap = score - decompiled_rows[1][1] if len(decompiled_rows) > 1 else None
+            if (
+                source_gap is not None
+                and source_gap < ambiguity_margin
+                or decompiled_gap is not None
+                and decompiled_gap < ambiguity_margin
+            ):
                 continue
-            accept(source_id, decompiled_id, "overlap", score)
+            accept(
+                source_id,
+                decompiled_id,
+                "overlap",
+                score,
+                source_runner_up_gap=source_gap,
+                decompiled_runner_up_gap=decompiled_gap,
+            )
             accepted = True
             break
         if not accepted:
@@ -506,13 +536,26 @@ def _decl_location(die: Any, line_program: Any) -> tuple[str | None, int | None]
     return name, int(line_attr.value) if line_attr is not None else None
 
 
-def _source_lines(source_path: Path, preprocessed_path: Path | None) -> dict[tuple[str, int], str]:
-    lines = {
+def source_file_lines(source_path: Path) -> dict[tuple[str, int], str]:
+    """Read one source file into the ``(basename, line)`` lookup used by DWARF.
+
+    This is intentionally separate from :func:`preprocessed_line_marker_lines`
+    so batch scorers can cache a large ``.i`` translation unit once while
+    extracting evidence for many functions from it.
+    """
+
+    return {
         (source_path.name, number): text
         for number, text in enumerate(source_path.read_text(errors="replace").splitlines(), start=1)
     }
-    if preprocessed_path is None:
-        return lines
+
+
+def preprocessed_line_marker_lines(
+    preprocessed_path: Path,
+) -> dict[tuple[str, int], str]:
+    """Parse GCC/Clang line markers from a preprocessed translation unit."""
+
+    lines: dict[tuple[str, int], str] = {}
     marker = re.compile(r'^\s*#\s+(\d+)\s+"([^"]+)"')
     current_file: str | None = None
     current_line = 0
@@ -525,6 +568,19 @@ def _source_lines(source_path: Path, preprocessed_path: Path | None) -> dict[tup
         if current_file is not None:
             lines.setdefault((current_file, current_line), text)
             current_line += 1
+    return lines
+
+
+def load_source_lines(
+    source_path: Path,
+    preprocessed_path: Path | None,
+) -> dict[tuple[str, int], str]:
+    """Build source-line text keyed the same way as the DWARF line table."""
+
+    lines = source_file_lines(source_path)
+    if preprocessed_path is not None:
+        for location, text in preprocessed_line_marker_lines(preprocessed_path).items():
+            lines.setdefault(location, text)
     return lines
 
 
@@ -555,10 +611,15 @@ def extract_source_evidence(
     preprocessed_path: Path | None = None,
     include_inlined: bool = False,
     function_address: int | None = None,
+    source_lines: Mapping[tuple[str, int], str] | None = None,
 ) -> FunctionEvidence:
     from elftools.elf.elffile import ELFFile
 
-    source_text = _source_lines(source_path, preprocessed_path)
+    source_text = (
+        source_lines
+        if source_lines is not None
+        else load_source_lines(source_path, preprocessed_path)
+    )
     with binary_path.open("rb") as stream:
         elf = ELFFile(stream)
         dwarfinfo = elf.get_dwarf_info()
@@ -779,6 +840,7 @@ def extract_decompiler_evidence(
     backend: str,
     function_name: str | None = None,
     function_end: int | None = None,
+    include_unnamed: bool = False,
 ) -> FunctionEvidence:
     base_backend = backend.split("@", 1)[0]
     line_addresses = {
@@ -788,7 +850,7 @@ def extract_decompiler_evidence(
     code_lines = function.decompiled_code.splitlines()
     variables: list[VariableEvidence] = []
     for index, variable in enumerate(function.variables):
-        if not variable.name:
+        if not variable.name and not include_unnamed:
             continue
         lines = {int(line) for line in getattr(variable, "line_numbers", [])}
         if not lines and base_backend not in {"ida", "ghidra"}:

@@ -6,12 +6,16 @@ each (project, opt) pair in parallel, persisting binaries under
 ``<out>/<opt>/<project>/compiled/`` so a later ``--skip-compile`` decompile
 + evaluate run can reuse them. Prints a per-target binary/.i count table and
 writes ``compile_report.json`` for the orchestrator.
+
+Set ``DECBENCH_OPT_LEVELS`` to a comma-separated list (for example ``O2``)
+when an experiment must build only selected optimization levels.
 """
 
 from __future__ import annotations
 
 import json
 import multiprocessing
+import os
 import sys
 import time
 import traceback
@@ -46,6 +50,12 @@ OPT_LEVELS = [
     OptimizationLevel.O2,
     OptimizationLevel.O2_NOINLINE,
 ]
+if os.environ.get("DECBENCH_OPT_LEVELS"):
+    OPT_LEVELS = [
+        OptimizationLevel(value.strip())
+        for value in os.environ["DECBENCH_OPT_LEVELS"].split(",")
+        if value.strip()
+    ]
 
 
 def _count_outputs(out_dir: Path, opt: str, name: str) -> tuple[int, int]:

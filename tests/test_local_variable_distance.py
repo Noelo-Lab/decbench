@@ -125,6 +125,29 @@ def test_overlap_matching_is_name_blind_and_deterministic() -> None:
     }
 
 
+def test_overlap_runner_up_gaps_are_captured_at_the_peeling_iteration() -> None:
+    source = [
+        _var("s0", addresses={1, 2, 3, 4}),
+        _var("s1", addresses={4, 5, 6, 7}),
+    ]
+    decompiled = [
+        _var("d0", addresses={1, 2, 3, 4}),
+        _var("d1", addresses={4, 5, 6, 7}),
+    ]
+
+    result = match_variables(source, decompiled)
+    matches = {(match.source_id, match.decompiled_id): match for match in result.matches}
+
+    first = matches[("s0", "d0")]
+    assert first.source_runner_up_gap is not None
+    assert first.decompiled_runner_up_gap is not None
+    # s0/d0 has been peeled away before s1/d1 is accepted. Its now-inactive
+    # cross edges must not be reported as runner-ups for the second pair.
+    second = matches[("s1", "d1")]
+    assert second.source_runner_up_gap is None
+    assert second.decompiled_runner_up_gap is None
+
+
 def test_ambiguous_equal_overlap_is_not_forced() -> None:
     source = [_var("s0", addresses={1, 2})]
     decompiled = [
@@ -307,7 +330,12 @@ def test_saved_decompiler_evidence_uses_native_variable_addresses() -> None:
                 addresses=[0x1004],
             ),
             VariableInfo(name="declaration_only", type="int"),
-            VariableInfo(name="", type="int"),
+            VariableInfo(
+                name="",
+                type="int",
+                line_numbers=[2],
+                addresses=[0x1002],
+            ),
         ],
     )
     evidence = extract_decompiler_evidence(
@@ -322,6 +350,18 @@ def test_saved_decompiler_evidence_uses_native_variable_addresses() -> None:
     assert evidence.variables[0].identity == "ghidra@12.1:0"
     assert evidence.variables[0].addresses == frozenset({0x1004})
     assert evidence.variables[1].addresses == frozenset()
+
+    calibration_evidence = extract_decompiler_evidence(
+        function,
+        backend="ghidra@12.1",
+        function_name="main",
+        function_end=0x1010,
+        include_unnamed=True,
+    )
+    assert len(calibration_evidence.variables) == 3
+    assert calibration_evidence.variables[2].identity == "ghidra@12.1:2"
+    assert calibration_evidence.variables[2].name == ""
+    assert calibration_evidence.variables[2].addresses == frozenset({0x1002})
 
 
 def test_grep_main_demo(tmp_path: Path) -> None:
