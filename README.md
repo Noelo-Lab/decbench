@@ -132,7 +132,7 @@ git push                                           # 3. Actions deploys it
 
 The workflow triggers on pushes to `main` that touch `site/**`, failing loudly if
 `site/index.html` or `site/data/aggregates.json` is missing; the tree's data
-contract is [`docs/SITE_DATA_SCHEMA.md`](docs/SITE_DATA_SCHEMA.md).
+contract is [`docs/site.md`](docs/site.md).
 
 ### Editing the site's text
 
@@ -195,5 +195,5 @@ decbench download sample-set --dest ./decbench-data
 python scripts/publish_dataset.py results/full_run --dest ~/github/decbench-dataset
 ```
 
-See [docs/DATASET_PUBLISHING.md](docs/DATASET_PUBLISHING.md) for the repo layout,
+See [docs/dataset-publishing.md](docs/dataset-publishing.md) for the repo layout,
 the publisher, and the lightweight consumer CLI.

@@ -83,7 +83,7 @@ SITE_PAGE_MARKER = "<!-- decbench:page -->"
 #: is applied to <html> before first paint — a link/style loaded first would flash
 #: the default (dark) theme. It reads localStorage (in try/catch: file:// and
 #: privacy modes throw) plus an optional ``?theme=`` param (a debug/share
-#: convenience, documented in docs/SITE_DATA_SCHEMA.md), then stamps
+#: convenience, documented in docs/site.md), then stamps
 #: ``data-theme`` on the document element. Dark is the default and the only
 #: theme when nothing is stored; there is deliberately NO OS-preference detection
 #: — only an explicit user choice switches to light. Lives in the shared skeleton

@@ -5,7 +5,7 @@ The report used to ship every :class:`~decbench.models.function_data.FunctionRec
 on every click. Every aggregate the site renders is a pure function of exactly two
 selectors — the dataset **preset** and the **normalize-failures** toggle — so there
 are only ``len(presets) x 2`` distinct answers. This module computes all of them
-once, here, into ~22 KB of JSON (see ``docs/SITE_DATA_SCHEMA.md``).
+once, here, into ~22 KB of JSON (see ``docs/site.md``).
 
 The aggregation semantics are ported verbatim from the client-side ``recompute()``,
 ``buildDistance()`` and ``buildDataset()`` in :mod:`decbench.rendering.html`. They
@@ -51,7 +51,7 @@ __all__ = [
 #: dataset presets at all. Reserved: no real preset may use it. The client falls back
 #: to this key when it has no preset to select (``app.js``'s ``FALLBACK_PRESET``), so
 #: a preset-less run renders every number with no dataset selector instead of an
-#: error banner. Kept in sync by ``docs/SITE_DATA_SCHEMA.md`` and tests.
+#: error banner. Kept in sync by ``docs/site.md`` and tests.
 ALL_PRESET = "__all__"
 
 #: The preset on which the sample-set-only decompilers (codex/claude-code — the LLM
