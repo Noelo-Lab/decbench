@@ -546,8 +546,8 @@ This is more common on the optimization dataset, and is a known limitation.</p>
         <p class="view-desc">Significant changes to DecBench that introduce or update results, which can be viewable on the website.</p>
 <h3 class="sub">2026-07-25</h3>
 <ul>
-<li>External submissions: <code>decbench evalkit export</code> packages the frozen 250-function sample-set as an anonymized eval kit outside decompiler authors can score against, and <code>decbench evalkit ingest</code> brings their packaged results back as a new sample-set-only leaderboard column (see <code>docs/EXTERNAL_SUBMISSIONS.md</code>).</li>
-<li>Repaired the sample-set to a true 250: 7 of the frozen picks were rows no decompiler could score (5 of them relabel-duplicate CRT/TLS-callback names with no DWARF anchor at all), so they were dead slots that scored for nobody. <code>scripts/export_sample_set.py --drop-unscoreable</code> drops them and refills their slots from the same category buckets, preserving every other pick verbatim. All 250 now resolve to real DWARF addresses across 224 binaries.</li>
+<li>Fixed a caching bug in <code>sample-set</code> that prevented Codex/CC from having 3 samples graded/shown in the UI. Their scores have changed slightly.</li>
+<li>External submission to DecBench are now open and can be done for closed source or private decompilers. See the <a href="https://github.com/Noelo-Lab/decbench#compete-externally">README note</a> for how.</li>
 </ul>
 <h3 class="sub">2026-07-24</h3>
 <ul>
