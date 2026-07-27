@@ -20,9 +20,6 @@ def content() -> Content:
     return load_content()
 
 
-# -- views -----------------------------------------------------------------
-
-
 def test_every_registered_view_has_content(content: Content) -> None:
     """views.toml is the registry; each id must have a parsed <id>.md."""
     for spec in content.view_specs:
@@ -49,8 +46,6 @@ def test_view_registry_covers_the_report(content: Content) -> None:
 def test_visible_views_drop_data_backed_views_without_data(content: Content) -> None:
     without = [v.id for v in content.visible_views(has_function_data=False)]
     with_data = [v.id for v in content.visible_views(has_function_data=True)]
-    # data/view need per-function data; leaderboard, about, and the prose
-    # changelog do not.
     assert without == ["leaderboard", "about", "changelog"]
     assert with_data == [v.id for v in content.view_specs]
 
@@ -83,10 +78,9 @@ def test_default_view_is_the_leaderboard(content: Content) -> None:
 
 def test_empty_states_are_parsed(content: Content) -> None:
     view = content.view("view")
-    assert view.has_empty_state
+    assert view.empty_html
     assert view.title == "view"
     assert "No sample functions were attached" in view.empty_html
-    # The three dropdowns are the contract with app.js's initView.
     for control in ("view-difficulty", "view-dec", "view-metric", "view-select"):
         assert f'id="{control}"' in view.body_html
 
@@ -95,14 +89,8 @@ def test_inline_html_passes_through_unescaped(content: Content) -> None:
     """Prose is markdown now, but the scaffolds and hand-authored viz islands are
     still final markup: their raw tags and entities must survive rendering
     byte-for-byte (the renderer's verbatim text() must not re-escape them)."""
-    # A scaffold element (JS fills it) passes through verbatim — the view page's
-    # selector controls.
     assert '<div class="controls">' in content.view("view").body_html
-    # The about page's .recovered callout is a raw-HTML styling hook, so its
-    # <strong> is passed through untouched (markdown is not parsed inside a
-    # raw-HTML block, so the tag is the only way to bold there).
     assert "<strong>at least one</strong>" in content.view("about").outro_html
-    # The metric-viz islands keep their hand-authored entities — not double-escaped.
     ged = next(g for g in content.view("about").goals if g.metric_key == "ged")
     assert "&mdash;" in ged.body_html
     assert "&amp;mdash;" not in ged.body_html
@@ -115,20 +103,14 @@ def test_prose_renders_markdown_constructs(content: Content) -> None:
     Guards the markdown-first rule — the literal `**`/`*`/`[..]` must be gone, and
     a bold run in a view body must become <strong>."""
     lb = content.view("leaderboard").body_html
-    # *italic* -> <em>, and the literal markdown is consumed.
     assert "<em>at least one</em>" in lb
     assert "*at least one*" not in lb
-    # [text](url) -> <a href>.
     assert '<a href="https://mahaloz.re/dec-history-pt1">the last 30 years</a>' in lb
-    # Literal unicode punctuation survives; it does NOT come back as an entity.
     assert "—" in lb
     assert "&mdash;" not in lb
-    # **bold** -> <strong> in a view body (the data page's distance section).
     di = content.view("data").body_html
     assert "<strong>GED</strong>" in di
     assert "**GED**" not in di
-    # Inline `code` -> <code> (also the changelog injection path, which renders
-    # markdown bullets as lists).
     injected = content.with_view("changelog", "# changelog\n\n- run `foo()` and **bar**.")
     body = injected.view("changelog").body_html
     assert "<code>foo()</code>" in body
@@ -159,12 +141,9 @@ def test_with_view_reparses_only_the_named_view(content: Content) -> None:
     injected = content.with_view("changelog", "# changelog\n\n- an injected bullet.")
     body = injected.view("changelog").body_html
     assert injected.view("changelog").title == "changelog"
-    assert "<li>an injected bullet.</li>" in body  # markdown lists render as lists
-    # Only the changelog view changed; every other view is the same object, and
-    # the original Content is untouched.
+    assert "<li>an injected bullet.</li>" in body
     assert injected.view("about") is content.view("about")
     assert "an injected bullet." not in content.view("changelog").body_html
-    # An unregistered id is a no-op (returns self, not a copy).
     assert content.with_view("does-not-exist", "# x") is content
 
 
@@ -175,13 +154,10 @@ def test_data_view_has_four_section_anchors(content: Content) -> None:
     body = content.view("data").body_html
     for anchor in ("distance", "compiles", "pipeline-health", "cost"):
         assert f'<h3 class="sub" id="{anchor}">' in body, anchor
-    # The section scaffolds app.js's builders target.
     for scaffold in ("cost-table", "joern-source", "joern-output-table"):
         assert f'id="{scaffold}"' in body, scaffold
-    # The pre-rename element ids are unchanged (the app.js contract).
     for kept in ("distance-table", "distance-subset-note", "compile-table", "compile-subset-note"):
         assert f'id="{kept}"' in body, kept
-    # ...and about.md no longer carries the joern scaffolds it used to.
     about = content.view("about")
     assert "joern-" not in about.body_html + about.outro_html + about.empty_html
 
@@ -197,12 +173,8 @@ def test_pricing_registry_loads(content: Content) -> None:
     assert "gpt-5.6-sol" in names
     assert content.model_pricing("claude-opus-4-8") is not None
     assert content.model_pricing("no-such-model") is None
-    # The is_priced gate: any non-zero axis is priced; all-zero is unpriced.
     assert ModelPricing(name="x", output_per_mtok=15.0).is_priced
     assert not ModelPricing(name="x").is_priced
-
-
-# -- metrics ---------------------------------------------------------------
 
 
 def test_metrics_registry_covers_the_three_metrics(content: Content) -> None:
@@ -213,7 +185,6 @@ def test_metric_lookup_and_fallbacks(content: Content) -> None:
     assert content.short_name("ged") == "Structure"
     assert content.display_name("ged") == "Structural Correctness (GED)"
     assert content.metric("nope") is None
-    # Unknown metrics fall back to their raw name rather than blowing up.
     assert content.short_name("nope") == "nope"
 
 
@@ -221,9 +192,6 @@ def test_ordered_metrics_sorts_known_and_appends_unknown(content: Content) -> No
     assert content.ordered_metrics(["byte_match", "ged", "type_match"]) == BENCHMARK_METRICS
     assert content.ordered_metrics(["byte_match", "ged"]) == ["ged", "byte_match"]
     assert content.ordered_metrics(["zzz", "ged"]) == ["ged", "zzz"]
-
-
-# -- goal cards (on the about page) -----------------------------------------
 
 
 def test_goal_card_parse_yields_three_cards(content: Content) -> None:
@@ -238,10 +206,7 @@ def test_goal_cards_are_fully_populated(content: Content) -> None:
         assert card.title
         assert card.metric_display_name
         assert card.body_html
-        # Every metric card carries its collapsible how-it-works visualization.
         assert 'class="metric-viz"' in card.body_html
-        # GED and type_match draw inline SVG; byte_match visualizes with an HTML
-        # assembly line-diff (.viz-diff) instead, so accept either.
         assert "<svg" in card.body_html or 'class="viz-diff"' in card.body_html
         assert card.perfect.startswith("perfect = ")
 
@@ -257,15 +222,10 @@ def test_goal_card_perfect_lines_match_the_metric_registry(content: Content) -> 
 def test_about_view_keeps_intro_and_outro_around_the_cards(content: Content) -> None:
     view = content.view("about")
     assert "three separable goals" in view.body_html
-    assert "[1]" not in view.body_html  # cards were lifted out of the body
+    assert "[1]" not in view.body_html
     assert 'class="recovered"' in view.outro_html
-    # The dataset section (scaffolds app.js fills from data/dataset.json)
-    # merged into this page's outro.
     assert 'id="dataset-summary"' in view.outro_html
     assert 'id="dataset-projects"' in view.outro_html
-
-
-# -- datasets --------------------------------------------------------------
 
 
 def test_exactly_one_default_dataset(content: Content) -> None:
@@ -290,13 +250,8 @@ def test_dataset_presets_cover_the_selector(content: Content) -> None:
     ]
     for preset in content.dataset_presets:
         assert preset.label and preset.description
-        # The leaderboard's per-dataset explainer paragraph: every shipped preset
-        # names itself (LARGE, SAMPLE-SET, ...) at the start of its paragraph.
         assert preset.long_description
         assert preset.name.upper() in preset.long_description
-
-
-# -- decompilers -----------------------------------------------------------
 
 
 def test_decompiler_registry_loads_with_names_links_and_overrides(content: Content) -> None:
@@ -309,9 +264,8 @@ def test_decompiler_registry_loads_with_names_links_and_overrides(content: Conte
     ida = content.decompiler("ida")
     assert ida is not None
     assert ida.display_name == "Hex-Rays"
-    # A raw version string is prettified through the entry's overrides.
     assert ida.pretty_version("920") == "9.2"
-    assert ida.pretty_version("unknown") == "unknown"  # unmapped passes through
+    assert ida.pretty_version("unknown") == "unknown"
     assert ida.pretty_version(None) is None
 
 
@@ -323,10 +277,8 @@ def test_decompiler_license_and_logo_are_parsed(content: Content) -> None:
     ida = content.decompiler("ida")
     assert ida is not None and ida.license == "closed-source" and ida.logo is True
 
-    # Every registered backend declares a license; only some ship a logo asset.
     for spec in content.decompilers:
         assert spec.license in {"open-source", "closed-source"}, spec.id
-    # RetDec/Reko carry no logo (no .dlogo-<id> in app.css yet).
     assert content.decompiler("retdec").logo is False
     assert content.decompiler("reko").logo is False
 
@@ -348,9 +300,6 @@ def test_decompiler_url_is_optional(content: Content) -> None:
     """Kuna has no homepage yet, so it renders unlinked."""
     kuna = content.decompiler("kuna")
     assert kuna is not None and kuna.url == ""
-
-
-# -- categories / site -----------------------------------------------------
 
 
 def test_categories_carry_labels_in_display_order(content: Content) -> None:
@@ -375,7 +324,6 @@ def test_site_chrome(content: Content) -> None:
     assert site.brand.title == "DecBench"
     assert site.brand.subtitle == "decompiler benchmark"
     assert "function_results.json" in site.no_function_data_banner
-    # The leading space separates the label from the <span> holding the number.
     assert site.side_stats["functions"] == " functions"
 
 
@@ -389,9 +337,6 @@ def test_footer_renders_projects_and_falls_back_when_empty(content: Content) -> 
 
 def test_load_content_is_cached(content: Content) -> None:
     assert load_content() is content
-
-
-# -- raw-HTML islands --------------------------------------------------------
 
 
 def test_metric_viz_islands_pass_through_verbatim() -> None:
@@ -444,6 +389,5 @@ def test_metric_viz_blocks_open_by_default_and_carry_a_visualization(content: Co
     assert "<svg" in goals["ged"]
     assert "<svg" in goals["type_match"]
     assert 'class="viz-diff"' in goals["byte_match"]
-    # The byte_match score strip's arithmetic is exact: 7 / 8 = 0.88.
     assert "0.88" in goals["byte_match"]
     assert "0.87" not in goals["byte_match"]

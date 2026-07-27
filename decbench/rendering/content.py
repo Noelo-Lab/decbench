@@ -61,21 +61,15 @@ __all__ = [
 
 _CONTENT_DIR = "content"
 
-# `# <title>` / `# [tag] <title>` — opens a section of a view markdown file.
 _SECTION_RE = re.compile(r"^#[ \t]+(?:\[(?P<tag>[a-z]+)\][ \t]*)?(?P<title>.*)$")
-# `## [1] <title>` — opens a goal card in metrics.md.
 _CARD_RE = re.compile(r"^##[ \t]+\[(?P<num>\d+)\][ \t]*(?P<title>.*)$")
 _METRIC_LINE_RE = re.compile(r"^metric:[ \t]*(?P<name>.+)$")
 _PERFECT_RE = re.compile(r"^\*\*perfect\s*=\*\*[ \t]*(?P<rest>.+)$")
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 _WRAPPING_P_RE = re.compile(r"^<p[^>]*>(?P<inner>.*)</p>\s*$", re.DOTALL)
-# `<details class="metric-viz">...</details>` — a hand-authored raw-HTML island.
-# Mistune knows nothing of SVG: blank-line-separated `<text>`/`<rect>` runs inside
-# one are "loose paragraphs" to it, and the `<p>` it wraps them in — INSIDE an
-# `<svg>` — is invalid foreign content that makes the browser abandon SVG parsing.
-# Islands are therefore lifted out before markdown rendering and spliced back in
-# verbatim afterwards. Lines inside an island still must not start with `# `/`## `
-# (the section/card splitters are line-based and run first).
+# Raw-HTML islands are lifted out before markdown rendering and spliced back
+# verbatim: mistune wraps blank-line-separated SVG runs in a `<p>`, which inside
+# an `<svg>` makes the browser abandon SVG parsing entirely.
 _ISLAND_RE = re.compile(r"<details class=\"metric-viz\"[^>]*>.*?</details>", re.DOTALL)
 _ISLAND_TOKEN = "decbench-viz-island-{index}"
 
@@ -111,9 +105,8 @@ class _ReportRenderer(_RawTextRenderer):
         return super().heading(text, level, **attrs)
 
 
-# escape=False: the prose IS final HTML (<em>, <strong>, &mdash;) and must pass
-# through untouched. The content directory ships with the package; it is never
-# user-supplied, so there is no injection surface here.
+# escape=False: the prose is already final HTML. The content directory ships with
+# the package and is never user-supplied, so there is no injection surface.
 _render_view = mistune.create_markdown(renderer=_ReportRenderer(escape=False))
 _render_inline = mistune.create_markdown(renderer=_RawTextRenderer(escape=False))
 
@@ -210,11 +203,6 @@ class ViewContent:
     empty_title: str = ""
     empty_html: str = ""
     goals: tuple[GoalCard, ...] = ()
-
-    @property
-    def has_empty_state(self) -> bool:
-        """Whether the view declares an ``# [empty]`` section."""
-        return bool(self.empty_html)
 
 
 @dataclass(frozen=True)
@@ -328,7 +316,6 @@ class Content:
     decompilers: tuple[DecompilerSpec, ...] = ()
     pricing: tuple[ModelPricing, ...] = ()
 
-    # -- views -------------------------------------------------------------
     def view(self, view_id: str) -> ViewContent:
         """Return one view's prose by id."""
         return self.views[view_id]
@@ -371,7 +358,6 @@ class Content:
         views[view_id] = _parse_view(view_id, markdown_text, self.metrics)
         return replace(self, views=views)
 
-    # -- metrics -----------------------------------------------------------
     def metric(self, name: str) -> MetricSpec | None:
         """Look up a metric's presentation, or ``None`` if it is unregistered."""
         for m in self.metrics:
@@ -396,7 +382,6 @@ class Content:
         spec = self.metric(metric)
         return spec.display_name if spec else metric
 
-    # -- datasets ----------------------------------------------------------
     @property
     def default_dataset(self) -> DatasetPresetSpec | None:
         """The preset the report opens with (explicit, never positional)."""
@@ -405,7 +390,6 @@ class Content:
                 return p
         return None
 
-    # -- decompilers -------------------------------------------------------
     def decompiler(self, dec_id: str) -> DecompilerSpec | None:
         """Presentation for a decompiler id, by exact match then base name.
 
@@ -422,7 +406,6 @@ class Content:
                 fallback = spec
         return fallback
 
-    # -- model pricing -----------------------------------------------------
     def model_pricing(self, name: str) -> ModelPricing | None:
         """The price card for a model id (exact match), or ``None`` if unknown."""
         for pricing in self.pricing:
@@ -472,8 +455,8 @@ def _render_with_islands(markdown: str, render: mistune.Markdown) -> str:
         return _ISLAND_TOKEN.format(index=len(islands) - 1)
 
     html = render(_ISLAND_RE.sub(_lift, markdown))
-    # Descending index: token "…-1" is a prefix of "…-10", so ascending bare-token
-    # replacement would corrupt the tenth island while splicing the second.
+    # Descending: token "…-1" is a prefix of "…-10", so ascending replacement would
+    # corrupt the tenth island while splicing the second.
     for index, island in reversed(list(enumerate(islands))):
         token = _ISLAND_TOKEN.format(index=index)
         for wrapped in (f"<p>{token}</p>", f'<p class="view-desc">{token}</p>'):

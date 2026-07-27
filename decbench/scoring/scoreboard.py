@@ -139,7 +139,6 @@ def build_scoreboard(
         total_binaries=aggregated.total_binaries,
     )
 
-    # Build per-decompiler scores
     for dec_name in decompilers:
         if dec_name not in aggregated.by_decompiler:
             continue
@@ -152,7 +151,6 @@ def build_scoreboard(
             total_binaries_evaluated=aggregated.total_binaries,
         )
 
-        # Per-metric scores
         for metric_name, agg_metric in dec_metrics.items():
             ms = MetricScore(
                 metric_name=metric_name,
@@ -165,10 +163,8 @@ def build_scoreboard(
             )
             dec_score.metric_scores[metric_name] = ms
 
-        # Compute Union: functions perfect on AT LEAST ONE metric, counted over
-        # functions that were evaluated on at least one metric. A function whose
-        # metrics all abstained (nothing measurable) is EXCLUDED rather than
-        # counted as a failure — "couldn't measure" != "wrong".
+        # Counted over functions evaluated on at least one metric: a function whose
+        # metrics all abstained is EXCLUDED, not counted as a failure.
         per_func = aggregated.per_function.get(dec_name, {})
         all_metric_names = aggregated.metrics
 
@@ -191,13 +187,11 @@ def build_scoreboard(
 
         scoreboard.decompiler_scores[dec_name] = dec_score
 
-    # Assign ranks per metric
     for metric_name in aggregated.metrics:
         rankings = scoreboard.get_metric_rankings(metric_name)
         for rank, (dec_name, _) in enumerate(rankings, 1):
             scoreboard.decompiler_scores[dec_name].metric_scores[metric_name].rank = rank
 
-    # Assign overall ranks
     overall_rankings = scoreboard.get_overall_rankings()
     for rank, (dec_name, _) in enumerate(overall_rankings, 1):
         scoreboard.decompiler_scores[dec_name].overall_rank = rank

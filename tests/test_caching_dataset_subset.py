@@ -49,11 +49,6 @@ def cache_dir(tmp_path, monkeypatch):
     caching._CACHES.clear()
 
 
-# --------------------------------------------------------------------------- #
-# Metric caching
-# --------------------------------------------------------------------------- #
-
-
 def test_metric_value_json_round_trip():
     mv = MetricValue(value=0.5, raw_value=0.5, metadata={"a": 1})
     again = MetricValue(**mv.model_dump(mode="json"))
@@ -98,7 +93,7 @@ def test_ged_cache_hit_across_fresh_instance(cache_dir):
 
     GEDMetric().compute_for_function(fd, source_cfg=g1, decompiled_cfg=g2)
 
-    caching._CACHES.clear()  # drop in-memory layer; force on-disk lookup
+    caching._CACHES.clear()
     metric2 = GEDMetric()
     calls = {"n": 0}
     orig = metric2._compute_uncached
@@ -201,11 +196,6 @@ def test_byte_match_caches_with_real_binary(cache_dir, tmp_path):
     assert calls["n"] == 1
 
 
-# --------------------------------------------------------------------------- #
-# Binary dataset store
-# --------------------------------------------------------------------------- #
-
-
 def _fake_elf(path: Path, body: bytes) -> None:
     """Write a minimal ELF header (ET_EXEC) plus a payload body."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -282,11 +272,6 @@ def test_load_missing_dataset_raises(tmp_path):
         load_dataset("nope", store_root=tmp_path / "store")
 
 
-# --------------------------------------------------------------------------- #
-# Large-function subset
-# --------------------------------------------------------------------------- #
-
-
 def _make_function_data() -> FunctionData:
     sizes = {"a": 5, "b": 7, "c": 6, "d": 8, "e": 4, "big1": 200, "big2": 150}
     group = BinaryGroup(
@@ -316,7 +301,7 @@ def _make_function_data() -> FunctionData:
 def test_size_distribution_ignores_none():
     fd = _make_function_data()
     dist = size_distribution(fd)
-    assert dist["count"] == 8  # the None-size record is excluded
+    assert dist["count"] == 8
     assert dist["min"] == 4
     assert dist["max"] == 200
     assert dist["p90"] >= dist["p50"]
@@ -358,9 +343,7 @@ def test_filter_function_data_shrinks_and_drops_empty():
 
     remaining = [(g.binary, r.function) for g in filtered.groups for r in g.functions]
     assert all(name in {"big1", "big2"} for _, name in remaining)
-    # bin2 had no large functions -> its group is dropped.
     assert all(g.binary == "bin" for g in filtered.groups)
-    # Top-level metadata is preserved.
     assert filtered.decompilers == ["angr"]
     assert filtered.perfect_values == {"ged": 0.0}
 

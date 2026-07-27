@@ -114,7 +114,6 @@ class ContentCache:
         self.misses = 0
 
     def _path_for(self, key: str) -> Path:
-        # Shard by the first two hex chars to avoid huge flat directories.
         return self.root / key[:2] / f"{key}.json"
 
     def get(self, key: str) -> Any | None:
@@ -148,15 +147,12 @@ class ContentCache:
                 json.dump(value, f, separators=(",", ":"), default=_json_default)
             os.replace(tmp, path)
         except OSError:
-            # Cache is best-effort; never fail the run because of it.
             pass
 
     def stats(self) -> dict[str, int]:
         return {"hits": self.hits, "misses": self.misses}
 
 
-# Process-global cache instances, keyed by namespace, so repeated lookups in a
-# single worker share the in-memory layer.
 _CACHES: dict[str, ContentCache] = {}
 
 

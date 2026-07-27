@@ -11,8 +11,6 @@ def _make_data() -> FunctionData:
     for proj in ("alpha", "beta", "gamma"):
         for opt in ("O0", "O2", "O2-noinline"):
             funcs = [
-                # A recorded metric value makes the record scoreable — the
-                # sample-set draw skips value-less phantom rows.
                 FunctionRecord(
                     function=f"{proj}_{opt}_f{i}", size=sz, values={"angr": {"ged": 1.0}}
                 )
@@ -78,7 +76,6 @@ def test_large_rules() -> None:
         for f in g.functions:
             if "large" in f.datasets:
                 assert g.opt_level == "O2-noinline" and f.size >= thr
-    # there IS at least one large function per opt level here (size 220)
     assert any("large" in f.datasets for g in fd.groups for f in g.functions)
 
 
@@ -91,8 +88,7 @@ def test_sample_set_is_bounded_and_spread() -> None:
         for f in g.functions
         if "sample-set" in f.datasets
     ]
-    assert 0 < len(picked) <= 25  # ~sample_total, bounded (5 buckets x quota)
-    # spread across all opt levels and all projects
+    assert 0 < len(picked) <= 25
     assert {opt for opt, _ in picked} == {"O0", "O2", "O2-noinline"}
     assert {proj for _, proj in picked} == {"alpha", "beta", "gamma"}
 
@@ -129,7 +125,6 @@ def _sample_keys(fd: FunctionData) -> set[str]:
 
 
 def test_sample_set_is_seeded_and_reproducible() -> None:
-    # Same seed -> identical sample-set selection, every time.
     fd1 = _make_data()
     assign_datasets(fd1, sample_total=20, seed=42)
     fd2 = _make_data()
@@ -139,7 +134,6 @@ def test_sample_set_is_seeded_and_reproducible() -> None:
 
 
 def test_sample_set_changes_with_seed() -> None:
-    # A different seed should (with this much data) pick a different sample.
     fd_a = _make_data()
     assign_datasets(fd_a, sample_total=20, seed=1)
     fd_b = _make_data()
@@ -176,16 +170,14 @@ def _sample_binkeys(fd: FunctionData) -> list[tuple[str, str, str]]:
 
 
 def test_sample_set_one_function_per_binary_when_enough() -> None:
-    # With many distinct binaries, no binary contributes more than one function.
     fd = _make_many_binaries(n_bins=40)
     assign_datasets(fd, sample_total=100)
     keys = _sample_binkeys(fd)
     assert len(keys) == len(set(keys)), "each binary should appear at most once"
-    assert len(keys) >= 20  # plenty selected (only the O0 bucket has candidates)
+    assert len(keys) >= 20
 
 
 def test_sample_set_relaxes_when_few_binaries() -> None:
-    # Only 9 binary-groups but we want ~20 -> must reuse some binaries.
     fd = _make_data()
     assign_datasets(fd, sample_total=50)
     keys = _sample_binkeys(fd)
@@ -212,7 +204,7 @@ def test_sample_set_skips_valueless_phantom_rows() -> None:
     for g in poisoned.groups:
         for f in g.functions:
             if f"{g.project}/{g.opt_level}/{f.function}" == victim:
-                f.values = {}  # now a phantom: no metric value from anyone
+                f.values = {}
     assign_datasets(poisoned, sample_total=100, seed=42)
     repicked = _sample_keys(poisoned)
 
@@ -224,9 +216,9 @@ def test_sample_set_skips_valueless_phantom_rows() -> None:
 def test_env_var_seed(monkeypatch) -> None:
     monkeypatch.setenv("DECBENCH_SAMPLE_SEED", "777")
     fd_env = _make_data()
-    assign_datasets(fd_env, sample_total=20)  # seed from env
+    assign_datasets(fd_env, sample_total=20)
     fd_explicit = _make_data()
-    assign_datasets(fd_explicit, sample_total=20, seed=777)  # same, explicit
+    assign_datasets(fd_explicit, sample_total=20, seed=777)
     assert _sample_keys(fd_env) == _sample_keys(fd_explicit)
 
 
@@ -254,7 +246,6 @@ def test_assign_datasets_honors_manifest() -> None:
         if "sample-set" in f.datasets
     }
     assert tagged == members
-    # Different seed, same manifest -> identical membership (seed is ignored).
     fd2 = _make_many_binaries(n_bins=10)
     assign_datasets(fd2, sample_total=100, seed=999, sample_members=members)
     tagged2 = {
@@ -280,7 +271,7 @@ def _make_multibucket(n_bins: int = 30) -> FunctionData:
                     FunctionRecord(
                         function=f"{proj}_{opt}_b{b}_f{i}", size=sz, values={"angr": {"ged": 1.0}}
                     )
-                    for i, sz in enumerate([10, 30, 400])  # 400 -> large
+                    for i, sz in enumerate([10, 30, 400])
                 ]
                 groups.append(
                     BinaryGroup(
@@ -311,13 +302,8 @@ def test_sample_set_topup_preserves_picks_across_all_buckets() -> None:
     base_fd = _make_multibucket()
     assign_datasets(base_fd, sample_total=50, seed=1337)
     base_members = _members_of(base_fd)
-    # Exclude a NON-ARM project (like the real mirai-win): its picks land in the
-    # unoptimized/inlined/optimized/large buckets — all refillable from p2 — while
-    # the arm-only bucket (p3) is untouched, so the total is fully replenished.
     excluded_project = "p1"
     base_excluded = {m for m in base_members if m[0] == excluded_project}
-    # p1 must have picks in the overlapping large/optimized buckets to make the
-    # preservation test meaningful.
     assert any(m[1] == "O2-noinline" for m in base_excluded), "need optimized/large picks"
 
     fd = _make_multibucket()
@@ -326,8 +312,6 @@ def test_sample_set_topup_preserves_picks_across_all_buckets() -> None:
     )
 
     assert not {m for m in topped if m[0] == excluded_project}, "excluded project never appears"
-    # EVERY non-excluded base pick is preserved verbatim — the invariant the
-    # review found violated by the old exclude-in-draw approach.
     assert (base_members - base_excluded) <= topped
     assert len(topped) == len(base_members), "total size preserved"
     assert (topped - base_members) and all(
@@ -356,7 +340,7 @@ def test_topup_refills_a_dropped_arm_pick_from_the_arm_bucket() -> None:
     base_fd = _make_multibucket()
     assign_datasets(base_fd, sample_total=50, seed=1337)
     base_members = _members_of(base_fd)
-    arm_picks = {m for m in base_members if m[0] == "p3"}  # p3 is the ARM project
+    arm_picks = {m for m in base_members if m[0] == "p3"}
     assert arm_picks, "fixture must sample the ARM project"
     victim = sorted(m for m in arm_picks if m[1] == "O0")[0]
 
@@ -364,7 +348,7 @@ def test_topup_refills_a_dropped_arm_pick_from_the_arm_bucket() -> None:
     for g in fd.groups:
         for f in g.functions:
             if (g.project, g.opt_level, g.binary, f.function) == victim:
-                f.values = {}  # unscoreable, so the refill cannot re-pick it
+                f.values = {}
 
     topped = topup_sample_members(
         fd, base_members, frozenset(), seed=1337, exclude_members=frozenset({victim})
@@ -406,8 +390,6 @@ def test_sample_set_topup_drops_excluded_members_and_refills() -> None:
     base_members = _members_of(base_fd)
     victims = frozenset(sorted(base_members)[:3])
 
-    # Simulate the phantoms: the victims' rows lose every metric value, so the
-    # refill (which skips unscoreable rows) can never re-pick them.
     fd = _make_multibucket()
     for g in fd.groups:
         for f in g.functions:

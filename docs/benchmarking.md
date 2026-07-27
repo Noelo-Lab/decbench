@@ -195,6 +195,24 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 - `DECBENCH_OPT_LEVELS` (comma list, e.g. `"O0"` to narrow the run)
 - `DECBENCH_METRICS` (comma list, e.g. `"ged"` for a GED-only run)
 
+### Per-decompiler wall-clock budgets
+
+`DECOMPILER_TIMEOUT` in `scripts/run_benchmark.py` overrides
+`DECBENCH_DECOMPILE_TIMEOUT` per backend (each with its own
+`DECBENCH_<NAME>_TIMEOUT` env override). The fairness principle: every backend
+gets enough time to finish the largest source-function set, so a slow-but-working
+one is not truncated and counted as thousands of failures while a faster one
+finishes. Small binaries finish in seconds, so these defaults only bite the ~10
+big targets (bash, openssh, coreutils, the large ARM firmware).
+
+| Backend | Default | Why |
+| --- | --- | --- |
+| `angr` | 3600 s | ~15-20 s/function; a big binary legitimately needs ~1 h. |
+| `ghidra` / `binja` / `r2dec` | 1800 s | Fast per function, but a few large binaries overrun 300 s. r2dec's `aaa` analysis alone can run minutes. |
+| `kuna` | 900 s | Emits its JSON only at the very end, so a kill yields ZERO functions; needs a budget above its slowest binary (~450 s on bash). Its per-FUNCTION guard is `--max-fn-seconds`, passed by the backend. |
+| `dewolf` | 1200 s | A z3/sympy simplification pipeline that blows up per function. Capped lower than angr because the cap bounds *hangs*, not a slow-but-progressing decompile. |
+| `codex` / `claude-code` / `kimi-code` | 3600 s | One agentic CLI call per function (~minutes). The backend checkpoints after each function, so a large budget bounds a stuck call while still crediting finished ones. |
+
 Resume MERGES per project AND per decompiler:
 `DECBENCH_DECOMPILERS=r2dec python scripts/run_benchmark.py results/full_run`
 ADDS r2dec (or dewolf) to every project's checkpoint without re-running the

@@ -70,10 +70,6 @@ class RawDewolfDecompiler(Decompiler):
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
 
-    #
-    # Config resolution
-    #
-
     def _settings(self) -> dict:
         """Per-version settings, falling back to the ``default`` entry.
 
@@ -123,10 +119,6 @@ class RawDewolfDecompiler(Decompiler):
             env["PATH"] = astyle + os.pathsep + env.get("PATH", "")
         return env
 
-    #
-    # Decompiler interface
-    #
-
     def is_available(self) -> bool:
         python = self._python()
         if not python or not Path(python).exists():
@@ -169,7 +161,6 @@ class RawDewolfDecompiler(Decompiler):
         failed_functions: list[str] = []
         lock = threading.Lock()
 
-        # The driver filters by address itself; pass the int targets through.
         target_addrs = sorted(
             a for a in (function_names or set()) if isinstance(a, int) and not isinstance(a, bool)
         )
@@ -202,16 +193,10 @@ class RawDewolfDecompiler(Decompiler):
             )
             common.dump_progress(progress_path, partial)
 
-        # Function-level sharding: dewolf decompiles a binary's functions
-        # SEQUENTIALLY in one Binary Ninja session, so a binary with many
-        # functions pins a single core for a long time. Binary Ninja parallelizes
-        # across PROCESSES, so we split the target addresses into up to
-        # ``_shard_count`` shards and run one driver per shard concurrently — each
-        # its own BN session on a disjoint address subset — then merge. Only shard
-        # when there are enough functions to amortize each shard's BN-load cost
-        # (>= 2x the shard count); tiny binaries and the no-filter case run one
-        # driver. The driver subprocesses inherit this task's process group, so
-        # the run driver's per-binary-timeout killpg reaps them all.
+        # dewolf decompiles sequentially in one Binary Ninja session, but BN
+        # parallelizes across PROCESSES, so split the targets into shards and run one
+        # driver each. Only worth it above 2x the shard count (BN load cost). The
+        # drivers inherit this process group, so the run driver's killpg reaps them.
         if target_addrs and len(target_addrs) >= 2 * self._shard_count():
             k = self._shard_count()
             shard_args = [json.dumps(target_addrs[i::k]) for i in range(k)]

@@ -21,16 +21,10 @@ from pathlib import Path
 from decbench.models.project import OptimizationLevel, Project
 from decbench.pipeline.compile import compile_project
 
-# Use 'spawn': fresh worker processes with no inherited lock state. The default
 # 'fork' deadlocks when a worker is forked while the parent's pool-management
-# thread holds an internal mutex (observed: late workers wedged on futex_wait
-# with downloads done but never extracted).
+# thread holds an internal mutex.
 _MP = multiprocessing.get_context("spawn")
 
-# All benchmark project dirs (top-level *.toml only; cps/disabled/ is excluded
-# since glob is non-recursive). sailr is x86 (host-compilable); cps (ARM) and
-# malware (ARM/PE) need the cross/mingw toolchains, so those are compiled inside
-# the decbench-cps-toolchain Docker image. Restrict with the trailing `only` args.
 PROJECT_DIRS = [Path("projects/sailr"), Path("projects/cps"), Path("projects/malware")]
 
 
@@ -117,7 +111,7 @@ def _build_one(toml_path: str, opt_value: str, out_dir: str) -> dict:
 def main() -> int:
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("results/sailr_full")
     workers = int(sys.argv[2]) if len(sys.argv) > 2 else 78
-    only = set(sys.argv[3:])  # optional: restrict to these project stems
+    only = set(sys.argv[3:])
 
     out_dir.mkdir(parents=True, exist_ok=True)
     tomls = gather_tomls()
@@ -148,7 +142,6 @@ def main() -> int:
                 flush=True,
             )
 
-    # Per-project summary across opt levels
     by_proj: dict[str, dict[str, int]] = {}
     for r in reports:
         by_proj.setdefault(r["project"], {})[r["opt"]] = r["elf_binaries"]

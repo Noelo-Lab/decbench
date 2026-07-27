@@ -32,7 +32,6 @@ _l = logging.getLogger(__name__)
 
 KIT_FORMAT_VERSION = 1
 
-# Verbatim in functions.json: the space contributors must report addresses in.
 ADDRESS_SPACE_NOTE = (
     "Virtual addresses as encoded in the binary's own headers (ELF: program-header "
     "vaddrs at the preferred/link base; PE: ImageBase + RVA). Report addresses in "
@@ -57,9 +56,9 @@ class _KitBinary:
 
     project: str
     opt: str
-    stem: str  # manifest/checkpoint key (Path(file).stem)
-    path: Path  # the real on-disk binary (unstripped)
-    functions: dict[str, int]  # DWARF name -> low_pc
+    stem: str
+    path: Path
+    functions: dict[str, int]
     anon: str = ""
 
 
@@ -174,8 +173,7 @@ def _strip_into(src: Path, dst: Path) -> None:
     proc = subprocess.run([*cmd, str(dst)], capture_output=True, text=True)
     if proc.returncode != 0:
         raise EvalKitError(f"strip failed for {src.name}: {proc.stderr.strip() or proc.stdout}")
-    # Ship non-executable: some kit binaries are real malware and the README
-    # says never to run them — don't hand out a chmod +x that invites it.
+    # Non-executable on purpose: some kit binaries are real malware.
     dst.chmod(0o644)
 
 
@@ -183,12 +181,11 @@ def _lief_sections(path: Path) -> dict[str, bytes]:
     """Section name -> content via LIEF (parses ELF and PE alike)."""
     import lief
 
-    with contextlib.suppress(Exception):  # LIEF chatters on stderr otherwise
+    with contextlib.suppress(Exception):
         lief.logging.disable()
     binary = lief.parse(str(path))
     if binary is None:
         raise EvalKitError(f"LIEF cannot parse {path}")
-    # LIEF types section names as str | bytes; decode defensively.
     return {
         sec.name.decode() if isinstance(sec.name, bytes) else sec.name: bytes(sec.content)
         for sec in binary.sections
@@ -215,8 +212,8 @@ def _pe_debug_leftovers(path: Path) -> list[str]:
     if getattr(binary.header, "numberof_symbols", 0):
         leftovers.append("COFF symbol table")
     raw = path.read_bytes()
-    # The string table sits right after the symbol table; its first 4 bytes are
-    # its own size. Without a symbol table pointer there is nothing to resolve.
+    # The string table follows the symbol table and its first 4 bytes are its own
+    # size, so without a symbol table pointer there is nothing to resolve.
     ptr = int(getattr(binary.header, "pointerto_symbol_table", 0) or 0)
     nsyms = int(getattr(binary.header, "numberof_symbols", 0) or 0)
     strtab_off = ptr + nsyms * 18 if ptr else 0
@@ -341,10 +338,8 @@ def export_kit(
     if not bins:
         raise EvalKitError("nothing to export: no manifest entry resolved to a binary+address")
 
-    # Anonymous identity assignment: deterministic for a given (manifest, seed).
-    # Byte-identical duplicates (e.g. crazyflie's cf2.elf/firmware.elf) stay
-    # SEPARATE anon binaries on purpose — each keeps its own per-binary identity
-    # in the tree, so merging them would corrupt the de-anonymized mapping.
+    # Byte-identical duplicates stay SEPARATE anon binaries on purpose: each keeps
+    # its own per-binary identity, so merging would corrupt the de-anonymized map.
     bins.sort(key=lambda b: (b.project, b.opt, b.path.name))
     random.Random(seed).shuffle(bins)
     for i, b in enumerate(bins):
@@ -352,7 +347,7 @@ def export_kit(
 
     binaries_dir = kit_dir / "binaries"
     results_dir = kit_dir / "results"
-    for stale in (binaries_dir, results_dir):  # stale kit content is worse than none
+    for stale in (binaries_dir, results_dir):
         if stale.exists():
             shutil.rmtree(stale)
     binaries_dir.mkdir(parents=True)
@@ -399,8 +394,8 @@ def export_kit(
     }
     (kit_dir / "functions.json").write_text(json.dumps(functions_json, indent=2) + "\n")
     (kit_dir / "README.md").write_text(templates.kit_readme(dataset, len(bins), n_functions))
-    # package.py is the kit_package module source VERBATIM — it must stay
-    # standalone (stdlib-only, no decbench imports) so contributors can run it.
+    # Shipped verbatim, so it must stay standalone (stdlib-only, no decbench
+    # imports) for contributors to run.
     (kit_dir / "package.py").write_text(Path(kit_package.__file__).read_text())
     (results_dir / "README.md").write_text(templates.results_readme())
     (results_dir / "results.example.json").write_text(templates.results_example(public))

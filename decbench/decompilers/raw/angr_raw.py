@@ -46,10 +46,6 @@ class RawAngrDecompiler(Decompiler):
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
 
-    #
-    # Decompiler interface
-    #
-
     def is_available(self) -> bool:
         try:
             import angr  # noqa: F401
@@ -67,22 +63,6 @@ class RawAngrDecompiler(Decompiler):
             return str(angr.__version__)
         except Exception:  # noqa: BLE001
             return "unknown"
-
-    def discover_functions(self, binary_path: Path) -> list[tuple[str, int]]:
-        """Discover (name, ELF-space addr) for benchmarkable functions."""
-        if not self.is_available():
-            return []
-        try:
-            import angr
-
-            proj = angr.Project(str(binary_path), auto_load_libs=False)
-            proj.analyses.CFGFast(normalize=True)
-            elf_base = common.elf_min_vaddr(binary_path)
-            text_range = common.elf_text_range(binary_path)
-            return self._enumerate(proj, elf_base, text_range)
-        except Exception as e:  # noqa: BLE001
-            _l.error("angr-raw: failed to discover functions in %s: %s", binary_path, e)
-            return []
 
     def decompile_binary(
         self,
@@ -139,9 +119,8 @@ class RawAngrDecompiler(Decompiler):
             cfg = proj.analyses.CFGFast(normalize=True)
 
             if functions is not None:
-                # Caller addresses are ELF-space; angr keys functions by the
-                # binary's own (loaded) address, which for a non-PIE static
-                # ELF equals the ELF-space address. We look up by address.
+                # angr keys functions by loaded address, which equals the caller's ELF-space
+                # address for a non-PIE static ELF.
                 target_funcs = [(n, a) for (n, a) in functions]
             else:
                 target_funcs = self._enumerate(proj, elf_base, text_range)
@@ -195,10 +174,6 @@ class RawAngrDecompiler(Decompiler):
 
         return result
 
-    #
-    # angr helpers
-    #
-
     def _enumerate(
         self,
         proj: Any,
@@ -243,7 +218,6 @@ class RawAngrDecompiler(Decompiler):
     ) -> FunctionDecompilation | None:
         """Decompile one function -> FunctionDecompilation (ELF-space addr)."""
         load_base = self._angr_load_base(proj)
-        # ELF-space -> angr loaded address.
         angr_addr = (file_addr - elf_base) + load_base
         try:
             func = proj.kb.functions.get_by_addr(angr_addr)
@@ -306,7 +280,6 @@ class RawAngrDecompiler(Decompiler):
         if cfunc is None:
             return variables
 
-        # --- Arguments, in ABI/positional order. ---
         arg_list = getattr(cfunc, "arg_list", None) or []
         for position, cvar in enumerate(arg_list):
             simvar = getattr(cvar, "unified_variable", None) or getattr(cvar, "variable", None)
@@ -330,7 +303,6 @@ class RawAngrDecompiler(Decompiler):
                 )
             )
 
-        # --- Locals (stack & register), excluding the args already emitted. ---
         try:
             local_map = cfunc.get_unified_local_vars()
         except Exception:  # noqa: BLE001

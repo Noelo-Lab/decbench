@@ -32,7 +32,6 @@ import r2pipe
 
 _R2_FLAGS = ["-2", "-e", "bin.relocs.apply=true", "-e", "scr.color=0"]
 
-# r2 names for the ELF/PE entry alias (== _start / CRT entry), not user code.
 _ENTRY_NAMES = frozenset({"entry0", "entry1", "entry.init0", "entry.fini0", "entry.preinit0"})
 
 

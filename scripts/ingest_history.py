@@ -30,9 +30,6 @@ from pathlib import Path
 from decbench.models.function_data import FunctionData, HistoryPoint
 from decbench.scoring.scoreboard import build_scoreboard_from_function_data
 
-# Best-known Ghidra release dates (published date of the labeled line), for the
-# HistoryPoint.date metadata. The chart orders by version, not date, so a missing
-# entry only drops the tooltip date, never the point.
 _GHIDRA_DATES = {
     "10.4": "2023-09-29",
     "11.0": "2023-12-22",
@@ -82,7 +79,7 @@ def build_points(run_dir: Path, base: str, metrics: list[str] | None) -> list[Hi
                 ),
             )
         )
-    points.sort(key=lambda t: t[0])  # oldest version first
+    points.sort(key=lambda t: t[0])
     return [p for _k, p in points]
 
 
@@ -118,8 +115,6 @@ def main() -> int:
 
     target_path = args.target_dir / "function_results.json"
     fd = FunctionData.from_json(target_path)
-    # --replace clears everything; otherwise drop only this base's existing points
-    # (re-ingest is idempotent) and keep any other bases'.
     kept = [] if args.replace else [h for h in fd.history if h.decompiler != args.base]
     fd.history = kept + points
     fd.to_json(target_path)

@@ -49,31 +49,18 @@ _DATA_DIR = "data"
 _FONTS_DIR = "fonts"
 _INDEX = "index.html"
 
-#: The root's own hop to itself, and a subpage's hop up to the root (used for the
-#: ``<base href>`` and the ``__DECBENCH_ROOT__`` stamp — see :func:`linked_assets`).
 _ROOT_HOP = ""
 _SUBPAGE_HOP = "../"
 
-#: Pages runs Jekyll over an uploaded tree unless this file exists, and Jekyll
-#: silently drops paths that start with `_`. We have none today; one added later
-#: would vanish in production and nowhere else.
+# Pages runs Jekyll over an uploaded tree unless this file exists, and Jekyll
+# silently drops paths starting with `_` — in production and nowhere else.
 _NOJEKYLL = ".nojekyll"
 
-#: Renamed views whose OLD URLs must keep working: old id -> (current view id,
-#: section anchor on that view). Each gets a marker-less redirect stub at
-#: ``<old>/index.html`` (see :func:`_write_legacy_redirects`). The distance page
-#: became the data page on 2026-07-23 (four linkable sections: distance /
-#: compiles / pipeline health / cost); ``/distance/`` links exist in the wild, so
-#: they land on the data page's ``#distance`` section rather than its top.
 _LEGACY_REDIRECTS = {"distance": ("data", "distance")}
 
-#: The redirect stub. Deliberately does NOT contain
-#: :data:`~decbench.rendering.html.SITE_PAGE_MARKER`: the subpage prune loop
-#: (:func:`_write_view_subpages`) deletes any non-current view directory whose
-#: index.html carries the marker, and this stub must survive every rebuild. The
-#: meta refresh is the no-JS fallback; the script hop preserves ``?query`` deep
-#: links and honors an incoming ``#hash`` (a meta refresh drops both), defaulting
-#: to the section anchor so a bare ``/distance/`` link lands on the right section.
+# Deliberately carries no SITE_PAGE_MARKER: the subpage prune deletes marked
+# non-current view directories, and these stubs must survive every rebuild. The
+# script hop preserves ?query and #hash, which a bare meta refresh drops.
 _REDIRECT_STUB = """<!doctype html>
 <html lang="en">
 <head>
@@ -112,8 +99,6 @@ def build_site(
     """
     from decbench.rendering.visibility import apply_hidden_decompilers
 
-    # Hide site-hidden decompilers (content/site.toml) from EVERY page and
-    # payload; their results stay on disk, untouched.
     scoreboard, function_data = apply_hidden_decompilers(scoreboard, function_data)
     content = content or load_content()
 
@@ -125,10 +110,6 @@ def build_site(
     (out_dir / _DATA_DIR).mkdir()
     (out_dir / _FONTS_DIR).mkdir()
 
-    # Payloads are computed once, up front: the per-page social share text (the
-    # top-3 by Union) is derived from the aggregates payload, so it must exist
-    # before any page is written. (The writer used to emit index.html first, then
-    # the payloads.)
     payloads = build_payloads(function_data, scoreboard)
     root_social, view_social = _social_meta(content, payloads["aggregates"])
 
@@ -141,16 +122,11 @@ def build_site(
     (out_dir / CSS_FILE).write_text(asset_text(CSS_FILE), encoding="utf-8")
     (out_dir / JS_FILE).write_text(asset_text(JS_FILE), encoding="utf-8")
     (out_dir / _NOJEKYLL).write_text("", encoding="utf-8")
-    # GitHub Pages custom domain. Workflow deploys take the domain from the repo's
-    # Pages settings, but the CNAME file keeps the tree self-documenting and keeps
-    # the domain if publishing ever moves back to a branch source.
     if content.site.pages_domain:
         (out_dir / "CNAME").write_text(content.site.pages_domain + "\n", encoding="utf-8")
 
     for name, blob in iter_font_assets():
         (out_dir / _FONTS_DIR / name).write_bytes(blob)
-    # Favicon, apple-touch icon, and the Open Graph / Twitter share card sit at the
-    # tree root, next to index.html (the head links and og:image reference them there).
     for name, blob in iter_site_icons():
         (out_dir / name).write_bytes(blob)
 
@@ -158,9 +134,6 @@ def build_site(
         _write_json(out_dir / _DATA_DIR / f"{name}.json", payload)
 
     _write_view_subpages(scoreboard, function_data, content, out_dir, view_social)
-    # LAST, after the subpage prune: the stubs are marker-less on purpose (the
-    # prune only deletes marked pages), but writing them after keeps the ordering
-    # obvious and correct even if that invariant ever changes.
     current = {spec.id for spec in content.visible_views(function_data is not None)}
     _write_legacy_redirects(out_dir, current, content.site.pages_domain)
 
@@ -179,7 +152,6 @@ def _write_legacy_redirects(out_dir: Path, current_view_ids: set[str], domain: s
     for old_id, (target, anchor) in _LEGACY_REDIRECTS.items():
         if old_id in current_view_ids:
             continue
-        # Canonicalize to the target VIEW (not the anchor): the section is one page.
         canonical = f"https://{domain}/{target}/" if domain else f"../{target}/"
         stub_dir = out_dir / old_id
         stub_dir.mkdir(exist_ok=True)
@@ -211,8 +183,6 @@ def _write_view_subpages(
         if not child.is_dir() or child.name in (_DATA_DIR, _FONTS_DIR) or child.name in current:
             continue
         index = child / _INDEX
-        # An unreadable / non-UTF-8 index.html is by definition not one of ours —
-        # skip it rather than abort the build over a hand-added page.
         try:
             ours = index.is_file() and SITE_PAGE_MARKER in index.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -236,12 +206,6 @@ def _write_view_subpages(
         )
 
 
-# --------------------------------------------------------------------------
-# Social share metadata (Open Graph / Twitter), baked per page at build time
-# --------------------------------------------------------------------------
-
-#: Generic fallback description for any view without a bespoke one below (keeps a
-#: newly-added view from shipping an empty og:description).
 _GENERIC_DESC = (
     "A ground-truth decompiler benchmark: control flow, types, and recompilation "
     "over real C projects, firmware, and malware."
@@ -266,7 +230,6 @@ def _social_meta(
     image = f"{base}{CARD_FILE}"
     descriptions = _view_descriptions(aggregates)
 
-    # The site always has function data here, so every registered view is visible.
     per_view: dict[str, SocialMeta] = {}
     for spec in content.visible_views(True):
         per_view[spec.id] = SocialMeta(
@@ -276,8 +239,6 @@ def _social_meta(
             image_url=image,
         )
 
-    # The root index renders the default (leaderboard) view but under the bare
-    # domain, so it gets its own title and canonical URL and the leaderboard's text.
     root = SocialMeta(
         title="DecBench — decompiler benchmark",
         description=descriptions.get(content.default_view, _GENERIC_DESC),

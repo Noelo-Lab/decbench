@@ -56,10 +56,6 @@ __all__ = [
     "DEFAULT_SAMPLE_SEED",
 ]
 
-# Fixed default seed for the `sample-set` sample so the selection is
-# reproducible across runs/machines. Override per call
-# (``assign_datasets(seed=...)``) or via the ``DECBENCH_SAMPLE_SEED``
-# environment variable to roll a different sample.
 DEFAULT_SAMPLE_SEED = 1337
 
 
@@ -81,9 +77,6 @@ def _resolve_seed(seed: int | None) -> int:
     return DEFAULT_SAMPLE_SEED
 
 
-#: The presets this module knows how to assign, in selector order. Names only:
-#: each one's label and description are the renderer's business (see the module
-#: docstring), and duplicating them here is how they drift.
 PRESETS: list[DatasetPreset] = [
     DatasetPreset(name="unoptimized"),
     DatasetPreset(name="optimized"),
@@ -96,10 +89,6 @@ _O2 = "O2"
 _O2_NOINLINE = "O2-noinline"
 _O0 = "O0"
 
-#: Binary labels that mark a group as built for a non-x86 (ARM) target. The CPS
-#: firmware projects all carry ``cps`` plus arch labels like ``armv7`` or
-#: ``cortex-m4``; the sailr packages and the malware targets are x86 (ELF or
-#: PE), so none of these labels appear there.
 _ARM_LABELS = frozenset({"cps", "arm", "armv7", "aarch64", "arm64", "bare-metal", "embedded-linux"})
 
 
@@ -220,11 +209,11 @@ def _sample_even(
                     if id(f) in chosen_fns:
                         continue
                     if g.project in exclude_projects:
-                        continue  # refill pass only: never pick the excluded project
+                        continue
                     if (g.project, g.opt_level, g.binary, f.function) in exclude_members:
-                        continue  # refill pass only: never re-pick a dropped member
+                        continue
                     if not _scoreable(f):
-                        continue  # phantom/unmeasurable row: never worth a slot
+                        continue
                     if one_per_binary and _binkey(g) in used_bins:
                         continue
                     idx = j
@@ -236,8 +225,8 @@ def _sample_even(
                     used_bins.add(_binkey(g))
                     advanced = True
 
-    pass_once(one_per_binary=True)  # at most one function per binary...
-    pass_once(one_per_binary=False)  # ...relaxed only if binaries run short
+    pass_once(one_per_binary=True)
+    pass_once(one_per_binary=False)
     return picked
 
 
@@ -324,7 +313,6 @@ def assign_datasets(
     records = _apply_opt_presets(function_data, k)
 
     if sample_members is not None:
-        # Frozen membership: tag exactly the manifest's functions, no draw.
         matched: set[tuple[str, str, str, str]] = set()
         for g, f in records:
             key = (g.project, g.opt_level, g.binary, f.function)
@@ -341,7 +329,6 @@ def assign_datasets(
         function_data.dataset_presets = [p.model_copy() for p in PRESETS]
         return function_data
 
-    # sample-set: even sample across five categories and across projects.
     rng = random.Random(_resolve_seed(seed))
     buckets = _sample_buckets(records, large_threshold(function_data, k=k))
     per_bucket = max(1, sample_total // len(buckets))
@@ -388,19 +375,11 @@ def topup_sample_members(
 
     buckets = _sample_buckets(records, large_threshold(function_data, k=k))
 
-    # Classify each removed pick into its MOST-SPECIFIC owning bucket, so the
-    # refill draws its replacement from the same bucket. The buckets overlap
-    # (`large` ⊂ `optimized`, `unoptimized-arm` ⊂ `unoptimized`) and each is
-    # quota-limited, so a pick the broad bucket left unpicked can still have
-    # been drawn by the specific one. Crediting the FIRST (broadest) match
-    # would zero the specific buckets' refill counts — every record is in one
-    # of the first three by opt level — and silently convert e.g. an ARM slot
-    # into a general unoptimized one, shrinking the sub-quota the bucket exists
-    # to guarantee. The refill loop below still runs in draw order so the rng
-    # stream is unchanged.
+    # Most-specific bucket wins: the buckets overlap and each is quota-limited, so
+    # crediting the broadest match would zero the specific buckets' refill counts
+    # and shrink the sub-quota they exist to guarantee.
     refill_per_bucket: dict[str, int] = {name: 0 for name in buckets}
     assigned: set[tuple[str, str, str, str]] = set()
-    # Pin the kept picks so the refill never reuses their functions/binaries.
     chosen: set[int] = set()
     used_bins: set[tuple[str, str, str]] = set()
     for name in reversed(list(buckets)):
@@ -416,10 +395,8 @@ def topup_sample_members(
                 assigned.add(key)
                 refill_per_bucket[name] += 1
 
-    # A removed pick whose record is GONE from the dataset entirely (a dropped
-    # or renamed function) appears in no bucket, so the loop above cannot credit
-    # it and its slot would silently vanish, leaving the manifest short. Charge
-    # those to the bucket their opt level belongs to.
+    # A removed pick whose record is gone entirely appears in no bucket, so charge
+    # it to its opt level's bucket or its slot silently vanishes.
     _OPT_BUCKET = {_O0: "unoptimized", _O2_NOINLINE: "optimized", _O2: "inlined"}
     for key in sorted(removed - assigned):
         bucket = _OPT_BUCKET.get(key[1])
@@ -432,8 +409,6 @@ def topup_sample_members(
         need = refill_per_bucket[name]
         if need <= 0:
             continue
-        # exclude_projects/exclude_members here are safe: `chosen`/`used_bins`
-        # already pin every surviving pick, so the skips cannot perturb them.
         for g, f in _sample_even(
             items, need, chosen, used_bins, rng, exclude_projects, exclude_members
         ):

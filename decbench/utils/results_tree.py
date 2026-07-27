@@ -26,11 +26,8 @@ from pathlib import Path
 
 from decbench.utils import binfmt
 
-# The header comment DecompilationResult.to_c_file writes before each function
-# block: ``// Function: <name> @ 0x<addr>``.
 FUNCTION_MARKER = re.compile(r"^// Function: (\S+) @ (0x[0-9a-fA-F]+)\s*$", re.M)
 
-# Optimization sub-directories a results tree can contain (top level, per-opt).
 OPT_LEVELS = ("O0", "O2", "O2-noinline")
 
 

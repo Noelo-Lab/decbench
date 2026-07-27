@@ -103,7 +103,6 @@ class TestScoringPipeline:
         from decbench.scoring.aggregator import aggregate_results
         from decbench.scoring.scoreboard import build_scoreboard
 
-        # Create synthetic evaluation results
         eval_results = {
             "test_project": {
                 OptimizationLevel.O2: {
@@ -145,7 +144,6 @@ class TestScoringPipeline:
             },
         }
 
-        # Compute aggregates for each metric result
         for proj_results in eval_results.values():
             for opt_results in proj_results.values():
                 for bin_results in opt_results.values():
@@ -161,12 +159,10 @@ class TestScoringPipeline:
         assert "angr" in aggregated.decompilers
         assert aggregated.total_binaries == 1
 
-        # Check per-metric aggregates
         angr_ged = aggregated.by_decompiler["angr"]["ged"]
-        assert angr_ged.perfect_count == 2  # func1 and func3 have GED=0
+        assert angr_ged.perfect_count == 2
         assert angr_ged.total_count == 3
 
-        # Build scoreboard
         scoreboard = build_scoreboard(
             aggregated,
             projects=["test_project"],
@@ -176,14 +172,10 @@ class TestScoringPipeline:
         assert len(scoreboard.decompilers) == 1
         assert scoreboard.decompiler_scores["angr"].metric_scores["ged"].perfect_count == 2
 
-        # Union: func1 and func3 are perfect on all 3 (so certainly on >=1);
-        # func2 fails every metric — ged (2.0 != 0.0), type_match (0.5 != 1.0),
-        # byte_match (0.0 != 1.0) — so it is counted but never perfect.
         ds = scoreboard.decompiler_scores["angr"]
-        assert ds.overall_perfect_count == 2  # func1 and func3
+        assert ds.overall_perfect_count == 2
         assert ds.overall_total_count == 3
 
-        # Render text
         text = scoreboard.render_text()
         assert "angr" in text
 
@@ -272,7 +264,6 @@ class TestScoringPipeline:
             assert "Type Correctness" in content
             assert "Recompilation Bytematch" in content
             assert "Union" in content
-            # No function data -> banner present, no embedded data.
             assert "interactive views unavailable" in content.lower()
             assert "__DECBENCH_INLINE__" not in content
 
@@ -356,15 +347,11 @@ class TestScoringPipeline:
             assert output_path.exists()
             content = output_path.read_text()
 
-            # Embedded (precomputed) data + interactive sections present.
             assert "window.__DECBENCH_INLINE__" in content
-            # Sidebar layout: nav + JS-driven leaderboard + view routing.
             assert 'class="sidebar"' in content
             assert 'id="leaderboard-table"' in content
-            assert 'data-view="about"' in content  # absorbed the old metrics view
-            # The precomputed combos the client looks up instead of recomputing.
+            assert 'data-view="about"' in content
             assert '"combos"' in content
-            # `</script>` escaping in the inline payload: see tests/test_site.py.
 
 
 class TestLabels:
@@ -390,11 +377,9 @@ class TestLabels:
         labels = binary_labels_for(config, "O2", "bin1")
         assert labels == ["O2", "optimized", "firmware", "big"]
 
-        # A binary without per-binary additions still inherits project labels.
         labels2 = binary_labels_for(config, "O0", "bin2")
         assert labels2 == ["O0", "unoptimized", "firmware"]
 
-        # Duplicates across sources are removed, order-stable.
         config2 = ProjectConfig(
             name="proj2",
             labels=["O2", "firmware"],
@@ -408,13 +393,9 @@ class TestLabels:
 
         base = ["O2", "optimized"]
 
-        # Below threshold -> no "large".
         assert function_labels_for(base, 50, large_threshold=100) == base
-        # At threshold -> "large" appended.
         assert function_labels_for(base, 100, large_threshold=100) == ["O2", "optimized", "large"]
-        # Above threshold -> "large" appended.
         assert function_labels_for(base, 250, large_threshold=100) == ["O2", "optimized", "large"]
-        # Unknown line count -> no "large".
         assert function_labels_for(base, None, large_threshold=100) == base
 
 
@@ -527,7 +508,6 @@ class TestFullPipelineIntegration:
         binary_file = EXAMPLE_PROJECT_DIR / "example"
         source_file = EXAMPLE_PROJECT_DIR / "example.c"
 
-        # Extract source CFGs
         source_parsed = parse_source(str(source_file))
         source_cfgs = {}
         for func_name, func in source_parsed.items():
@@ -536,7 +516,6 @@ class TestFullPipelineIntegration:
 
         assert len(source_cfgs) > 0
 
-        # Decompile with angr
         project = angr.Project(str(binary_file), auto_load_libs=False)
         cfg = project.analyses.CFGFast(normalize=True)
 
@@ -553,7 +532,6 @@ class TestFullPipelineIntegration:
 
         assert len(decompiled_code) > 0
 
-        # Parse decompiled code to get CFGs
         decompiled_cfgs = {}
         with tempfile.NamedTemporaryFile(mode="w", suffix=".c", delete=False) as f:
             for name, code in decompiled_code.items():
@@ -570,7 +548,6 @@ class TestFullPipelineIntegration:
         finally:
             Path(temp_path).unlink(missing_ok=True)
 
-        # Compute GED
         total = 0
         perfect = 0
         for dec_name in decompiled_cfgs:

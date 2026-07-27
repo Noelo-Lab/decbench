@@ -36,8 +36,8 @@ from decbench.models.decompilation import (
 
 _l = logging.getLogger(__name__)
 
-# IDA-specific C dialect -> standard C (order matters: __int64 before __int).
-# Matches declib_dec.IDADeclibDecompiler so byte_match can recompile the output.
+# Order matters (__int64 before __int). Mirrors declib_dec.IDADeclibDecompiler
+# so byte_match can recompile the output.
 _CODE_REPLACEMENTS = (
     ("unsigned __int64", "unsigned long long"),
     ("__int64", "long long"),
@@ -71,10 +71,6 @@ class RawIDADecompiler(Decompiler):
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
 
-    #
-    # Decompiler interface
-    #
-
     def is_available(self) -> bool:
         """Whether a real, working IDA 9+ idalib is importable.
 
@@ -107,23 +103,6 @@ class RawIDADecompiler(Decompiler):
             return str(idaapi.IDA_SDK_VERSION)
         except Exception:  # noqa: BLE001
             return "unknown"
-
-    def discover_functions(self, binary_path: Path) -> list[tuple[str, int]]:
-        if not self.is_available():
-            return []
-        elf_base = common.elf_min_vaddr(binary_path)
-        text_range = common.elf_text_range(binary_path)
-        try:
-            import idapro
-
-            idapro.open_database(str(binary_path), run_auto_analysis=True)
-            try:
-                return self._enumerate(elf_base, text_range)
-            finally:
-                idapro.close_database(save=False)
-        except Exception as e:  # noqa: BLE001
-            _l.error("ida-raw: failed to discover functions in %s: %s", binary_path, e)
-            return []
 
     def decompile_binary(
         self,
@@ -228,10 +207,6 @@ class RawIDADecompiler(Decompiler):
 
         return result
 
-    #
-    # IDA helpers
-    #
-
     @staticmethod
     def _ida_image_base() -> int:
         """The address IDA loaded the binary at (its image base)."""
@@ -264,7 +239,6 @@ class RawIDADecompiler(Decompiler):
             f = ida_funcs.get_func(ea)
             if f is None:
                 continue
-            # Skip thunks (IDA flags them as FUNC_THUNK).
             if f.flags & ida_funcs.FUNC_THUNK:
                 continue
             name = ida_name.get_ea_name(ea) or ""
@@ -283,7 +257,6 @@ class RawIDADecompiler(Decompiler):
         """Decompile one function with Hex-Rays -> FunctionDecompilation."""
         import ida_hexrays
 
-        # ELF-space -> IDA EA.
         ida_ea = (file_addr - elf_base) + self._ida_image_base()
         cfunc = ida_hexrays.decompile(ida_ea)
         if cfunc is None:
@@ -401,16 +374,11 @@ class RawIDADecompiler(Decompiler):
 
             for line_no in range(len(sv)):
                 line = sv[line_no].line
-                # Find the item anchored at the start of this line, if any.
                 anchor = ida_hexrays.ctree_anchor_t()
-                # Strip color tags to compute positions is non-trivial; instead
-                # use the citem-to-ea map via the function's eamap when present.
-                _ = (line, anchor, ida_lines)  # documented best-effort path
+                _ = (line, anchor, ida_lines)
         except Exception:  # noqa: BLE001
             return []
 
-        # Fall back to the function-wide EA map when available: maps EA ->
-        # list of citems; we instead need item -> line, which IDA does not
-        # expose cleanly here, so we leave line mappings empty rather than
-        # emit incorrect data.
+        # IDA exposes EA -> citems but not citem -> line, so leave line mappings empty
+        # rather than emit incorrect data.
         return common.merge_line_addresses(line_to_addrs)

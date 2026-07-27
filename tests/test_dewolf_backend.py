@@ -27,7 +27,6 @@ def test_unavailable_without_python(monkeypatch) -> None:
     monkeypatch.delenv("DECBENCH_DEWOLF_PYTHON", raising=False)
     monkeypatch.delenv("DECBENCH_DEWOLF_REPO", raising=False)
     dec = RawDewolfDecompiler()
-    # No configured interpreter (and the test env has no versions config for it):
     monkeypatch.setattr(dec, "_python", lambda: None)
     assert dec.is_available() is False
 
@@ -44,8 +43,6 @@ def test_child_env_prepends_repo_and_astyle(monkeypatch, tmp_path: Path) -> None
     assert env["PATH"].split(":")[0] == "/opt/astyle/bin"
 
 
-# A stand-in driver: emits the JSON protocol and exits, so decompile_binary can
-# be exercised without Binary Ninja or the dewolf venv.
 _FAKE_DRIVER = """\
 import json, sys
 def e(o): sys.stdout.write(json.dumps(o) + "\\n")
@@ -69,8 +66,6 @@ def test_decompile_binary_parses_driver_stream(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setattr(dec, "_python", lambda: sys.executable)
     monkeypatch.setattr(dec, "_child_env", dict)
     monkeypatch.setattr("decbench.decompilers.raw.dewolf_raw._DRIVER", driver)
-    # elf_min_vaddr on our stub bytes → 0; the driver's addrs are already
-    # ELF-file-space, so they pass straight through.
     monkeypatch.setattr("decbench.decompilers.raw.dewolf_raw.common.elf_min_vaddr", lambda p: 0)
 
     out = tmp_path / "out"

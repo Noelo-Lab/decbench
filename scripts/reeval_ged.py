@@ -28,11 +28,6 @@ import pickle
 import sys
 from pathlib import Path
 
-# Every decompiler whose checkpoints may carry stale inline GED. r2dec/dewolf
-# joined the tree after the first reeval; a refresh must cover them too, or the
-# scoped update_ged overlay leaves their columns on the inline values forever.
-# codex/claude-code (sample-set-only) are included for the same reason — their
-# slice is tiny (~250 fns each) so covering them costs nearly nothing.
 DECOMPILERS = (
     "angr",
     "ghidra",
@@ -44,16 +39,14 @@ DECOMPILERS = (
     "codex",
     "claude-code",
 )
-# DECBENCH_REEVAL_DECOMPILERS (comma list, e.g. "angr,mydec") overrides the default tuple.
 if os.environ.get("DECBENCH_REEVAL_DECOMPILERS"):
     DECOMPILERS = tuple(
         d.strip() for d in os.environ["DECBENCH_REEVAL_DECOMPILERS"].split(",") if d.strip()
     )
 OPT_LEVELS = ("O0", "O2", "O2-noinline")
-SRC_OPT = "O0"  # source CFGs are opt-independent; extract once from here
+SRC_OPT = "O0"
 
 
-# ---- Stage A: source CFGs per project -------------------------------------
 def src_cfgs_for_i(i_path: str) -> tuple[str, dict]:
     """Worker: extract (stripped) source CFGs for one .i file."""
     from decbench.utils.cfg import extract_cfgs_from_source
@@ -69,7 +62,6 @@ def build_source_cfgs(root: Path, projects: list[str], workers: int) -> Path:
     """Extract + cache source CFGs per project (one pickle each)."""
     src_dir = root / "ged_src"
     src_dir.mkdir(exist_ok=True)
-    # Gather .i files per project that still need a source-CFG cache.
     todo: dict[str, list[str]] = {}
     for proj in projects:
         if (src_dir / f"{proj}.pkl").exists():
@@ -87,7 +79,6 @@ def build_source_cfgs(root: Path, projects: list[str], workers: int) -> Path:
     if not todo:
         print("[ged/src] all source-CFG caches present", flush=True)
         return src_dir
-    # path -> project, for routing results
     owner = {p: proj for proj, paths in todo.items() for p in paths}
     all_paths = list(owner)
     print(
@@ -95,11 +86,9 @@ def build_source_cfgs(root: Path, projects: list[str], workers: int) -> Path:
         f"{len(todo)} projects, {workers} workers",
         flush=True,
     )
-    # proj -> {translation-unit stem -> {function name -> CFG}}. Keeping source
-    # CFGs PER-TU (not a project-wide name-keyed union) lets stage B pair each
-    # binary against its OWN translation unit, so per-program functions
-    # (main/usage/static helpers) are scored against the right body instead of an
-    # arbitrary same-named function from another binary (the collision bug).
+    # Source CFGs stay PER-TU (not a project-wide name-keyed union) so stage B can
+    # pair each binary against its own translation unit — otherwise main/usage/static
+    # helpers score against an arbitrary same-named function from another binary.
     acc: dict[str, dict] = {proj: {} for proj in todo}
     ctx = mp.get_context("spawn")
     done = 0
@@ -116,10 +105,6 @@ def build_source_cfgs(root: Path, projects: list[str], workers: int) -> Path:
     return src_dir
 
 
-# ---- Stage B: GED per (opt, project, binary, dec) -------------------------
-# Per-worker cache: src_pkl path -> (per_stem_dict, best_source_by_name). A pool
-# worker handles many (binary, dec) tasks for the same project, so the cross-TU
-# best-by-name fallback is computed once per project pickle, not per task.
 _SRC_CACHE: dict[str, tuple[dict, dict]] = {}
 
 
@@ -150,17 +135,12 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
     per_stem, best_by_name = _load_src(src_pkl)
     src_cfgs = resolved_source_for_binary(stem, per_stem, best_by_name)
     try:
-        # sanitize_decompiled=True mirrors the live pipeline: clean decompiler-
-        # specific C quirks (array-return types, binja @reg, ida __int128) so
-        # Joern parses functions it would otherwise drop from GED coverage.
         dec_cfgs = extract_cfgs_from_source(Path(c_path), sanitize_decompiled=True) or {}
     except Exception:  # noqa: BLE001
         dec_cfgs = {}
-    # The decompiler's own claim of which functions this artifact holds. Joern
-    # keys CFGs by the parsed BODY name; when that differs from the marker name
-    # (e.g. ida marker `_rl_set_screen_size` over a `rl_set_screen_size` body)
-    # the entry would land on a universe row this decompiler never owned —
-    # misattribution, not a score. Only emit functions the markers declare.
+    # Joern keys CFGs by the parsed BODY name, which can differ from the marker name
+    # (ida's `_rl_set_screen_size` over a `rl_set_screen_size` body). Emitting only
+    # marker-declared functions avoids attributing a row the decompiler never owned.
     markers = set(
         re.findall(
             r"^// Function: (\S+) @ 0x[0-9a-fA-F]+\s*$",
@@ -226,9 +206,8 @@ def main() -> None:
         ckpt = ckpt_dir / (f"{t[0]}::{t[1]}::{t[2]}::{t[3]}".replace("::", "__") + ".json")
         if not ckpt.exists():
             return True
-        # A checkpoint older than its decompiled artifact was computed against a
-        # PREVIOUS decompile of this binary — its entries may reference functions
-        # the artifact no longer holds (the kuna/betaflight stale-overlay bug).
+        # A checkpoint older than its artifact was computed against a PREVIOUS decompile
+        # and may reference functions the artifact no longer holds.
         return ckpt.stat().st_mtime < Path(t[4]).stat().st_mtime
 
     pending = [t for t in tasks if _pending(t)]
@@ -236,9 +215,8 @@ def main() -> None:
 
     ctx = mp.get_context("spawn")
     done = 0
-    # maxtasksperchild bounds the per-worker _SRC_CACHE: without recycling, a
-    # long-lived worker accumulates every project pickle it ever touches
-    # (multi-GB each for the big projects) and 40 workers OOM a 256 GB box.
+    # maxtasksperchild bounds the per-worker _SRC_CACHE: without recycling, workers
+    # accumulate every project pickle they touch and 40 of them OOM a 256 GB box.
     with ctx.Pool(processes=workers, maxtasksperchild=8) as pool:
         for key, result in pool.imap_unordered(eval_one, pending):
             (ckpt_dir / (key.replace("::", "__") + ".json")).write_text(json.dumps(result))
@@ -255,12 +233,9 @@ def main() -> None:
             merged[f"{key}::{func}"] = v
     out_path = root / "ged_new.json"
     out_path.write_text(json.dumps(merged))
-    # Sidecar: EVERY (opt, project, binary, dec) slice this reeval evaluated —
-    # including slices whose checkpoint is empty (nothing measurable in the
-    # artifact). The overlay merge (decbench.results_store.update_ged) uses this
-    # as its covered-slice set, so "evaluated, found nothing" clears stale inline
-    # values while "never evaluated" keeps them. Without the sidecar the merge
-    # falls back to inferring coverage from the entry keys (conservative).
+    # Sidecar of EVERY slice this reeval evaluated, including empty ones, so the
+    # overlay merge can tell "evaluated, found nothing" (clears stale inline values)
+    # from "never evaluated" (keeps them).
     (root / "ged_new.slices.json").write_text(json.dumps(sorted(slices)))
     perf = sum(1 for v in merged.values() if v.get("perfect"))
     print(

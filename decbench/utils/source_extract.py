@@ -48,10 +48,8 @@ def _dwarf_decl(binary_path: Path) -> dict[str, tuple[str, int]]:
             dw = elf.get_dwarf_info()
             for cu in dw.iter_CUs():
                 lp = dw.line_program_for_CU(cu)
-                # DW_AT_decl_file indexing differs by DWARF version: pre-v5 is
-                # 1-based (entry 0 is unused), v5 is 0-based (entry 0 is the
-                # primary source). Prepend a placeholder only for pre-v5 so the
-                # index lines up either way.
+                # DW_AT_decl_file is 1-based pre-DWARF5 and 0-based in DWARF5; the placeholder
+                # makes the index line up either way.
                 version = 4
                 if lp is not None:
                     version = lp.header.get("version", cu.header.get("version", 4))
@@ -175,33 +173,28 @@ def extract_from_text(text: str, func_name: str, decl_line: int = 0) -> str | No
     """
     pat = re.compile(r"(^|[^\w])" + re.escape(func_name) + r"\s*\(")
     lines = text.splitlines(keepends=True)
-    # Precompute byte offset of each line start for decl_line proximity.
     offsets = []
     acc = 0
     for ln in lines:
         offsets.append(acc)
         acc += len(ln)
 
-    # (proximity, signature_start_offset, body_end_offset)
     candidates: list[tuple[int, int, int]] = []
     for m in pat.finditer(text):
         paren = text.index("(", m.start())
         close = _match_paren(text, paren)
         if close is None:
             continue
-        # The next non-space char after ')' decides definition vs prototype.
         j = close + 1
         while j < len(text) and text[j] in " \t\r\n":
             j += 1
         if j >= len(text):
             continue
         if text[j] == ";":
-            continue  # prototype / forward declaration, never a definition
+            continue
         if text[j] != "{":
-            # Possible K&R definition. The ';' guard above is essential: an
-            # empty/bare-param prototype would otherwise let the loose scan below
-            # stitch across to an unrelated later '{'. Accept only a bare-
-            # identifier param list, then a run of ';'-terminated declarations.
+            # The ';' guard above is essential: an empty/bare-param prototype would let the
+            # loose scan below stitch across to an unrelated later '{'.
             params = text[paren + 1 : close]
             if not re.fullmatch(r"[\s\w,]*", params):
                 continue
@@ -209,14 +202,8 @@ def extract_from_text(text: str, func_name: str, decl_line: int = 0) -> str | No
             if body is None:
                 continue
             j = body
-        # Reject if this looks like a call inside another body: require the
-        # token before the name (ignoring the return type) to start a logical
-        # line — i.e. the line's first non-space isn't itself a statement.
-        line_no = text.count("\n", 0, m.start())  # 0-based
-        # Find start of the signature: walk back to the line that begins the
-        # return type (previous blank line or '}' / ';').
+        line_no = text.count("\n", 0, m.start())
         sig_start = text.rfind("\n", 0, m.start())
-        # extend upward over the return-type line(s)
         k = line_no
         while k > 0:
             prev = lines[k - 1].strip()
@@ -255,10 +242,6 @@ def function_source_ex(binary_path: Path | None, func_name: str) -> tuple[str | 
     if binary_path is None:
         return None, "binary_not_found"
     binary_path = Path(binary_path)
-    # A missing binary only loses the DWARF *hint* (_dwarf_decl swallows the open
-    # failure); the sibling sources may still hold the function — e.g. a partial
-    # results snapshot whose artifacts were pruned but whose .c/.i were kept. Only
-    # a missing directory means there is nothing to search at all.
     if not binary_path.parent.is_dir():
         return None, "binary_not_found"
 
@@ -274,8 +257,6 @@ def function_source_ex(binary_path: Path | None, func_name: str) -> tuple[str | 
         if not sources:
             continue
         any_sources = True
-        # Prefer the DWARF-named file (matched on stem, since decl_file is foo.c
-        # but the preprocessed file is foo.i), then any file containing the name.
         ordered: list[Path] = []
         if decl_stem:
             ordered = [p for p in sources if p.stem == decl_stem]
@@ -289,8 +270,7 @@ def function_source_ex(binary_path: Path | None, func_name: str) -> tuple[str | 
             if func_name not in text:
                 continue
             found_name = True
-            # decl_line indexes the original .c; it does not correspond to the
-            # preprocessed .i line numbers, so only use it as a hint for .c.
+            # decl_line indexes the original .c, not the preprocessed .i line numbers.
             line_hint = decl_line if (ext == ".c" and p.stem == decl_stem) else 0
             snippet = extract_from_text(text, func_name, line_hint)
             if snippet:

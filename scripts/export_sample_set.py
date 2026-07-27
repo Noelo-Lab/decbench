@@ -88,7 +88,6 @@ def collect_sample_set(
     ``--base`` manifest is given); to preserve an existing manifest's picks use
     :func:`topup_from_base`.
     """
-    # seed=None -> DEFAULT_SAMPLE_SEED (1337)
     assign_datasets(fd, seed=seed)
     members = {
         (g.project, g.opt_level, g.binary, f.function)
@@ -194,7 +193,6 @@ def main() -> int:
         out = fr_json.parent / "sample_set_manifest.json"
 
     excluded = frozenset(exclude)
-    # One parse of the (large) dataset for both the presence check and the draw.
     fd = FunctionData.from_json(fr_json)
     present = {g.project for g in fd.groups}
     for name in sorted(excluded - present):
@@ -209,7 +207,6 @@ def main() -> int:
 
     drop_members: frozenset[tuple[str, str, str, str]] = frozenset()
     if base is not None and base.is_file():
-        # Top-up: preserve the base manifest's surviving picks, refill freed slots.
         base_members = {_key(e) for e in json.loads(base.read_text()).get("functions", [])}
         if drop_unscoreable:
             drop_members = unscoreable_members(fd, base_members)
@@ -244,7 +241,6 @@ def main() -> int:
 
     manifest.to_json(out)
 
-    # Report the shape so the operator can sanity-check the slice.
     by_opt: dict[str, int] = {}
     by_proj: dict[str, int] = {}
     for e in manifest.functions:

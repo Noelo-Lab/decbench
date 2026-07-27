@@ -58,10 +58,6 @@ class RawGhidraDecompiler(Decompiler):
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
 
-    #
-    # Version / install-dir resolution
-    #
-
     def _settings(self) -> dict:
         """Per-version settings from ``decompilers.toml`` (may be empty)."""
         from decbench.decompilers.spec import version_settings
@@ -158,12 +154,10 @@ class RawGhidraDecompiler(Decompiler):
                 str(Path(java_home) / "bin") + os.pathsep + os.environ.get("PATH", "")
             )
 
-        # Make Java run headless before the JVM boots.
         opts = os.environ.get("_JAVA_OPTIONS", "")
         if "java.awt.headless" not in opts:
             os.environ["_JAVA_OPTIONS"] = (opts + " -Djava.awt.headless=true").strip()
-        # A stale DISPLAY (e.g. an old SSH X-forward) triggers the AWT error
-        # even in "headless" Ghidra; drop it for this process.
+        # A stale DISPLAY triggers the AWT error even in headless Ghidra.
         os.environ.pop("DISPLAY", None)
 
         launcher = self._launcher()
@@ -194,10 +188,6 @@ class RawGhidraDecompiler(Decompiler):
         finally:
             shutil.rmtree(project_dir, ignore_errors=True)
 
-    #
-    # Decompiler interface
-    #
-
     def is_available(self) -> bool:
         if self._install_dir() is None:
             return False
@@ -220,21 +210,6 @@ class RawGhidraDecompiler(Decompiler):
         except Exception:  # noqa: BLE001
             pass
         return "unknown"
-
-    def discover_functions(self, binary_path: Path) -> list[tuple[str, int]]:
-        if not self.is_available():
-            return []
-        elf_base = common.elf_min_vaddr(binary_path)
-        text_range = common.elf_text_range(binary_path)
-        try:
-            launcher = self._ensure_started()
-
-            with self._open_program(launcher, binary_path) as flat:
-                program = flat.getCurrentProgram()
-                return self._enumerate(program, elf_base, text_range)
-        except Exception as e:  # noqa: BLE001
-            _l.error("ghidra-raw: failed to discover functions in %s: %s", binary_path, e)
-            return []
 
     def decompile_binary(
         self,
@@ -305,7 +280,6 @@ class RawGhidraDecompiler(Decompiler):
                 ifc.openProgram(program)
                 monitor = ConsoleTaskMonitor()
                 timeout_s = int(self.config.function_timeout_seconds)
-                # Map name -> ghidra Function for the enumerated set.
                 by_name = self._functions_by_name(program)
 
                 for func_name, file_addr in enumerated:
@@ -365,10 +339,6 @@ class RawGhidraDecompiler(Decompiler):
             result.to_toml(output_dir / f"{self.name}_{binary_path.stem}.toml")
 
         return result
-
-    #
-    # Ghidra helpers
-    #
 
     def _enumerate(
         self,
@@ -512,7 +482,6 @@ class RawGhidraDecompiler(Decompiler):
                     )
                 )
 
-        # Re-index arguments by sorted ordinal so arg_index is dense ABI order.
         params.sort(key=lambda t: t[0])
         for position, (_ord, vi) in enumerate(params):
             vi.arg_index = position

@@ -112,7 +112,7 @@ def _split_artifact_name(
     Known decompiler names (when given) are matched as prefixes first, so a
     ``dec`` containing ``_`` still resolves; otherwise split on the first ``_``.
     """
-    base = filename[:-2]  # strip ".c"
+    base = filename[:-2]
     if decompilers:
         for dec in sorted(decompilers, key=len, reverse=True):
             if base.startswith(dec + "_"):

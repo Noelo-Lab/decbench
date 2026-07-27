@@ -36,21 +36,11 @@ class AggregatedMetric:
 
 
 @dataclass
-class PerFunctionResults:
-    """Per-function metric values across decompilers for computing Overall."""
-
-    # function_key -> metric_name -> is_perfect
-    function_perfects: dict[str, dict[str, bool]] = field(default_factory=dict)
-
-
-@dataclass
 class AggregatedResults:
     """Fully aggregated results ready for scoreboard generation."""
 
-    # decompiler -> metric -> AggregatedMetric
     by_decompiler: dict[str, dict[str, AggregatedMetric]] = field(default_factory=dict)
 
-    # decompiler -> function_key -> metric -> is_perfect
     per_function: dict[str, dict[str, dict[str, bool]]] = field(default_factory=dict)
 
     total_functions: int = 0
@@ -68,14 +58,12 @@ def aggregate_results(
     """Aggregate evaluation results across all projects and binaries."""
     aggregated = AggregatedResults()
 
-    # decompiler -> metric -> list of (value, is_perfect)
     all_values: dict[str, dict[str, list[tuple[float, bool]]]] = {}
 
     decompilers_seen: set[str] = set()
     metrics_seen: set[str] = set()
     binary_count = 0
-    # Distinct project::opt::binary::function keys across all decompilers
-    # and metrics, so totals are not inflated by either dimension.
+    # Distinct project::opt::binary::function keys, so totals are not inflated.
     distinct_functions: set[str] = set()
 
     for project_name, opt_results in evaluation_results.items():
@@ -109,7 +97,6 @@ def aggregate_results(
                                 (value.value, is_perfect)
                             )
 
-                            # Track per-function perfects for Overall computation
                             opt_value = (
                                 opt_level.value
                                 if hasattr(opt_level, "value")
@@ -124,7 +111,6 @@ def aggregate_results(
                                 aggregated.per_function[dec_name][func_key] = {}
                             aggregated.per_function[dec_name][func_key][metric_name] = is_perfect
 
-    # Compute aggregates
     for dec_name in all_values:
         aggregated.by_decompiler[dec_name] = {}
 

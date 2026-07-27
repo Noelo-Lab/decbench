@@ -183,7 +183,6 @@ def save_dataset(
                 binary_relpath = rel_dir / stem
                 _copy(entry_path, dataset_root / binary_relpath)
 
-                # Sibling .i sources for this binary (same compiled dir).
                 source_relpaths: list[str] = []
                 for src in sorted(compiled_dir.glob("*.i")):
                     src_rel = rel_dir / src.name

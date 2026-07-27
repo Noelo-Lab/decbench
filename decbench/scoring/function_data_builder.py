@@ -19,14 +19,10 @@ if TYPE_CHECKING:
     from decbench.models.project import OptimizationLevel, Project
 
 
-# Placeholder names a decompiler assigns to an address it could not resolve to a
-# real symbol (stripped binary). A universe row under such a name is a PHANTOM:
-# either a non-source function pulled in by a narrow-to-source miss, or a real
-# source function whose address failed to relabel (ARM Thumb T-bit / PE
-# ImageBase). Once _relabel_to_dwarf has run (with the Thumb + PE fixes), any
-# name still matching this and scoring NO metric for anyone is genuinely
-# non-source and must not become its own universe key that every other
-# decompiler is marked "failed" on.
+# Placeholder names a decompiler assigns to an address it could not resolve.
+# One that still matches after _relabel_to_dwarf AND scores no metric for anyone
+# is genuinely non-source, and must not become a universe key every other
+# decompiler is then marked failed on.
 _UNRESOLVED_NAME = re.compile(r"^(sub|FUN|fcn|loc|nullsub|unk|off|byte|word|dword|j)_[0-9a-fA-F]+$")
 
 
@@ -168,13 +164,9 @@ def build_function_data(
     """
     projects_by_name = {p.name: p for p in projects}
 
-    # The universe (which functions each decompiler produced) must be built even
-    # for a (project, opt, binary) that has NO eval section — e.g. a
-    # DECOMPILE_ONLY re-decompile whose inline metrics were skipped, to be layered
-    # back by the reeval scripts. Without this, such a binary/project is driven
-    # only by evaluation_results below and silently vanishes from the dataset
-    # (the historical "coreutils dropped" bug). Add empty eval cells for every
-    # decompiled binary so the loop reaches its decompile-derived universe.
+    # The universe must be built even for a (project, opt, binary) with NO eval
+    # section (e.g. a DECOMPILE_ONLY re-decompile), or such a binary is driven only
+    # by evaluation_results and silently vanishes from the dataset.
     evaluation_results = _with_decompile_cells(evaluation_results, decompile_results)
 
     decompilers_seen: set[str] = set()
@@ -190,7 +182,6 @@ def build_function_data(
             opt_value = opt_level.value if hasattr(opt_level, "value") else str(opt_level)
 
             for binary_name, dec_results in binary_results.items():
-                # records keyed by function name for this binary
                 records: dict[str, FunctionRecord] = {}
                 func_order: list[str] = []
 
@@ -216,14 +207,6 @@ def build_function_data(
                             if dist is not None:
                                 record.distances.setdefault(dec_name, {})[metric_name] = dist
 
-                # --- Decompile success/failure universe --------------------
-                # Record, per (function, decompiler), whether the decompiler
-                # actually produced output. The universe is every name any
-                # decompiler decompiled (plus explicit failures); a decompiler
-                # that didn't produce a universe function "errored" on it (failed
-                # or timed out). This makes a decompiler's metric denominator =
-                # the set it decompiled — one denominator across all metrics — and
-                # powers the Errors column + the normalize-failures view.
                 dec_map = _dec_results_for(decompile_results, project_name, opt_level, binary_name)
                 allfail_decs: set[str] = set()
                 for dec_name, dr in dec_map.items():
@@ -237,13 +220,6 @@ def build_function_data(
                     names = list(dr.functions.keys()) + [f for f in ff if f != "all"]
                     for fn in names:
                         if fn not in records:
-                            # Don't mint a phantom universe row for an unresolved
-                            # placeholder name that scored no metric for anyone
-                            # (records already holds everything that scored a
-                            # metric, since the metric loop above ran first).
-                            # These are non-source functions (narrow miss) or
-                            # unrelabeled addresses; a real source function is
-                            # relabeled to its DWARF name before this point.
                             if _is_unresolved_name(fn):
                                 continue
                             records[fn] = FunctionRecord(function=fn)
@@ -259,10 +235,7 @@ def build_function_data(
                             and dec_name not in rec.values
                             and fn not in (meta.failed_functions or [])
                         ):
-                            # Slice-scoped backend (LLM sample-set) never
-                            # attempted this function: no flag at all, not False.
                             continue
-                        # a computed metric implies the function was decompiled
                         rec.decompiled[dec_name] = bool(ok or dec_name in rec.values)
 
                 if project is not None:
@@ -270,7 +243,6 @@ def build_function_data(
                 else:
                     bin_labels = list(_opt_only_labels(opt_value))
 
-                # Assign function labels (inherit binary labels + auto labels)
                 for func_name in func_order:
                     line_count = _line_count_for(
                         decompile_results,

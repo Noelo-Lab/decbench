@@ -57,49 +57,22 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# gcc localizes diagnostics and (by default) quotes identifiers with Unicode
-# curly quotes (' ') — force the C locale so it emits plain ASCII quotes that the
-# repair regexes below can match. (The regexes also accept curly quotes as a
-# fallback, in case a toolchain ignores the locale.)
+# Forces ASCII quoting in gcc diagnostics so the repair regexes below match.
 _C_LOCALE_ENV = {**os.environ, "LC_ALL": "C", "LANG": "C", "LANGUAGE": "C"}
-_Q = r"['‘’“”]"  # ascii ' or " plus curly variants
+_Q = r"['‘’“”]"
 
-# Strip a leading ``Namespace::`` qualifier (e.g. ``GLIBC_2.2.5::stderr`` ->
-# ``stderr``). Decompiled C never uses real C++ scope resolution, so any ``::``
-# is a symbol-version artifact we can safely drop. Also strip a BARE leading
-# ``::`` (IDA's "global shadowed by a local" disambiguator, ``::s``).
 _NS_QUALIFIER = re.compile(r"\b[A-Za-z_][\w.$]*::")
 _BARE_SCOPE = re.compile(r"(?<![\w)\]>]):{2}(?=\s*[A-Za-z_])")
 
-# Decompiler-specific function/type ANNOTATIONS that aren't valid C in the place
-# they appear (Binary Ninja's ``__noreturn``/``__pure`` suffixes, IDA/Ghidra
-# ``__cdecl``/``__fastcall``/``__thiscall`` calling-conv keywords, ``__packed``).
-# Dropping them lets the body still compile; they don't affect the recovered
-# logic the byte-match is measuring. The keyword-only forms are string-protected
-# (they must not be stripped out of a string literal like ``puts("__cdecl")``).
 _ANNOTATION_KEYWORDS = re.compile(
     r"\b__(?:noreturn|pure|const|packed|noreturn__|hidden|usercall|userpurge"
     r"|cdecl|stdcall|fastcall|thiscall|vectorcall)\b"
 )
-# The parametrized forms carry a string literal INSIDE the annotation, so the
-# pattern must span it — these run on the whole text (they can't occur as
-# ordinary program data).
 _ANNOTATION_CALLS = re.compile(r'\b__convention\s*\([^)]*\)|\b__(?:reg|stack)\s*\("[^"]*"\)')
 
-# Binary Ninja register-location annotations in parameter lists: ``char arg3 @
-# rax``. A bare ``@`` never occurs in valid C.
 _AT_REG = re.compile(r"\s@\s*\w+")
-# Binary Ninja unsigned-shift dialect: ``u>>``/``u<<`` (+ compound assign).
-# Binja renders it spaced on BOTH sides — ``x u>> y`` — so require whitespace
-# before the ``u`` and after the operator. That leaves a variable named ``u``
-# (``u>>2``, ``u >> 2``, ``return u>>foo``) untouched.
 _U_SHIFT = re.compile(r"(?<=\s)u(>>=|>>|<<=|<<)(?=\s)")
-# Width-unknown deref through a bare void cast: ``*(void *)EXPR`` — never valid
-# C (void lvalue). ``*(void **)`` (valid) is not matched: the cast must close
-# right after a single ``*``.
 _VOID_DEREF = re.compile(r"\*\s*\(\s*void\s*\*\s*\)")
-# Ghidra sub-piece notation ``x._<off>_<size>_`` (read <size> bytes at byte
-# offset <off> of x) — not C; desugared to a byte-offset deref (lvalue-capable).
 _SUBPIECE = re.compile(r"\b([A-Za-z_]\w*)\._(\d+)_([1248])_")
 _SUBPIECE_TYPES = {
     "1": "unsigned char",
@@ -107,21 +80,12 @@ _SUBPIECE_TYPES = {
     "4": "unsigned int",
     "8": "unsigned long",
 }
-# angr computed goto printed as a cast call: ``goto (long long)(EXPR);``.
 _GOTO_CAST = re.compile(r"\bgoto\s*\(\s*[^()]*\)\s*\(")
-# angr array return types: ``unsigned int [166] f(...)`` / ``struct s *[2] f(``.
 _ARRAY_RET = re.compile(r"^([A-Za-z_][\w \t]*?(?:\*+[ \t]*)?)\[\d+\][ \t]+(\w+[ \t]*\()", re.M)
-# Binary Ninja integer literals with a float-ish suffix: ``-1f`` (not ``0x1f``,
-# not a real float suffix like ``2.5f``).
 _INT_F_SUFFIX = re.compile(r"(?<![\w.])(\d+)f\b")
 
-# Duplicate ``typedef struct X {...} X;`` blocks (angr emits the same tag twice
-# with different member sets — can never compile; keep the fullest one).
 _STRUCT_TYPEDEF = re.compile(r"typedef\s+struct\s+(\w+)\s*\{[^{}]*\}\s*\1\s*;")
 
-# String/char literals: rewrites must never fire inside them (a ``@`` or ``::``
-# in a printf format is program data, and changing it would change the measured
-# code, not fix its syntax).
 _STRING_OR_CHAR = re.compile(r'"(?:[^"\\\n]|\\.)*"|\'(?:[^\'\\\n]|\\.)*\'')
 
 
@@ -137,12 +101,8 @@ def _sub_outside_strings(pattern: re.Pattern, repl, code: str) -> str:
     return "".join(out)
 
 
-# Minimal, conflict-safe scaffolding. Only fixed-width int + size types; nothing
-# that defines FILE/struct names a decompiler might also define.
 _MINIMAL_INCLUDES = "#include <stdint.h>\n#include <stddef.h>\n"
 
-# Sensible C type for a Ghidra/IDA/angr pseudo-type, chosen so the *width* (and
-# thus most codegen) matches. Anything unknown falls back to ``long``.
 _TYPE_GUESS: dict[str, str] = {
     "undefined": "unsigned char",
     "undefined1": "unsigned char",
@@ -169,9 +129,8 @@ _TYPE_GUESS: dict[str, str] = {
     "ulonglong": "unsigned long long",
     "longlong": "long long",
     "pointer": "void *",
-    # IDA's underscore-prefixed cast types (``*(_DWORD *)p``). These MUST be
-    # width-correct: a generic ``long`` fallback silently turns every 4-byte
-    # store/load into an 8-byte one, wrecking the recompiled codegen.
+    # These MUST stay width-correct: a ``long`` fallback would silently widen
+    # every 4-byte store/load to 8 bytes and wreck the recompiled codegen.
     "_byte": "unsigned char",
     "_word": "unsigned short",
     "_dword": "unsigned int",
@@ -199,17 +158,13 @@ _TYPE_GUESS: dict[str, str] = {
     "unkuint10": "long double",
 }
 
-# Type names whose typedef is NOT a plain scalar alias.
 _SPECIAL_TYPEDEFS: dict[str, str] = {
-    # ``code *`` must be a *function* pointer so ``(*(code *)p)(...)`` compiles.
     "code": "typedef long code();",
-    # IDA emits ``gcc_va_list va; va[0]`` — the real va_list is an array type.
     "va_list": "typedef __builtin_va_list va_list;",
     "gcc_va_list": "typedef __builtin_va_list gcc_va_list;",
     "__gnuc_va_list": "typedef __builtin_va_list __gnuc_va_list;",
-    "_Bool": "",  # never needed, keep the guess table from firing
+    "_Bool": "",
 }
-# IDA SIMD types with their member spellings (``v.m128i_i32[1]``).
 for _simd, _members in (
     (
         "__m128i",
@@ -228,8 +183,6 @@ for _simd, _members in (
 ):
     _SPECIAL_TYPEDEFS[_simd] = f"typedef union {{ {_members} }} {_simd};"
 
-# A name that is clearly a pseudo-TYPE even when gcc reports it as a plain
-# undeclared identifier (cast position hides the type-ness).
 _PSEUDO_TYPE_NAME = re.compile(
     r"^(?:undefined\d*|u?int\d+|u(?:char|short|int|long)|s?byte|[dq]word|word"
     r"|bool|code|float\d+|ulonglong|longlong|_(?:byte|word|dword|qword|oword"
@@ -237,10 +190,6 @@ _PSEUDO_TYPE_NAME = re.compile(
     re.IGNORECASE,
 )
 
-# IDA/Ghidra/kuna DATA-name prefixes encode the referenced width; injecting the
-# right width (and array-ness) makes the recompiled global access match the
-# original. These are DEFINED (not extern) so PIE codegen stays a direct
-# rip-relative access like the original's, not a GOT indirection.
 _DATA_NAME = re.compile(
     r"^(byte|word|dword|qword|off|unk|flt|dbl|xmmword|asc|stru|s|DAT|_DAT|PTR|dat)_[0-9a-fA-F_]+$"
 )
@@ -262,8 +211,6 @@ _DATA_PREFIX_TYPE = {
     "PTR": "void *",
     "dat": "long",
 }
-# Prefixes that name a data BLOCK (string/unknown region) — declare as an array
-# so ``name[i]``/decay codegen (lea) matches the original data symbol.
 _DATA_ARRAY_PREFIXES = {"asc", "s", "unk", "stru"}
 
 
@@ -283,7 +230,6 @@ def _known_protos() -> dict[str, str]:
         protos[name] = decl
 
     for d in (
-        # stdio
         "int printf(const char *, ...);",
         "int fprintf(void *, const char *, ...);",
         "int sprintf(char *, const char *, ...);",
@@ -325,7 +271,6 @@ def _known_protos() -> dict[str, str]:
         "int setvbuf(void *, char *, int, unsigned long);",
         "void setbuf(void *, char *);",
         "void *tmpfile(void);",
-        # string
         "unsigned long strlen(const char *);",
         "int strcmp(const char *, const char *);",
         "int strncmp(const char *, const char *, unsigned long);",
@@ -352,7 +297,6 @@ def _known_protos() -> dict[str, str]:
         "int memcmp(const void *, const void *, unsigned long);",
         "void *memchr(const void *, int, unsigned long);",
         "void *mempcpy(void *, const void *, unsigned long);",
-        # stdlib
         "void *malloc(unsigned long);",
         "void *calloc(unsigned long, unsigned long);",
         "void *realloc(void *, unsigned long);",
@@ -385,7 +329,6 @@ def _known_protos() -> dict[str, str]:
         "void srandom(unsigned int);",
         "int mkstemp(char *);",
         "char *realpath(const char *, char *);",
-        # unistd / fcntl / sys
         "int open(const char *, int, ...);",
         "int close(int);",
         "long read(int, void *, unsigned long);",
@@ -436,7 +379,6 @@ def _known_protos() -> dict[str, str]:
         "int link(const char *, const char *);",
         "int symlink(const char *, const char *);",
         "long readlink(const char *, char *, unsigned long);",
-        # errno / ctype / locale
         "int *__errno_location(void);",
         "const unsigned short **__ctype_b_loc(void);",
         "const int **__ctype_tolower_loc(void);",
@@ -455,7 +397,6 @@ def _known_protos() -> dict[str, str]:
         "int iscntrl(int);",
         "int isgraph(int);",
         "char *setlocale(int, const char *);",
-        # time
         "long time(long *);",
         "long clock(void);",
         "int gettimeofday(void *, void *);",
@@ -467,7 +408,6 @@ def _known_protos() -> dict[str, str]:
         "unsigned long strftime(char *, unsigned long, const char *, const void *);",
         "int nanosleep(const void *, void *);",
         "int clock_gettime(int, void *);",
-        # getopt / err / assert / setjmp
         "int getopt(int, char *const *, const char *);",
         "int getopt_long(int, char *const *, const char *, const void *, int *);",
         "int getopt_long_only(int, char *const *, const char *, const void *, int *);",
@@ -482,11 +422,9 @@ def _known_protos() -> dict[str, str]:
         "int __sigsetjmp(void *, int);",
         "void longjmp(void *, int);",
         "void siglongjmp(void *, int);",
-        # dirent
         "void *opendir(const char *);",
         "void *readdir(void *);",
         "int closedir(void *);",
-        # glibc fortify variants (original -D_FORTIFY_SOURCE builds call these)
         "int __printf_chk(int, const char *, ...);",
         "int __fprintf_chk(void *, int, const char *, ...);",
         "int __sprintf_chk(char *, int, unsigned long, const char *, ...);",
@@ -535,12 +473,6 @@ def _helper_macros() -> dict[str, str]:
         " < (unsigned long)(x))",
         "__CFSUB__": "#define __CFSUB__(x, y) ((unsigned long)(x) < (unsigned long)(y))",
         "__CFSHL__": "#define __CFSHL__(x, y) (((x) >> (8 * sizeof(x) - (y))) & 1)",
-        # Signed-overflow flags (IDA semantics: SIGNED overflow regardless of
-        # operand signedness). Extract the overflow bit POSITIONALLY as the MSB
-        # of the classic ``(~(x^y)) & (x^sum)`` term at the operands' common
-        # width, shifted down as an unsigned value — sign-agnostic and
-        # width-generic, so it fires even when x/y are unsigned (a bare
-        # ``(long)`` cast zero-extends an unsigned operand and folds to 0).
         "__OFADD__": "#define __OFADD__(x, y) __extension__({ __typeof__((x) + (y)) _x = (x),"
         " _y = (y), _s = _x + _y;"
         " (int)(((~(_x ^ _y)) & (_x ^ _s)) >> (8 * sizeof(_s) - 1)) & 1; })",
@@ -556,7 +488,6 @@ def _helper_macros() -> dict[str, str]:
         "__SPAIR64__": "#define __SPAIR64__(h, l) ((long long)(((unsigned long long)"
         "(unsigned int)(h) << 32) | (unsigned int)(l)))",
     }
-    # IDA BYTEn/WORDn/DWORDn (+ signed variants): byte/word/dword n of a value.
     for n in range(1, 16):
         m[f"BYTE{n}"] = f"#define BYTE{n}(x) (*((unsigned char *)&(x) + {n}))"
         m[f"SBYTE{n}"] = f"#define SBYTE{n}(x) (*((signed char *)&(x) + {n}))"
@@ -566,7 +497,6 @@ def _helper_macros() -> dict[str, str]:
     for n in range(1, 4):
         m[f"DWORD{n}"] = f"#define DWORD{n}(x) (*((unsigned int *)&(x) + {n}))"
         m[f"SDWORD{n}"] = f"#define SDWORD{n}(x) (*((int *)&(x) + {n}))"
-    # IDA rotate helpers (width-suffixed).
     for n, t in (
         (1, "unsigned char"),
         (2, "unsigned short"),
@@ -580,7 +510,6 @@ def _helper_macros() -> dict[str, str]:
         m[f"__ROR{n}__"] = (
             f"#define __ROR{n}__(x, y) ((({t})(x) >> (y))" f" | (({t})(x) << ({bits} - (y))))"
         )
-    # Ghidra pcode helpers: CONCATxy / SUBxy / ZEXTxy / SEXTxy (x, y = byte widths).
     widths = {
         1: "unsigned char",
         2: "unsigned short",
@@ -593,9 +522,8 @@ def _helper_macros() -> dict[str, str]:
         for b in (1, 2, 3, 4, 5, 6, 7, 8):
             total = a + b
             rt = widths.get(total) or ("unsigned long long" if total < 8 else "unsigned __int128")
-            # Mask y to b BYTES: an odd b (3/5/6/7) has no integer type, so a
-            # cast can't truncate it — do it explicitly so upper bits of y never
-            # leak into the concatenation (Ghidra pcode CONCAT truncates y).
+            # An odd byte width (3/5/6/7) has no integer type to cast through,
+            # so mask explicitly — pcode CONCAT truncates y.
             ymask = (
                 f"(({rt})(y) & ((({rt})1 << {8 * b}) - 1))"
                 if b < 8
@@ -650,8 +578,6 @@ def sanitize_tokens(code: str) -> str:
     code = _sub_outside_strings(_NS_QUALIFIER, "", code)
     code = _sub_outside_strings(_BARE_SCOPE, "", code)
     code = _sub_outside_strings(_ANNOTATION_KEYWORDS, "", code)
-    # NOT string-protected: ``__convention("regparm")`` / ``__reg("rdx")`` carry
-    # a string literal INSIDE the annotation, so the pattern must span it.
     code = _ANNOTATION_CALLS.sub("", code)
     code = _sub_outside_strings(_AT_REG, "", code)
     code = _sub_outside_strings(_U_SHIFT, r"\1", code)
@@ -675,8 +601,6 @@ def _type_guess(name: str) -> str:
     low = name.lower()
     if low in _TYPE_GUESS:
         return _TYPE_GUESS[low]
-    # u?intN width hints. N <= 8 is a BYTE count (Ghidra/kuna: int8 = 8 bytes);
-    # 16/32/64 are bit counts (int32 = 4 bytes).
     m = re.fullmatch(r"u?int(\d+)", low)
     if m:
         n = int(m.group(1))
@@ -699,7 +623,6 @@ def _typedef_decl(name: str, code: str) -> str:
         return special
     if name == "bool":
         return "typedef _Bool bool;"
-    # A cast that is *called through* needs a function type: ``(*(X *)p)(...)``.
     if re.search(rf"\(\s*\*\s*\(\s*{re.escape(name)}\s*\*+\s*\)[^)]*\)\s*\(", code):
         return f"typedef long {name}();"
     return f"typedef {_type_guess(name)} {name};"
@@ -766,8 +689,6 @@ def derive_context_decls(function_codes: dict[str, str]) -> dict[str, str]:
             brace = stripped.find("{")
             head_lines.append(stripped[:brace] if brace != -1 else stripped)
             head = " ".join(head_lines)
-            # A signature is complete at its balanced closing paren (long
-            # parameter lists wrap over many lines) or at the body brace.
             if brace != -1 or ("(" in head and head.count("(") == head.count(")")):
                 done = brace != -1 or head.rstrip().endswith(")")
                 break
@@ -776,10 +697,6 @@ def derive_context_decls(function_codes: dict[str, str]) -> dict[str, str]:
         if not done:
             continue
         sig = " ".join(head_lines).strip()
-        # Reject anything that is not a plausible single C signature: error
-        # prose ("Decompilation Failed! ..."), comment continuations, glyphs,
-        # unbalanced parens — a malformed injected decl breaks the whole TU for
-        # every CALLER of this function, which is far worse than no prototype.
         if (
             not sig
             or len(sig) > 400
@@ -795,11 +712,6 @@ def derive_context_decls(function_codes: dict[str, str]) -> dict[str, str]:
             or "decompilation failed" in sig.lower()
         ):
             continue
-        # Must be a single clean declarator: ``<ret> name(<params>)`` where the
-        # function name is immediately followed by the parameter-list paren group
-        # AND that group closes at the very end of the signature. This rejects
-        # doubled/garbled signatures (e.g. dewolf's ``char* f(...)(...)``) that
-        # happen to have balanced parens overall.
         nm = re.search(rf"\b{re.escape(name)}\s*\(", sig)
         if not nm:
             continue
@@ -831,22 +743,15 @@ class FixupResult:
     error: str | None = None
 
 
-# Diagnostic patterns gcc emits that we know how to repair. ``_RE_IMPLICIT_FUNC``
-# matches the *warning* form too — the compile deliberately runs without ``-w``
-# so implicit-declaration warnings can drive prototype injection (gcc 11 treats
-# them as warnings, and ``-w`` would hide them entirely).
 _RE_UNKNOWN_TYPE = re.compile(rf"unknown type name {_Q}([A-Za-z_]\w*){_Q}")
 _RE_IMPLICIT_FUNC = re.compile(rf"implicit declaration of function {_Q}([A-Za-z_]\w*){_Q}")
 _RE_UNDECLARED = re.compile(rf"{_Q}([A-Za-z_]\w*){_Q} undeclared")
 _RE_NOT_A_FUNC = re.compile(rf"called object {_Q}([A-Za-z_]\w*){_Q}[^\n]*is not a function")
-# A conflict caused by one of OUR injected declarations.
 _RE_CONFLICT = re.compile(
     r"(?:conflicting types for|redefinition of|redeclared as|previous declaration of) "
     rf"{_Q}([A-Za-z_]\w*){_Q}"
 )
-# A prototype we injected doesn't fit the call site -> downgrade to unprototyped.
 _RE_BAD_ARGS = re.compile(rf"too (?:many|few) arguments to function {_Q}([A-Za-z_]\w*){_Q}")
-# Deref/void diagnostics repaired by positional edits or decl upgrades.
 _RE_DEREF_ERR = re.compile(
     r"(\d+):(\d+): error: (?:void value not ignored as it ought to be"
     r"|invalid use of void expression"
@@ -871,7 +776,6 @@ _RE_PTR_ARROW = re.compile(rf"{_Q}\*(\w+){_Q} is a pointer; did you mean to use 
 _RE_ARRAY_ASSIGN = re.compile(r"error: assignment to expression with array type")
 _RE_EXPECT_EXPR = re.compile(rf"error: expected expression before {_Q}(\w+){_Q}")
 _RE_SUBSCRIPTED = re.compile(r"error: subscripted value is neither array nor pointer")
-# ``NN | <source line>`` context lines gcc prints under each diagnostic.
 _RE_ERR_SNIPPET = re.compile(r"error: ([^\n]+)\n\s*\d+ \|([^\n]*)")
 
 
@@ -952,8 +856,6 @@ def _apply_edits(code: str, hdr_lines: int, edits: list[tuple[int, int, object]]
             if c < len(line) and line[c] == "*" and not line.startswith("(unsigned long *)", c + 1):
                 lines[ln] = line[: c + 1] + "(unsigned long *)" + line[c + 1 :]
             elif line[col : col + 1] == "=" or (c < len(line) and line[c] != "*"):
-                # A void-deref STORE (``*a5 = x``): the caret sits on the ``=``;
-                # the star is BEFORE it — scan back over the lvalue identifier.
                 b = col - 1
                 while b >= 0 and line[b] in " \t":
                     b -= 1
@@ -1000,14 +902,12 @@ def compile_with_fixup(
     """
     if flags is None:
         flags = ["-O2", "-c", "-fno-builtin"]
-    # Run WITHOUT -w: implicit-function-declaration diagnostics (warnings in
-    # gcc 11) drive prototype injection, and -w would suppress them.
+    # No -w: implicit-declaration warnings are what drive prototype injection.
     flags = [f for f in flags if f != "-w"]
 
     code = sanitize_tokens(code)
     decls: dict[str, str] = {}
     structs: dict[str, list[str]] = {}
-    # Track which names we injected (so we can withdraw on a conflict we caused).
     obj_dir = Path(tempfile.mkdtemp(prefix="decbench_bm_"))
     obj_path = obj_dir / f"{func_name}.o"
 
@@ -1015,8 +915,6 @@ def compile_with_fixup(
         return [d for d in decls.values() if d] + [f"struct {n} {{...}}" for n in structs]
 
     def fail(src: str, iteration: int, error: str) -> FixupResult:
-        # Only the SUCCESS path hands the temp dir to the caller; every failure
-        # must clean it up here or we leak an empty dir per non-compiling func.
         shutil.rmtree(obj_dir, ignore_errors=True)
         return FixupResult(None, src, False, iteration, injected(), error)
 
@@ -1031,11 +929,6 @@ def compile_with_fixup(
             return fail(src, iteration, "compiler-not-found")
 
         if proc.returncode == 0 and obj_path.exists():
-            # SUCCESS. One improvement pass: give implicitly-declared calls the
-            # best prototype we know (sibling signature / libc / helper macro /
-            # ``long f();``) — implicit-int callees mis-shape call-site codegen
-            # (AL zeroing, bogus sign-extensions). If the injections break the
-            # build, back them out and recompile the known-good source.
             new = {}
             for name in set(_RE_IMPLICIT_FUNC.findall(proc.stderr)):
                 if name != func_name and name not in decls:
@@ -1049,8 +942,6 @@ def compile_with_fixup(
                     proc2 = None
                 if proc2 is not None and proc2.returncode == 0 and obj_path.exists():
                     return FixupResult(obj_path, src2, True, iteration + 1, injected())
-                # Try once more after withdrawing just the decls gcc objects to
-                # (conflicts / arg-count mismatches from an imperfect proto).
                 err2 = proc2.stderr if proc2 is not None else ""
                 for name in set(_RE_CONFLICT.findall(err2)) | set(_RE_BAD_ARGS.findall(err2)):
                     if name in new:
@@ -1062,7 +953,6 @@ def compile_with_fixup(
                     proc3 = None
                 if proc3 is not None and proc3.returncode == 0 and obj_path.exists():
                     return FixupResult(obj_path, src3, True, iteration + 2, injected())
-                # Back out the whole improvement pass; recompile the good TU.
                 for name in new:
                     decls.pop(name, None)
                 src = _build_source(code, decls, structs)
@@ -1077,15 +967,6 @@ def compile_with_fixup(
         pairs = _errors_with_snippets(last_err)
         added = False
 
-        # 0) A PARSE error that lands in the SCAFFOLDING region (before ``code``)
-        #    means one of OUR injected decls is itself syntactically malformed —
-        #    most likely a context_decls sibling prototype that survived
-        #    derivation but doesn't parse. Withdraw whichever injected decl owns
-        #    that line; leaving it in blocks every subsequent repair (and would
-        #    score a function 0 for a defect in a *sibling's* signature). Only
-        #    STRUCTURAL parse errors trigger this — an "unknown type name"/
-        #    "undeclared" in a header decl (e.g. a proto that uses ``FILE *``) is
-        #    resolved by the normal typedef/struct rules below, not withdrawal.
         header_line_list = _build_source("", decls, structs).split("\n")
         withdrew = False
         for m in re.finditer(r"(?:^|\n)[^\n:]*:(\d+):\d+: error: ([^\n]+)", last_err):
@@ -1103,38 +984,27 @@ def compile_with_fixup(
             bad_line = header_line_list[ln0].strip()
             for nm, d in list(decls.items()):
                 if d and d.strip() == bad_line:
-                    decls[nm] = ""  # blank keeps it claimed so we don't re-add
+                    decls[nm] = ""
                     withdrew = True
                     added = True
                     break
         if withdrew:
-            continue  # recompile without the malformed decl before doing more
+            continue
 
-        # 1) Withdraw any injected decl that caused a conflict, and avoid re-adding.
-        #    Guard on truthiness so an already-blanked (or non-injected) name does
-        #    NOT keep re-firing `added` — otherwise a persistent conflict between
-        #    two decompiler-provided decls burns all _MAX_REPAIR_ITERS gcc runs.
         for name in _RE_CONFLICT.findall(last_err):
             if decls.get(name):
-                # Our decl clashed with a decompiler-provided one; drop ours.
-                decls[name] = ""  # blank keeps it "claimed" so we don't re-add
+                decls[name] = ""
                 added = True
-        # An injected prototype that doesn't fit the call site -> unprototyped.
         for name in _RE_BAD_ARGS.findall(last_err):
             if decls.get(name) and decls[name] != f"long {name}();":
                 decls[name] = f"long {name}();"
                 added = True
 
-        # 2) unknown type name -> typedef a width-matched concrete type (or a
-        #    special union/function/varargs typedef for known pseudo-types).
         for name in _RE_UNKNOWN_TYPE.findall(last_err):
             if name not in decls:
                 decls[name] = _typedef_decl(name, code)
                 added = True
 
-        # 3) implicit function declaration -> best available prototype.
-        #    A pseudo-TYPE name reported as a "function" is really a cast that
-        #    parses like a call — ``(bool (**)())v`` — and needs a typedef.
         for name in set(_RE_IMPLICIT_FUNC.findall(last_err)):
             if name == func_name:
                 continue
@@ -1146,8 +1016,6 @@ def compile_with_fixup(
                 decls[name] = decl
                 added = True
 
-        # 4) undeclared identifier -> typedef if it's used as a cast type or is
-        #    a known pseudo-type name; else a width-typed global definition.
         for name in _RE_UNDECLARED.findall(last_err):
             if name not in decls:
                 if name in _HELPER_MACROS:
@@ -1158,10 +1026,6 @@ def compile_with_fixup(
                     decls[name] = _global_decl(name, code)
                 added = True
 
-        # 4b) A parse error whose snippet shows one of OUR scalar globals in
-        #     cast position -> it was a type after all; flip to a typedef.
-        #     (Only names implicated by the failing line, so an unrelated parse
-        #     error can't misflip an ordinary parenthesized global.)
         for msg, snip in pairs:
             if not msg.startswith("expected"):
                 continue
@@ -1171,12 +1035,6 @@ def compile_with_fixup(
                     decls[name] = _typedef_decl(name, code)
                     added = True
 
-        # 5) Deref of an implicitly-declared (int-returning) call or of one of
-        #    our injected scalars -> pointer-returning / pointer / fn pointer.
-        #    Each deref diagnostic is routed ONCE: a decl upgrade when the
-        #    snippet names something we can retype, else a positional cast edit
-        #    (never both — a cast inserted on top of an upgraded decl re-breaks
-        #    the expression).
         deref_edits: list[tuple[int, int, object]] = []
         for m in _RE_DEREF_ERR.finditer(last_err):
             block_end = last_err.find("error:", m.end())
@@ -1194,9 +1052,6 @@ def compile_with_fixup(
                     handled = True
                     added = True
                 elif "(" in (cur or ""):
-                    # An earlier rule already gave this callee a (better)
-                    # prototype in THIS iteration — the deref resolves on the
-                    # next compile; a positional cast would re-break it.
                     handled = True
             if not handled:
                 for cm in re.finditer(r"\*\s*([A-Za-z_]\w*)\s*[^\w(]", snip):
@@ -1213,13 +1068,10 @@ def compile_with_fixup(
                         handled = True
                         added = True
                     elif "*" in d:
-                        handled = True  # already pointer-typed; resolves next pass
+                        handled = True
             if not handled:
-                # Untyped ``*(ptr + off)`` etc. -> positional word-width cast.
                 deref_edits.append((int(m.group(1)), int(m.group(2)), "deref"))
 
-        # 5b) void* locals/params that are subscripted or deref'd -> byte ptr
-        #     (preserves GNU void*-arithmetic offsets).
         if "invalid use of void expression" in last_err or "void value not ignored" in last_err:
             for msg, snip in pairs:
                 if "void" not in msg:
@@ -1231,13 +1083,8 @@ def compile_with_fixup(
                         code = new_code
                         added = True
 
-        # 6) Positional edits: brace assignments and calls through data values.
         for m in _RE_BRACE_ASSIGN.finditer(last_err):
             deref_edits.append((int(m.group(1)), int(m.group(2)), "brace"))
-        # Calls through a value the decompiler itself typed as data. NAMED form
-        # ("called object 'x' is not a function"): x has a non-function type in
-        # scope (a local/param/its own global), so injecting a decl can't help —
-        # cast the call sites instead (and withdraw any decl we injected).
         for name in set(_RE_NOT_A_FUNC.findall(last_err)):
             if decls.get(name):
                 decls[name] = ""
@@ -1247,18 +1094,14 @@ def compile_with_fixup(
             if n:
                 code = new_code
                 added = True
-        # ANONYMOUS form (expression callee: ``x->f(...)``, ``(*p)(...)``).
         for m in _RE_SCALAR_CALL.finditer(last_err):
             if re.search(rf"called object {_Q}", m.group(0)):
-                continue  # named form handled above
+                continue
             block_end = last_err.find("error:", m.end())
             block = last_err[m.end() : block_end if block_end != -1 else len(last_err)]
             sm = re.search(r"\d+ \|([^\n]*)", block)
             snip = sm.group(1) if sm else ""
             handled = False
-            # ``(*name)(...)`` — an indirect call through a data symbol: give
-            # OUR injected global a function-pointer type (matches the
-            # original's load-then-call codegen).
             for cm in re.finditer(r"\(\s*\*\s*([A-Za-z_]\w*)\s*\)\s*\(", snip):
                 name = cm.group(1)
                 d = decls.get(name)
@@ -1266,8 +1109,6 @@ def compile_with_fixup(
                     decls[name] = f"long (*{name})();"
                     handled = True
                     added = True
-            # ``(*(unsigned long *)NAME)(...)`` (often born from the *(void *)
-            # sanitize): load a function pointer from NAME, then call it.
             if not handled:
                 pat = re.compile(
                     r"\(\s*\*\s*\(\s*unsigned long\s*\*\s*\)\s*([A-Za-z_]\w*)\s*\)\s*\("
@@ -1286,8 +1127,6 @@ def compile_with_fixup(
                 code = new_code
                 added = True
 
-        # 7) Undefined struct types -> synthesize a definition and grow it from
-        #    subsequent has-no-member diagnostics.
         struct_names = set()
         for m in _RE_UNDEF_STRUCT.finditer(last_err):
             name = next((g for g in m.groups() if g), None)
@@ -1300,7 +1139,7 @@ def compile_with_fixup(
                 struct_names.add(dm.group(1))
         for name in struct_names:
             if re.search(rf"\bstruct\s+{re.escape(name)}\s*\{{", code):
-                continue  # decompiler defined it; never redefine
+                continue
             if name not in structs:
                 structs[name] = []
                 added = True
@@ -1310,11 +1149,8 @@ def compile_with_fixup(
                 structs[tag].append(f"long {member};")
                 added = True
 
-        # 7b) Member access on something we injected as a scalar -> grow it.
         for m in _RE_NO_MEMBER_ANON.finditer(last_err):
             member = m.group(1)
-            # SIMD member on a call result: ``_mm_*(x).m128i_i64`` — declare the
-            # intrinsic as returning the matching IDA SIMD union.
             simd = {"m128i": "__m128i", "m128": "__m128", "m128d": "__m128d", "m64": "__m64"}.get(
                 member.split("_")[0]
             )
@@ -1337,8 +1173,6 @@ def compile_with_fixup(
                 if not bm:
                     continue
                 var = bm.group(1)
-                # Base var is one of OUR injected scalar globals -> make IT a
-                # synthesized-struct global, accumulating members.
                 d = decls.get(var, "")
                 if d == f"long {var};":
                     decls[var] = f"struct {{ long {member}; }} {var};"
@@ -1352,8 +1186,6 @@ def compile_with_fixup(
                     decls[var] = d.replace("struct { ", f"struct {{ long {member}; ", 1)
                     added = True
                     continue
-                # Else: the var's TYPE is one of OUR scalar typedefs -> grow the
-                # typedef into a synthesized struct.
                 tm = re.search(rf"\b([A-Za-z_]\w*)\s*\**\s*{re.escape(var)}\s*[;,)\[=]", code)
                 if not tm:
                     continue
@@ -1370,8 +1202,6 @@ def compile_with_fixup(
                     )
                     added = True
 
-        # 8) Subscripted scalar -> our injected global was really data: make it
-        #    an array (definition keeps direct rip-relative codegen).
         if _RE_SUBSCRIPTED.search(last_err):
             for msg, snip in pairs:
                 if "subscripted value" not in msg:
@@ -1384,8 +1214,6 @@ def compile_with_fixup(
                         decls[name] = f"{base} {name}[1024];"
                         added = True
 
-        # 9) Array-typed variable assigned as a whole -> it was really a pointer
-        #    (arrays are not assignable; the decompiler meant a pointer).
         if _RE_ARRAY_ASSIGN.search(last_err):
             for msg, snip in pairs:
                 if "array type" not in msg:
@@ -1405,7 +1233,6 @@ def compile_with_fixup(
                     code = new_code
                     added = True
 
-        # 10) angr precedence bug: ``*(a0)->f`` means ``(*a0)->f``.
         for name in set(_RE_PTR_ARROW.findall(last_err)):
             esc = re.escape(name)
             pat = re.compile(rf"\*\(\s*{esc}\s*\)\s*->|\*{esc}\s*->")
@@ -1414,8 +1241,6 @@ def compile_with_fixup(
                 code = new_code
                 added = True
 
-        # 11) A typedef name also used as a function (``struct stat`` dropped its
-        #     keyword and shadows the libc call): rename the CALL sites only.
         for msg, snip in pairs:
             m = _RE_EXPECT_EXPR.search("error: " + msg)
             if not m:
@@ -1442,8 +1267,6 @@ def compile_with_fixup(
                 code = new_code
                 added = True
 
-        # 11b) Wrong member name with a gcc suggestion (angr's struct dedupe can
-        #      keep the variant that renamed a field): take the suggestion.
         for m in re.finditer(
             rf"has no member named {_Q}(\w+){_Q}; did you mean {_Q}(\w+){_Q}", last_err
         ):
@@ -1454,8 +1277,6 @@ def compile_with_fixup(
                 code = new_code
                 added = True
 
-        # 11c) Pointer/int mixed arithmetic (decompiler treats pointers as
-        #      integers): cast the offending simple-identifier operand.
         for msg, snip in pairs:
             bm = re.search(
                 rf"invalid operands to binary (\S+) \(have {_Q}([^'‘’]+?){_Q}"
@@ -1475,7 +1296,7 @@ def compile_with_fixup(
             ):
                 continue
             esc_op = re.escape(op)
-            if lb:  # cast the RHS identifier
+            if lb:
                 m2 = re.search(rf"{esc_op}\s*([A-Za-z_]\w*)\b(?!\s*[\[(])", snip)
                 if m2:
                     name = m2.group(1)
@@ -1486,7 +1307,7 @@ def compile_with_fixup(
                         code = new_code
                         added = True
                         continue
-            if la and not lb:  # int OP nothing matched above; cast the LHS
+            if la and not lb:
                 m2 = re.search(rf"([A-Za-z_]\w*)\s*{esc_op}", snip)
                 if m2:
                     name = m2.group(1)
@@ -1496,8 +1317,6 @@ def compile_with_fixup(
                         code = new_code
                         added = True
 
-        # 11d) A function-typedef of ours used in a VALUE cast (``(code)x``):
-        #      rewrite those cast sites to (long).
         if "cast specifies function type" in last_err:
             for name, d in list(decls.items()):
                 if d == f"typedef long {name}();":
@@ -1507,7 +1326,6 @@ def compile_with_fixup(
                         code = new_code
                         added = True
 
-        # 12) Read-only assignment -> strip const from that declaration.
         for name in _RE_RDONLY.findall(last_err):
             if not name:
                 continue
@@ -1519,7 +1337,6 @@ def compile_with_fixup(
                 code = new_code
                 added = True
 
-        # 13) ``void X;`` locals -> ``long X;``.
         for name in _RE_VOIDVAR.findall(last_err):
             new_code = re.sub(rf"\bvoid(\s+{re.escape(name)}\s*[;\[=])", r"long\1", code, count=1)
             if new_code != code:
@@ -1527,7 +1344,7 @@ def compile_with_fixup(
                 added = True
 
         if not added:
-            break  # nothing actionable left; give up
+            break
 
     return fail(
         _build_source(code, decls, structs),

@@ -33,13 +33,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Label carried by every :class:`BinaryGroup` built from an ``is_malware``
-#: project (see ``projects/malware/*.toml``). It is the render-time signal that
-#: a function's code is REAL MALWARE source.
+# The render-time signal that a function's code is REAL MALWARE source.
 MALWARE_LABEL = "malware"
 
-#: Opt-OUT switch: set ``DECBENCH_PUBLISH_MALWARE=1`` to put malware code back
-#: into the report payloads. Default is to EXCLUDE.
+# Opt-OUT switch: default is to EXCLUDE malware code from report payloads.
 PUBLISH_MALWARE_ENV = "DECBENCH_PUBLISH_MALWARE"
 
 
@@ -191,7 +188,6 @@ def _lookup_decompiled(
             return None
         binary_results = opt_results.get(opt_level)
         if binary_results is None:
-            # Fall back to matching by string value of the opt key.
             ov = _opt_value(opt_level)
             for key, val in opt_results.items():
                 if _opt_value(key) == ov:
@@ -360,7 +356,6 @@ def build_hardest(
         excluded = set()
     dropped: Counter[str] = Counter()
 
-    # (metric, dec) -> list of candidate dicts
     buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
     perfect_cache: dict[str, float] = {}
 
@@ -384,7 +379,7 @@ def build_hardest(
                                 continue
                             distance = abs(value - perfect)
                             if distance == 0.0:
-                                continue  # perfect ⇒ not "hard"
+                                continue
                             buckets.setdefault((metric_name, dec_name), []).append(
                                 {
                                     "metric": metric_name,
@@ -402,7 +397,6 @@ def build_hardest(
 
     entries: list[HardestEntry] = []
     for (metric_name, dec_name), candidates in buckets.items():
-        # Worst first: farthest from perfect, then larger raw value as tiebreak.
         candidates.sort(key=lambda c: (c["distance"], c["value"]), reverse=True)
         kept = 0
         for c in candidates:
@@ -417,7 +411,7 @@ def build_hardest(
                 c["function"],
             )
             if not code:
-                continue  # require code to be worth showing
+                continue
             size = _lookup_line_count(
                 decompile_results,
                 c["project"],
@@ -531,8 +525,6 @@ def build_samples(
     if samples:
         return samples
 
-    # Fallback for corpora the tiers cannot see (single-decompiler runs, no GED):
-    # untiered samples of any function with decompiled code, bounded like before.
     limit = per_tier
     for group in function_data.groups:
         if len(samples) >= limit:
@@ -659,7 +651,7 @@ def build_sample_set_samples(
                 if code:
                     decompiled[dec] = code
             if not decompiled:
-                continue  # nothing to show (or only hidden-decompiler output)
+                continue
             binary = reader.binary(group.opt_level, group.project, group.binary)
             source, source_status = function_source_ex(binary, record.function)
             samples.append(
@@ -743,7 +735,6 @@ def build_history(
                     )
                 )
                 continue
-            # Tuple / list form.
             seq = list(item)
             if len(seq) < 2:
                 continue
@@ -782,8 +773,6 @@ def attach_extras(
     default — see :func:`publish_malware_allowed`. The score/aggregate path is
     deliberately untouched: malware functions still count in every metric.
     """
-    # Derived once from the label signal (+ is_malware when projects are given)
-    # and shared by both code-carrying builders.
     excluded = malware_projects(function_data, projects)
 
     try:
@@ -803,9 +792,6 @@ def attach_extras(
         except Exception:
             function_data.history = []
 
-    # Tag each function with its dataset presets (unoptimized/optimized/inlined/
-    # large/sample-set) so the report shows a single dataset selector instead of
-    # many toggles.
     try:
         from decbench.scoring.datasets import assign_datasets
 
@@ -813,8 +799,6 @@ def attach_extras(
     except Exception:
         pass
 
-    # Difficulty-tiered View samples (original source vs each decompiler's
-    # output; easy/medium/hard from cross-decompiler GED agreement).
     try:
         function_data.samples = build_samples(
             function_data, decompile_results, excluded_projects=excluded
@@ -822,7 +806,6 @@ def attach_extras(
     except Exception:
         function_data.samples = []
 
-    # Per-decompiler recompilation (compilability) rate for the Metrics page.
     try:
         function_data.compile_rates = compute_compile_rates(evaluation_results)
     except Exception:

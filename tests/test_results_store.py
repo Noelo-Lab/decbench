@@ -70,12 +70,9 @@ def test_update_ged_slice_scoped_clear_regression_kuna() -> None:
     n = update_ged(fd, overlay)
     assert n == 1
     o0, noinline = fd.groups
-    # Covered slice: cleared + rewritten from the overlay.
     assert o0.functions[0].values["kuna"]["ged"] == 0.0
     assert o0.functions[0].perfects["kuna"]["ged"] is True
-    # Uncovered slice of the SAME decompiler: inline value KEPT.
     assert noinline.functions[0].values["kuna"]["ged"] == 5.0
-    # Uncovered decompiler untouched everywhere.
     assert o0.functions[0].values["angr"]["ged"] == 1.0
     assert noinline.functions[0].values["angr"]["ged"] == 2.0
 
@@ -87,7 +84,7 @@ def test_update_ged_sidecar_covers_empty_slice() -> None:
     overlay = {"O0::projA::binA::kuna::f1": {"value": 0.0, "perfect": True}}
     covered = {
         ("O0", "projA", "binA", "kuna"),
-        ("O2-noinline", "projA", "binA", "kuna"),  # evaluated: artifact empty
+        ("O2-noinline", "projA", "binA", "kuna"),
     }
     update_ged(fd, overlay, covered=covered)
     o0, noinline = fd.groups
@@ -107,12 +104,9 @@ def test_update_byte_match_slice_scoped() -> None:
     tally = update_byte_match(fd, overlay)
     o0, noinline = fd.groups
     assert o0.functions[0].values["kuna"]["byte_match"] == 1.0
-    # Same decompiler, uncovered slice: stale value KEPT (per-slice scoping).
     assert noinline.functions[0].values["kuna"]["byte_match"] == 0.4
-    # Uncovered decompiler untouched.
     assert o0.functions[0].values["angr"]["byte_match"] == 0.4
     assert tally["kuna"] == {"comp": 1, "tot": 1}
-    # add_only never drops anything even inside a covered slice.
     fd2 = _fd_two_slices()
     fd2.groups[0].functions[0].values["kuna"]["byte_match"] = 0.4
     update_byte_match(fd2, {"O0::projA::binA::kuna::zzz": {"value": 1.0}}, add_only=True)
@@ -128,7 +122,6 @@ def test_read_ged_overlay_covers_evaluated_empty_slices(tmp_path: Path) -> None:
     (root / "ged_new.json").write_text(
         json.dumps({"O0::projA::binA::angr::f1": {"value": 0.0, "perfect": True}})
     )
-    # reeval cache has an EMPTY checkpoint for a kuna slice that scored nothing.
     (root / "reeval_ged").mkdir()
     (root / "reeval_ged" / "O2-noinline__projA__binA__kuna.json").write_text("{}")
     (root / "reeval_ged" / "O0__projA__binA__angr.json").write_text(
@@ -136,10 +129,9 @@ def test_read_ged_overlay_covers_evaluated_empty_slices(tmp_path: Path) -> None:
     )
     payload, covered = read_ged_overlay(root)
     assert payload is not None
-    assert ("O0", "projA", "binA", "angr") in covered  # from entries + cache
-    assert ("O2-noinline", "projA", "binA", "kuna") in covered  # empty cache slice
+    assert ("O0", "projA", "binA", "angr") in covered
+    assert ("O2-noinline", "projA", "binA", "kuna") in covered
 
-    # That empty-but-evaluated kuna slice must clear its stale inline GED.
     fd = _fd_two_slices()
     update_ged(fd, payload, covered=covered)
     noinline = fd.groups[1]
@@ -150,16 +142,16 @@ def test_merge_typematch_overlay() -> None:
     existing = {"kuna": {"a::O0::b::f": {"value": 0.5}}, "angr": {"a::O0::b::f": {"value": 0.2}}}
     fresh = {"kuna": {"a::O0::b::f": {"value": 0.9}, "a::O0::b::g": {"value": 0.1}}}
     merged = merge_typematch_overlay(existing, fresh)
-    assert merged["kuna"]["a::O0::b::f"] == {"value": 0.9}  # fresh wins
-    assert merged["kuna"]["a::O0::b::g"] == {"value": 0.1}  # fresh added
-    assert merged["angr"]["a::O0::b::f"] == {"value": 0.2}  # untouched dec kept
-    assert existing["kuna"]["a::O0::b::f"] == {"value": 0.5}  # inputs not mutated
+    assert merged["kuna"]["a::O0::b::f"] == {"value": 0.9}
+    assert merged["kuna"]["a::O0::b::g"] == {"value": 0.1}
+    assert merged["angr"]["a::O0::b::f"] == {"value": 0.2}
+    assert existing["kuna"]["a::O0::b::f"] == {"value": 0.5}
 
 
 def test_coverage_guard_catches_column_drop() -> None:
     old = coverage_counts(_fd_two_slices())
     shrunk = _fd_two_slices()
-    shrunk.groups[1].functions[0].values.pop("kuna")  # the kuna wipe, in miniature
+    shrunk.groups[1].functions[0].values.pop("kuna")
     regs = coverage_regressions(old, coverage_counts(shrunk))
     assert any(g == "projA::O2-noinline::binA" and c == "kuna::ged" for g, c, _o, _n in regs)
 
@@ -179,27 +171,22 @@ def test_guard_allows_excluded_project_and_decompiler() -> None:
 
 def test_guarded_write_blocks_and_preserves_old_file(tmp_path: Path) -> None:
     root = tmp_path
-    write_function_data_guarded(_fd_two_slices(), root)  # first write: no old file
+    write_function_data_guarded(_fd_two_slices(), root)
     original = (root / "function_results.json").read_bytes()
 
     shrunk = _fd_two_slices()
     shrunk.groups[1].functions[0].values.pop("kuna")
     with pytest.raises(CoverageRegressionError):
         write_function_data_guarded(shrunk, root)
-    # Failed guard leaves the previous file byte-identical and no temp litter.
     assert (root / "function_results.json").read_bytes() == original
     assert not (root / "function_results.json.tmp").exists()
 
-    # allow_drops writes and rotates the previous file to .prev.
     write_function_data_guarded(shrunk, root, allow_drops=True)
     assert (root / "function_results.prev.json").read_bytes() == original
     reloaded = FunctionData.from_json(root / "function_results.json")
     assert "kuna" not in reloaded.groups[1].functions[0].values
 
 
-# --------------------------------------------------------------------------- #
-# finalize_tree over a miniature results tree.
-# --------------------------------------------------------------------------- #
 def _mini_checkpoint(project: str, dec: str = "angr") -> dict:
     fn = FunctionDecompilation(name="main", address=0x1000, decompiled_code="int main(){}\n")
     dr = DecompilationResult(
@@ -236,11 +223,9 @@ def test_finalize_tree_reads_all_checkpoints(tmp_path: Path) -> None:
     assert (root / "scoreboard.toml").exists()
     assert sb.decompilers == ["angr"]
 
-    # A vanished checkpoint is a coverage regression, not a silent drop...
     (root / "checkpoints" / "beta.pkl").unlink()
     with pytest.raises(CoverageRegressionError):
         finalize_tree(root, log=lambda _msg: None)
-    # ...unless the project is explicitly excluded.
     fd2, _sb2 = finalize_tree(root, exclude_projects=["beta"], log=lambda _msg: None)
     assert sorted(g.project for g in fd2.groups) == ["alpha"]
 
@@ -248,7 +233,6 @@ def test_finalize_tree_reads_all_checkpoints(tmp_path: Path) -> None:
 def test_finalize_preserves_dataset_info_and_history(tmp_path: Path) -> None:
     root = _mini_tree(tmp_path, projects=("alpha",))
     fd, _ = finalize_tree(root, log=lambda _msg: None)
-    # Simulate compute_dataset_info + ingest_history having written their fields.
     fd.dataset_info = {"total_loc": 123}
     fd.history = []
     raw = json.loads((root / "function_results.json").read_text())
@@ -298,7 +282,6 @@ def test_audit_tree_scopes_slice_scoped_decompilers(tmp_path: Path) -> None:
         "evaluate": {},
     }
     (root / "checkpoints" / "alpha.pkl").write_bytes(pickle.dumps(ckpt))
-    # Manifest covers ONLY the O2 slice: mydec's O0 checkpoint data is off-slice.
     (root / "sample_set_manifest.json").write_text(
         json.dumps(
             {
@@ -311,9 +294,9 @@ def test_audit_tree_scopes_slice_scoped_decompilers(tmp_path: Path) -> None:
 
     gaps = audit_tree(root, log=lambda _msg: None)
     flagged = {(g.decompiler, g.opt) for g in gaps}
-    assert ("angr", "O0") in flagged  # unscoped decompiler: audited everywhere
-    assert ("mydec", "O0") not in flagged  # slice_scoped + off-manifest: by design
-    assert ("mydec", "O2") in flagged  # slice_scoped + on-manifest: still audited
+    assert ("angr", "O0") in flagged
+    assert ("mydec", "O0") not in flagged
+    assert ("mydec", "O2") in flagged
 
 
 def test_finalize_tree_strips_excluded_decompilers(tmp_path: Path) -> None:

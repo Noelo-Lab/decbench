@@ -58,8 +58,8 @@ def main() -> None:
             f"{_fmt_secs(elapsed.get('median_s'))}  {entry['functions']} ({note})"
         )
 
-    # Guarded write (decbench.results_store): this script only ADDS cost_info, so
-    # any coverage regression the guard reports means the file changed under us.
+    # This script only ADDS cost_info, so any coverage regression the guard reports
+    # means the file changed under us.
     from decbench.results_store import write_function_data_guarded
 
     write_function_data_guarded(fd, root)

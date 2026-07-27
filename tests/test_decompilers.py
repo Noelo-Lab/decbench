@@ -70,7 +70,6 @@ class TestRegistry:
         for name in ALL_DECOMPILERS:
             dec = DecompilerRegistry.get(name)
             assert dec.name == name
-            # is_available must never raise
             assert isinstance(dec.is_available(), bool)
 
     def test_binja_registered_even_if_unavailable(self) -> None:
@@ -99,12 +98,9 @@ class TestSmokeDecompile:
         func = result.functions["add_nums"]
         assert func.decompiled_code.strip()
         assert func.line_count > 0
-        # Structured variables must be populated (stack vars and/or args)
         assert func.variables, f"{name} produced no variables for add_nums"
         kinds = {v.kind for v in func.variables}
         assert kinds <= {"stack", "arg"}
-        # At -O0 every backend recovers at least one stack variable w/ offset
         assert any(v.stack_offset is not None for v in func.variables)
 
-        # Output files were written
         assert (tmp_path / f"{name}_{tiny_binary.stem}.c").exists()
