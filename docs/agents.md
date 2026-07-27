@@ -9,7 +9,8 @@ in `docs/` — read the matching doc before working in an area.
 DecBench is a benchmarking suite for evaluating decompiler performance. It
 implements a three-stage pipeline (compile → decompile → evaluate) with
 pluggable decompilers and three core metrics, and publishes the results as a
-static site (https://decbench.com).
+static site (https://decbench.com). The associated data produced from this
+benchmark can be found at https://huggingface.co/datasets/noelo-lab/decbench-dataset.
 
 ## Docs index
 
@@ -119,6 +120,10 @@ Key conventions:
   than in the last update, or drastically changing rank. This can happen, but
   should only occur when MAJOR changes to the benchmark occur, like adding a 
   new metric or deleting many projects from the dataset.
+- **When updating results** be sure to keep the huggingface-side dataset up to
+  date with our changes, found at https://huggingface.co/datasets/noelo-lab/decbench-dataset.
+  You can usually find a local clone one directory above this repo in
+  `decbench-dataset`, which has results stored in it.
 
 ## Coding Standards
 
