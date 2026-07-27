@@ -23,6 +23,9 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
   CRT/PLT/thunk skip sets, `narrow_to_source` function filter, atomic
   `dump_progress` checkpoint, line-mapping helpers). This is the path
   benchmark runs use now.
+- **Whole-binary** (`raw/manifold_raw.py`: `manifold`): a tool with no
+  per-function entry point — one subprocess call per binary emits one C
+  translation unit, which the backend splits into per-function definitions.
 - **declib** (`declib_dec.py`, registered as `angr-declib`/`ghidra-declib`/…):
   the original declib-driven backends, kept for comparison.
 - **Dockerized** (`dockerized.py`: `reko`/`retdec`/`r2dec`): run a tool in a
