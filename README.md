@@ -28,8 +28,10 @@ DecBench evaluates decompilers using three core metrics:
 
 A **Union** score tracks the percentage of functions where a decompiler achieves a perfect match on *one of three* metrics — i.e. the source was "perfect" by one direction.
 
+Full methodology — fairness passes, denominators, caching — is in [docs/metrics.md](docs/metrics.md).
+
 ## Quickstart
-DecBench runs a four-stage pipeline:
+DecBench runs a three-stage pipeline (plus reporting):
 
 ```
 Source Code (TOML config)
@@ -65,9 +67,9 @@ decbench list-metrics
 ## Generating results
 
 `decbench run` works for a single project, but real benchmark runs use the
-resilient drivers in `scripts/` — they checkpoint per project (so a multi-hour
-run survives crashes) and use the `spawn` multiprocessing context (the default
-`fork` deadlocks workers once angr's threads are live).
+resilient drivers in `scripts/` — they checkpoint per project, so a multi-hour
+run survives crashes. Driver internals and every env knob:
+[docs/benchmarking.md](docs/benchmarking.md).
 
 ```bash
 # 1. Compile every project at every opt level into a results tree.
@@ -87,15 +89,13 @@ This produces, under `results/sailr_full/`:
 - `scoreboard.toml` — machine-readable per-metric + overall scores
 - `function_results.json` — the per-function dataset the HTML report embeds
   (values, perfect flags, dataset tags, side-by-side **samples** with source,
-  **hardest** functions, per-decompiler **compile rates**)
+  per-decompiler **compile rates**)
 - `<opt>/<project>/{compiled,decompiled,evaluated}/` — intermediate artifacts
 
-The `compiled/` directories keep the preprocessed `.i` sources emitted at build
-time (`-save-temps=obj`) alongside the binaries — they are **required**, not
-build debris: GED's source-side CFGs are parsed exclusively from them, because
-Joern needs macro-expanded, ifdef-resolved code to parse completely (raw `.c`
-with unexpanded includes does not). Without the `.i` files, GED is silently
-skipped for the entire run.
+The `compiled/` directories keep the preprocessed `.i` sources alongside the
+binaries. They are **required**, not build debris: GED's source-side CFGs are
+parsed exclusively from them, and without the `.i` files GED is silently
+skipped for the entire run (why: [docs/metrics.md](docs/metrics.md)).
 
 ## Rendering the site
 
@@ -119,8 +119,7 @@ decbench site build results/full_run -o site/
 
 ### Publishing to GitHub Pages
 
-CI **never builds the site** — building needs every decompiler, a ~1.9 GB Joern,
-and ~15 GB of compiled binaries. The maintainer builds locally and commits the
+CI **never builds the site** — the maintainer builds locally and commits the
 tree; [`.github/workflows/pages.yml`](.github/workflows/pages.yml) only uploads
 what is already in `site/`.
 
@@ -130,36 +129,21 @@ git add site && git commit -m 'site: refresh'      # 2. commit it (site/ is deli
 git push                                           # 3. Actions deploys it
 ```
 
-The workflow triggers on pushes to `main` that touch `site/**`, failing loudly if
-`site/index.html` or `site/data/aggregates.json` is missing; the tree's data
-contract is [`docs/site.md`](docs/site.md).
+The tree's data contract — and why CI cannot build it — is in
+[`docs/site.md`](docs/site.md).
 
 ### Editing the site's text
 
 **Every string a maintainer might want to reword lives in
 `decbench/rendering/content/` — not in `html.py`.** Edit a file there, re-render,
-done: no benchmark re-run, no Python.
-
-| File | Holds |
-|------|-------|
-| `<view>.md` | each view's title and prose — `leaderboard.md`, `data.md`, `view.md`, `changelog.md`, `about.md` |
-| `site.toml` | brand block, sidebar, footer, banners, side stats, and which decompilers are site-hidden / sample-set-only |
-| `views.toml` | the view registry — which views exist, nav order + labels, which is `default`, which need function data |
-| `metrics.toml` | per-metric display name, short column label, order, and the definition of *perfect* |
-| `datasets.toml` | the 5 dataset presets' labels + descriptions, and which is `default` |
-| `decompilers.toml` | the decompiler registry — official display names, project links, and version labels, rendered wherever the site names a decompiler |
-| `categories.toml` | the software-type taxonomy on the About page's dataset tables |
-| `pricing.toml` | per-model USD/MTok list prices for the Data page's cost table — applied at render time against the token facts in `FunctionData.cost_info` (gathered by `decbench/scoring/cost.py` via `scripts/compute_cost_info.py`), so a price fix needs only a re-render |
-
-The `.md` conventions are documented in `leaderboard.md`'s header. A view's `id`
-in `views.toml` must match its `<id>.md`. `datasets.toml` owns only preset
-*presentation* — which functions are *in* a preset is scoring logic in
-`decbench/scoring/datasets.py`.
+done: no benchmark re-run, no Python. The per-file breakdown (view prose, the
+metric/preset/decompiler registries, pricing) is in
+[docs/site.md](docs/site.md).
 
 ## Finding improvement cases
 
 You are a decompiler developer and you want to find ways to improve your decompiler based on these results?
-Use the `improvement` command, which can help you find good starting cases. 
+Use the `improvements` command, which can help you find good starting cases. 
 
 The example below uses **GED** (structural correctness — CFG graph edit distance, where **lower is better** and `0` is a perfect structural match):
 ```bash
