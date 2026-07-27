@@ -28,8 +28,6 @@ def download_source(project: Project, target_dir: Path) -> Path:
     config = project.config
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    # Custom fetch (e.g. malware: download + password-extract a theZoo zip
-    # without cloning the whole repo). Runs in a fresh per-project dir.
     if config.download_cmd:
         src = target_dir / (config.package_dir or config.name)
         src.mkdir(parents=True, exist_ok=True)
@@ -39,13 +37,11 @@ def download_source(project: Project, target_dir: Path) -> Path:
         return src
 
     if config.remote_type == RemoteType.LOCAL:
-        # Just use local path
         if config.local_path:
             return config.local_path
         raise ValueError("Local project requires local_path")
 
     elif config.remote_type == RemoteType.GIT:
-        # Git clone
         clone_dir = target_dir / (config.package_dir or config.name)
 
         cmd = ["git", "clone"]
@@ -57,21 +53,17 @@ def download_source(project: Project, target_dir: Path) -> Path:
         return clone_dir
 
     elif config.remote_type == RemoteType.TAR:
-        # Download and extract tarball
         import urllib.request
         from urllib.parse import urlparse
 
-        # Preserve the original file extension for correct archive detection
         url_path = urlparse(config.source_remote).path
         filename = Path(url_path).name or "source.tar.gz"
         tar_path = target_dir / filename
         urllib.request.urlretrieve(config.source_remote, tar_path)
 
-        # Extract
         shutil.unpack_archive(tar_path, target_dir)
         tar_path.unlink()
 
-        # Find extracted directory
         dirs = [d for d in target_dir.iterdir() if d.is_dir()]
         if len(dirs) == 1:
             return dirs[0]
@@ -101,10 +93,8 @@ def compile_project(
     config = project.config
     compilation = project.compilation
 
-    # SAFETY: malware targets are REAL malware. They are only ever COMPILED
-    # (never executed) for decompiler benchmarking, and only inside a container.
-    # Refuse to build them on a bare host unless explicitly overridden, so a
-    # stray `decbench run` can't drop malware binaries on someone's machine.
+    # SAFETY: malware targets are REAL malware — compiled (never executed) only
+    # inside a container. Refuse a bare-host build unless explicitly overridden.
     if config.is_malware:
         import os
 
@@ -119,31 +109,25 @@ def compile_project(
                 "DECBENCH_ALLOW_MALWARE=1 if you really know what you're doing."
             )
 
-    # Convert optimization to string
     if isinstance(optimization, OptimizationLevel):
         opt_str = optimization.value
     else:
         opt_str = optimization
 
-    # Create output directory
     opt_output_dir = output_dir / opt_str / config.name / "compiled"
     opt_output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get source directory
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
 
         if config.skip_compilation:
-            # Use pre-built binaries
             if config.local_path:
                 source_dir = config.local_path
             else:
                 raise ValueError("skip_compilation requires local_path")
         else:
-            # Download source
             source_dir = download_source(project, tmpdir)
 
-            # Apply patch if specified
             if config.apply_patch:
                 patch_path = Path(config.apply_patch)
                 if patch_path.exists():
@@ -153,7 +137,6 @@ def compile_project(
                         check=False,
                     )
 
-            # Run post-download commands
             for cmd in config.post_download_cmds:
                 subprocess.run(
                     cmd,
@@ -163,14 +146,12 @@ def compile_project(
                     check=False,
                 )
 
-        # Create compiler
         compiler = GCCCompiler(
             gcc_path=compilation.c_compiler,
             base_flags=compilation.base_flags + compilation.extra_flags,
             target_arch=compilation.target_arch,
         )
 
-        # Compile
         results = compiler.compile_project(
             project_dir=source_dir / config.source_dir if config.source_dir else source_dir,
             output_dir=opt_output_dir,
@@ -180,11 +161,8 @@ def compile_project(
             project_root=source_dir,
         )
 
-        # Also copy original C files. Recursive so nested source trees (CPS
-        # firmware, libacl, gnulib) keep their .c next to the binary, not just
-        # the top-level ones; dedup by basename, SHALLOWEST path first — plain
-        # sorted() would put arch/foo.c before foo.c and an unrelated nested
-        # duplicate would shadow the file that was actually compiled.
+        # Dedup by basename, SHALLOWEST path first: plain sorted() would put arch/foo.c
+        # before foo.c and let an unrelated nested duplicate shadow the compiled file.
         src_dir = source_dir / config.source_dir if config.source_dir else source_dir
         seen: set[str] = set()
         for c_file in sorted(src_dir.rglob("*.c"), key=lambda p: (len(p.parts), str(p))):
@@ -195,7 +173,6 @@ def compile_project(
             if not dest.exists():
                 shutil.copy2(c_file, dest)
 
-    # Update project state
     if optimization not in project.compiled_binaries:
         project.compiled_binaries[optimization] = []
 

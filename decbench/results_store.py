@@ -41,23 +41,16 @@ from typing import Any
 from decbench.models.function_data import FunctionData, HistoryPoint
 from decbench.models.scoreboard import Scoreboard
 
-#: (opt_level, project, binary_stem, decompiler) — the granularity every overlay merge,
-#: guard counter and audit row works at.
 Slice = tuple[str, str, str, str]
-#: (project, opt_level, binary_stem, function) — a single function's identity, the shape
-#: used by ``sample_set_manifest.json``.
 FnKey = tuple[str, str, str, str]
 Log = Callable[[str], None]
 
 PERFECT = {"ged": 0.0, "type_match": 1.0, "byte_match": 1.0}
 
-# All benchmark project dirs (top-level *.toml only; cps/disabled/ excluded).
-# sailr = x86, cps = ARM firmware, malware = ARM/PE. Anchored to the repo root
-# (this file is <repo>/decbench/results_store.py) rather than the cwd: a finalize
-# run from the wrong directory must NOT silently find zero projects — that would
-# drop every project label (malware/cps/arch), and losing the `malware` label
-# would let the code-carrying report extras embed real malware source (the leak
-# `decbench-malware-publishing-guard` closed). finalize_tree hard-fails on empty.
+# Anchored to the repo root, not the cwd: a finalize run from the wrong directory
+# must not silently find zero projects, which would drop every project label and
+# let the code-carrying report extras embed real malware source. finalize_tree
+# hard-fails on empty.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 PROJECT_DIRS = [
     _REPO_ROOT / "projects/sailr",
@@ -65,7 +58,7 @@ PROJECT_DIRS = [
     _REPO_ROOT / "projects/malware",
 ]
 
-GUARD_PRINT_CAP = 100  # max aggregated regression lines printed before "... and N more"
+GUARD_PRINT_CAP = 100
 
 
 class CoverageRegressionError(RuntimeError):
@@ -80,9 +73,6 @@ def gather_project_tomls() -> list[Path]:
     return sorted(out, key=lambda p: p.stem)
 
 
-# --------------------------------------------------------------------------- #
-# Raw layer: checkpoints.
-# --------------------------------------------------------------------------- #
 def load_checkpoints(
     root: Path, exclude_projects: Collection[str] = (), log: Log = print
 ) -> tuple[dict[str, dict], dict[str, dict]]:
@@ -93,7 +83,6 @@ def load_checkpoints(
     skipped (its project then legitimately drops, which the guard will surface unless
     it is in ``exclude_projects``).
     """
-    # Register model/metric modules so the pickles resolve their classes.
     import decbench.decompilers  # noqa: F401
     import decbench.metrics  # noqa: F401
 
@@ -115,10 +104,6 @@ def load_checkpoints(
     return all_decompile, all_evaluate
 
 
-# --------------------------------------------------------------------------- #
-# Overlay merges (moved from scripts/rebuild_function_data.py, with the clears
-# scoped to SLICES instead of whole decompiler columns).
-# --------------------------------------------------------------------------- #
 def slices_from_overlay_keys(new: dict[str, Any]) -> set[Slice]:
     """The ``(opt, project, binary, dec)`` slices an overlay's entry keys cover."""
     covered: set[Slice] = set()
@@ -205,7 +190,6 @@ def update_ged(fd: FunctionData, new: dict[str, dict], covered: set[Slice] | Non
                 val = float(rec["value"])
                 f.values.setdefault(dec, {})["ged"] = val
                 f.perfects.setdefault(dec, {})["ged"] = bool(rec.get("perfect", val == 0.0))
-                # GED distance IS the graph edit distance (the value itself).
                 f.distances.setdefault(dec, {})["ged"] = val
                 n += 1
     return n
@@ -236,8 +220,6 @@ def update_byte_match(
                 if rec is None:
                     in_slice = (g.opt_level, g.project, g.binary, dec) in covered
                     if not add_only and in_slice:
-                        # No fresh value (artifact gone / abstained): drop any
-                        # stale value, distance, perfect and compile flag.
                         mv.pop("byte_match", None)
                         f.perfects.get(dec, {}).pop("byte_match", None)
                         f.distances.get(dec, {}).pop("byte_match", None)
@@ -251,9 +233,6 @@ def update_byte_match(
                 if rec.get("dist") is not None:
                     f.distances.setdefault(dec, {})["byte_match"] = float(rec["dist"])
                 else:
-                    # Non-compiling (or extract-failed): no fresh distance. Clear
-                    # any stale one so the distance view + a compile proxy can't
-                    # read a value left over from a prior computation.
                     f.distances.get(dec, {}).pop("byte_match", None)
                 t = tally.setdefault(dec, {"comp": 0, "tot": 0})
                 t["tot"] += 1
@@ -280,8 +259,6 @@ def update_type_match(fd: FunctionData, new: dict[str, dict[str, Any]]) -> int:
                 rec = per.get(f"{g.project}::{g.opt_level}::{g.binary}::{f.function}")
                 if rec is None:
                     continue
-                # Back-compat: older type_match_new.json stored a bare float; the
-                # new form is {"value": accuracy, "dist": type-flips (fp+fn)}.
                 if isinstance(rec, dict):
                     val = float(rec["value"])
                     dist = rec.get("dist")
@@ -355,9 +332,6 @@ def apply_overlays(
     return counts, bm_tally
 
 
-# --------------------------------------------------------------------------- #
-# Sample-set manifest (the frozen membership store).
-# --------------------------------------------------------------------------- #
 def load_sample_manifest(root: Path) -> set[FnKey] | None:
     """The frozen sample-set membership, or None when the tree has no manifest."""
     path = root / "sample_set_manifest.json"
@@ -367,9 +341,6 @@ def load_sample_manifest(root: Path) -> set[FnKey] | None:
     return {(e["project"], e["opt"], e["binary"], e["function"]) for e in data.get("functions", [])}
 
 
-# --------------------------------------------------------------------------- #
-# Coverage-regression guard.
-# --------------------------------------------------------------------------- #
 def _iter_group_dicts(fd_or_raw: FunctionData | dict) -> Iterable[tuple[str, str, str, list]]:
     """Yield ``(project, opt, binary, functions)`` from a model OR a raw JSON dict.
 
@@ -399,8 +370,6 @@ def coverage_counts(fd_or_raw: FunctionData | dict) -> dict[str, dict[str, int]]
         c: dict[str, int] = out.setdefault(f"{project}::{opt}::{binary}", {})
         c["functions"] = c.get("functions", 0) + len(functions)
         for f in functions:
-            # `.get`/`getattr` defaults so a pre-`decompiled`-field tree (older
-            # function_results.json) counts cleanly instead of KeyError-ing.
             values = f.get("values") if isinstance(f, dict) else f.values
             decompiled = f.get("decompiled") if isinstance(f, dict) else f.decompiled
             for dec, mv in (values or {}).items():
@@ -503,18 +472,14 @@ def write_function_data_guarded(
         )
     tmp = root / "function_results.json.tmp"
     fd.to_json(tmp)
-    # COPY (not rename) the old file to .prev, then a single atomic replace: a
-    # crash mid-write can never leave function_results.json absent (which would
-    # disable the guard on the next run), only a stale tmp.
+    # Copy (not rename) to .prev, then one atomic replace, so a crash mid-write can
+    # never leave function_results.json absent and disable the next run's guard.
     if fd_path.exists():
         shutil.copy2(fd_path, root / "function_results.prev.json")
     os.replace(tmp, fd_path)
     log(f"[guard] wrote {fd_path}")
 
 
-# --------------------------------------------------------------------------- #
-# The canonical rebuild.
-# --------------------------------------------------------------------------- #
 def finalize_tree(
     root: Path,
     *,
@@ -546,9 +511,8 @@ def finalize_tree(
     tomls = [t for t in gather_project_tomls() if t.stem not in excluded_projects]
     all_decompile, all_evaluate = load_checkpoints(root, excluded_projects, log=log)
     if not tomls and all_decompile:
-        # No project TOMLs found but checkpoints exist -> almost certainly a
-        # wrong-cwd / bad-install run. Refuse rather than rebuild label-less (which
-        # would strip malware/cps labels and risk leaking malware source).
+        # Checkpoints but no project TOMLs means a wrong-cwd run; rebuilding label-less
+        # would strip the malware/cps labels and risk leaking malware source.
         raise RuntimeError(
             f"finalize_tree: no project TOMLs under {[str(d) for d in PROJECT_DIRS]} "
             f"but {len(all_decompile)} checkpoints present — refusing to rebuild "
@@ -572,13 +536,9 @@ def finalize_tree(
         decompile_results=all_decompile,
         projects=projects,
     )
-    # attach_extras derives compile rates from the inline (checkpoint) byte_match;
-    # for the overlaid decompilers the reeval tally is the published number.
     if bm_tally:
         fd.compile_rates.update({d: t["comp"] / t["tot"] for d, t in bm_tally.items() if t["tot"]})
 
-    # Sample-set: the frozen manifest (minus excluded projects) is the single source
-    # of truth for membership; the seeded draw only runs on manifest-less trees.
     members = load_sample_manifest(root)
     if members is not None:
         members = {m for m in members if m[0] not in excluded_projects}
@@ -587,8 +547,6 @@ def finalize_tree(
     elif seed is not None:
         assign_datasets(fd, seed=seed)
 
-    # Carry forward the fields that exist ONLY in the previous derived file, and
-    # reuse its raw parse for the guard's old-coverage counts (parse once, not twice).
     old_counts: dict[str, dict[str, int]] | None = None
     prev_path = root / "function_results.json"
     if prev_path.exists():
@@ -626,14 +584,11 @@ def finalize_tree(
     return fd, scoreboard
 
 
-# --------------------------------------------------------------------------- #
-# Audit: find silent coverage gaps across every layer.
-# --------------------------------------------------------------------------- #
 @dataclass
 class CoverageGap:
     """One suspicious ``(opt, project, binary, decompiler)`` slice."""
 
-    kind: str  # SILENT-DROP | OVERLAY-GAP | DECOMPILE-FAILURE | PARTIAL
+    kind: str
     opt: str
     project: str
     binary: str
@@ -654,8 +609,6 @@ class CoverageGap:
         )
 
 
-# Built-in sample-set-only backends, kept for trees whose old checkpoints predate
-# the DecompilerMetadata.extra["slice_scoped"] flag (which audit_tree also honors).
 _LLM_BASENAMES = {"codex", "claude-code", "kimi-code"}
 
 
@@ -748,11 +701,11 @@ def audit_tree(root: Path, log: Log = print) -> list[CoverageGap]:
         for (optn, proj, stem, dec), names in sorted(ckpt_names.items()):
             base_dec = dec.split("@", 1)[0]
             if published_decs and dec not in published_decs and base_dec not in published_decs:
-                continue  # decompiler intentionally removed from the dataset (e.g. phoenix)
+                continue
             if (base_dec in _LLM_BASENAMES or dec in scoped_decs) and (
                 llm_slices is None or (proj, optn, stem) not in llm_slices
             ):
-                continue  # off-slice sparsity is by design (sample-set-only backend)
+                continue
             key: Slice = (optn, proj, stem, dec)
             markers = _artifact_marker_names(root / optn / proj / "decompiled" / f"{dec}_{stem}.c")
             pubnames = published_names.get((optn, proj, stem))
@@ -762,8 +715,6 @@ def audit_tree(root: Path, log: Log = print) -> list[CoverageGap]:
                 n > 0 for o, n in per_dec_opts.get((stem, dec), {}).items() if o != optn
             )
             if pubnames is None:
-                # The whole (opt, project, binary) group is absent from the
-                # published data — the historical "coreutils vanished" class.
                 if names or markers:
                     gaps.append(
                         CoverageGap(
@@ -780,17 +731,9 @@ def audit_tree(root: Path, log: Log = print) -> list[CoverageGap]:
                         )
                     )
                 continue
-            # Compare only functions that exist as published rows: a checkpoint
-            # holds everything the tool decompiled (library/sub_* included), while
-            # the dataset legitimately keeps only attributable source rows.
             ckpt_n = len(names & pubnames)
             art = len(markers & pubnames)
             if pub == 0 and ov > 0:
-                # The corrected overlay HAS metric values for this slice, but the
-                # published dataset has none — a real merge drop. (A decompiled
-                # artifact with NO overlay entry is not a drop: the function may be
-                # legitimately unmeasurable — ARM byte_match abstains, no source
-                # CFG for GED — so it falls to OVERLAY-GAP below, not here.)
                 gaps.append(CoverageGap("SILENT-DROP", optn, proj, stem, dec, ckpt_n, art, ov, pub))
             elif len(names) == 0 and len(markers) == 0 and sibling_ok:
                 gaps.append(

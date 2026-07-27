@@ -22,7 +22,6 @@ root = Path(sys.argv[1])
 args = [a for a in sys.argv[2:] if not a.startswith("--")]
 emit = "--emit" in sys.argv
 
-# old stored type_match, keyed (project, opt, binary, function, dec)
 with open(root / "function_results.json") as _fh:
     fd = json.load(_fh)
 old = {}
@@ -50,8 +49,6 @@ for proj in projects:
         optn = getattr(opt, "value", str(opt))
         for binn, decs in bins.items():
             for dname, dr in decs.items():
-                # dname here is the decompiler id used in the run; normalize to
-                # the unversioned name used in function_results (angr/ida/...).
                 try:
                     mr = metric.compute_for_binary(dr)
                 except Exception as e:  # noqa: BLE001
@@ -60,12 +57,6 @@ for proj in projects:
                 for fn, mv in mr.function_results.items():
                     key = (proj, optn, binn, fn, dname)
                     n = mv.value
-                    # Emit EVERY freshly computed value (not only those already in
-                    # function_results.json), so newly-recovered functions — e.g.
-                    # angr ARM functions that were previously misnamed
-                    # sub_* and had no type_match — are captured. The OLD-vs-NEW
-                    # comparison stats below still only cover functions present in
-                    # `old` (there is nothing to compare against otherwise).
                     if emit:
                         md = mv.metadata or {}
                         dist = int(md.get("fp", 0)) + int(md.get("fn", 0))
@@ -94,10 +85,8 @@ for d in sorted(agg):
 if emit:
     out_path = root / "type_match_new.json"
     if args and out_path.is_file():
-        # Project-scoped run: MERGE into the existing overlay instead of
-        # overwriting it with only the scoped projects' entries — a scoped
-        # --emit used to silently shrink type_match_new.json to the projects it
-        # covered (the same silent-loss class as the GED clear-then-rewrite).
+        # Project-scoped runs MERGE into the existing overlay: overwriting used to
+        # silently shrink type_match_new.json to only the projects covered.
         from decbench.results_store import merge_typematch_overlay
 
         with open(out_path) as _if:

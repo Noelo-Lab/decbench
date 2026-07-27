@@ -29,7 +29,6 @@ from pathlib import Path
 
 KIT_FORMAT_VERSION = 1
 
-# results/ files that are part of the kit itself, not the submission.
 _KIT_OWNED = {"README.md", "results.example.json", "results.json"}
 
 
@@ -150,8 +149,8 @@ def validate_and_package(kit_root: Path, out_path: Path | None = None, quiet: bo
         entries = {}
 
     packaged: dict = {}
-    covered_binaries: dict = {}  # anon binary -> .c file claiming it
-    covered_addrs: dict = {}  # anon binary -> set of claimed addresses
+    covered_binaries: dict = {}
+    covered_addrs: dict = {}
     listed_c: set = set()
     n_functions = 0
 
@@ -203,9 +202,8 @@ def validate_and_package(kit_root: Path, out_path: Path | None = None, quiet: bo
                     '(use a hex string like "0x1234")'
                 )
                 continue
-            # ARM/Thumb tools report entry points with the low bit set; the kit
-            # README promises the odd form is tolerated, so normalize to the
-            # even target instead of rejecting it (ingest applies the same rule).
+            # The kit README promises the odd (Thumb LSB) form is tolerated, so normalize
+            # to the even target instead of rejecting it — ingest applies the same rule.
             if addr not in public[anon] and (addr & ~1) in public[anon]:
                 addr &= ~1
             if addr not in public[anon]:
@@ -224,8 +222,6 @@ def validate_and_package(kit_root: Path, out_path: Path | None = None, quiet: bo
             if not _word_present(c_text, fn_name):
                 warnings.append(f"{where}: identifier {fn_name} not found in results/{c_name}")
             out_funcs[fn_name] = f"0x{addr:x}"
-        # (duplicate function names within one file are impossible past JSON
-        # parsing — the duplicate-key hook rejects them at load time)
 
         covered_addrs[anon] = set(seen_addrs)
         n_functions += len(out_funcs)
@@ -237,9 +233,6 @@ def validate_and_package(kit_root: Path, out_path: Path | None = None, quiet: bo
             "functions": out_funcs,
         }
 
-    # Coverage + stray-file warnings (never fatal). Partial submissions are
-    # explicitly allowed, so uncovered binaries are summarized in ONE line — a
-    # per-binary warning would bury the real ones under hundreds of lines.
     uncovered = sorted(set(public) - set(covered_binaries))
     if uncovered:
         shown = ", ".join(uncovered[:5])
@@ -277,8 +270,6 @@ def validate_and_package(kit_root: Path, out_path: Path | None = None, quiet: bo
     out_json = {
         "kit_format_version": functions_json.get("kit_format_version", KIT_FORMAT_VERSION),
         "dataset": functions_json.get("dataset", "sample-set"),
-        # Carried through so ingest can detect that the benchmark's frozen
-        # manifest was re-drawn after this kit was exported.
         "manifest_sha256": functions_json.get("manifest_sha256"),
         "packaged_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "decompiler": {"name": dec_name, "version": dec_version},

@@ -84,8 +84,8 @@ from decbench.models.decompilation import (
 | `get_version(self) -> str \| None` | The realized version string (shown in the report). |
 | `decompile_binary(self, binary_path, functions=None, output_dir=None, function_names=None, progress_path=None) -> DecompilationResult` | The core method. |
 
-`discover_functions`, `decompile_function`, and `cleanup` have usable defaults;
-override them only if helpful.
+`decompile_function` has a usable default (it calls `decompile_binary` with a
+single target); override it only if helpful.
 
 ### `decompile_binary` signature — match it exactly
 

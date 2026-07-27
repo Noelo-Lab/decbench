@@ -69,9 +69,8 @@ def _dwarf_addr_to_name(binary: Path, stems: set[str] | None) -> dict[int, str]:
             files: list[str | None] = []
             if stems is not None:
                 lp = dw.line_program_for_CU(cu)
-                # DW_AT_decl_file indexing is 1-based pre-DWARF5 (entry 0
-                # unused) and 0-based in DWARF5 (entry 0 = primary source);
-                # prepend a placeholder only for pre-v5 so the index lines up.
+                # DW_AT_decl_file is 1-based pre-DWARF5 and 0-based in DWARF5; the placeholder
+                # makes the index line up either way.
                 version = 4
                 if lp is not None:
                     version = lp.header.get("version", cu.header.get("version", 4))

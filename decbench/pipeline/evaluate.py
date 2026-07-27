@@ -33,7 +33,6 @@ def evaluate_decompilation(
 
     results: dict[str, MetricResult] = {}
 
-    # Extract CFGs from decompilation if needed
     decompiled_cfgs = None
     needs_decomp_cfg = any(MetricRegistry.get(m).requires_decompiled_cfg for m in metrics)
     if needs_decomp_cfg:
@@ -95,7 +94,6 @@ def evaluate_project(
 
     results: dict[str, dict[str, dict[str, MetricResult]]] = {}
 
-    # Get source CFGs for each binary
     source_cfgs_by_binary: dict[str, dict[str, DiGraph]] = {}
 
     logger.debug("preprocessed_sources keys: %s", list(project.preprocessed_sources.keys()))
@@ -104,9 +102,6 @@ def evaluate_project(
     elif optimization in project.preprocessed_sources:
         sources = project.preprocessed_sources[optimization]
         logger.debug("Found %d preprocessed sources for %s", len(sources), optimization)
-        # Source CFG extraction shells out to Joern (~seconds each); for projects
-        # with many binaries (e.g. coreutils) doing this serially dominates the
-        # run, so extract in parallel when there is more than one source.
         if parallel and len(sources) > 1:
             ex_workers = workers or cpu_count()
             with ProcessPoolExecutor(max_workers=ex_workers) as executor:
@@ -141,14 +136,10 @@ def evaluate_project(
     else:
         logger.warning("No preprocessed sources for %s/%s", project.name, optimization)
 
-    # Match each binary's decompiled functions against source CFGs TU-aware:
-    # prefer the binary's OWN translation unit (so per-program functions like
-    # main/usage/static helpers hit the RIGHT body, not an arbitrary same-named
-    # function from another binary of the project), and fall back to the cross-TU
-    # best-by-name only for functions the own TU doesn't define (statically-linked
-    # library code). This replaces the old name-keyed union whose last-writer-wins
-    # collisions scored, e.g., nologin's 5-node main against another binary's
-    # 56-node main. See decbench.utils.cfg.resolved_source_for_binary.
+    # TU-aware matching: prefer the binary's OWN translation unit so per-program
+    # functions hit the right body, falling back cross-TU only for functions it does
+    # not define. The old name-keyed union scored nologin's 5-node main against
+    # another binary's 56-node main.
     from decbench.utils.cfg import best_source_by_name, resolved_source_for_binary
 
     best_by_name = best_source_by_name(source_cfgs_by_binary)

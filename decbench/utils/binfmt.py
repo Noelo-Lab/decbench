@@ -30,16 +30,15 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-# ELF e_machine / PE COFF machine -> short arch name.
 _ELF_MACHINES = {0x28: "arm", 0xB7: "aarch64", 0x3E: "x86-64", 0x03: "x86", 0xF3: "riscv"}
 _PE_MACHINES = {0x14C: "x86", 0x8664: "x86-64", 0xAA64: "aarch64", 0x1C0: "arm"}
 
 
 @dataclass
 class BinInfo:
-    fmt: str  # "elf" | "pe"
-    arch: str  # "x86" | "x86-64" | "arm" | "aarch64" | ...
-    bits: int  # 32 | 64
+    fmt: str
+    arch: str
+    bits: int
 
 
 def detect(path: Path) -> BinInfo | None:
@@ -47,7 +46,7 @@ def detect(path: Path) -> BinInfo | None:
     try:
         with open(path, "rb") as f:
             head = f.read(2)
-            if head == b"\x7fE":  # ELF
+            if head == b"\x7fE":
                 f.seek(0)
                 if f.read(4) != b"\x7fELF":
                     return None
@@ -55,7 +54,7 @@ def detect(path: Path) -> BinInfo | None:
                 arch = _ELF_MACHINES.get(struct.unpack("<H", f.read(2))[0], "other")
                 bits = 64 if arch in ("x86-64", "aarch64") else 32
                 return BinInfo("elf", arch, bits)
-            if head == b"MZ":  # PE
+            if head == b"MZ":
                 f.seek(0x3C)
                 pe_off = struct.unpack("<I", f.read(4))[0]
                 f.seek(pe_off)
@@ -94,13 +93,9 @@ def tool_available(name: str) -> bool:
     return shutil.which(name) is not None
 
 
-# Codegen-relevant flags to carry over from the original build (NOT -g; we add
-# it). Besides -m*/-O*, a whitelist of -f flags that change emitted code:
-# dropping them made byte_match unwinnable for whole projects (openssh's
-# -fzero-call-used-regs=all pads every epilogue with zeroing, its -ftrapv turns
-# arithmetic into __addv* calls; sysvinit's -fomit-frame-pointer switches every
-# stack access from rbp- to rsp-relative). Header-independent, codegen-only
-# flags only — nothing here affects parsing or needs libc headers.
+# Codegen-relevant flags carried over from the original build (never -g). Only
+# codegen-only, header-independent flags: dropping them made byte_match
+# unwinnable for whole projects (e.g. -fzero-call-used-regs, -fomit-frame-pointer).
 _FLAG_RE = re.compile(
     r"(?:^|\s)(-m(?:arch|tune|cpu|thumb|float-abi|fpu|abi)?=?\S*|-O[0-3sgz]?"
     r"|-f(?:no-)?(?:omit-frame-pointer|zero-call-used-regs=\S+|trapv|wrapv"
@@ -129,7 +124,6 @@ def producer_flags(path: Path) -> list[str]:
                 continue
             text = prod.value.decode() if isinstance(prod.value, bytes) else str(prod.value)
             flags = [m.group(1).strip() for m in _FLAG_RE.finditer(text)]
-            # -masm=att is asm-syntax only (no codegen effect); drop it.
             return [f for f in flags if f and not f.startswith("-masm")]
     except Exception:
         pass
@@ -149,8 +143,6 @@ def capstone_arch_mode(info: BinInfo, thumb: bool = False):
         return capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM
     return None
 
-
-# --- DWARF (ELF or PE) -------------------------------------------------------
 
 _DWARF_SECS = (
     ".debug_info",
@@ -242,7 +234,6 @@ def dwarf_info(path: Path):
         return None
     if info.fmt == "pe":
         return pe_dwarf_info(path)
-    # ELF: read the debug sections into memory, build a self-contained DWARFInfo.
     try:
         from elftools.elf.elffile import ELFFile
 
@@ -264,9 +255,6 @@ def dwarf_info(path: Path):
             return _build_dwarfinfo(secs, elf.little_endian, addr_size, march)
     except Exception:
         return None
-
-
-# --- function bytes ----------------------------------------------------------
 
 
 def _dwarf_function_range(path: Path, func_name: str) -> tuple[int, int] | None:
@@ -300,7 +288,6 @@ def function_bytes(path: Path, func_name: str, address: int) -> bytes | None:
         b = _elf_function_bytes(path, func_name, address)
         if b is not None:
             return b
-    # DWARF-range + content-at-VA (works for PE, and ELF as a fallback).
     rng = _dwarf_function_range(path, func_name)
     if rng is None:
         return None
@@ -345,13 +332,11 @@ def object_text_bytes(obj_path: Path, func_name: str) -> bytes | None:
     byte_match compiles one function, so the object's ``.text`` is essentially
     that function (alignment padding is dropped by the disassembler's nop skip).
     """
-    # ELF object: precise symtab extraction (existing behaviour).
     info = detect(obj_path)
     if info is not None and info.fmt == "elf":
         b = _elf_object_function(obj_path, func_name)
         if b is not None:
             return b
-    # COFF (MinGW) object, or ELF fallback: take the .text section via LIEF.
     try:
         import lief
 

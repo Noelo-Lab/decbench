@@ -15,7 +15,6 @@ needs_gcc = pytest.mark.skipif(not gcc_available, reason="gcc not installed")
 
 class TestSanitizeTokens:
     def test_strips_symbol_version_qualifier(self) -> None:
-        # angr emits illegal `GLIBC_2.2.5::stderr`; the bare identifier remains.
         out = sanitize_tokens("fprintf(GLIBC_2.2.5::stderr, msg);")
         assert "::" not in out
         assert "stderr" in out
@@ -25,8 +24,6 @@ class TestSanitizeTokens:
         assert sanitize_tokens(code) == code
 
     def test_strips_decompiler_annotations(self) -> None:
-        # Binary Ninja / IDA / Ghidra emit annotations that aren't valid C where
-        # they appear; stripping them lets the body still compile.
         assert "__noreturn" not in sanitize_tokens("int main() __noreturn {")
         assert "__convention" not in sanitize_tokens('void f() __convention("regparm") {')
         out = sanitize_tokens("int __cdecl g(int a)")
@@ -35,7 +32,6 @@ class TestSanitizeTokens:
 
 class TestNormalizeOperands:
     def test_branch_target_blanked(self) -> None:
-        # Two calls to different (link-dependent) targets normalize equal.
         a = _normalize_operands("call", "0x1234")
         b = _normalize_operands("call", "0x9abc")
         assert a == b == "X"
@@ -47,20 +43,16 @@ class TestNormalizeOperands:
         assert "0x2e04" not in a
 
     def test_non_branch_immediate_preserved(self) -> None:
-        # A real constant in a non-branch instruction must NOT be blanked.
         out = _normalize_operands("add", "rax, 0x10")
         assert "0x10" in out
 
     def test_indirect_branch_displacement_preserved(self) -> None:
-        # An indirect call's memory displacement is a (base-independent) struct
-        # offset — a real difference that must be kept, not blanked.
         a = _normalize_operands("call", "qword ptr [rax + 0x20]")
         b = _normalize_operands("call", "qword ptr [rax + 0x40]")
         assert a != b
         assert "0x20" in a
 
     def test_arm_adrp_immediate_blanked(self) -> None:
-        # AArch64 adrp immediate is a PC-relative page address (link-dependent).
         a = _normalize_operands("adrp", "x0, #0x400000")
         b = _normalize_operands("adrp", "x0, #0x10000")
         assert a == b
@@ -82,14 +74,12 @@ class TestCompileWithFixup:
         shutil.rmtree(res.obj_path.parent, ignore_errors=True)
 
     def test_ghidra_pseudotypes_get_defined(self) -> None:
-        # `undefined4`/`uint`/`code` are undefined in C; the fixup must typedef
-        # them via gcc-error-driven self-repair so the function builds.
         code = (
             "uint compute(undefined4 x) {\n" "    uint r = (uint)x;\n" "    return r + 1;\n" "}\n"
         )
         res = compile_with_fixup(code, "compute")
         assert res.compilable, res.error
-        assert res.iterations >= 2  # needed at least one repair pass
+        assert res.iterations >= 2
         shutil.rmtree(res.obj_path.parent, ignore_errors=True)
 
     def test_undeclared_symbol_stubbed(self) -> None:
@@ -99,15 +89,11 @@ class TestCompileWithFixup:
         shutil.rmtree(res.obj_path.parent, ignore_errors=True)
 
     def test_unrepairable_returns_no_object(self) -> None:
-        # A hard syntax error cannot be repaired by declaration injection.
         res = compile_with_fixup("int bad(void) { return", "bad")
         assert not res.compilable
         assert res.obj_path is None
 
     def test_abstains_when_toolchain_missing(self, tmp_path) -> None:
-        # When the matching recompile toolchain is unavailable (e.g. ARM/PE on an
-        # x86 host), byte_match must ABSTAIN (no per-function results), not score
-        # 0 — so cps/malware aren't unfairly penalized.
         import subprocess
 
         from decbench.metrics.byte_match import ByteMatchMetric
@@ -137,18 +123,15 @@ class TestCompileWithFixup:
         )
         metric = ByteMatchMetric()
         orig = binfmt.tool_available
-        binfmt.tool_available = lambda name: False  # force "toolchain missing"
+        binfmt.tool_available = lambda name: False
         try:
             result = metric.compute_for_binary(dr)
         finally:
             binfmt.tool_available = orig
-        assert result.function_results == {}  # abstained, not scored 0
+        assert result.function_results == {}
         assert any("abstain" in e for e in result.errors)
 
     def test_failure_paths_do_not_leak_temp_dirs(self, tmp_path) -> None:
-        # Every non-success path must clean up its mkdtemp dir. Isolate the temp
-        # root to tmp_path so a concurrent benchmark run's decbench_bm_* dirs
-        # don't race this assertion.
         import glob
         import tempfile
 
@@ -159,4 +142,4 @@ class TestCompileWithFixup:
                 compile_with_fixup("int bad(void) { return", "bad")
         finally:
             tempfile.tempdir = old
-        assert glob.glob(f"{tmp_path}/decbench_bm_*") == []  # no leaked dirs
+        assert glob.glob(f"{tmp_path}/decbench_bm_*") == []

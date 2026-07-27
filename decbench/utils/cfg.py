@@ -18,16 +18,12 @@ if TYPE_CHECKING:
 
 _LINE_MARKER = re.compile(r'^#\s+\d+\s+"([^"]*)"')
 
-# Aggregate/array return type: ``unsigned int [4] name(`` -> ``unsigned int name(``.
-# angr/ghidra render a by-value aggregate/array return as ``T [N] name(...)``
-# which is not valid C, so Joern parses NOTHING for such a function and it silently
-# drops out of GED's denominator. Anchored at line start (re.M) so it only ever
-# rewrites a top-level function SIGNATURE, never an in-body array declaration such as
-# ``char buf[16];`` (which is indented and/or not followed by an identifier + ``(``).
+# ``T [N] name(...)`` is not valid C, so Joern parses nothing for such a function
+# and it silently drops out of GED's denominator. Anchored at line start so it
+# only rewrites a signature, never an in-body ``char buf[16];``.
 _AGG_RETURN = re.compile(r"^([A-Za-z_][\w ]*?)\s*\[\d+\]\s+([A-Za-z_]\w*\s*\()", re.M)
 
-# Binary Ninja register annotations: ``char arg3 @ rax`` -> ``char arg3``. ``@`` is
-# not legal C, so its presence breaks Joern's parse for the whole function.
+# ``@`` is not legal C and breaks Joern's parse for the whole function.
 _REG_ANNOTATION = re.compile(r"\s*@\s*[a-z]\w+\b")
 
 
@@ -82,12 +78,12 @@ def strip_system_headers(preprocessed: str) -> str:
     code that was compiled (the right ifdef branches) — fair and small.
     """
     keep: list[str] = []
-    in_system = True  # before the first marker
+    in_system = True
     for line in preprocessed.splitlines():
         m = _LINE_MARKER.match(line)
         if m is not None:
             in_system = _is_system_header(m.group(1))
-            continue  # drop the marker line itself
+            continue
         if not in_system:
             keep.append(line)
     return "\n".join(keep) + "\n"
@@ -189,10 +185,8 @@ def extract_cfgs_from_source(
         )
 
     cfgs = {}
-    # Always parse via a UNIQUE temp .c: Joern names its workspace after the input
-    # file's basename, so parsing the same filename concurrently (e.g. the same
-    # function file across opt levels) would collide. A unique temp name avoids
-    # that. For .i we also strip the inlined system headers first.
+    # Joern names its workspace after the input basename, so a unique temp name is
+    # what keeps concurrent parses of the same filename from colliding.
     temp_c_path = Path(tempfile.mktemp(suffix=".c"))
     if source_path.suffix == ".i":
         temp_c_path.write_text(strip_system_headers(source_path.read_text(errors="replace")))
@@ -204,13 +198,11 @@ def extract_cfgs_from_source(
     parse_path = temp_c_path
 
     try:
-        # parse_source returns dict[str, Function] or dict[tuple[str,str], Function]
         parsed = parse_source(parse_path)
 
         if parsed is None:
             return cfgs
 
-        # Extract CFGs for each function
         for key, func in parsed.items():
             func_name = func.name if hasattr(func, "name") else str(key)
             cfg = func.cfg if hasattr(func, "cfg") else None
@@ -247,10 +239,7 @@ def extract_cfgs_from_decompilation(
 
     cfgs = {}
 
-    # Write decompiled code to temp file and parse
     with tempfile.NamedTemporaryFile(mode="w", suffix=".c", delete=False) as f:
-        # Write all functions, sanitizing decompiler-specific C quirks that would
-        # otherwise break Joern's parse and drop the function from GED coverage.
         for func in decompilation.functions.values():
             f.write(f"// Function: {func.name}\n")
             f.write(sanitize_decompiled_c(func.decompiled_code))
@@ -275,66 +264,3 @@ def extract_cfgs_from_decompilation(
         temp_path.unlink(missing_ok=True)
 
     return cfgs
-
-
-def cfg_to_dict(cfg: DiGraph) -> dict:  # type: ignore
-    """Convert a CFG to a serializable dictionary.
-
-    Args:
-        cfg: NetworkX DiGraph
-
-    Returns:
-        Dictionary representation
-    """
-    return {
-        "nodes": list(cfg.nodes()),
-        "edges": list(cfg.edges()),
-        "node_count": cfg.number_of_nodes(),
-        "edge_count": cfg.number_of_edges(),
-    }
-
-
-def compute_cfg_stats(cfg: DiGraph) -> dict:  # type: ignore
-    """Compute statistics about a CFG.
-
-    Args:
-        cfg: NetworkX DiGraph
-
-    Returns:
-        Dictionary of statistics
-    """
-    import networkx as nx
-
-    nodes = cfg.number_of_nodes()
-    edges = cfg.number_of_edges()
-
-    stats = {
-        "nodes": nodes,
-        "edges": edges,
-        "size": nodes + edges,
-        "cyclomatic_complexity": edges - nodes + 2,
-    }
-
-    # Try to compute more stats
-    try:
-        if nodes > 0:
-            stats["density"] = nx.density(cfg)
-
-            # Find entry and exit nodes
-            in_degrees = dict(cfg.in_degree())
-            out_degrees = dict(cfg.out_degree())
-
-            entry_nodes = [n for n, d in in_degrees.items() if d == 0]
-            exit_nodes = [n for n, d in out_degrees.items() if d == 0]
-
-            stats["entry_nodes"] = len(entry_nodes)
-            stats["exit_nodes"] = len(exit_nodes)
-
-            # Average branching factor
-            if nodes > 0:
-                stats["avg_out_degree"] = sum(out_degrees.values()) / nodes
-
-    except Exception:
-        pass
-
-    return stats

@@ -70,7 +70,6 @@ def expected_paths(repo: Path) -> set[str]:
             expected.add(entry["source_cfg_path"])
         for rel in entry.get("results", {}).values():
             expected.add(rel)
-            # The publisher also copies the sibling variables .toml when present.
             if rel.endswith(".c"):
                 expected.add(rel[:-2] + ".toml")
     return expected
@@ -110,10 +109,8 @@ def main() -> int:
         print("[prune] dry run — re-run with --apply to git rm these")
         return 0
 
-    # git rm in batches to stay under argv limits. -f: orphans often carry
-    # working-tree drift (hardlinks shared with the results tree), and git rm
-    # refuses locally-modified files without it; the manifest reconciliation,
-    # not content, is what decides deletion.
+    # Batched to stay under argv limits. -f because orphans often carry working-tree
+    # drift and git rm refuses locally-modified files without it.
     for i in range(0, len(orphans), 500):
         batch = orphans[i : i + 500]
         subprocess.run(["git", "-C", str(repo), "rm", "--quiet", "-f", "--", *batch], check=True)

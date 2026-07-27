@@ -38,12 +38,8 @@ class ImprovementCase:
     metric: str
 
     base_value: float
-    # None when the target produced no value for this metric on this function
-    # (e.g. it failed to decompile it) and ``include_target_missing`` is set.
     target_value: float | None
     base_perfect: bool
-    # Base's advantage magnitude (>= 0), always oriented "higher = base wins by
-    # more"; ``inf`` when the target is missing entirely.
     margin: float
     target_missing: bool
 
@@ -154,16 +150,14 @@ def find_improvement_cases(
         for rec in group.functions:
             base_value = rec.values.get(base, {}).get(metric)
             if base_value is None or not math.isfinite(base_value):
-                continue  # base must actually have a (finite) score to be winning
+                continue
             base_perfect = bool(rec.perfects.get(base, {}).get(metric, False))
             if perfect_only and not base_perfect:
                 continue
 
             target_value = rec.values.get(target, {}).get(metric)
-            # A non-finite target score (e.g. GED's ``inf`` error sentinel) is a
-            # tooling failure, not a place the target is genuinely worse — treat
-            # it exactly like a missing value so it is gated behind
-            # ``include_target_missing`` and never ranked as a real metric win.
+            # A non-finite target score is a tooling failure, not a place the target is
+            # genuinely worse, so treat it exactly like a missing value.
             if target_value is not None and not math.isfinite(target_value):
                 target_value = None
             target_missing = target_value is None
@@ -196,8 +190,6 @@ def find_improvement_cases(
             _resolve_locations(group_cases, results_root, base, target, fd.decompilers)
         cases.extend(group_cases)
 
-    # Largest base advantage first (target-missing → inf sorts first), then a
-    # stable secondary order so equal-margin rows are deterministic.
     cases.sort(
         key=lambda c: (
             -c.margin if math.isfinite(c.margin) else float("-inf"),
@@ -232,10 +224,6 @@ def _resolve_locations(
     comp = results_tree.compiled_dir(results_root, g.opt_level, g.project)
     binary_path = results_tree.resolve_binary(comp, g.binary)
 
-    # Addresses are decompiler-emitted (in the .c header). Any decompiler that
-    # decompiled the function has the same file-space address, so try the base
-    # first, then the target, then any other decompiler's artifact for this
-    # binary until every function is located.
     addr_map: dict[str, int] = {}
     tried: set[str] = set()
     wanted = {c.function for c in group_cases}
@@ -306,7 +294,6 @@ def render_text(
     addr_w = max(addr_w, 3)
     func_w = min(max(len(c.function) for c in cases), 48)
 
-    # Group consecutive cases by (project, opt, binary) preserving margin order.
     last_key: tuple[str, str, str] | None = None
     for c in cases:
         key = (c.project, c.opt_level, c.binary)

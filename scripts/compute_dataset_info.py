@@ -23,8 +23,8 @@ from pathlib import Path
 
 from decbench.models.function_data import FunctionData
 
-OPT_FOR_LOC = "O0"  # source is identical across opt levels; count once
-SKIP_C = ("conftest.c",)  # autoconf probe noise
+OPT_FOR_LOC = "O0"
+SKIP_C = ("conftest.c",)
 
 
 def count_loc(root: Path) -> tuple[int, dict[str, int]]:
@@ -61,7 +61,6 @@ def sample_i_files(root: Path, per_project: int) -> list[Path]:
         cand = sorted(
             f for f in comp.glob("*.i") if "conftest" not in f.name and not f.name.startswith("a-")
         )
-        # spread across the project's units rather than taking the first N
         if len(cand) > per_project:
             step = len(cand) / per_project
             cand = [cand[int(i * step)] for i in range(per_project)]
@@ -140,14 +139,13 @@ def main() -> None:
         "loc_by_project": loc_by_project,
         "joern": joern,
     }
-    # Guarded write (decbench.results_store): this script only ADDS dataset_info,
-    # so any coverage regression the guard reports means the file changed under us.
+    # This script only ADDS dataset_info, so any coverage regression the guard
+    # reports means the file changed under us.
     from decbench.results_store import write_function_data_guarded
 
     write_function_data_guarded(fd, root)
     print("[dataset] wrote dataset_info into function_results.json", flush=True)
-    # Hard-exit so any still-running (slow/hung) Joern worker threads can't block
-    # the interpreter from exiting on the thread join.
+    # Hard-exit so a hung Joern worker thread cannot block interpreter shutdown.
     os._exit(0)
 
 

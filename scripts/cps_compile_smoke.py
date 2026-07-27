@@ -21,7 +21,6 @@ from pathlib import Path
 from decbench.models.project import Project
 from decbench.pipeline.compile import compile_project
 
-# ELF e_machine values we care about.
 _EM = {0x28: "ARM", 0xB7: "AArch64", 0x3E: "x86-64", 0x03: "x86"}
 
 

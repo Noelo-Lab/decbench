@@ -15,10 +15,8 @@ implementations remain available for comparison under ``angr-declib`` etc.
 
 from __future__ import annotations
 
-# Import each backend module so the @register_decompiler decorators run.
-# Heavy native imports (angr, pyghidra, idapro, binaryninja) happen lazily
-# inside each plugin, so importing this package is cheap and never fails on
-# a missing decompiler.
+# Imported for their @register_decompiler side effects. The heavy native imports
+# happen lazily inside each plugin, so a missing decompiler never breaks this.
 from decbench.decompilers.raw import (
     angr_raw,  # noqa: F401
     binja_raw,  # noqa: F401

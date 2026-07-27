@@ -39,7 +39,7 @@ class TestMetricRegistry:
         with pytest.raises(KeyError):
             MetricRegistry.get("nonexistent")
 
-    def test_get_all(self) -> None:
+    def test_list_registered(self) -> None:
         @register_metric("m1")
         class M1(Metric):
             name = "m1"
@@ -54,9 +54,9 @@ class TestMetricRegistry:
             def compute_for_function(self, decompiled, **kwargs):
                 return MetricValue(value=0.0)
 
-        all_metrics = MetricRegistry.get_all()
-        assert "m1" in all_metrics
-        assert "m2" in all_metrics
+        registered = MetricRegistry.list_registered()
+        assert "m1" in registered
+        assert "m2" in registered
 
 
 class TestGEDMetric:
@@ -97,12 +97,9 @@ class TestGEDMetric:
 
         from decbench.metrics.ged import GEDMetric
 
-        # What Joern produces when it only sees a declaration: one lone node.
         source = nx.DiGraph()
         source.add_node("decl_only")
 
-        # A truncated (prologue-only) decompilation stub: also one node. Under
-        # exact GED these "match" for 0 — the exact artifact being excluded.
         stub = nx.DiGraph()
         stub.add_node("stub_block")
 
@@ -118,14 +115,11 @@ class TestGEDMetric:
         assert "degenerate source CFG" in result.metadata["error"]
         assert result.metadata["source_nodes"] == 1
 
-        # A degenerate source must exclude the function no matter how big the
-        # decompiled CFG is (previously: bigger output = worse score).
         big = nx.DiGraph()
         big.add_edges_from((i, i + 1) for i in range(10))
         result_big = metric.compute_for_function(func, source_cfg=source, decompiled_cfg=big)
         assert result_big.value == float("inf")
 
-        # An empty source graph is degenerate too.
         empty = nx.DiGraph()
         result_empty = metric.compute_for_function(func, source_cfg=empty, decompiled_cfg=stub)
         assert result_empty.value == float("inf")
@@ -137,7 +131,6 @@ class TestGEDMetric:
 
         from decbench.metrics.ged import GEDMetric
 
-        # cfgutils expects nodes with is_entrypoint attribute
         class CFGNode:
             def __init__(self, addr: int, is_entry: bool = False, is_exit: bool = False):
                 self.addr = addr
@@ -228,7 +221,6 @@ class TestTypeMatchMetric:
 
         metric = TypeMatchMetric()
         result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
-        # x matches, y doesn't
         assert result.value == pytest.approx(0.5)
 
     def test_type_match_no_ground_truth(self) -> None:
@@ -296,7 +288,6 @@ int main() {
                 VariableInfo(name="a1", type="char *", kind="arg", arg_index=1),
             ],
         )
-        # Register-resident args at -O2: names differ, no stack offsets.
         gt_vars = [
             {
                 "name": "count",
@@ -399,7 +390,6 @@ int main() {
         gt = extract_ground_truth_types(binary)
         assert "helper" in gt, f"helper missing from O2 ground truth: {sorted(gt)}"
         by_name = {v["name"]: v for v in gt["helper"]}
-        # Register-resident args kept, with positional indices
         assert by_name["first"]["is_arg"] is True
         assert by_name["first"]["arg_index"] == 0
         assert by_name["second"]["arg_index"] == 1
@@ -417,7 +407,6 @@ int main() {
                 VariableInfo(name="i", type="int", stack_offset=-8, kind="stack"),
             ],
         )
-        # Two shadowed locals named "i" at distinct offsets; only one recovered
         gt_vars = [
             {"name": "i", "type": ["int"], "rbp_offset": [-8], "size": 4},
             {"name": "i", "type": ["int"], "rbp_offset": [-16], "size": 4},
@@ -443,8 +432,6 @@ int main() {
         """All-single-var functions must not elect a spurious nonzero shift."""
         from decbench.metrics.type_match import _calibrate_shift_multi
 
-        # Three coincidental +4 alignments from unrelated single slots, and
-        # one function genuinely aligned at shift 0.
         pairs = [
             ([-8], [-12]),
             ([-12], [-16]),
@@ -463,7 +450,6 @@ int main() {
             decompiled_code="// no decls",
             variables=[
                 VariableInfo(name="x", type="int", stack_offset=-4, kind="stack"),
-                # argc was promoted to an argument: correct name+type, no offset
                 VariableInfo(name="argc", type="int", stack_offset=None, kind="arg"),
             ],
         )
@@ -563,8 +549,6 @@ int main() {
 
         metric = TypeMatchMetric()
         result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
-        # The local declaration is now parsed into a structured variable and
-        # matched by name via the structured matcher (value unchanged at 1.0).
         assert result.metadata["matched_by"] == "structured"
         assert result.value == 1.0
 
@@ -580,8 +564,6 @@ int main() {
             decompiled_code='void wcomment(FILE *fp, int c)\n{\n    fputs("x", fp);\n}\n',
             variables=[],
         )
-        # DWARF ground truth: two arguments; the decompiler renamed the 2nd
-        # (``c`` vs ``i``), so only ABI position — not name — can match it.
         gt_vars = [
             {"name": "fp", "type": ["FILE*"], "is_arg": True, "arg_index": 0, "rbp_offset": [-8]},
             {"name": "i", "type": ["int"], "is_arg": True, "arg_index": 1, "rbp_offset": [-12]},
@@ -645,20 +627,17 @@ class TestByteMatchMetric:
     def test_jaccard_similarity(self) -> None:
         from decbench.metrics.byte_match import _compute_jaccard_similarity
 
-        # Returns (similarity, changed_lines). Identical -> perfect, 0 changes.
         lines = ["mov rax, rbx", "add rax, 1", "ret"]
         sim, changed = _compute_jaccard_similarity(lines, lines)
         assert sim == 1.0
         assert changed == 0
 
-        # Completely different -> 0 similarity, every line changed on both sides.
         lines_a = ["mov rax, rbx", "ret"]
         lines_b = ["push rbp", "pop rbp"]
         sim, changed = _compute_jaccard_similarity(lines_a, lines_b)
         assert sim == 0.0
         assert changed == len(lines_a) + len(lines_b)
 
-        # Empty
         sim, changed = _compute_jaccard_similarity([], [])
         assert sim == 1.0
         assert changed == 0

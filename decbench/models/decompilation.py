@@ -48,27 +48,22 @@ class FunctionDecompilation(BaseModel):
     decompiled_code: str = Field(..., description="Decompiled C code")
     line_count: int = Field(default=0, description="Number of lines in decompilation")
 
-    # Line mappings for CFG reconstruction
     line_mappings: list[LineMapping] = Field(
         default_factory=list,
         description="Line to address mappings",
     )
 
-    # Structured variable info (stack vars + args) for type matching
     variables: list[VariableInfo] = Field(
         default_factory=list,
         description="Recovered stack variables and function arguments",
     )
 
-    # Pre-computed metadata (optional, computed during decompilation)
     metadata: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional metadata (gotos, bools, func_calls, etc.)",
     )
 
-    # Structured cost capture (optional — both default None so artifacts written
-    # before these fields existed still load). Feeds the data page's cost section
-    # via decbench.scoring.cost, which prefers these over the trace/artifact scans.
+    # Both default None so artifacts written before these fields existed still load.
     time_seconds: float | None = Field(
         default=None,
         description="Wall time spent decompiling THIS function, when the backend "
@@ -83,14 +78,6 @@ class FunctionDecompilation(BaseModel):
         "decbench.scoring.cost.parse_session_tokens). None for non-LLM backends "
         "or when the session log was unavailable/unparseable.",
     )
-
-    @property
-    def has_gotos(self) -> bool:
-        return self.metadata.get("gotos", 0) > 0
-
-    @property
-    def goto_count(self) -> int:
-        return self.metadata.get("gotos", 0)
 
 
 class DecompilerMetadata(BaseModel):
@@ -125,25 +112,21 @@ class DecompilationResult(BaseModel):
     binary_path: Path = Field(..., description="Path to the source binary")
     binary_name: str = Field(..., description="Name of the binary")
 
-    # Decompiler information
     decompiler: DecompilerMetadata = Field(
         ...,
         description="Metadata about the decompiler",
     )
 
-    # Function-level results
     functions: dict[str, FunctionDecompilation] = Field(
         default_factory=dict,
         description="Decompilation results keyed by function name",
     )
 
-    # Combined output
     combined_source: str | None = Field(
         default=None,
         description="All functions combined into a single C file",
     )
 
-    # Output paths
     output_dir: Path | None = Field(
         default=None,
         description="Directory where output files are stored",
@@ -156,10 +139,6 @@ class DecompilationResult(BaseModel):
     @property
     def successful_count(self) -> int:
         return len(self.functions) - len(self.decompiler.failed_functions)
-
-    def get_function(self, name: str) -> FunctionDecompilation | None:
-        """Get decompilation for a specific function."""
-        return self.functions.get(name)
 
     def to_c_file(self, path: Path) -> None:
         """Write combined decompilation to a C file."""
@@ -183,10 +162,6 @@ class DecompilationResult(BaseModel):
             "failed_functions": self.decompiler.failed_functions,
         }
 
-        # Add per-function metadata. The structured cost fields ride along when
-        # set (they round-trip through toml.load; scoring/cost.py's structured
-        # scan reads them back), and are omitted when None so batch backends'
-        # artifacts are byte-identical to before the fields existed.
         for name, func in self.functions.items():
             entry: dict[str, Any] = {
                 "address": hex(func.address),

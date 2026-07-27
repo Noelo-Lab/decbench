@@ -34,9 +34,6 @@ pytestmark = pytest.mark.skipif(
     reason="host gcc + strip are required to build the synthetic eval-kit tree",
 )
 
-# --------------------------------------------------------------------------- #
-# Synthetic tree fixture: 2 tiny PIE programs at O0, a manifest, empty .i files
-# --------------------------------------------------------------------------- #
 _PROG1_C = """\
 int add_nums(int a, int b) { return a + b; }
 int mul_nums(int a, int b) { return a * b; }
@@ -49,8 +46,6 @@ int helper_two(int x) { return x * 2; }
 int main(void) { return helper_one(5) + helper_two(6); }
 """
 
-# main is deliberately NOT in the manifest so its address is an "extra"
-# (off-manifest) address for the ingest drop tests.
 _MANIFEST_FUNCS = [
     {"project": "proj1", "opt": "O0", "binary": "prog1", "function": "add_nums"},
     {"project": "proj1", "opt": "O0", "binary": "prog1", "function": "mul_nums"},
@@ -90,8 +85,6 @@ def tree(tmp_path_factory: pytest.TempPathFactory) -> Path:
             check=True,
             capture_output=True,
         )
-        # Empty .i named after the TU: source_stems() only needs the stem for
-        # the DWARF decl_file filter (no Joern parse happens at evaluate=False).
         (compiled / f"{prog}.i").write_text("")
     manifest = {"method": "std", "k": 1.0, "threshold": 10.0, "functions": _MANIFEST_FUNCS}
     (root / "sample_set_manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -178,14 +171,10 @@ def packaged_zip(kit: Path, tmp_path_factory: pytest.TempPathFactory) -> Path:
     return zip_path
 
 
-# --------------------------------------------------------------------------- #
-# Export
-# --------------------------------------------------------------------------- #
 def test_export_layout_and_zip(kit: Path) -> None:
     assert (kit / "README.md").is_file()
     assert (kit / "functions.json").is_file()
     assert (kit / "results" / "README.md").is_file()
-    # package.py is the kit_package module source VERBATIM (standalone contract).
     assert (kit / "package.py").read_text() == Path(kit_package.__file__).read_text()
 
     fj = _functions_json(kit)
@@ -195,13 +184,11 @@ def test_export_layout_and_zip(kit: Path) -> None:
     assert shipped == set(fj["public"]) == set(fj["private"])
     assert len(shipped) == 2
 
-    # results.example.json is valid JSON built from the kit's own first binary.
     example = json.loads((kit / "results" / "results.example.json").read_text())
     (entry,) = example["results"].values()
     assert entry["binary"] == sorted(fj["public"])[0]
     assert set(entry["functions"].values()) <= set(fj["public"][entry["binary"]])
 
-    # The zip wraps the kit dir as its single top-level folder.
     zip_path = kit.parent / f"{kit.name}.zip"
     with zipfile.ZipFile(zip_path) as zf:
         names = zf.namelist()
@@ -215,14 +202,12 @@ def test_export_functions_json_matches_dwarf_truth(kit: Path, tree: Path) -> Non
 
     fj = _functions_json(kit)
     for anon, ident in fj["private"].items():
-        # Private identity round-trips to the real file on disk.
         original = tree / ident["opt"] / ident["project"] / "compiled" / ident["file"]
         assert original.is_file()
         assert Path(ident["file"]).stem == ident["binary"]
         assert ident["format"] == "ELF64-x86-64"
         shipped = kit / "binaries" / anon
         assert ident["sha256_stripped"] == hashlib.sha256(shipped.read_bytes()).hexdigest()
-        # Public addresses are exactly the manifest functions' nm/DWARF truth.
         truth = _nm_addrs(original)
         expected = sorted(truth[fn] for fn in _MANIFEST_BY_BINARY[ident["binary"]])
         assert fj["public"][anon] == [f"0x{a:x}" for a in expected]
@@ -243,8 +228,6 @@ def test_export_strip_verification(kit: Path, tree: Path) -> None:
         assert not any(name.startswith(".debug") for name in stripped)
         assert ".symtab" not in stripped
         assert stripped[".text"] == sections(original)[".text"]
-        # Never ship the executable bit: some real-corpus kit binaries are
-        # malware and the README says never to run them.
         assert not shipped.stat().st_mode & 0o111
 
 
@@ -271,7 +254,6 @@ def test_export_anon_assignment_deterministic(tree: Path, kit: Path, tmp_path: P
     assert fj_a["public"] == fj_b["public"]
     assert fj_a["private"] == fj_b["private"]
 
-    # The pinned assignment: sort by (project, opt, file), Random(seed).shuffle.
     idents = sorted(
         [(v["project"], v["opt"], v["file"]) for v in fj_a["private"].values()],
     )
@@ -304,7 +286,7 @@ def test_export_strict_vs_allow_unresolved(tree: Path, tmp_path: Path) -> None:
         tree, tmp_path / "lenient", manifest=manifest, make_zip=False, allow_unresolved=True
     )
     assert summary.n_binaries == 2
-    assert summary.n_functions == 4  # the resolvable manifest entries all survive
+    assert summary.n_functions == 4
     assert len(summary.skipped) == 2
     assert summary.zip_path is None
 
@@ -314,9 +296,6 @@ def test_export_rejects_non_sample_set_dataset(tree: Path, tmp_path: Path) -> No
         export_kit(tree, tmp_path / "kit", dataset="large")
 
 
-# --------------------------------------------------------------------------- #
-# package.py (always exercised as a real subprocess)
-# --------------------------------------------------------------------------- #
 def test_package_happy_path(kit_copy: Path) -> None:
     submitted = _full_submission(kit_copy)
     proc = _run_package(kit_copy)
@@ -336,7 +315,6 @@ def test_package_happy_path(kit_copy: Path) -> None:
     for c_name, entry in packaged["results"].items():
         anon = entry["anon_binary"]
         ident = fj["private"][anon]
-        # De-anonymized identity, straight from the kit's private mapping.
         assert entry["binary"] == {k: ident[k] for k in ("project", "opt", "binary", "file")}
         assert entry["functions"] == submitted["results"][c_name]["functions"]
 
@@ -414,7 +392,6 @@ def test_package_duplicate_function_names(kit_copy: Path) -> None:
     c_name = sorted(submitted["results"])[0]
     entry = submitted["results"][c_name]
     addrs = sorted(entry["functions"].values())
-    # JSON with a literal duplicate key (json.dumps of a dict can't emit one).
     entry_text = json.dumps(entry["functions"])[:-1] + f', "dup_fn": "{addrs[0]}", '
     entry_text += f'"dup_fn": "{addrs[1]}"}}'
     raw = json.dumps(submitted).replace(json.dumps(entry["functions"]), entry_text)
@@ -444,14 +421,13 @@ def test_package_tolerates_thumb_odd_addresses(kit_copy: Path) -> None:
     first_c = sorted(submitted["results"])[0]
     entry = submitted["results"][first_c]
     fn_name, even = next(iter(entry["functions"].items()))
-    entry["functions"][fn_name] = f"0x{int(even, 16) | 1:x}"  # set the Thumb bit
+    entry["functions"][fn_name] = f"0x{int(even, 16) | 1:x}"
     _write_submission(kit_copy, submitted, {})
 
     proc = _run_package(kit_copy)
     assert proc.returncode == 0, proc.stderr
     with zipfile.ZipFile(kit_copy / "results.zip") as zf:
         packaged = json.loads(zf.read("results.json"))
-    # Normalized back to the even target address the kit actually assigned.
     assert packaged["results"][first_c]["functions"][fn_name] == f"0x{int(even, 16):x}"
 
 
@@ -462,8 +438,6 @@ def test_package_partial_submission_warns_but_packages(kit_copy: Path) -> None:
     _write_submission(kit_copy, submitted, {})
     proc = _run_package(kit_copy)
     assert proc.returncode == 0
-    # Uncovered binaries are summarized in ONE line naming the offenders — a
-    # per-binary warning would bury the real ones (224-binary kit, partial run).
     assert "no submission for 1 of 2 kit binaries" in proc.stderr
     assert "bin_001.elf" in proc.stderr
     assert proc.stderr.count("no submission") == 1
@@ -474,9 +448,6 @@ def test_package_partial_submission_warns_but_packages(kit_copy: Path) -> None:
     assert "no submission" not in quiet.stderr
 
 
-# --------------------------------------------------------------------------- #
-# Ingest (evaluate=False everywhere: pyjoern must never load)
-# --------------------------------------------------------------------------- #
 def _load_dec_result(tree: Path, project: str, stem: str, dec_id: str):
     from decbench.models.project import OptimizationLevel
 
@@ -517,7 +488,7 @@ def test_ingest_packaged_zip_happy_path(packaged_zip: Path, tree_copy: Path) -> 
     assert summary.dec_id == "mydec"
     assert summary.n_binaries == 2
     assert summary.n_functions == 4
-    assert summary.n_relabeled == 4  # every sub_<addr> was renamed to its DWARF name
+    assert summary.n_relabeled == 4
     assert summary.n_dropped_extra == 0
     assert summary.n_failed == 0
 
@@ -526,7 +497,7 @@ def test_ingest_packaged_zip_happy_path(packaged_zip: Path, tree_copy: Path) -> 
     assert set(result.functions) == {"add_nums", "mul_nums"}
     assert result.binary_name == "prog1"
     assert result.decompiler.decompiler_name == "mydec"
-    assert result.decompiler.decompiler_version == "1.2.3"  # inherited from the submission
+    assert result.decompiler.decompiler_version == "1.2.3"
     assert result.decompiler.extra["slice_scoped"] is True
     assert result.decompiler.extra["external_submission"] is True
     assert result.decompiler.extra["kit_dataset"] == "sample-set"
@@ -534,11 +505,9 @@ def test_ingest_packaged_zip_happy_path(packaged_zip: Path, tree_copy: Path) -> 
     for name in ("add_nums", "mul_nums"):
         func = result.functions[name]
         assert func.address == truth[name]
-        # Relabeled: the DWARF name is the identifier in the stored code.
         assert name in func.decompiled_code
         assert "sub_" not in func.decompiled_code
 
-    # Artifacts: run-driver layout with "// Function: <name> @ 0x<addr>" markers.
     c_art = tree_copy / "O0" / "proj1" / "decompiled" / "mydec_prog1.c"
     assert f"// Function: add_nums @ 0x{truth['add_nums']:x}" in c_art.read_text()
     assert (tree_copy / "O0" / "proj1" / "decompiled" / "mydec_prog1.toml").is_file()
@@ -562,7 +531,6 @@ def test_ingest_partial_submission_failed_functions(tree_copy: Path, tmp_path: P
     result = _load_dec_result(tree_copy, "proj1", "prog1", "partdec")
     assert result.decompiler.failed_functions == ["mul_nums"]
     assert set(result.functions) == {"add_nums"}
-    # The other manifest binary wasn't submitted at all: warned, not fabricated.
     assert not (tree_copy / "checkpoints" / "proj2.pkl").exists()
     assert any("1/2 manifest" in w for w in summary.warnings)
 
@@ -571,9 +539,9 @@ def test_ingest_drops_extra_and_unparseable_addresses(tree_copy: Path, tmp_path:
     truth = _nm_addrs(tree_copy / "O0" / "proj1" / "compiled" / "prog1")
     funcs = {
         "sub_good": f"0x{truth['add_nums']:x}",
-        "sub_main": f"0x{truth['main']:x}",  # resolvable, but main is off-manifest
-        "sub_ghost": "0x999999",  # resolves to no DWARF function at all
-        "sub_bad": "zzz",  # unparseable address
+        "sub_main": f"0x{truth['main']:x}",
+        "sub_ghost": "0x999999",
+        "sub_bad": "zzz",
     }
     c_text = "".join(f"int {n}(int a, int b) {{ return a; }}\n\n" for n in funcs)
     sub = _packaged_dir(tmp_path, funcs, c_text)
@@ -604,7 +572,6 @@ def test_ingest_force_semantics(packaged_zip: Path, tree_copy: Path) -> None:
     ingest_submission(packaged_zip, tree_copy, "mydec", evaluate=False)
     with pytest.raises(EvalKitError, match="force"):
         ingest_submission(packaged_zip, tree_copy, "mydec", evaluate=False)
-    # Same id, force=True: overwrite allowed. A different id needs no force.
     summary = ingest_submission(packaged_zip, tree_copy, "mydec", evaluate=False, force=True)
     assert summary.n_functions == 4
     other = ingest_submission(packaged_zip, tree_copy, "otherdec", evaluate=False)
@@ -621,7 +588,6 @@ def test_force_reingest_purges_slices_the_new_submission_dropped(
     ingest_submission(packaged_zip, tree_copy, "mydec", evaluate=False)
     assert (tree_copy / "O0" / "proj2" / "decompiled" / "mydec_prog2.c").is_file()
 
-    # Re-package covering only proj1.
     work = tmp_path / "resub"
     work.mkdir()
     with zipfile.ZipFile(packaged_zip) as zf:
@@ -635,12 +601,10 @@ def test_force_reingest_purges_slices_the_new_submission_dropped(
     summary = ingest_submission(work, tree_copy, "mydec", evaluate=False, force=True)
     assert summary.n_binaries == 1
     assert any("dropped stale" in w and "proj2" in w for w in summary.warnings)
-    # The dropped project's artifacts AND checkpoint entry are gone...
     assert not (tree_copy / "O0" / "proj2" / "decompiled" / "mydec_prog2.c").exists()
     assert not (tree_copy / "O0" / "proj2" / "decompiled" / "mydec_prog2.toml").exists()
     with pytest.raises(KeyError):
         _load_dec_result(tree_copy, "proj2", "prog2", "mydec")
-    # ...while the covered project survives.
     assert set(_load_dec_result(tree_copy, "proj1", "prog1", "mydec").functions) == {
         "add_nums",
         "mul_nums",
@@ -690,21 +654,15 @@ def test_ingest_requires_sample_manifest(packaged_zip: Path, tmp_path: Path) -> 
         ingest_submission(packaged_zip, bare, "mydec", evaluate=False)
 
 
-# --------------------------------------------------------------------------- #
-# AddrLookup tolerances
-# --------------------------------------------------------------------------- #
 def test_addrlookup_tolerances() -> None:
     lookup = resolve.AddrLookup({0x401000: "f", 0x8008000: "g"}, min_vaddr=0x400000)
-    assert lookup.name_for(0x401000) == "f"  # exact
-    assert lookup.name_for(0x8008001) == "g"  # Thumb bit cleared
-    assert lookup.name_for(0x1000) == "f"  # rebased by min_vaddr
-    assert lookup.name_for(0x7C08001) == "g"  # rebased + Thumb-cleared
-    assert lookup.name_for(0x5000) is None  # no tolerance rule reaches a match
+    assert lookup.name_for(0x401000) == "f"
+    assert lookup.name_for(0x8008001) == "g"
+    assert lookup.name_for(0x1000) == "f"
+    assert lookup.name_for(0x7C08001) == "g"
+    assert lookup.name_for(0x5000) is None
 
 
-# --------------------------------------------------------------------------- #
-# CLI smoke (CliRunner)
-# --------------------------------------------------------------------------- #
 def test_cli_export_smoke(tree: Path, tmp_path: Path) -> None:
     from decbench.cli import main
 

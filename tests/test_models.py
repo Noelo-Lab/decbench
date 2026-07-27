@@ -65,11 +65,9 @@ optimization_levels = ["O2"]
         assert OptimizationLevel.O2.gcc_flags == ["-O2"]
         assert OptimizationLevel.O2_NOINLINE.gcc_flags == ["-O2", "-fno-inline"]
 
-        # String values and enum members map identically
         assert opt_gcc_flags("O2-noinline") == ["-O2", "-fno-inline"]
         assert opt_gcc_flags(OptimizationLevel.O2_NOINLINE) == ["-O2", "-fno-inline"]
         assert opt_gcc_flags("O0") == ["-O0"]
-        # Unknown ad-hoc levels fall back to -<value>
         assert opt_gcc_flags("Og") == ["-Og"]
 
     def test_o2_noinline_round_trip(self) -> None:
@@ -89,7 +87,6 @@ optimization_levels = ["O0", "O2", "O2-noinline"]
             assert OptimizationLevel.O2_NOINLINE in project.compilation.optimization_levels
 
     def test_base_flags_no_inline_by_default(self) -> None:
-        # Inlining is controlled by the opt level, not base flags
         config = CompilationConfig()
         assert "-fno-inline" not in config.base_flags
         assert "-fno-builtin" in config.base_flags
@@ -122,18 +119,7 @@ class TestDecompilationModels:
         )
         assert func.name == "main"
         assert func.address == 0x1000
-        assert func.has_gotos is False
-        assert func.goto_count == 0
-
-    def test_function_with_gotos(self) -> None:
-        func = FunctionDecompilation(
-            name="test",
-            address=0x2000,
-            decompiled_code="void test() { goto label; label: return; }",
-            metadata={"gotos": 1},
-        )
-        assert func.has_gotos is True
-        assert func.goto_count == 1
+        assert func.metadata["gotos"] == 0
 
     def test_decompilation_result(self) -> None:
         result = DecompilationResult(

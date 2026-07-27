@@ -152,9 +152,7 @@ def main() -> int:
     print(f"=== small validation: {project_name} {opts} specs={specs} ===")
     project = Project(config=ProjectConfig(name=project_name, labels=["sailr"]))
 
-    # project -> OptimizationLevel -> binary -> dec_id -> {metric: MetricResult}
     evaluation: dict = {project_name: {}}
-    # project -> OptimizationLevel -> binary -> dec_id -> DecompilationResult
     decompiled: dict = {project_name: {}}
 
     for opt_str in opts:
@@ -170,9 +168,6 @@ def main() -> int:
         binaries = binaries[:max_bins]
         print(f"[{opt_str}] {len(binaries)} binary(ies); extracting source CFGs...")
         src_cfgs = _source_cfgs(sources)
-        # Target functions that exist in BOTH source (so they have a source CFG
-        # to score against) AND the binary's symbol table (so a slow decompiler
-        # only does these few, never falling back to all ~hundreds).
         bin_funcs = _binary_func_names(binaries[0])
         common = sorted(set(src_cfgs) & bin_funcs) if bin_funcs else sorted(src_cfgs)
         targets = common[:max_funcs] or sorted(src_cfgs)[:max_funcs]
@@ -201,7 +196,7 @@ def main() -> int:
                 if res is None:
                     print(f"    [{spec}] decompile produced no result")
                     continue
-                dec_id = res.decompiler.decompiler_name  # == backend .id
+                dec_id = res.decompiler.decompiler_name
                 metric_results = evaluate_decompilation(res, src_cfgs)
                 evaluation[project_name][opt][stem][dec_id] = metric_results
                 decompiled[project_name][opt][stem][dec_id] = res
@@ -214,7 +209,6 @@ def main() -> int:
                 dt = time.time() - t0
                 print(f"    [{dec_id}] {got} funcs in {dt:.0f}s scored={scored}")
 
-    # Aggregate + scoreboard
     aggregated = aggregate_results(evaluation)
     scoreboard = build_scoreboard(
         aggregated,
@@ -225,7 +219,6 @@ def main() -> int:
     )
     function_data = build_function_data(evaluation, [project], decompiled)
 
-    # Build REAL history from the Ghidra versions we ran (two points = a line).
     history_inputs = []
     for dec_id, ds in scoreboard.decompiler_scores.items():
         if "@" not in dec_id:

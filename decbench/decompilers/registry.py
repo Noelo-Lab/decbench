@@ -99,40 +99,8 @@ class DecompilerRegistry:
                 if instance.is_available():
                     available.append(name)
             except Exception:
-                # Skip decompilers that fail to instantiate
                 pass
         return available
-
-    @classmethod
-    def get_all(
-        cls,
-        names: list[str] | None = None,
-        config: DecompilerConfig | None = None,
-        only_available: bool = True,
-    ) -> dict[str, Decompiler]:
-        """Get multiple decompiler instances.
-
-        Args:
-            names: List of decompiler names, or None for all
-            config: Optional configuration (applied to all)
-            only_available: Only return available decompilers
-
-        Returns:
-            Dictionary mapping names to decompiler instances
-        """
-        if names is None:
-            names = cls.list_registered()
-
-        result = {}
-        for name in names:
-            try:
-                dec = cls.get(name, config)
-                if not only_available or dec.is_available():
-                    result[name] = dec
-            except (KeyError, Exception):
-                pass
-
-        return result
 
     @classmethod
     def clear(cls) -> None:

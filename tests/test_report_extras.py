@@ -30,8 +30,6 @@ int target(int a, int b) {
 }
 """
 
-# A minimal-but-valid ELF header (x86-64) so `binfmt.detect` / `resolve_binary`
-# accept the fake binary and source_extract will search its sibling .c.
 _ELF64_HEADER = b"\x7fELF" + b"\x00" * 14 + b"\x3e\x00"
 
 
@@ -60,7 +58,6 @@ def _function_data():
 
 
 def test_build_samples_includes_source_and_decompiled(tmp_path: Path) -> None:
-    # A fake binary with a sibling .c source (source_extract finds it w/o DWARF).
     binary = tmp_path / "bin1"
     binary.write_bytes(b"\x7fELF not-really")
     (tmp_path / "bin1.c").write_text(SOURCE)
@@ -74,7 +71,6 @@ def test_build_samples_includes_source_and_decompiled(tmp_path: Path) -> None:
     assert "return a+b+b" in s.decompiled["angr"]
     assert s.source_code is not None
     assert "return s * 2;" in s.source_code
-    # Carries the per-metric scores for display.
     assert s.values["angr"]["byte_match"] == 0.5
 
 
@@ -101,14 +97,6 @@ def test_compute_compile_rates() -> None:
     evaluation = {"proj": {"O0": {"bin1": {"angr": {"byte_match": bm}}}}}
     rates = compute_compile_rates(evaluation)
     assert abs(rates["angr"] - (2 / 3)) < 1e-9
-
-
-# --- sample-set materialization (site-build time) ----------------------------
-#
-# `build_sample_set_samples` is the site-build path that turns every function
-# tagged `sample-set` into a View-page entry, reading decompiled code + source
-# straight off the on-disk results tree (not the in-memory decompile results the
-# GED-tiered `build_samples` uses).
 
 
 def _write_results_tree(root: Path, project: str = "proj") -> None:
@@ -160,9 +148,7 @@ def test_build_sample_set_samples_materializes_from_tree(tmp_path: Path, monkeyp
     assert s.difficulty == "sample-set"
     assert s.function == "target"
     assert "return a+b+b" in s.decompiled["codex"]
-    # Source resolved from the sibling .c (no DWARF needed for the fake binary).
     assert s.source_code is not None and "return s * 2;" in s.source_code
-    # Per-metric scores carried from the record, for the View page's score strip.
     assert s.values["codex"]["ged"] == 0.0
     assert s.perfects["codex"]["type_match"] is True
 
@@ -173,7 +159,7 @@ def test_build_sample_set_samples_skips_untagged(tmp_path: Path) -> None:
     fd = _sample_set_fd()
     for group in fd.groups:
         for func in group.functions:
-            func.datasets = ["unoptimized"]  # not sampled into the sample-set
+            func.datasets = ["unoptimized"]
     assert build_sample_set_samples(fd, tmp_path) == []
 
 
@@ -181,7 +167,6 @@ def test_build_sample_set_samples_skips_bare_tree(tmp_path: Path, caplog) -> Non
     """A bare scoreboard+function_results dir (no per-opt artifact dirs) yields []."""
     import logging
 
-    # tmp_path has no O0/O2/... subdirs, so there is nothing to read.
     with caplog.at_level(logging.WARNING, logger="decbench.scoring.report_extras"):
         assert build_sample_set_samples(_sample_set_fd(), tmp_path) == []
     assert "no artifact directories" in caplog.text
@@ -193,14 +178,6 @@ def test_build_sample_set_samples_excludes_malware(tmp_path: Path, monkeypatch) 
     _write_results_tree(tmp_path, project="mirai")
     fd = _sample_set_fd(project="mirai", labels=["malware", "do-not-execute"])
     assert build_sample_set_samples(fd, tmp_path) == []
-
-
-# --- Malware code must never reach a published payload -----------------------
-#
-# The `samples`/`hardest` payloads carry real C source, get committed to site/,
-# and are published by GitHub Pages (which is PUBLIC even for a private repo on
-# Pro/Team). Six benchmark targets are REAL malware from theZoo. These tests are
-# the tripwire: if the filter is ever "optimized" away, they fail.
 
 
 def _malware_function_data() -> FunctionData:
@@ -310,7 +287,6 @@ def test_attach_extras_keeps_malware_out_of_code_payloads(tmp_path: Path, monkey
     )
     assert "MALWARE_C" not in blob
     assert "mirai" not in blob
-    # The score path is untouched: the malware function still counts.
     assert any(g.project == "mirai" for g in fd.groups)
 
 
@@ -326,7 +302,6 @@ def test_build_payloads_scrubs_prebaked_malware(tmp_path: Path, monkeypatch) -> 
     from decbench.rendering.aggregate import build_payloads
 
     fd = _malware_function_data()
-    # Simulate the already-baked payload: malware code sitting in the file.
     fd.samples = [
         SampleEntry(
             project="mirai",
@@ -353,8 +328,5 @@ def test_build_payloads_scrubs_prebaked_malware(tmp_path: Path, monkeypatch) -> 
     payloads = build_payloads(fd, Scoreboard(name="t"))
 
     assert payloads["samples"] == []
-    # hardest is stored in function_results.json but never shipped as a payload
-    # anymore (the View page's hard tier replaced it) — so prebaked malware in
-    # it cannot publish either.
     assert "hardest" not in payloads
     assert "MALWARE_C" not in json.dumps(payloads)

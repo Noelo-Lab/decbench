@@ -25,12 +25,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Branch/call mnemonics whose operand is a code address. After single-function
-# recompilation that target is an *unlinked* relative displacement (or a
-# different absolute, since we disassemble the original at its real vaddr and the
-# recompiled object at 0), so the printed target is layout/linker-dependent and
-# must be normalized away before diffing — otherwise every call/jump counts as a
-# mismatch even when the control flow is identical.
+# Branch/call mnemonics whose operand is a code address. That target is
+# layout/linker-dependent after single-function recompilation, so it must be
+# normalized away or identical control flow counts as a mismatch.
 _BRANCH_MNEMONICS = frozenset(
     {
         "call",
@@ -63,7 +60,6 @@ _BRANCH_MNEMONICS = frozenset(
         "jpe",
         "jpo",
         "jcxz",
-        # ARM / AArch64 branches.
         "b",
         "bl",
         "blx",
@@ -87,21 +83,10 @@ _BRANCH_MNEMONICS = frozenset(
     }
 )
 
-# An immediate literal, optionally ARM-style ``#``-prefixed (and possibly
-# negative), hex OR decimal: ``0x40``, ``#0x40``, ``#-0x40``, and the bare
-# decimal form capstone prints for small displacements/targets (``call 4``).
 _HEX_TOKEN = re.compile(r"#?-?(?:0x[0-9a-fA-F]+|\d+)")
-# A PC/IP-relative *memory* operand: x86 ``[rip + 0x..]`` / ``[rip - 0x..]`` and
-# AArch64 literal loads ``[pc, #0x..]``. The displacement encodes a data/GOT
-# offset fixed up at link time, so it is layout-dependent and gets a placeholder.
-# The displacement is OPTIONAL and may be decimal: in an *unlinked* object the
-# relocation slot is 0 and capstone prints a bare ``[rip]`` (and small
-# displacements print as decimal, e.g. ``[rip + 7]``) — without matching those,
-# every global/string access in a recompiled object mismatches its linked
-# original purely because of linking.
+# The displacement is OPTIONAL and may be decimal: an unlinked object has a zero
+# relocation slot, which capstone prints as a bare ``[rip]``.
 _PC_REL_MEM = re.compile(r"\[(rip|pc)(?:\s*[+\-,]\s*#?-?(?:0x[0-9a-fA-F]+|\d+))?\]")
-# AArch64 PC-relative *address* computations whose immediate is the (page)
-# target itself — capstone prints e.g. ``adrp x0, #0x400000``.
 _PC_REL_MNEMONICS = frozenset({"adrp", "adr"})
 
 
@@ -114,13 +99,7 @@ def _normalize_operands(mnemonic: str, op_str: str) -> str:
     same. We blank those so the diff measures *real* assembly differences, not
     relocation noise — the central fairness fix for this metric.
     """
-    # PC-relative data references: [rip + 0x..] / [pc, #0x..] -> [<base>+X]
     op_str = _PC_REL_MEM.sub(lambda m: f"[{m.group(1)}+X]", op_str)
-    # Blank the immediate when it IS a link-dependent address: AArch64 adrp/adr
-    # (the immediate is the PC-relative target), or a DIRECT branch/call target
-    # (a bare address, no memory operand). An indirect ``call [rax + 0x20]``
-    # displacement is a base-independent struct/vtable offset — a real difference
-    # we keep — so memory-operand branches are excluded.
     if mnemonic in _PC_REL_MNEMONICS or (mnemonic in _BRANCH_MNEMONICS and "[" not in op_str):
         op_str = _HEX_TOKEN.sub("X", op_str)
     return op_str
@@ -144,7 +123,6 @@ def _disassemble_bytes(data: bytes, address: int = 0, arch_mode: tuple | None = 
 
         lines: list[str] = []
         for insn in cs.disasm(data, address):
-            # Skip nops (alignment padding varies between compilations)
             if insn.mnemonic == "nop":
                 continue
 
@@ -152,14 +130,9 @@ def _disassemble_bytes(data: bytes, address: int = 0, arch_mode: tuple | None = 
             line = f"{insn.mnemonic} {op_str}".strip()
             lines.append(line)
 
-        # Drop x86-64 varargs AL-zeroing (``mov eax, 0`` / ``xor eax, eax``
-        # immediately before a call): the SysV ABI makes callers zero AL for
-        # variadic/unprototyped callees, so its presence tracks whether a
-        # *prototype* was in scope at compile time — for recompiled decompiler
-        # output the prototype is our injected scaffolding, not the
-        # decompiler's logic. Applied to BOTH listings uniformly. ONLY on
-        # x86-64: i386 (regparm) and Win64 have no AL-varargs convention, so a
-        # ``xor eax, eax`` before a call there is a real register argument.
+        # AL-zeroing before a call tracks whether a prototype was in scope, which for
+        # recompiled output is our scaffolding rather than the decompiler's logic. Only
+        # on x86-64: elsewhere a ``xor eax, eax`` before a call is a real argument.
         if arch_mode == (capstone.CS_ARCH_X86, capstone.CS_MODE_64):
             lines = [
                 ln
@@ -225,7 +198,6 @@ def _compute_jaccard_similarity(lines_a: list[str], lines_b: list[str]) -> tuple
         return shared / total, a_only + b_only
 
     except ImportError:
-        # Fall back to simple set-based Jaccard
         set_a = set(lines_a)
         set_b = set(lines_b)
         intersection = set_a & set_b
@@ -233,23 +205,6 @@ def _compute_jaccard_similarity(lines_a: list[str], lines_b: list[str]) -> tuple
         if not union:
             return 1.0, 0
         return len(intersection) / len(union), len(set_a ^ set_b)
-
-
-def _compile_function(
-    code: str,
-    func_name: str,
-    compiler: str = "gcc",
-    flags: list[str] | None = None,
-) -> Path | None:
-    """Compile a single function's decompiled code to an object file.
-
-    Thin wrapper over :func:`decbench.metrics.fixup.compile_with_fixup` (which
-    maximizes the odds the code builds). Returns the object path or ``None``.
-    """
-    from decbench.metrics.fixup import compile_with_fixup
-
-    result = compile_with_fixup(code, func_name, compiler, flags)
-    return result.obj_path
 
 
 @register_metric("byte_match")
@@ -275,16 +230,6 @@ class ByteMatchMetric(Metric):
     requires_source_cfg = False
     requires_decompiled_cfg = False
 
-    # v5: rip/pc-relative normalization also covers the unlinked-object bare
-    # ``[rip]`` (zero/decimal displacement) form; direct branch/call targets
-    # normalize decimal as well as hex; x86-64-only varargs AL-zeroing before
-    # calls is dropped from both listings; fixup gains width-correct IDA/Ghidra
-    # pseudo-types, semantically-correct helper macros, sibling/libc prototypes,
-    # struct synthesis, positional repairs and a malformed-decl backout, and
-    # producer_flags now carries codegen ``-f`` flags. (NOTE: a bare ``[rip]``
-    # conflates reads of *different* globals — the same accepted precision limit
-    # the linked-side hex displacement always had; symbol identity isn't
-    # compared.)
     cache_version = "5"
 
     def __init__(self, config: MetricConfig | None = None):
@@ -319,12 +264,9 @@ class ByteMatchMetric(Metric):
 
         from decbench.utils import binfmt
 
-        # Recompile THE SAME WAY THE SOURCE WAS COMPILED: pick the toolchain and
-        # arch/opt flags that match the original binary's own format+arch
-        # (PE -> MinGW, ARM -> arm-none-eabi, x86 -> gcc; flags from the DWARF
-        # producer), instead of a fixed host gcc. If that toolchain isn't
-        # installed, we can't match it — return a non-scoring result rather than
-        # comparing against a wrong-arch recompile.
+        # Recompile the way the source was compiled (PE -> MinGW, ARM -> arm-none-eabi,
+        # x86 -> gcc, flags from the DWARF producer). Without that toolchain, return a
+        # non-scoring result rather than comparing against a wrong-arch recompile.
         info = binfmt.detect(original_binary_path)
         if info is None:
             return MetricValue(value=0.0, metadata={"error": "Unrecognized binary format"})
@@ -337,13 +279,9 @@ class ByteMatchMetric(Metric):
                     "reason": f"no matching toolchain ({recompiler}) for {info.fmt}/{info.arch}",
                 },
             )
-        # producer flags (e.g. -m32 -march=... -O2, or -mcpu=cortex-m4 -mthumb)
-        # so the recompile matches; then compile to an object.
         flags = binfmt.producer_flags(original_binary_path) + ["-c", "-fno-builtin", "-w"]
         arch_mode = binfmt.capstone_arch_mode(info)
 
-        # Extract original function bytes ONCE; reuse for both the cache key and
-        # the comparison.
         original_bytes = binfmt.function_bytes(
             original_binary_path, decompiled.name, decompiled.address
         )
@@ -353,9 +291,6 @@ class ByteMatchMetric(Metric):
                 metadata={"error": "Could not extract original function bytes"},
             )
 
-        # Sibling prototypes (the decompiler's OWN recovered signatures for the
-        # binary's other functions) shape the fixup's injected decls, so they
-        # are part of the cache key.
         context_decls: dict[str, str] | None = kwargs.get("context_decls")
         key_inputs = [
             decompiled.decompiled_code,
@@ -387,9 +322,6 @@ class ByteMatchMetric(Metric):
         from decbench.metrics.fixup import compile_with_fixup
         from decbench.utils import binfmt
 
-        # Compile decompiled code the same way as source (matching toolchain),
-        # running the fixup/self-repair pass so the maximum number of functions
-        # build (otherwise non-compiling code is a flat 0 and dominates).
         fix = compile_with_fixup(
             decompiled.decompiled_code,
             decompiled.name,
@@ -409,7 +341,6 @@ class ByteMatchMetric(Metric):
                 },
             )
 
-        # The fixup pass places the object in its own temp dir; clean the dir.
         obj_dir = obj_path.parent
         fixup_meta = {
             "compilable": True,
@@ -417,8 +348,6 @@ class ByteMatchMetric(Metric):
             "fixup_injected": len(fix.injected),
         }
         try:
-            # Extract recompiled function bytes (.text of the single-function
-            # object — ELF or COFF/MinGW).
             recompiled_bytes = binfmt.object_text_bytes(obj_path, decompiled.name)
 
             if recompiled_bytes is None:
@@ -427,7 +356,6 @@ class ByteMatchMetric(Metric):
                     metadata={**fixup_meta, "error": "Could not extract recompiled bytes"},
                 )
 
-            # First check exact byte match
             if recompiled_bytes == original_bytes:
                 return MetricValue(
                     value=1.0,
@@ -441,7 +369,6 @@ class ByteMatchMetric(Metric):
                     },
                 )
 
-            # Disassemble (with the binary's own arch) and compute similarity
             original_asm = _disassemble_bytes(original_bytes, decompiled.address, arch_mode)
             recompiled_asm = _disassemble_bytes(recompiled_bytes, 0, arch_mode)
 
@@ -450,7 +377,6 @@ class ByteMatchMetric(Metric):
                     original_asm, recompiled_asm
                 )
             else:
-                # Fallback: raw byte comparison ratio
                 min_len = min(len(original_bytes), len(recompiled_bytes))
                 max_len = max(len(original_bytes), len(recompiled_bytes))
                 if max_len == 0:
@@ -462,7 +388,6 @@ class ByteMatchMetric(Metric):
                     similarity = matching / max_len
                 changed_lines = abs(len(original_bytes) - len(recompiled_bytes))
 
-            # A perfect match requires similarity == 1.0
             return MetricValue(
                 value=1.0 if similarity == 1.0 else similarity,
                 raw_value=similarity,
@@ -470,8 +395,6 @@ class ByteMatchMetric(Metric):
                     **fixup_meta,
                     "exact_match": False,
                     "jaccard_similarity": similarity,
-                    # Absolute edit distance (# changed asm lines) for the report's
-                    # 'distance' view; does not affect the (unchanged) jaccard score.
                     "changed_lines": changed_lines,
                     "original_size": len(original_bytes),
                     "recompiled_size": len(recompiled_bytes),
@@ -499,12 +422,8 @@ class ByteMatchMetric(Metric):
 
         original_binary_path = decompilation.binary_path
 
-        # ABSTAIN (emit no per-function results) when the matching recompile
-        # toolchain isn't installed for this binary's format/arch — e.g. ARM
-        # firmware (cps) or PE malware decompiled on an x86 host without the
-        # cross/mingw gcc. Scoring those 0 would be unfair ("couldn't measure" is
-        # not "wrong"); abstaining drops byte_match for the binary so GED +
-        # type_match carry it (per-metric denominators already differ).
+        # Abstain rather than score 0 when the matching toolchain isn't installed:
+        # "couldn't measure" is not "wrong", and GED + type_match still carry the binary.
         if original_binary_path is not None:
             from decbench.utils import binfmt
 
@@ -524,8 +443,6 @@ class ByteMatchMetric(Metric):
                         ],
                     )
 
-        # The decompiler's own signatures for this binary's functions: used by
-        # the fixup to give internal calls real prototypes.
         from decbench.metrics.fixup import derive_context_decls
 
         context_decls = derive_context_decls(

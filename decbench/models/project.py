@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -99,11 +98,9 @@ class CompilationConfig(BaseModel):
 class ProjectConfig(BaseModel):
     """Configuration for a project to be compiled and evaluated."""
 
-    # Identity
     name: str = Field(..., description="Unique project identifier")
     version: str | None = Field(default=None, description="Version tag or commit")
 
-    # Source location
     source_remote: str | None = Field(
         default=None,
         description="Remote URL for source (git URL or tar URL)",
@@ -117,7 +114,6 @@ class ProjectConfig(BaseModel):
         description="Local path if remote_type is LOCAL",
     )
 
-    # Build configuration
     package_dir: str | None = Field(
         default=None,
         description="Directory name after extraction/clone",
@@ -127,26 +123,20 @@ class ProjectConfig(BaseModel):
         description="Subdirectory containing source files",
     )
 
-    # Custom fetch: when set, this shell command (run in a fresh source dir)
-    # is responsible for producing the source tree, instead of git/tar. Used by
-    # the malware targets to fetch + password-extract theZoo zips without
-    # cloning the whole repo.
     download_cmd: str | None = Field(
         default=None,
         description="Shell command that fetches/extracts the source into the "
         "current directory (overrides remote_type-based download)",
     )
 
-    # Danger flag: this target is REAL MALWARE. It is compiled (never executed)
-    # only for decompiler benchmarking, and ONLY inside a container — the
-    # pipeline refuses to build it on a bare host (see compile_project).
+    # Danger flag: compiled (never executed), and only inside a container — the
+    # pipeline refuses to build these on a bare host (see compile_project).
     is_malware: bool = Field(
         default=False,
         description="REAL malware source — compile-only, container-only, never "
         "execute. Guarded in compile_project.",
     )
 
-    # Build commands
     post_download_cmds: list[str] = Field(
         default=[],
         description="Commands to run after downloading source",
@@ -164,7 +154,6 @@ class ProjectConfig(BaseModel):
         description="Commands to run after make",
     )
 
-    # Options
     apply_patch: str | None = Field(
         default=None,
         description="Patch file to apply after download",
@@ -178,7 +167,6 @@ class ProjectConfig(BaseModel):
         description="Only compile these specific files",
     )
 
-    # Labels
     labels: list[str] = Field(
         default_factory=list,
         description="Labels applied to all binaries in this project "
@@ -206,7 +194,6 @@ class Project(BaseModel):
         description="Compilation configuration",
     )
 
-    # Runtime state (not serialized to config)
     compiled_binaries: dict[OptimizationLevel, list[Path]] = Field(
         default_factory=dict,
         exclude=True,
@@ -229,11 +216,8 @@ class Project(BaseModel):
 
         data = toml.load(path)
 
-        # Extract compilation config if present
         compilation_data = data.pop("compilation", {})
 
-        # Resolve a relative apply_patch against the TOML's directory so
-        # projects can ship patches next to their config.
         patch = data.get("apply_patch")
         if patch and not Path(patch).is_absolute():
             candidate = (Path(path).parent / patch).resolve()

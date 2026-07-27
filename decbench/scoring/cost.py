@@ -43,18 +43,11 @@ __all__ = [
     "scan_structured_costs",
 ]
 
-#: Trace ``.md`` header lines written by ``llm_dec._save_trace``.
 _TRACE_MODEL_RE = re.compile(r"^- model:\s*(?P<model>.+?)\s*$", re.MULTILINE)
 _TRACE_STATUS_RE = re.compile(r"^- status:\s*(?P<status>ok|FAILED|TIMEOUT)\s*$", re.MULTILINE)
 _TRACE_ELAPSED_RE = re.compile(r"^- elapsed:\s*(?P<secs>\d+(?:\.\d+)?)s\s*$", re.MULTILINE)
 
-#: The four normalized token buckets every parser emits (pricing.toml's axes).
 _TOKEN_KEYS = ("input", "cached_input", "cache_write", "output")
-
-
-# ---------------------------------------------------------------------------
-# Batch decompile times (the traditional decompilers)
-# ---------------------------------------------------------------------------
 
 
 def _read_toml_header(path: Path) -> dict[str, Any] | None:
@@ -134,11 +127,6 @@ def scan_decompile_times(tree: Path, opt_levels: Iterable[str]) -> dict[str, dic
         }
         for dec in sorted(totals)
     }
-
-
-# ---------------------------------------------------------------------------
-# LLM session token parsing (shared with llm_dec's structured capture)
-# ---------------------------------------------------------------------------
 
 
 def _claude_session_tokens(records: list[dict[str, Any]]) -> dict[str, int] | None:
@@ -223,11 +211,6 @@ def parse_session_tokens(path: Path) -> dict[str, int] | None:
         _l.debug("cost: unreadable session log %s: %s", path, e)
         return None
     return _claude_session_tokens(records) or _codex_session_tokens(records)
-
-
-# ---------------------------------------------------------------------------
-# LLM per-function facts: trace scan (historical) + structured fields (new runs)
-# ---------------------------------------------------------------------------
 
 
 def _elapsed_stats(values: list[float]) -> dict[str, float]:
@@ -317,7 +300,7 @@ def scan_structured_costs(tree: Path, opt_levels: Iterable[str]) -> dict[str, di
         except OSError:
             continue
         if "time_seconds" not in text:
-            continue  # no structured fields — the trace scan's territory
+            continue
         try:
             data = toml.loads(text)
         except Exception:  # noqa: BLE001
@@ -325,7 +308,6 @@ def scan_structured_costs(tree: Path, opt_levels: Iterable[str]) -> dict[str, di
         dec = str(data.get("decompiler") or "")
         if not dec:
             continue
-        # The header `version` is "<model> (<cli version>)" for the LLM backends.
         if dec not in model:
             raw = str(data.get("version") or "")
             model[dec] = raw.split(" (")[0] or None
@@ -350,11 +332,6 @@ def scan_structured_costs(tree: Path, opt_levels: Iterable[str]) -> dict[str, di
         }
         for dec in sorted(elapsed)
     }
-
-
-# ---------------------------------------------------------------------------
-# The cost_info blob
-# ---------------------------------------------------------------------------
 
 
 def _discover_opt_levels(tree: Path) -> list[str]:
@@ -383,7 +360,7 @@ def build_cost_info(
     """
     opts = list(opt_levels) if opt_levels is not None else _discover_opt_levels(tree)
     llm = scan_llm_traces(traces_dir) if traces_dir is not None else {}
-    llm.update(scan_structured_costs(tree, opts))  # structured fields are preferred
+    llm.update(scan_structured_costs(tree, opts))
     return {
         "decompile_time": scan_decompile_times(tree, opts),
         "llm": llm,

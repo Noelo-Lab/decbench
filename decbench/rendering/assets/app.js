@@ -28,22 +28,15 @@
 /* ============================================================================
  * Self-contained syntax highlighter — no third-party code, no CDN.
  *
- * An IIFE that exposes three globals on `window` (this file is a classic
- * script, so they are reachable as bare names below):
+ * An IIFE exposing three globals on `window` (this is a classic script, so they
+ * are reachable as bare names below):
  *   hlC(code)                    -> HTML string  (C / decompiler pseudo-C)
  *   hlAsm(text)                  -> HTML string  (x86-64 Intel + basic ARM)
  *   applyStaticHighlights(root)  -> highlight every <pre data-lang="c|asm">
- *                                   under `root` by reading its textContent.
  *
- * Token span classes (styled in app.css): tok-kw tok-type tok-str tok-num
- * tok-com tok-pp tok-call tok-mn tok-reg tok-imm tok-lbl.
- *
- * The tokenizers escape every token's text and clamp unterminated strings /
- * comments to EOL/EOF, so output is always well-formed even on adversarial
- * input (< > & " '). init() drives applyStaticHighlights(document) (there is no
- * DOMContentLoaded auto-init here — see the source viz/hl.js), so the about
- * page's server-rendered <pre data-lang> blocks are highlighted in both the
- * split and inline delivery modes.
+ * Token span classes are styled in app.css (tok-kw, tok-type, ...). The
+ * tokenizers escape every token and clamp unterminated strings/comments to
+ * EOL/EOF, so the output is well-formed on adversarial input.
  * ==========================================================================*/
 (function (global) {
   "use strict";
@@ -58,7 +51,6 @@
     return '<span class="' + cls + '">' + esc(text) + "</span>";
   }
 
-  // ---- C keyword / type vocabularies -------------------------------------
   var C_KEYWORDS = new Set([
     "if", "else", "for", "while", "do", "switch", "case", "default", "break",
     "continue", "return", "goto", "sizeof", "typedef", "struct", "union",
@@ -69,13 +61,11 @@
     "__volatile__", "__extension__", "true", "false", "NULL"
   ]);
   var C_TYPES = new Set([
-    // real C types
     "void", "char", "short", "int", "long", "float", "double", "bool",
     "size_t", "ssize_t", "ptrdiff_t", "wchar_t", "va_list", "FILE", "off_t",
     "int8_t", "int16_t", "int32_t", "int64_t",
     "uint8_t", "uint16_t", "uint32_t", "uint64_t",
     "intptr_t", "uintptr_t",
-    // decompiler pseudo-types (Ghidra / IDA / angr / binja flavours)
     "undefined", "undefined1", "undefined2", "undefined4", "undefined8",
     "uint", "ulong", "ushort", "uchar", "byte", "word", "dword", "qword",
     "code", "__int8", "__int16", "__int32", "__int64", "__uint64",
@@ -96,19 +86,15 @@
   }
   function isSpaceNoNL(c) { return c === " " || c === "\t" || c === "\r"; }
 
-  // -------------------------------------------------------------------------
-  //  C / pseudo-C
-  // -------------------------------------------------------------------------
   function hlC(code) {
     code = String(code == null ? "" : code);
     var out = "", plain = "", i = 0, n = code.length;
-    var atLineStart = true;            // only whitespace seen since last '\n'
+    var atLineStart = true;
     function flush() { if (plain) { out += esc(plain); plain = ""; } }
 
     while (i < n) {
       var c = code[i];
 
-      // preprocessor line: '#' as the first non-space token on a line
       if (c === "#" && atLineStart) {
         flush();
         var j = i;
@@ -119,21 +105,18 @@
         out += span("tok-pp", code.slice(i, j));
         i = j; atLineStart = true; continue;
       }
-      // line comment
       if (c === "/" && code[i + 1] === "/") {
         flush();
         var k = code.indexOf("\n", i); if (k < 0) k = n;
         out += span("tok-com", code.slice(i, k));
         i = k; continue;
       }
-      // block comment
       if (c === "/" && code[i + 1] === "*") {
         flush();
         var e = code.indexOf("*/", i + 2); e = (e < 0) ? n : e + 2;
         out += span("tok-com", code.slice(i, e));
         i = e; atLineStart = false; continue;
       }
-      // string / char literal
       if (c === '"' || c === "'") {
         flush();
         var q = c, p = i + 1;
@@ -142,11 +125,10 @@
           if (code[p] === q || code[p] === "\n") break;
           p++;
         }
-        if (code[p] === q) p++;        // include closing quote when present
+        if (code[p] === q) p++;
         out += span("tok-str", code.slice(i, p));
         i = p; atLineStart = false; continue;
       }
-      // number (hex / decimal / float, with suffixes)
       if (isDigit(c) || (c === "." && isDigit(code[i + 1]))) {
         flush();
         var s = i;
@@ -164,7 +146,6 @@
         out += span("tok-num", code.slice(s, i));
         atLineStart = false; continue;
       }
-      // identifier / keyword / type / call
       if (isIdentStart(c)) {
         flush();
         var a = i; i++;
@@ -179,7 +160,6 @@
         }
         atLineStart = false; continue;
       }
-      // plain char (operators, punctuation, whitespace)
       if (c === "\n") { plain += c; atLineStart = true; i++; continue; }
       if (!isSpaceNoNL(c)) atLineStart = false;
       plain += c; i++;
@@ -188,28 +168,25 @@
     return out;
   }
 
-  // -------------------------------------------------------------------------
-  //  Assembly (x86-64 Intel-syntax + basic ARM)
-  // -------------------------------------------------------------------------
   var X86_REGS = new Set([
     "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp", "rip",
     "eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp",
     "ax", "bx", "cx", "dx", "si", "di", "bp", "sp",
     "al", "bl", "cl", "dl", "ah", "bh", "ch", "dh",
     "sil", "dil", "bpl", "spl",
-    "lr", "pc", "fp", "ip", "sb", "sl", "xzr", "wzr"   // ARM aliases
+    "lr", "pc", "fp", "ip", "sb", "sl", "xzr", "wzr"
   ]);
   function isReg(w) {
     var r = w.toLowerCase();
     if (X86_REGS.has(r)) return true;
-    if (/^r\d{1,2}[dwb]?$/.test(r)) return true;         // r0..r15, r8d/r9w/..
-    if (/^[xw]([0-9]|[12][0-9]|3[01])$/.test(r)) return true; // ARM x0..x31/w0..
-    if (/^(xmm|ymm|zmm)\d{1,2}$/.test(r)) return true;   // SIMD
-    if (/^[dsq]([0-9]|[12][0-9]|3[01])$/.test(r)) return true; // ARM d/s/q regs
+    if (/^r\d{1,2}[dwb]?$/.test(r)) return true;
+    if (/^[xw]([0-9]|[12][0-9]|3[01])$/.test(r)) return true;
+    if (/^(xmm|ymm|zmm)\d{1,2}$/.test(r)) return true;
+    if (/^[dsq]([0-9]|[12][0-9]|3[01])$/.test(r)) return true;
     return false;
   }
 
-  function readNumTail(line, s) {          // s points just past the # / $ prefix
+  function readNumTail(line, s) {
     var n = line.length;
     if (line[s] === "+" || line[s] === "-") s++;
     if (line[s] === "0" && (line[s + 1] === "x" || line[s + 1] === "X")) {
@@ -222,11 +199,9 @@
 
   function hlAsmLine(line) {
     var n = line.length, i = 0, out = "";
-    // leading whitespace
     var ws = 0; while (ws < n && (line[ws] === " " || line[ws] === "\t")) ws++;
     if (ws) { out += esc(line.slice(0, ws)); i = ws; }
 
-    // leading label:  name:  /  .Lxx:  /  hexaddr:
     var lm = /^([.\w$@]+):/.exec(line.slice(i));
     if (lm) {
       out += span("tok-lbl", lm[0]);
@@ -239,28 +214,24 @@
     var mnemSeen = false;
     while (i < n) {
       var c = line[i];
-      // comments
       if (c === ";" || c === "@") { out += span("tok-com", line.slice(i)); break; }
       if (c === "/" && line[i + 1] === "/") { out += span("tok-com", line.slice(i)); break; }
       if (c === "#") {
         var d = line[i + 1];
-        if (d === "-" || d === "+" || (d >= "0" && d <= "9")) {   // #imm
+        if (d === "-" || d === "+" || (d >= "0" && d <= "9")) {
           var s = readNumTail(line, i + 1);
           out += span("tok-imm", line.slice(i, s)); i = s; continue;
         }
-        out += span("tok-com", line.slice(i)); break;            // '# comment'
+        out += span("tok-com", line.slice(i)); break;
       }
-      // whitespace
       if (c === " " || c === "\t") {
         var a = i; while (i < n && (line[i] === " " || line[i] === "\t")) i++;
         out += esc(line.slice(a, i)); continue;
       }
-      // AT&T immediate  $imm
       if (c === "$") {
         var s2 = readNumTail(line, i + 1);
         out += span("tok-imm", line.slice(i, s2)); i = s2; continue;
       }
-      // bare number / hex
       if (isDigit(c)) {
         var s3 = i;
         if (c === "0" && (line[i + 1] === "x" || line[i + 1] === "X")) {
@@ -270,7 +241,6 @@
         }
         out += span("tok-imm", line.slice(s3, i)); continue;
       }
-      // word: mnemonic / directive / register / symbol
       if ((c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_" || c === ".") {
         var wstart = i; i++;
         while (i < n && /[\w.$]/.test(line[i])) i++;
@@ -285,7 +255,6 @@
         }
         continue;
       }
-      // any other char (brackets, commas, +, -, *, :, !, etc.)
       out += esc(c); i++;
     }
     return out;
@@ -296,16 +265,13 @@
     return text.split("\n").map(hlAsmLine).join("\n");
   }
 
-  // -------------------------------------------------------------------------
-  //  Static application to <pre data-lang="c|asm"> blocks
-  // -------------------------------------------------------------------------
   function applyStaticHighlights(root) {
     root = root || (typeof document !== "undefined" ? document : null);
     if (!root) return;
     var pres = root.querySelectorAll("pre[data-lang]");
     for (var i = 0; i < pres.length; i++) {
       var pre = pres[i];
-      if (pre.getAttribute("data-hl") === "1") continue;   // idempotent
+      if (pre.getAttribute("data-hl") === "1") continue;
       var lang = (pre.getAttribute("data-lang") || "").toLowerCase();
       var target = pre.querySelector("code") || pre;
       var text = target.textContent;
@@ -320,24 +286,17 @@
 })(typeof window !== "undefined" ? window
   : (typeof globalThis !== "undefined" ? globalThis : this));
 
-// The inline payload, or null in split mode. Set before this script runs.
 const INLINE = (typeof window !== "undefined" && window.__DECBENCH_INLINE__) || null;
 
-// Split-mode routing root: the relative hop from THIS page to the site root,
-// stamped by the renderer (html.py::linked_assets) before this script — "" on the
-// root index, "../" on a `<view>/index.html` subpage. It is a string only in split
-// mode; null in the single-file/inline report, which keeps pure hash routing.
 const ROOT = (typeof window !== "undefined" && typeof window.__DECBENCH_ROOT__ === "string")
     ? window.__DECBENCH_ROOT__ : null;
 
-// Query params from the URL the page FIRST loaded with, read once before any
-// replaceState rewrites location: dataset/norm, and on the view page tier/dec/
-// metric/fn. Unknown values are ignored where they are applied, never here.
 const INIT_PARAMS = (function () {
     try { return new URLSearchParams(location.search); } catch (e) { return new URLSearchParams(); }
 })();
 
-// The directory of the SITE ROOT (e.g. "/decbench/"), resolved once from the page
+// Cached deliberately: pushState later moves location without moving the root,
+// so recomputing from a post-navigation URL would lie.
 // that first loaded plus the stamped hop. Cached deliberately: pushState later moves
 // location without moving the root, so recomputing from a post-navigation URL lies.
 let _basePath = null;
@@ -348,7 +307,7 @@ function basePath() {
     }
     return _basePath;
 }
-// Resolve NOW, before any pushState moves location: a later first call would
+// Resolve NOW, before any pushState moves location.
 // compute the root from wherever the user has since navigated.
 if (ROOT !== null) basePath();
 
@@ -361,9 +320,6 @@ const state = {
     normalize: false
 };
 
-// ---- Data loading ----
-// One promise per payload, cached: a view is never fetched twice, and a failure
-// stays failed rather than re-storming the network on every navigation.
 const _payloads = {};
 function loadData(name) {
     if (_payloads[name]) return _payloads[name];
@@ -374,6 +330,7 @@ function loadData(name) {
             : Promise.reject(new Error("inline payload '" + name + "' is missing"));
     } else {
         // Anchored to the site root, not the document: a relative "data/..." would
+// re-resolve after pushState, and the first cached rejection would then stick.
         // re-resolve against whatever path pushState/replaceState moved us to, and
         // the first cached rejection would stick for the whole session.
         const prefix = ROOT !== null ? basePath() : "";
@@ -386,9 +343,6 @@ function loadData(name) {
     return p;
 }
 
-// ---- Metric presentation (from the registry in aggregates.json) ----
-// Names and column order used to be hardcoded here AND in html.py; both now read
-// decbench/rendering/content/metrics.toml, which ships into aggregates.json.
 let _metricSpecs = null;
 function metricSpecs() {
     if (_metricSpecs) return _metricSpecs;
@@ -404,8 +358,6 @@ function metricSpecs() {
 function metricList() { return (AGG && AGG.metrics) || []; }
 function metricShort(m) { const s = metricSpecs()[m]; return (s && s.short_name) || m; }
 function metricName(m) { const s = metricSpecs()[m]; return (s && s.display_name) || m; }
-// Registry order (structure -> types -> recompile); unregistered metrics keep
-// their given order and are appended. Mirrors Content.ordered_metrics().
 function orderedMetrics() {
     const specs = metricSpecs(), ms = metricList();
     const known = ms.filter(m => m in specs).sort((a, b) => specs[a].order - specs[b].order);
@@ -414,6 +366,8 @@ function orderedMetrics() {
 }
 
 // ---- Decompiler presentation (from the registry in aggregates.json) ----
+// SHOW_LOGOS is the single switch for the leaderboard logos; flip it to false to
+// disable them everywhere with no other edit.
 // Official names / links / prettified versions replace raw ids on screen. Tolerant
 // the same way metricSpecs is: a missing registry (older payload) or an unknown id
 // (r2dec/dewolf data landing before its entry) falls back to the raw id, unlinked.
@@ -430,8 +384,6 @@ function decRegistry() { return (AGG && AGG.decompiler_registry) || {}; }
 function decRegEntry(id) {
     const reg = decRegistry();
     if (reg[id]) return reg[id];
-    // Base-name fallback: a versioned id ("ghidra@12.1") resolves to its base
-    // ("ghidra") entry when the registry has no exact match for it.
     const base = baseName(id);
     if (reg[base]) return reg[base];
     for (const k in reg) if (baseName(k) === base) return reg[k];
@@ -445,21 +397,10 @@ function decVersion(id) {
     if (e && e.version) return e.version;
     return (AGG && AGG.decompiler_versions && AGG.decompiler_versions[id]) || null;
 }
-// Tooltip: pretty name + pretty version (was the raw id + raw version).
 function decTip(id) {
     const v = decVersion(id);
     return v ? (decName(id) + " — version " + v) : decName(id);
 }
-// A decompiler as a table cell: linked when the registry carries a url (opens in a
-// new tab; styled to keep the terminal look — see .lb-name a).
-//
-// Two forms, one source of truth (name/url/version/logo):
-//   compact (default)  `[logo] name <span.ver>vX</span>` on one line — the metrics
-//                      table, the distance table and the compile table.
-//   stacked ({stacked:true})  a two-line block for the LEADERBOARD: logo-prefixed
-//                      name, then the version on its own line.
-// The version keeps the same rule in both: a "v" prefix only in front of a digit
-// ("v9.2" reads right, "vr2 6.0.8" does not).
 function decNameHtml(id, options) {
     options = options || {};
     const name = escapeHtml(decName(id)), url = decUrl(id), v = decVersion(id);
@@ -479,7 +420,10 @@ function decNameHtml(id, options) {
     return html + '</span>';
 }
 
-// ---- Combo lookup (replaces the old client-side recompute) ----
+// ---- Combo lookup ----
+// A run with no dataset presets has none to select, so the builder emits one
+// synthetic all-functions combo under this reserved name (aggregate.py's
+// ALL_PRESET). Without the fallback every view here shows an error banner.
 // A run with no dataset presets has no preset to select, so state.dataset stays null.
 // The builder emits one synthetic all-functions combo under this reserved name for
 // exactly that case (aggregate.py's ALL_PRESET); selecting it renders the full corpus
@@ -493,12 +437,12 @@ function currentCombo() {
 }
 function totalFunctions() { return (AGG && AGG.totals && AGG.totals.functions) || 0; }
 
-// Aggregates ship [numerator, denominator] pairs rather than percentages: the UI
-// shows the raw counts next to the bar, so the pair is what it needs.
 function pairOf(map, key) { const c = map && map[key]; return c || [0, 0]; }
 function metricCell(result, d, m) { return pairOf((result.per_metric || {})[d], m); }
 
-// Decompilers to render as rows for the CURRENT preset. Backends in
+// Decompilers to render as rows for the CURRENT preset. AGG.sample_set_only
+// backends ran on the sample-set slice only, so they render there and, on the
+// data page, below a partial-coverage break (splitDecs) — never elsewhere.
 // AGG.sample_set_only (the LLM/coding-agent ones — codex/claude-code) ran on the
 // sample-set slice only, so their rows are shown ONLY when the sample-set preset is
 // selected; on every other view they are omitted (their data still ships, it is
@@ -514,11 +458,6 @@ function visibleDecs() {
     if (preset === SAMPLE_SET_PRESET) return all;
     return all.filter(d => sso.indexOf(d) < 0);
 }
-// The same rows split into {main, subset} for the data page's tables: off the
-// sample-set preset the sample-set-only backends are NOT hidden there (unlike the
-// leaderboard) — they render below a dashed break, muted, because their numbers
-// cover only the part of the selected dataset that overlaps the sample-set slice.
-// On the sample-set preset itself they are first-class rows (subset is empty).
 function splitDecs() {
     const all = ((AGG && AGG.decompilers) || []).slice();
     const sso = (AGG && AGG.sample_set_only) || [];
@@ -529,9 +468,6 @@ function splitDecs() {
         subset: all.filter(d => sso.indexOf(d) >= 0),
     };
 }
-// The dashed break labeling the sample-set-only rows, and the note shown with it
-// (the note's text lives in content/data.md; it ships hidden and is revealed
-// only when subset rows are actually rendered).
 function subsetBreakRow(colspan) {
     return '<tr class="subset-break"><td colspan="' + colspan +
         '">&mdash; sample-set only &mdash;</td></tr>';
@@ -542,13 +478,8 @@ function toggleSubsetNote(id, on) {
 }
 function overallCell(result, d) { return pairOf(result.overall, d); }
 function errorCell(result, d) { return pairOf(result.errors, d); }
-// Compiles: share of a decompiler's byte_match-measured functions whose output
-// actually recompiled (the compilability-fixup pass built it). Denominator is
-// per-decompiler (functions where byte_match was measurable), so ARM/PE
-// abstentions never enter it — see aggregate.py `compile`.
 function compileCell(result, d) { return pairOf(result.compile, d); }
 
-// ---- Formatting ----
 function pctClass(p) { return p >= 50 ? "high" : (p >= 20 ? "mid" : "low"); }
 function asciiBar(pct, width) {
     width = width || 12;
@@ -563,15 +494,12 @@ function escapeHtml(s) {
 }
 function pct(cell) { return cell && cell[1] > 0 ? (cell[0] / cell[1]) * 100 : 0; }
 
-// Read a theme color from CSS (app.css :root owns the palette).
 function cssVar(name, fallback) {
     const v = getComputedStyle(document.documentElement).getPropertyValue(name);
     return (v && v.trim()) || fallback;
 }
 
-// ---- Loading / error states ----
 function setLoading(el) { if (el) el.innerHTML = '<p class="view-desc">Loading&hellip;</p>'; }
-// A failed payload must say so where the reader is looking — never a blank view.
 function showBanner(viewId, msg) {
     const sec = document.getElementById("view-" + viewId);
     if (!sec) return;
@@ -584,18 +512,13 @@ function showBanner(viewId, msg) {
     b.textContent = "[ error ] " + msg;
 }
 
-// ---- Leaderboard (swebench-style sortable table) ----
 function cellPctHtml(cell) {
     const p = pct(cell);
     return '<span class="bar-ascii">' + asciiBar(p, 8) + '</span> ' +
         '<span class="cell-pct pct-' + pctClass(p) + '">' + p.toFixed(1) + '%</span> ' +
         '<span class="cell-count">(' + cell[0] + '/' + cell[1] + ')</span>';
 }
-// Errors: lower is better, so the color scale is inverted vs metrics.
 function errPctClass(p) { return p < 2 ? "high" : (p < 10 ? "mid" : "low"); }
-// Same arithmetic as pct() now that errors ship as an [errored, scope] pair (the
-// old pair read .errored/.scope vs .perfect/.total). Kept as its own name so the
-// call sites say which rate they mean.
 function errRate(cell) { return cell && cell[1] > 0 ? (cell[0] / cell[1]) * 100 : 0; }
 function errorCellHtml(cell) {
     const p = errRate(cell);
@@ -612,9 +535,6 @@ function buildLeaderboard(result) {
     const tbl = document.getElementById("leaderboard-table");
     if (!tbl) return;
     const decs = visibleDecs(), metrics = orderedMetrics();
-    // Header. "Errors" = how often the decompiler failed/timed out on a
-    // function it was asked to decompile (lower is better). The Compiles rate
-    // used to sit here; it moved to its own table on the distance page.
     const cols = [["__name__", "decompiler"], ["__overall__", "Union"]];
     for (const m of metrics) cols.push([m, metricShort(m)]);
     cols.push(["__errors__", "Errors"]);
@@ -626,20 +546,16 @@ function buildLeaderboard(result) {
             escapeHtml(label) + '<span class="arrow">' + arrow + '</span></th>';
     }
     tbl.querySelector("thead tr").innerHTML = head;
-    // Sort.
     decs.sort((a, b) => {
         let va = sortValue(a, state.sortKey, result), vb = sortValue(b, state.sortKey, result);
         if (typeof va === "string") return state.sortDir * va.localeCompare(vb);
         return state.sortDir * (va - vb);
     });
-    // Rows.
     let body = "";
     decs.forEach((d, i) => {
         let row = '<tr class="binrow"><td class="lb-rank">#' + (i + 1) + '</td>' +
             '<td class="lb-name lb-name-stacked" title="' + escapeHtml(decTip(d)) + '">' +
             decNameHtml(d, {stacked: true}) + '</td>';
-        // data-label lets the stacked (mobile) card show each cell's column name
-        // (see the max-width:700px block in app.css); ignored on the desktop table.
         row += '<td class="metric-cell col-overall" data-label="Union">' + cellPctHtml(overallCell(result, d)) + '</td>';
         for (const m of metrics) row += '<td class="metric-cell" data-label="' + escapeHtml(metricShort(m)) + '">' + cellPctHtml(metricCell(result, d, m)) + '</td>';
         row += '<td class="metric-cell" data-label="Errors">' + errorCellHtml(errorCell(result, d)) + '</td>';
@@ -657,7 +573,6 @@ function buildLeaderboard(result) {
     });
 }
 
-// ---- Metrics perfect-rate table ----
 function buildMetricsTable(result) {
     const tbl = document.getElementById("metrics-perfect-table");
     if (!tbl) return;
@@ -678,9 +593,6 @@ function buildMetricsTable(result) {
     tbl.querySelector("tbody").innerHTML = body;
 }
 
-// ---- Distance table (the data page's #distance section; lower is better) ----
-// mean/median/n/at0 are precomputed per combo; see docs/site.md. A null
-// cell means no function under this combo had a finite distance for that metric.
 function buildDistance(result) {
     const tbl = document.getElementById("distance-table");
     if (!tbl) return;
@@ -696,9 +608,6 @@ function buildDistance(result) {
             return av - bv;
         });
     const rows = mkRows(groups.main), subRows = mkRows(groups.subset);
-    // Best (lowest) mean per metric -> highlight. Full-coverage rows only: a
-    // sample-set-only backend's mean covers a fraction of this dataset, so it
-    // neither takes nor sets the highlight.
     const best = {};
     metrics.forEach((m, i) => {
         best[m] = Math.min.apply(null, rows.map(r => r.cells[i] ? r.cells[i].mean : Infinity));
@@ -729,13 +638,6 @@ function buildDistance(result) {
     toggleSubsetNote("distance-subset-note", subRows.length > 0);
 }
 
-// ---- Compile-rate table (lives on the data page's #compiles section) ----
-// The per-decompiler Compiles rate — the share of a decompiler's
-// byte_match-measured functions whose output actually recompiled — moved off the
-// leaderboard to here. It is one number per decompiler (see aggregate.py's
-// `compile`), so unlike the metrics it gets its own small table rather than a
-// column. Sorted highest-first; the sample-set-only backends render below a
-// dashed break off their preset, exactly like the distance table (splitDecs()).
 function buildCompile(result) {
     const tbl = document.getElementById("compile-table");
     if (!tbl) return;
@@ -760,16 +662,6 @@ function buildCompile(result) {
     toggleSubsetNote("compile-subset-note", subRows.length > 0);
 }
 
-// ---- Cost table (the data page's #cost section) ----
-// Reads AGG.cost — a GLOBAL, combo-independent block (decompile time and $ do
-// not vary with the dataset preset or the normalize toggle), so buildCost runs
-// ONCE from init() after the aggregates land, never from refresh(). Shape per
-// decompiler: {time: {mean_s, median_s, n_functions, [n_binaries,] basis},
-// dollars: {total, per_function, model, estimated} | null}. `basis` is "batch"
-// (binary wall-time / functions) for traditional decompilers and "per-function"
-// (agent call incl. tool use) for the LLM backends — the data.md prose warns the
-// two are not directly comparable, which is also why the rows split main vs
-// sample-set (the same static split the other tables draw with subsetBreakRow).
 function fmtSecs(s) {
     return s >= 100 ? Math.round(s) + " s" : s.toFixed(1) + " s";
 }
@@ -779,8 +671,6 @@ function buildCost() {
     const cost = (AGG && AGG.cost) || {};
     tbl.querySelector("thead tr").innerHTML =
         "<th>decompiler</th><th>median time / fn</th><th>mean time / fn</th><th>est. cost</th>";
-    // Static split: LLM/sample-set-only backends below the break, always (cost is
-    // preset-independent, so unlike splitDecs() this does not consult the preset).
     const all = ((AGG && AGG.decompilers) || []).filter(d => cost[d]);
     const sso = (AGG && AGG.sample_set_only) || [];
     const median = d => {
@@ -791,8 +681,6 @@ function buildCost() {
     const timeCell = v => (v == null) ? "&mdash;" : fmtSecs(v);
     const rowHtml = (d, isSubset) => {
         const t = cost[d].time || {}, dol = cost[d].dollars;
-        // No dollars: em-dash for the batch rows (not applicable — no per-token
-        // cost), "n/a" for an LLM row (applicable but unpriced/no token data).
         const dolCell = dol
             ? '$' + dol.total.toFixed(2) + ' <span class="cell-count">($' +
               dol.per_function.toFixed(2) + '/fn, est.)</span>'
@@ -841,19 +729,12 @@ function refresh() {
     buildDistance(lastResult);
     buildCompile(lastResult);
     updateStats(lastResult);
-    // The About page's projects table is preset-aware; re-render it if it has been
-    // loaded (no-op before the About view is first opened, or if not in the DOM).
     renderDatasetProjects();
 }
 
-// ---- About page's dataset section (corpus-wide; independent of the selectors) ----
-// The corpus stats are selector-independent, but the projects table is preset-aware
-// (the sample-set preset lists only its sampled projects), so the loaded payload is
-// cached here and the table is re-rendered from it on preset change (refresh()).
 let _lastDataset = null;
 function buildDataset(ds) {
     const cats = ds.categories || [], summary = ds.summary || {};
-    // Category highlight buttons.
     const cc = document.getElementById("category-controls");
     if (cc) {
         cc.innerHTML = cats.map(c =>
@@ -873,7 +754,6 @@ function buildDataset(ds) {
             }
         }));
     }
-    // Summary.
     const sum = document.getElementById("dataset-summary");
     if (sum) {
         sum.innerHTML = '<div class="goal-body">' +
@@ -886,22 +766,12 @@ function buildDataset(ds) {
             '</strong> total source lines of code (project .c files)</div>' +
             '</div>';
     }
-    // Projects table: cache the payload, then render it preset-aware. refresh()
-    // calls renderDatasetProjects() again on preset change (no refetch).
     _lastDataset = ds;
     renderDatasetProjects();
 }
 
-// ---- Data page's pipeline-health section (corpus-wide; from data/dataset.json) ----
-// Split out of buildDataset when the joern scaffolds moved from the about page to
-// the data page (2026-07-23). Same lazy dataset.json payload — the fetch promise
-// is cached per file (loadData), so opening both pages fetches it once.
 function buildPipelineHealth(ds) {
     const joern = ds.joern || {};
-    // Pipeline health: source-side GED loss. A benchmark function has NO source
-    // CFG iff no decompiler ever got a GED value for it (source CFGs are
-    // decompiler-independent), so this is the share of functions GED cannot score
-    // because OUR source front-end (Joern) failed or was too slow on the source.
     const src = joern.source || {}, spot = joern.spot_check || {};
     const srcTotal = src.total || 0, srcLost = src.lost || 0;
     const srcPct = srcTotal ? (100 * srcLost / srcTotal) : 0;
@@ -920,7 +790,6 @@ function buildPipelineHealth(ds) {
                 '.</div>') : '') +
             '</div>';
     }
-    // Pipeline health: Joern failures on each decompiler's OUTPUT (corpus-wide).
     const out = joern.output || {};
     const jt = document.getElementById("joern-output-table");
     if (jt) {
@@ -938,12 +807,6 @@ function buildPipelineHealth(ds) {
     }
 }
 
-// The About page's projects table, filtered by the selected preset. Only the
-// sample-set preset narrows the list — to the projects it sampled (>=1 function
-// tagged sample-set, per the row's `presets`); every other preset shows the full
-// corpus (which those presets essentially are, and the user asked to filter only
-// the sample-set). Reads the cached payload so refresh() can re-render on a preset
-// change without refetching.
 function renderDatasetProjects() {
     const tbl = document.getElementById("dataset-projects");
     if (!tbl || !_lastDataset) return;
@@ -969,22 +832,11 @@ function renderDatasetProjects() {
     }
 }
 
-// ---- View page (source vs one decompiler, by difficulty tier) ----
-// Replaced the old Compare and Hardest views. samples.json entries carry a
-// `difficulty` tag (easy/medium/hard, assigned server-side from cross-decompiler
-// GED agreement); the three dropdowns pick the tier, the decompiler whose output
-// is shown, and the metric whose score is highlighted.
 let VIEW_SAMPLES = [];
-// Tier order for the view-page dropdown. `sample-set` is the dataset-selector's
-// curated slice (materialized at build time, difficulty="sample-set"); it lists
-// after the three GED-agreement tiers, and the decompiler dropdown gains codex
-// only because those entries carry codex output. A tier appears only when the
-// data has entries for it (initView filters this against VIEW_SAMPLES).
 const DIFFICULTIES = ["easy", "medium", "hard", "sample-set"];
 function sampleLabel(s) {
     return s.project + "/" + s.opt_level + "/" + s.binary + " :: " + s.function;
 }
-// The stable id used in the `fn` URL param: the label with no spaces around "::".
 function sampleKey(s) {
     return s.project + "/" + s.opt_level + "/" + s.binary + "::" + s.function;
 }
@@ -999,9 +851,6 @@ function viewControls() {
         body: document.getElementById("view-body")
     };
 }
-// Human explanation for a missing view-page source, keyed by the `source_status`
-// code the sample carries (stamped by scoring/report_extras.py). Any unknown or
-// null code falls back to a generic line rather than showing an empty panel.
 function sourceUnavailableReason(status) {
     switch (status) {
         case "binary_not_found":
@@ -1030,7 +879,6 @@ function renderViewEntry() {
         (s.difficulty ? (' &middot; <span class="tag score-bad">' +
             escapeHtml(s.difficulty) + '</span>') : '') +
         '</div>';
-    // Scores strip: the chosen decompiler's per-metric values, chosen metric first.
     const vals = (s.values && s.values[dec]) || {};
     const perf = (s.perfects && s.perfects[dec]) || {};
     let scores = "";
@@ -1046,9 +894,6 @@ function renderViewEntry() {
     }
     html += '<div class="cmp-scores">' + escapeHtml(dec) + ': ' + (scores || '&mdash;') + '</div>';
     const code = (s.decompiled || {})[dec];
-    // Always a two-column grid: source on the left (or, when it is missing, a
-    // short explanation of why), the chosen decompiler's output on the right.
-    // Both code panels are syntax-highlighted — hlC escapes its input for us.
     html += '<div class="cmp-grid" style="grid-template-columns:repeat(2,minmax(0,1fr));">';
     if (s.source_code) {
         const badge = s.source_status === "preprocessed"
@@ -1093,7 +938,6 @@ function initView(samples) {
     VIEW_SAMPLES = samples || [];
     const c = viewControls();
     if (!c.fn) return;
-    // Difficulty tiers present in the data; legacy payloads (no tags) get "all".
     const tiers = DIFFICULTIES.filter(t => VIEW_SAMPLES.some(s => s.difficulty === t));
     if (c.tier) {
         (tiers.length ? tiers : ["__all__"]).forEach(t => {
@@ -1102,7 +946,6 @@ function initView(samples) {
             c.tier.appendChild(o);
         });
     }
-    // Decompilers: union over the entries (covers versioned ids), sorted.
     const decs = [];
     for (const s of VIEW_SAMPLES) {
         for (const d in (s.decompiled || {})) if (decs.indexOf(d) < 0) decs.push(d);
@@ -1111,7 +954,7 @@ function initView(samples) {
     if (c.dec) {
         decs.forEach(d => {
             const o = document.createElement("option");
-            o.value = d; o.textContent = decName(d);  // value stays the raw id
+            o.value = d; o.textContent = decName(d);
             c.dec.appendChild(o);
         });
     }
@@ -1122,8 +965,6 @@ function initView(samples) {
             c.metric.appendChild(o);
         });
     }
-    // Deep-link the tier/dec/metric selects from the initial URL; the function is
-    // selected after fillViewFunctions lists it.
     const fnIdx = applyViewParams(c);
     if (c.tier) c.tier.addEventListener("change", () => { fillViewFunctions(); syncUrl(); });
     if (c.dec) c.dec.addEventListener("change", () => { renderViewEntry(); syncUrl(); });
@@ -1135,14 +976,8 @@ function initView(samples) {
         c.fn.value = String(fnIdx);
         renderViewEntry();
     }
-    // Reflect the resolved view state in the URL (idempotent; keeps a deep link
-    // canonical and drops any unknown params the reader arrived with).
     if (state.view === "view") syncUrl();
 }
-// Apply the view page's URL params (once, from the initial load). Returns the
-// VIEW_SAMPLES index the `fn` param names, or -1. Unknown values are ignored: a
-// param only takes effect when it matches a real option, and a named function
-// additionally forces its own difficulty tier so its option is actually listed.
 function applyViewParams(c) {
     const optOf = sel => Array.from(sel.options).map(o => o.value);
     let fnIdx = -1;
@@ -1164,24 +999,14 @@ function applyViewParams(c) {
     return fnIdx;
 }
 
-// baseName strips a versioned id's "@version" suffix. It outlived the removed
-// Historical view (whose legend keyed by base name): the decompiler registry
-// still uses it to resolve a versioned id ("ghidra@12.1") to its "ghidra" entry.
 function baseName(dec) { const a = dec.indexOf("@"); return a >= 0 ? dec.substring(0, a) : dec; }
 
-// ---- Theme toggle ----
-// Dark is the default; light is an explicit opt-in, persisted in localStorage.
-// The FOUC-free <head> script (html.py) already applied the stored/URL theme
-// before first paint, and the button LABEL is CSS-driven off data-theme — so all
-// that is left for the client is the click. The whole page is pure CSS and
-// re-tints for free (the removed historical charts, which baked colors at render
-// time, were the only thing that had to be redrawn on a live flip).
 function currentTheme() {
     return document.documentElement.dataset.theme === "light" ? "light" : "dark";
 }
 function applyTheme(theme) {
     document.documentElement.dataset.theme = theme;
-    try { localStorage.setItem("decbench-theme", theme); } catch (e) { /* private mode */ }
+    try { localStorage.setItem("decbench-theme", theme); } catch (e) { }
 }
 function initThemeToggle() {
     const btn = document.getElementById("theme-toggle");
@@ -1191,14 +1016,8 @@ function initThemeToggle() {
     });
 }
 
-// ---- Lazy views ----
-// Fetched on FIRST navigation, once. Each also waits on aggregates, which carry
-// the metric registry these views label their columns and scores with.
 const LAZY_VIEWS = {
     about: {file: "dataset", body: "dataset-summary", render: buildDataset},
-    // The data page's pipeline-health section reads the SAME dataset.json as the
-    // about page — loadData caches the fetch promise per file, so whichever view
-    // opens first pays for it and the other reuses the promise.
     data: {file: "dataset", body: "joern-source", render: buildPipelineHealth},
     view: {file: "samples", body: "view-body", render: initView}
 };
@@ -1207,7 +1026,7 @@ function ensureViewData(name) {
     const spec = LAZY_VIEWS[name];
     if (!spec || lazyStarted[name]) return;
     const body = document.getElementById(spec.body);
-    if (!body) return;  // the view rendered its empty state: nothing to fill.
+    if (!body) return;
     lazyStarted[name] = true;
     setLoading(body);
     Promise.all([loadData("aggregates"), loadData(spec.file)])
@@ -1218,11 +1037,6 @@ function ensureViewData(name) {
         });
 }
 
-// ---- View routing ----
-// Two modes, one DOM update. Split mode reflects the view in the URL PATH
-// (site/<view>/) so it is linkable and the back button works; the single-file /
-// inline report keeps its pure #hash behavior. showView only touches the DOM; the
-// URL is written by navigate()/syncUrl().
 function showView(name) {
     state.view = name;
     document.querySelectorAll(".view").forEach(v => {
@@ -1236,20 +1050,15 @@ function showView(name) {
 function validViews() {
     return Array.from(document.querySelectorAll(".view")).map(v => v.getAttribute("data-view"));
 }
-// Renamed views: an old `#<hash>` deep link routes to the view's new id (e.g. the
-// distance page became the data page, 2026-07-23). Only consulted when the hash
-// is not itself a valid view id, so an in-page section anchor (#cost, #compiles)
-// that is NOT a view id still falls through to native scrolling untouched.
 const LEGACY_HASH_VIEWS = {distance: "data"};
-// The view a `#hash` names: the hash itself when it is a valid view id, its
-// legacy mapping when that resolves to one, else null (not a view hash).
 function resolveViewHash(hash) {
     const views = validViews();
     if (views.indexOf(hash) >= 0) return hash;
     const mapped = LEGACY_HASH_VIEWS[hash];
     return (mapped && views.indexOf(mapped) >= 0) ? mapped : null;
 }
-// The view a fresh load opens on when the URL names none. It is config —
+// The default view is config (views.toml's `default = true`) and reaches us
+// through the DOM: routing runs before aggregates.json lands.
 // views.toml's `default = true` — and reaches us through the DOM: the renderer
 // marks that section `active` (on a subpage, the subpage's own view), and routing
 // runs before aggregates.json lands, so we cannot wait to read it from there.
@@ -1257,7 +1066,8 @@ function defaultView() {
     const el = document.querySelector(".view.active") || document.querySelector(".view");
     return el ? el.getAttribute("data-view") : null;
 }
-// Split mode: the view named by the path segment just under the site root, or null
+// The source of truth AFTER a browser navigation, when the DOM's `.active` is
+// stale.
 // (the root, or an unknown segment). The source of truth AFTER a browser navigation,
 // when the DOM's `.active` is stale.
 function pathView() {
@@ -1269,16 +1079,10 @@ function pathView() {
     const seg = rest.split("/")[0];
     return validViews().indexOf(seg) >= 0 ? seg : null;
 }
-// Where a fresh load lands: a valid legacy `#hash` (so old site/#about links keep
-// working, and a renamed view's old hash — #distance — still routes) wins;
-// otherwise the renderer already marked the right section active (a path
-// subpage, or the inline default), so the DOM fallback covers it.
 function routeTarget() {
     const hash = (location.hash || "").replace("#", "");
     return resolveViewHash(hash) || defaultView();
 }
-// The canonical URL for the current state. Split mode carries the view in the path;
-// inline mode leaves the path+hash alone and only attaches the query.
 function viewUrl(view) {
     const qs = currentQuery();
     if (ROOT !== null) return basePath() + (view ? view + "/" : "") + (qs ? "?" + qs : "");
@@ -1289,35 +1093,27 @@ function writeUrl(push) {
     try {
         if (push) history.pushState({view: state.view}, "", url);
         else history.replaceState(history.state, "", url);
-    } catch (e) { /* file:// and sandboxed frames forbid the history API */ }
+    } catch (e) { }
 }
-// A state change (dataset / normalize / view select) replaces — no new history
-// entry. A nav pushes a new entry in split mode, replaces in inline (hash left as is).
 function syncUrl() { writeUrl(false); }
 function navigate(view) {
     showView(view);
     writeUrl(ROOT !== null);
 }
 function onPopState() {
-    // The URL is the source of truth after Back/Forward; do not push again. A
-    // legacy `#hash` entry (the URL a pre-subpage deep link loaded with) names
-    // its view in the hash, not the path — honor it exactly as routeTarget() did.
     const hash = (location.hash || "").replace("#", "");
     const name = resolveViewHash(hash)
         || pathView() || (AGG && AGG.default_view) || defaultView();
     if (name) showView(name);
 }
-// In-page `#view` links in the prose (e.g. about.md's "see the data page") change
-// the hash without a popstate; route them in both delivery modes. A hash that is
-// neither a view id nor a legacy view alias (e.g. the data page's own #cost /
-// #compiles section anchors) is left to the browser's native anchor scrolling.
 function onHashChange() {
     const hash = (location.hash || "").replace("#", "");
     const name = resolveViewHash(hash);
     if (name) showView(name);
     maybeScrollToHash();
 }
-// A section-anchor deep link (the data page's #distance / #compiles / #cost, incl.
+// The browser's native on-load scroll fires while these sections are still
+// empty, so re-scroll once the async tables have rendered.
 // the old /distance/ URL that now redirects to /data/#distance) must scroll to its
 // heading AFTER the async tables render: the browser's native on-load scroll fires
 // while those sections are still empty, so the heading has moved by the time the
@@ -1332,10 +1128,10 @@ function initNav() {
     document.querySelectorAll(".nav-item").forEach(a => {
         const id = a.getAttribute("data-view");
         // Rewrite the href to the real subpage URL so middle-click / copy-link work
+// (the renderer ships "#id" for the no-JS and single-file forms).
         // (the renderer ships "#id" for the no-JS and single-file forms).
         if (ROOT !== null) { try { a.setAttribute("href", basePath() + id + "/"); } catch (e) {} }
         a.addEventListener("click", e => {
-            // Leave modified clicks (new tab, download, non-primary button) to the href.
             if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || (e.button && e.button !== 0)) return;
             e.preventDefault();
             navigate(id);
@@ -1347,14 +1143,11 @@ function initNav() {
     if (target) showView(target);
 }
 
-// ---- URL <-> state (query params, both modes) ----
 function defaultPresetName() {
     const presets = (AGG && AGG.presets) || [];
     const def = presets.filter(p => p.default)[0] || presets[0];
     return def ? def.name : null;
 }
-// Minimal, clean query for the current state: dataset only when NOT the default
-// preset, norm only when on, and the view-page selectors only while on that page.
 function currentQuery() {
     const params = new URLSearchParams();
     if (state.dataset && state.dataset !== defaultPresetName()) params.set("dataset", state.dataset);
@@ -1374,7 +1167,8 @@ function setDatasetDesc() {
     const p = (AGG.presets || []).filter(x => x.name === state.dataset)[0];
     const el = document.getElementById("dataset-desc");
     if (el) el.textContent = p ? p.description : "";
-    // The leaderboard's per-dataset explainer paragraph. `long_description` is
+    // `long_description` is packaged, maintainer-authored inline HTML from
+// content/datasets.toml — not run data — so innerHTML is safe here.
     // final inline HTML from content/datasets.toml (packaged, maintainer-authored
     // — not run data), so innerHTML is safe; empty (older aggregates.json or an
     // unregistered preset) renders nothing.
@@ -1386,14 +1180,10 @@ function setDatasetDesc() {
 }
 function initDatasetSelector() {
     const presets = AGG.presets || [];
-    // The opening preset is explicit (`default = true` in datasets.toml), never
-    // positional; a valid `dataset` URL param overrides it (deep link), and an
-    // unknown one is ignored. Sync the buttons so state and UI cannot disagree.
     const def = presets.filter(p => p.default)[0] || presets[0];
     const wanted = INIT_PARAMS.get("dataset");
     state.dataset = presets.some(p => p.name === wanted) ? wanted : (def ? def.name : null);
     state.normalize = INIT_PARAMS.get("norm") === "1";
-    // Only the preset buttons carry data-dataset (the normalize toggle does not).
     const btns = document.querySelectorAll(".ds-btn[data-dataset]");
     btns.forEach(b => {
         b.classList.toggle("active", b.getAttribute("data-dataset") === state.dataset);
@@ -1407,7 +1197,6 @@ function initDatasetSelector() {
         });
     });
     setDatasetDesc();
-    // "normalize failures": restrict to functions every decompiler decompiled.
     const nb = document.getElementById("normalize-btn");
     if (nb) {
         nb.classList.toggle("active", state.normalize);
@@ -1423,19 +1212,12 @@ function initDatasetSelector() {
 function init() {
     initNav();
     initThemeToggle();
-    // Color the about page's server-rendered <pre data-lang> blocks. They are in
-    // the DOM from page load in both modes (all view sections ship in every page),
-    // so this runs once here rather than via a DOMContentLoaded auto-init.
     if (typeof applyStaticHighlights === "function") applyStaticHighlights(document);
     loadData("aggregates").then(agg => {
         AGG = agg;
         initDatasetSelector();
         refresh();
-        // Cost is combo-independent (AGG.cost is global, not per-combo), so it is
-        // built once here rather than on every refresh().
         buildCost();
-        // Section anchors (e.g. a /distance/ -> /data/#distance redirect) scroll
-        // only now that the tables they point at have rendered.
         maybeScrollToHash();
     }).catch(err => {
         ["leaderboard", "about", "data"].forEach(v => showBanner(v,

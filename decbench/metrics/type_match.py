@@ -27,15 +27,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Type normalization: map common decompiler-specific types to standard C types
 TYPE_MAP: dict[str, str] = {
-    # angr types
     "undefined8": "long long",
     "undefined4": "int",
     "undefined2": "short",
     "undefined1": "char",
     "undefined": "char",
-    # IDA types
     "__int64": "long long",
     "__int32": "int",
     "__int16": "short",
@@ -45,11 +42,8 @@ TYPE_MAP: dict[str, str] = {
     "_WORD": "short",
     "_BYTE": "char",
     "_BOOL": "bool",
-    # kuna types (SLEIGH core-type spellings: intN/uintN are sized in BYTES,
-    # matching the undefinedN convention above — int4 is a 4-byte int, int8 an
-    # 8-byte int). Without these kuna's recovered types never normalize to the
-    # DWARF base-type names and type_match is unfairly ~0, the same way angr's
-    # undefinedN / IDA's __intN are aliased here.
+    # kuna's SLEIGH spellings size intN/uintN in BYTES (int4 is 4 bytes), like the
+    # undefinedN convention above. Without these its type_match is unfairly ~0.
     "int1": "char",
     "int2": "short",
     "int4": "int",
@@ -58,7 +52,6 @@ TYPE_MAP: dict[str, str] = {
     "uint2": "short",
     "uint4": "int",
     "uint8": "long long",
-    # Ghidra types
     "uint": "int",
     "ulong": "long long",
     # LP64: plain "long" is 8 bytes, same as DWARF "long int"/"long long"
@@ -77,7 +70,6 @@ TYPE_MAP: dict[str, str] = {
     "ssize_t": "long long",
 }
 
-# Qualifiers to strip during normalization
 QUALIFIERS = ["unsigned", "signed", "const", "volatile", "register", "static", "extern"]
 
 
@@ -91,13 +83,11 @@ def normalize_type(type_str: str) -> set[str]:
 
     t = type_str.strip()
 
-    # Apply TYPE_MAP first
     if t in TYPE_MAP:
         t = TYPE_MAP[t]
 
     forms = {t}
 
-    # Strip qualifiers and generate normalized forms
     normalized = t
     for q in QUALIFIERS:
         normalized = normalized.replace(f"{q} ", "")
@@ -105,8 +95,6 @@ def normalize_type(type_str: str) -> set[str]:
     if normalized:
         forms.add(normalized)
 
-    # Standard normalizations (DWARF base-type names like "short int" /
-    # "long int" must converge with decompiler spellings like "short")
     for original, replacement in [
         ("long long int", "long long"),
         ("long int", "long long"),
@@ -119,39 +107,28 @@ def normalize_type(type_str: str) -> set[str]:
             if original in form:
                 forms.add(form.replace(original, replacement))
 
-    # Remove whitespace variations
     forms = {re.sub(r"\s+", " ", f).strip() for f in forms if f.strip()}
 
-    # Canonicalize pointer spacing ("char * *" / "char **" -> "char**")
     forms |= {re.sub(r"\s*\*", "*", f) for f in forms}
 
-    # Re-apply TYPE_MAP to derived forms (e.g. "unsigned long" -> "long" -> LP64
-    # "long long") after qualifier stripping.
     forms |= {TYPE_MAP[f] for f in forms if f in TYPE_MAP}
 
     return forms
 
 
-# --- Uncommitted (width-only) decompiler types --------------------------------
-# A decompiler often recovers a variable's SIZE but not a committed C type
-# (Ghidra ``undefined8``, IDA ``__int64``/``_QWORD``, kuna ``int8``). Crediting
-# such an uncommitted N-byte type against a ground-truth scalar of the same width
-# is fair ("it knew it was 8 bytes"); crediting it against a POINTER or an
-# aggregate is NOT — recovering a ``char *`` as a bare 8-byte scalar is a real
-# type miss (and ``struct *`` -> ``void *`` stays a miss too, handled by exact
-# name matching, not here).
+# Uncommitted types recover a variable's SIZE but not a committed C type. Matching
+# one against a same-width ground-truth SCALAR is fair; against a pointer or
+# aggregate it is a real miss, so those are excluded from _UNCOMMITTED_GT_SCALARS.
 _UNCOMMITTED_TYPES = re.compile(
     r"^\s*(?:"
-    r"undefined\d*"  # Ghidra: undefined, undefined1..8
-    r"|__u?int(?:8|16|32|64)"  # IDA: __int64 / __uint32 / ...
-    r"|_(?:BYTE|WORD|DWORD|QWORD)"  # IDA: _QWORD / _DWORD / ...
-    r"|u?int[1-8]"  # kuna: int4 / uint8 (sized in BYTES)
-    r"|byte|word|dword|qword"  # Ghidra: byte / word / dword / qword
+    r"undefined\d*"
+    r"|__u?int(?:8|16|32|64)"
+    r"|_(?:BYTE|WORD|DWORD|QWORD)"
+    r"|u?int[1-8]"
+    r"|byte|word|dword|qword"
     r"|uchar"
     r")\s*$"
 )
-# Byte width implied by an uncommitted spelling when ``VariableInfo.size`` is
-# absent (angr/ghidra usually populate ``size``, so this is a fallback).
 _UNCOMMITTED_WIDTH: dict[str, int] = {
     "undefined": 1,
     "undefined1": 1,
@@ -184,11 +161,8 @@ _UNCOMMITTED_WIDTH: dict[str, int] = {
     "__int64": 8,
     "__uint64": 8,
 }
-# Normalized ground-truth scalar names of each byte width. An uncommitted N-byte
-# decompiler var matches a GT var whose normalized type set intersects this.
-# Integer + bool only (a committed ``float``/``double`` is a type the decompiler
-# demonstrably failed to recover, so it stays a miss); pointers/aggregates never
-# appear here, so scalar<->pointer and struct*->void* correctly stay misses.
+# Integer + bool only: a committed float/double is a type the decompiler
+# demonstrably failed to recover, and pointers/aggregates must stay misses.
 _SIZE_SCALARS: dict[int, set[str]] = {
     1: {"char", "bool"},
     2: {"short"},
@@ -196,12 +170,8 @@ _SIZE_SCALARS: dict[int, set[str]] = {
     8: {"long long"},
 }
 
-# Ghidra/IDA encode a stack slot's frame offset in the variable NAME
-# (``local_28``, ``var_28``) but sometimes leave ``stack_offset`` unset. These
-# names are unambiguously frame-negative locals; the per-binary/-function
-# calibration absorbs the constant base difference vs DWARF, and its "needs >=2
-# aligned" guard means a wrongly-parsed offset simply fails to calibrate (no
-# harm). Deliberately excludes ``*Stack_*`` names (mixed sign conventions).
+# Ghidra/IDA encode a stack slot's frame offset in the NAME but sometimes leave
+# ``stack_offset`` unset. ``*Stack_*`` is excluded (mixed sign conventions).
 _NAME_OFFSET = re.compile(r"^(?:local|var)_([0-9a-fA-F]+)$")
 
 
@@ -287,8 +257,6 @@ def _parse_function_die(die: Any, dwarfinfo: Any) -> tuple[str | None, list[dict
             variables.extend(_parse_lexical_block(child, dwarfinfo))
         elif child.tag == "DW_TAG_formal_parameter":
             var = _parse_variable_die(child, dwarfinfo, is_arg=True, arg_index=arg_index)
-            # The positional index must reflect declaration order even when
-            # an argument is dropped (e.g. fully optimized out).
             arg_index += 1
             if var:
                 variables.append(var)
@@ -331,7 +299,6 @@ def _parse_variable_die(
     if not has_location:
         return None
 
-    # Follow abstract origin if present
     if "DW_AT_abstract_origin" in die.attributes:
         try:
             attr = die.attributes["DW_AT_abstract_origin"]
@@ -352,7 +319,6 @@ def _parse_variable_die(
     if not type_names:
         return None
 
-    # Normalize types
     all_forms: set[str] = set()
     for t in type_names:
         all_forms.update(normalize_type(t))
@@ -519,8 +485,6 @@ def _get_array_dims(die: Any) -> list[int | None]:
     return dims
 
 
-# Match common C local-variable declarations:
-#   type name;  |  type name = ...;  |  type *name;  |  type name[N];
 _DECL_PATTERN = re.compile(
     r"^\s*"
     r"((?:(?:unsigned|signed|const|volatile|static|struct|union|enum)\s+)*"
@@ -528,13 +492,13 @@ _DECL_PATTERN = re.compile(
     r"__int\d+|_DWORD|_QWORD|_WORD|_BYTE|_BOOL|"
     r"u?int\d+_t|size_t|ssize_t|"
     r"undefined\d?|ulong|uint|ushort|uchar|"
-    r"\w+_t)\s*\**)"  # type with possible pointer
+    r"\w+_t)\s*\**)"
     r")"
     r"\s+"
-    r"(\w+)"  # variable name
-    r"\s*(?:\[[^\]]*\])?"  # optional array
-    r"\s*(?:=[^;]*)?"  # optional initializer
-    r"\s*;",  # semicolon
+    r"(\w+)"
+    r"\s*(?:\[[^\]]*\])?"
+    r"\s*(?:=[^;]*)?"
+    r"\s*;",
     re.MULTILINE,
 )
 
@@ -618,17 +582,16 @@ def _parse_param(param: str) -> tuple[str, str] | None:
     p = param.strip()
     if not p or p == "void":
         return None
-    # function pointer:  ret (*name)(args)  /  ret (*name[N])(args)
     m = re.search(r"\(\s*\*+\s*(\w+)\s*(?:\[[^\]]*\])?\s*\)", p)
     if m:
         return m.group(1), (p[: m.start()] + "(*)" + p[m.end() :]).strip()
-    p = re.sub(r"\[[^\]]*\]\s*$", "", p).strip()  # drop a trailing array subscript
-    m = re.search(r"([A-Za-z_]\w*)\s*$", p)  # the last identifier is the name
+    p = re.sub(r"\[[^\]]*\]\s*$", "", p).strip()
+    m = re.search(r"([A-Za-z_]\w*)\s*$", p)
     if not m:
         return None
     name = m.group(1)
     type_ = p[: m.start()].strip()
-    if not type_:  # a lone identifier is a type without a parameter name
+    if not type_:
         return None
     return name, type_
 
@@ -653,7 +616,6 @@ def parse_c_variables(code: str, func_name: str) -> list[Any]:
         for i, raw in enumerate(_split_top_level_commas(params)):
             parsed = _parse_param(raw)
             if parsed is None:
-                # A non-void, un-nameable slot still occupies its ABI position.
                 token = raw.strip()
                 if token and token != "void":
                     out.append(VariableInfo(name="", type=token, arg_index=i, kind="arg"))
@@ -711,8 +673,6 @@ def _calibrate_shift(gt_offsets: list[int], decomp_offsets: list[int]) -> int | 
     best_k: int | None = None
     best_count = 0
     for k in _candidate_shifts(gt_offsets, decomp_offsets):
-        # Count UNIQUE ground-truth offsets matched so duplicate decompiled
-        # slots cannot inflate a spurious shift.
         count = len({d + k for d in decomp_offsets} & gt_set)
         if count > best_count:
             best_count = count
@@ -721,7 +681,6 @@ def _calibrate_shift(gt_offsets: list[int], decomp_offsets: list[int]) -> int | 
     if best_k is None or best_count == 0:
         return None
 
-    # Guard against spurious single-variable alignments at a nonzero shift.
     if best_k != 0 and len(decomp_offsets) >= 2 and best_count < 2:
         zero_count = len(set(decomp_offsets) & gt_set)
         return 0 if zero_count >= 1 else None
@@ -751,12 +710,8 @@ def _calibrate_shift_multi(
     if not pairs:
         return None
 
-    # Binary-wide calibration stays in the ±32 window: pooled across the binary
-    # it is robust for the decompilers whose offsets are already rbp/CFA-relative
-    # (a small constant), and keeping it narrow avoids a coincidental large shift
-    # winning the vote. IDA's per-function frame-bottom offsets are handled
-    # separately by the per-function override in _match_structured, so they do
-    # not need (and must not perturb) this binary-wide shift.
+    # The binary-wide shift stays in a ±32 window so a coincidental large shift
+    # cannot win the vote; IDA's frame-bottom offsets are handled per-function.
     candidates = sorted(range(-32, 33), key=lambda x: (abs(x), x))
 
     def matches(gt_offs: list[int], dec_offs: list[int], k: int) -> int:
@@ -773,8 +728,6 @@ def _calibrate_shift_multi(
     if best_k is not None:
         return best_k
 
-    # Fallback: no multi-variable signal anywhere; use plain unique counts,
-    # guarded against electing a shift from single-slot coincidences.
     for k in candidates:
         votes = sum(matches(g, d, k) for g, d in pairs)
         if votes > best_votes:
@@ -784,8 +737,6 @@ def _calibrate_shift_multi(
     if best_k is None or best_votes == 0:
         return None
     if best_k != 0:
-        # Prefer no shift whenever it aligns anything; otherwise require a
-        # nonzero shift to be supported by more than one coincidence.
         zero_votes = sum(matches(g, d, 0) for g, d in pairs)
         if zero_votes >= 1:
             return 0
@@ -812,15 +763,6 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    # v2: per-function, adaptive (uncapped) stack-offset calibration so IDA's
-    # frame-bottom-relative offsets align with DWARF (the old binary-wide ±32
-    # shift silently failed for IDA, scoring most of its stack vars as misses).
-    # v3: uncommitted (width-only) types match a same-width GT scalar; recover
-    # local_/var_ name-encoded stack offsets; pointers/aggregates stay strict.
-    # v4: code-only decompilers (LLM backends) with no structured variables now
-    # get their C signature parsed into arguments (ABI position) + locals and run
-    # through the structured matcher — the old name-only regex fallback never
-    # credited arguments, zeroing functions whose only variables are their args.
     cache_version = "4"
 
     weight = 1.0
@@ -875,10 +817,6 @@ class TypeMatchMetric(Metric):
                 metadata={"error": "No ground truth types available"},
             )
 
-        # The type-match value is fully determined by the decompiled variables,
-        # the DWARF ground-truth variables, and the calibration shift. Cache on
-        # those (the decompiled code is included so the regex fallback path is
-        # also keyed correctly).
         key_inputs = [
             [
                 {
@@ -908,10 +846,6 @@ class TypeMatchMetric(Metric):
     ) -> MetricValue:
         gt_stack_vars = sum(1 for gv in ground_truth_vars if gv.get("rbp_offset"))
 
-        # Code-only decompilers (the LLM backends) expose no structured variables.
-        # Parse the emitted C into arguments (with ABI position) + locals so they
-        # get the same name-independent argument-position matching as everyone
-        # else, instead of the name-only regex fallback that never scored args.
         if not decompiled.variables and decompiled.decompiled_code:
             parsed = parse_c_variables(decompiled.decompiled_code, decompiled.name)
             if parsed:
@@ -980,8 +914,6 @@ class TypeMatchMetric(Metric):
         gt_offsets: list[int] = []
         for gv in ground_truth_vars:
             gt_offsets.extend(gv.get("rbp_offset", []))
-        # Effective offsets recover ``local_``/``var_`` name-encoded slots that
-        # some backends leave with ``stack_offset=None`` (see _effective_offset).
         var_offsets: list[int | None] = [_effective_offset(v) for v in decompiled.variables]
         decomp_offsets = [o for o in var_offsets if o is not None]
         gt_off_set = set(gt_offsets)
@@ -991,31 +923,17 @@ class TypeMatchMetric(Metric):
                 return 0
             return len({d + kk for d in decomp_offsets} & gt_off_set)
 
-        # Start from the binary-wide calibrated shift (robust for functions with
-        # few stack slots), then override with THIS function's own shift when it
-        # aligns strictly more of the function's slots. IDA's Hex-Rays offsets are
-        # frame-bottom relative, so the GT<->decompiler gap is a *per-function*
-        # constant (≈ frame size) that no single binary-wide shift can fit;
-        # per-function calibration recovers those matches. Decompilers whose
-        # offsets are already binary-consistent are unaffected — their
-        # per-function shift never aligns strictly more than the binary one.
+        # IDA's Hex-Rays offsets are frame-bottom relative, so the ground-truth gap is a
+        # per-function constant that no single binary-wide shift can fit. Overriding only
+        # when the per-function shift aligns strictly more leaves other backends unchanged.
         shift: int | None = calibration_shift if calibration_shift is not None else 0
         func_shift = _calibrate_shift(gt_offsets, decomp_offsets)
         if func_shift is not None and _aligned(shift) == 0 and _aligned(func_shift) > 0:
-            # Pure rescue: only when the binary-wide shift aligns NONE of this
-            # function's stack slots do we fall back to its own calibrated shift.
-            # This is the IDA case — its Hex-Rays offsets are frame-bottom
-            # relative, so the per-function GT gap is ≈ the frame size and no
-            # binary-wide ±32 shift fits. Decompilers whose offsets are already
-            # binary-consistent keep aligning >0 under the binary shift, so this
-            # never fires for them and their scores are byte-for-byte unchanged.
             shift = func_shift
 
         k = shift if shift is not None else 0
 
         var_types: list[set[str]] = [normalize_type(v.type) for v in decompiled.variables]
-        # Width of each decompiled var's uncommitted (undefinedN/__intN/...) type,
-        # else None. An uncommitted N-byte var matches a GT scalar of that width.
         var_unc: list[int | None] = [_uncommitted_size(v) for v in decompiled.variables]
         by_arg_index: dict[int, int] = {}
         by_off: dict[int, list[int]] = {}
@@ -1060,8 +978,6 @@ class TypeMatchMetric(Metric):
         decided: list[bool] = [False] * n
         pass_counts = {"arg": 0, "offset": 0, "name": 0}
 
-        # Pass 1: arguments by ABI position. Position is a reliable identity
-        # even with synthetic names (angr) and register args (-O2).
         for gi, gv in enumerate(ground_truth_vars):
             arg_index = gv.get("arg_index")
             if not gv.get("is_arg") or arg_index is None:
@@ -1074,8 +990,6 @@ class TypeMatchMetric(Metric):
             verdicts[gi] = _matches(set(gv.get("type", [])), di)
             pass_counts["arg"] += 1
 
-        # Pass 2: stack variables by calibrated offset (any-of across the
-        # DWARF loclist offsets).
         for gi, gv in enumerate(ground_truth_vars):
             if decided[gi]:
                 continue
@@ -1090,8 +1004,6 @@ class TypeMatchMetric(Metric):
                 verdicts[gi] = verdict
                 pass_counts["offset"] += 1
 
-        # Pass 3: names. Covers register-resident locals when the decompiler
-        # imported debug names, and stack slots promoted to args/registers.
         for gi, gv in enumerate(ground_truth_vars):
             if decided[gi]:
                 continue
@@ -1195,7 +1107,6 @@ class TypeMatchMetric(Metric):
         function_results: dict[str, MetricValue] = {}
         errors: list[str] = []
 
-        # Extract ground truth from the original binary
         binary_path = decompilation.binary_path
         cache_key = str(binary_path)
 
@@ -1211,10 +1122,6 @@ class TypeMatchMetric(Metric):
                 binary_path,
             )
 
-        # Calibrate the GT<->decompiler offset shift once per binary: the
-        # shift is an ABI/decompiler constant, and pooling offsets across all
-        # functions makes calibration robust for functions with few stack
-        # variables (where a lone slot could align to a spurious shift).
         binary_shift = self._calibrate_binary_shift(decompilation, gt_types)
 
         for func_name, func_decomp in decompilation.functions.items():
@@ -1233,7 +1140,6 @@ class TypeMatchMetric(Metric):
             except Exception as e:
                 errors.append(f"{func_name}: {str(e)}")
 
-        # Diagnostic: GT existed but nothing matched across all functions.
         if gt_types and (
             not function_results or all(v.value == 0.0 for v in function_results.values())
         ):

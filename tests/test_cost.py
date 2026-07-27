@@ -23,8 +23,6 @@ from decbench.scoring.cost import (
     scan_structured_costs,
 )
 
-# -- fixtures ---------------------------------------------------------------
-
 
 def _write_decompiled_toml(
     tree: Path,
@@ -133,9 +131,6 @@ def _codex_session(path: Path) -> None:
     path.write_text("\n".join(json.dumps(r) for r in records))
 
 
-# -- batch decompile-time scan ----------------------------------------------
-
-
 def test_scan_reads_only_the_toml_header(tmp_path: Path) -> None:
     """The per-function tables after the header must never be parsed: a broken
     table body (invalid TOML) cannot fail the scan, because the parse stops at
@@ -174,7 +169,6 @@ def test_scan_keys_by_header_decompiler_not_filename(tmp_path: Path) -> None:
 def test_scan_mean_median_and_zero_skip(tmp_path: Path) -> None:
     """Mean is amortized (sum/sum); median is over per-binary rates; a binary
     with zero time or zero functions contributes nothing."""
-    # Three real binaries: rates 1.0, 2.0 and 6.0 s/fn.
     _write_decompiled_toml(
         tmp_path, "O0", "p1", "angr_a", decompiler="angr", total_time=10.0, function_count=10
     )
@@ -184,7 +178,6 @@ def test_scan_mean_median_and_zero_skip(tmp_path: Path) -> None:
     _write_decompiled_toml(
         tmp_path, "O2", "p3", "angr_c", decompiler="angr", total_time=60.0, function_count=10
     )
-    # Skipped: no functions / no recorded time.
     _write_decompiled_toml(
         tmp_path, "O0", "p4", "angr_d", decompiler="angr", total_time=99.0, function_count=0
     )
@@ -195,8 +188,8 @@ def test_scan_mean_median_and_zero_skip(tmp_path: Path) -> None:
     assert times["total_s"] == pytest.approx(90.0)
     assert times["functions"] == 30
     assert times["binaries"] == 3
-    assert times["per_fn_mean_s"] == pytest.approx(3.0)  # 90 / 30
-    assert times["per_fn_median_s"] == pytest.approx(2.0)  # median of [1, 2, 6]
+    assert times["per_fn_mean_s"] == pytest.approx(3.0)
+    assert times["per_fn_median_s"] == pytest.approx(2.0)
     assert times["basis"] == "batch"
 
 
@@ -210,18 +203,15 @@ def test_scan_respects_the_given_opt_levels(tmp_path: Path) -> None:
     assert scan_decompile_times(tmp_path, ["O0"])["ida"]["total_s"] == pytest.approx(1.0)
 
 
-# -- session token parsing --------------------------------------------------
-
-
 def test_parse_claude_session_tokens(tmp_path: Path) -> None:
     path = tmp_path / "s.jsonl"
     _claude_session(path)
     tokens = parse_session_tokens(path)
     assert tokens == {
-        "input": 5,  # 2 + 3
-        "cached_input": 20000,  # 14000 + 6000
-        "cache_write": 5200,  # 5000 + 200 (no double count with the breakdown)
-        "output": 150,  # 100 + 50
+        "input": 5,
+        "cached_input": 20000,
+        "cache_write": 5200,
+        "output": 150,
     }
 
 
@@ -233,10 +223,10 @@ def test_parse_codex_session_tokens_normalizes_cached_input(tmp_path: Path) -> N
     _codex_session(path)
     tokens = parse_session_tokens(path)
     assert tokens == {
-        "input": 66000,  # 553000 - 487000
+        "input": 66000,
         "cached_input": 487000,
         "cache_write": 0,
-        "output": 6500,  # already includes reasoning
+        "output": 6500,
     }
 
 
@@ -248,16 +238,12 @@ def test_parse_unknown_session_format_returns_none(tmp_path: Path) -> None:
     assert parse_session_tokens(tmp_path / "missing.jsonl") is None
 
 
-# -- trace scan -------------------------------------------------------------
-
-
 def test_scan_llm_traces(tmp_path: Path) -> None:
     traces = tmp_path / "traces"
     _trace_md(traces, "claude-code", "O0__p__b__f1_0x1", status="ok", elapsed=100)
     _trace_md(traces, "claude-code", "O0__p__b__f2_0x2", status="FAILED", elapsed=300)
     _trace_md(traces, "claude-code", "O0__p__b__f3_0x3", status="TIMEOUT", elapsed=200)
     _claude_session(traces / "claude-code" / "O0__p__b__f1_0x1.session.jsonl")
-    # A dir with no .md files is not a backend.
     (traces / "not-a-backend").mkdir()
 
     scanned = scan_llm_traces(traces)
@@ -265,8 +251,6 @@ def test_scan_llm_traces(tmp_path: Path) -> None:
     entry = scanned["claude-code"]
     assert entry["model"] == "test-model"
     assert entry["functions"] == 3
-    # FAILED and TIMEOUT both count as failed AND still contribute wall time —
-    # that time (and those tokens) were genuinely spent.
     assert entry["failed"] == 2
     assert entry["elapsed"]["total_s"] == pytest.approx(600.0)
     assert entry["elapsed"]["mean_s"] == pytest.approx(200.0)
@@ -285,9 +269,6 @@ def test_scan_llm_traces_without_parseable_sessions_has_none_tokens(tmp_path: Pa
     assert scan_llm_traces(tmp_path / "nope") == {}
 
 
-# -- structured fields (FunctionDecompilation -> TOML -> scan) ---------------
-
-
 def test_function_decompilation_round_trips_cost_fields(tmp_path: Path) -> None:
     """The two structured fields survive pydantic serialization AND the
     DecompilationResult TOML artifact; records without them still load (None)."""
@@ -304,15 +285,12 @@ def test_function_decompilation_round_trips_cost_fields(tmp_path: Path) -> None:
         time_seconds=12.5,
         llm_tokens={"input": 10, "cached_input": 5, "cache_write": 2, "output": 3},
     )
-    # Pydantic round trip.
     back = FunctionDecompilation.model_validate(json.loads(func.model_dump_json()))
     assert back.time_seconds == 12.5
     assert back.llm_tokens == {"input": 10, "cached_input": 5, "cache_write": 2, "output": 3}
-    # Pre-field artifacts still load, defaulting to None.
     legacy = FunctionDecompilation(name="g", address=1, decompiled_code="")
     assert legacy.time_seconds is None and legacy.llm_tokens is None
 
-    # TOML artifact round trip (the structured scan's input).
     import toml
 
     result = DecompilationResult(
@@ -326,7 +304,6 @@ def test_function_decompilation_round_trips_cost_fields(tmp_path: Path) -> None:
     data = toml.load(out)
     assert data["functions.f"]["time_seconds"] == 12.5
     assert data["functions.f"]["llm_tokens"]["cached_input"] == 5
-    # None fields are omitted, keeping batch backends' artifacts unchanged.
     assert "time_seconds" not in data["functions.g"]
     assert "llm_tokens" not in data["functions.g"]
 
@@ -362,7 +339,6 @@ def test_scan_structured_costs_prefers_new_run_artifacts(tmp_path: Path) -> None
     dest = tmp_path / "O0" / "proj" / "decompiled" / "claude-code_b.toml"
     dest.parent.mkdir(parents=True)
     result.to_toml(dest)
-    # A batch artifact without the fields is skipped by the substring sniff.
     _write_decompiled_toml(
         tmp_path, "O0", "proj", "angr_b", decompiler="angr", total_time=5.0, function_count=5
     )
@@ -370,7 +346,7 @@ def test_scan_structured_costs_prefers_new_run_artifacts(tmp_path: Path) -> None
     scanned = scan_structured_costs(tmp_path, ["O0"])
     assert set(scanned) == {"claude-code"}
     entry = scanned["claude-code"]
-    assert entry["model"] == "claude-opus-4-8"  # from the header version
+    assert entry["model"] == "claude-opus-4-8"
     assert entry["functions"] == 2
     assert entry["failed"] == 1
     assert entry["elapsed"]["mean_s"] == pytest.approx(200.0)
@@ -398,7 +374,6 @@ def test_build_cost_info_merges_scans_structured_first(tmp_path: Path) -> None:
     traces = tmp_path / "traces"
     _trace_md(traces, "codex", "O0__p__b__f_0x1", status="ok", elapsed=400)
     _trace_md(traces, "claude-code", "O0__p__b__f_0x1", status="ok", elapsed=999)
-    # claude-code ALSO has structured artifacts — they must win over its traces.
     result = DecompilationResult(
         binary_path=tmp_path / "b",
         binary_name="b",
@@ -412,10 +387,9 @@ def test_build_cost_info_merges_scans_structured_first(tmp_path: Path) -> None:
 
     info = build_cost_info(tmp_path, traces, ["O0"])
     assert info["decompile_time"]["ghidra"]["per_fn_mean_s"] == pytest.approx(0.5)
-    assert info["llm"]["codex"]["elapsed"]["mean_s"] == pytest.approx(400.0)  # trace path
-    assert info["llm"]["claude-code"]["elapsed"]["mean_s"] == pytest.approx(50.0)  # structured
-    json.dumps(info, allow_nan=False)  # the whole blob must be strict-JSON-safe
+    assert info["llm"]["codex"]["elapsed"]["mean_s"] == pytest.approx(400.0)
+    assert info["llm"]["claude-code"]["elapsed"]["mean_s"] == pytest.approx(50.0)
+    json.dumps(info, allow_nan=False)
 
-    # Without a traces dir the llm block still carries the structured backends.
     info = build_cost_info(tmp_path, None, ["O0"])
     assert set(info["llm"]) == {"claude-code"}

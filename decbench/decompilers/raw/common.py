@@ -12,7 +12,8 @@ its output contract exactly *without* depending on declib:
 * ``SKIP_NAMES`` / ``SKIP_PREFIXES`` — CRT/compiler-generated functions and
   thunk/import name prefixes that are never benchmarked.
 * ``should_skip_function`` / ``in_text`` — the name + section filter that
-  ``declib_dec._enumerate_functions`` applies.
+  ``declib_dec._enumerate_functions`` applies. Address comparisons tolerate the
+  ARM Thumb T-bit (DWARF ``low_pc`` is even; angr reports Thumb entries odd).
 * ``narrow_to_source`` — the optional ``function_names`` restriction (with the
   same "fall back to everything if nothing matched" behaviour as declib_dec).
 * ``dump_progress`` — the atomic partial-result pickle used by the run driver
@@ -27,7 +28,6 @@ from __future__ import annotations
 
 import logging
 import pickle
-from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -36,8 +36,6 @@ if TYPE_CHECKING:
 
 _l = logging.getLogger(__name__)
 
-# CRT/compiler-generated functions that are not user code. Copied verbatim
-# from declib_dec so the raw backends discover the same benchmarkable set.
 SKIP_NAMES = frozenset(
     {
         "_start",
@@ -57,7 +55,6 @@ SKIP_NAMES = frozenset(
     }
 )
 
-# Name prefixes for thunks/imports that should not be benchmarked.
 SKIP_PREFIXES = ("thunk_", "j_", "__imp_", ".plt", "_dl_")
 
 
@@ -81,14 +78,13 @@ def _pe_image_base(binary_path: Path) -> int | None:
             sig = f.read(4)
             if sig != b"PE\x00\x00":
                 return None
-            # COFF header is 20 bytes; the Optional Header magic follows it.
             opt = pe_off + 4 + 20
             f.seek(opt)
             magic = int.from_bytes(f.read(2), "little")
-            if magic == 0x10B:  # PE32: ImageBase is a u32 at opt+28
+            if magic == 0x10B:
                 f.seek(opt + 28)
                 return int.from_bytes(f.read(4), "little")
-            if magic == 0x20B:  # PE32+: ImageBase is a u64 at opt+24
+            if magic == 0x20B:
                 f.seek(opt + 24)
                 return int.from_bytes(f.read(8), "little")
             return None
@@ -177,9 +173,8 @@ def should_skip_function(
     if not name or name in SKIP_NAMES:
         return True
     if text_range is not None:
-        # PLT stubs / import thunks live outside .text. Inside .text we trust
-        # the section filter and never drop by name prefix (a user function may
-        # legitimately be called e.g. "j_compress").
+        # Inside .text, trust the section filter and never drop by name prefix — a user
+        # function may legitimately be called e.g. "j_compress".
         if not in_text(file_addr, text_range):
             return True
     elif name.startswith(SKIP_PREFIXES):
@@ -228,39 +223,6 @@ def _addr_matches(addr: int, target_addrs: set[int]) -> bool:
     return addr in target_addrs or (addr & ~1) in target_addrs or (addr | 1) in target_addrs
 
 
-def missing_targets(
-    enumerated_addrs: Iterable[int],
-    target_addrs: set[int] | None,
-    text_range: tuple[int, int] | None,
-) -> list[int]:
-    """DWARF target addresses that a backend's auto-analysis did NOT discover.
-
-    Used by the raw backends to *force-create* functions at addresses the tool
-    missed on stripped firmware (vector/pointer-table functions), so DecBench
-    measures decompilation quality rather than boundary discovery. Covered
-    addresses are compared with Thumb even/odd normalization; results are the
-    canonical (DWARF, even) target addresses, filtered to ``.text`` and to
-    plausible code (drops a bogus ``low_pc`` of 0 seen in some DWARF).
-    """
-    if not target_addrs:
-        return []
-    covered: set[int] = set()
-    for a in enumerated_addrs:
-        covered.add(a)
-        covered.add(a & ~1)
-        covered.add(a | 1)
-    out: list[int] = []
-    for t in sorted(target_addrs):
-        if t == 0:
-            continue
-        if t in covered or (t & ~1) in covered:
-            continue
-        if not in_text(t, text_range):
-            continue
-        out.append(t)
-    return out
-
-
 def extract_metrics(code: str) -> dict[str, Any]:
     """Extract basic structure metrics (matches ``declib_dec._extract_metrics``)."""
     return {
@@ -305,7 +267,6 @@ def line_starts(text: str) -> list[int]:
 
 def pos_to_line(pos: int, starts: list[int]) -> int:
     """Convert a 0-based character position into a 1-based line number."""
-    # Binary search for the last line start <= pos.
     import bisect
 
     idx = bisect.bisect_right(starts, pos) - 1
@@ -326,15 +287,4 @@ def merge_line_addresses(
         if not addrs:
             continue
         out.append(LineMapping(line_number=int(line_num), addresses=sorted(int(a) for a in addrs)))
-    return out
-
-
-def iter_unique(items: Iterable[Any]) -> list[Any]:
-    """Stable de-duplication helper (preserves first-seen order)."""
-    seen: set[Any] = set()
-    out: list[Any] = []
-    for it in items:
-        if it not in seen:
-            seen.add(it)
-            out.append(it)
     return out

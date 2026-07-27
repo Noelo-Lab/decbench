@@ -47,34 +47,15 @@ __all__ = [
     "union_leaders",
 ]
 
-#: Preset name for the synthetic all-functions combo emitted when a run carries no
-#: dataset presets at all. Reserved: no real preset may use it. The client falls back
-#: to this key when it has no preset to select (``app.js``'s ``FALLBACK_PRESET``), so
-#: a preset-less run renders every number with no dataset selector instead of an
-#: error banner. Kept in sync by ``docs/site.md`` and tests.
+# Reserved: no real preset may use this name. Mirrors app.js's FALLBACK_PRESET.
 ALL_PRESET = "__all__"
 
-#: The preset on which the sample-set-only decompilers (codex/claude-code — the LLM
-#: agents, cost-gated to the ~250-function sample-set slice) are actually shown.
-#: Mirrors ``app.js``'s ``SAMPLE_SET_PRESET``; the two must stay in sync. Used by the
-#: normalize gate: those decompilers join the "every decompiler decompiled it" test
-#: only where their rows render (see :func:`_active_combos`).
+# Mirrors app.js's SAMPLE_SET_PRESET; the two must stay in sync.
 SAMPLE_SET_PRESET = "sample-set"
 
-#: Floats are emitted EXACTLY as computed — deliberately unrounded. Rounding used to
-#: happen here (3dp) and was documented as "lossless"; it was not. The client
-#: re-renders some values at FEWER places than it stored (``toFixed(2)`` for Compare
-#: values, ``toFixed(1)`` for distance means), so pre-rounding to 3dp manufactures an
-#: exact 2dp/1dp half-boundary and the second rounding then breaks the tie the other
-#: way: 0.45454... renders "0.45", but stored as 0.455 it renders "0.46". That moved
-#: 13 Compare cells and 1 distance cell, in BOTH directions. The old proof only ever
-#: covered means and perfect flags, never the raw per-function values the Compare view
-#: prints. Rounding bought 0.087% of payload bytes (6.4 KB of 7.3 MB; 2.1 KB of 935 KB
-#: gzipped) — the payloads are dominated by embedded C source, not float digits — so
-#: the whole double-rounding hazard is simply deleted rather than re-proved. Do not
-#: reintroduce it: any rounding here is only safe at >= the most precise rendering the
-#: client does, and that is a coupling across the Python/JS boundary that no test in
-#: this repo can see.
+# Do NOT reintroduce rounding here. The client re-renders some values at fewer
+# places than they are stored, so pre-rounding manufactures half-boundaries that
+# the second rounding then breaks the other way. It saved 0.09% of payload bytes.
 
 
 def combo_key(preset: str, normalize: bool) -> str:
@@ -130,7 +111,7 @@ def _js_is_finite(value: float | None) -> bool:
     quirk costs nothing and "fixing" it would move published denominators.
     """
     if value is None:
-        return True  # isFinite(null) === true — Number(null) is 0.
+        return True
     return math.isfinite(value)
 
 
@@ -215,12 +196,8 @@ class _FunctionFacts:
 
     datasets: frozenset[str]
     all_decompiled: bool
-    #: ``all_decompiled`` with the sample-set-only decompilers ignored. Those backends
-    #: only ever attempt the sample-set slice, so requiring them everywhere would (and,
-    #: from 2026-07-22 until this field existed, DID) collapse every normalize=1 combo
-    #: to the sample-set intersection — optimized|1 went 7,850 -> 50 functions the day
-    #: codex landed. Both flags are selector-independent; :func:`_active_combos` picks
-    #: per preset.
+    # all_decompiled minus the sample-set-only decompilers: requiring them everywhere
+    # collapses every normalize=1 combo to the sample-set intersection.
     all_full_coverage_decompiled: bool
     err_scope: tuple[bool, ...]
     err_errored: tuple[bool, ...]
@@ -229,10 +206,6 @@ class _FunctionFacts:
     perfect: tuple[tuple[bool, ...], ...]
     union_perfect: tuple[bool, ...]
     distances: tuple[tuple[float | None, ...], ...]
-    # Per-decompiler recompilation status: True (byte_match built it), False (it
-    # did not compile), None (byte_match not measurable for this dec — ARM/PE
-    # abstained, or the dec never decompiled the function; excluded from the
-    # Compiles denominator). Independent of the metrics/perfect maps.
     compiles: tuple[bool | None, ...]
 
 
@@ -257,8 +230,6 @@ def _function_facts(
     all_full_coverage_decompiled = True
 
     for dec in decompilers:
-        # Errors: a function is in scope for `dec` if it attempted it (present in the
-        # decompiled map); errored if it produced nothing (failed / timed out).
         attempted = dec in func.decompiled
         err_scope.append(attempted)
         err_errored.append(attempted and not func.decompiled[dec])
@@ -271,13 +242,8 @@ def _function_facts(
         fperf = func.perfects.get(dec) or {}
         flags = tuple(bool(fperf.get(m)) for m in metrics)
         perfect.append(flags)
-        # Union: perfect on AT LEAST ONE measurable metric. Gating each flag on
-        # measurability keeps a stray perfect=True for an unmeasurable metric
-        # (which per_metric would never count) from leaking into the numerator.
         union_perfect.append(any(f and m for f, m in zip(flags, measurable, strict=True)))
 
-        # JS parity: `const dm = dd[d]; if (!dm) continue;` — a missing distances map
-        # yields no values, and so does an empty one (every lookup is undefined).
         dmap = func.distances.get(dec)
         if dmap is None:
             distances.append(tuple(None for _ in distance_metrics))
@@ -289,9 +255,6 @@ def _function_facts(
                 )
             )
 
-        # Compiles: only counts where byte_match was actually measured for this
-        # dec (it has a byte_match value). None otherwise → out of the Compiles
-        # denominator, matching the per-dec, non-shared basis of `compile_rates`.
         bm = (func.values.get(dec) or {}).get("byte_match")
         compiles.append(bool(func.compiles.get(dec)) if bm is not None else None)
 
@@ -333,8 +296,7 @@ def _distance_stats(values: list[float]) -> dict[str, Any] | None:
     if not values:
         return None
     ordered = sorted(values)
-    # Plain left-to-right summation, as in the JS `reduce`; math.fsum would be more
-    # accurate and therefore a different number.
+    # Left-to-right summation for JS `reduce` parity; math.fsum would differ.
     mean = sum(values) / len(values)
     return {
         "mean": mean,
@@ -381,14 +343,10 @@ class _ComboAccumulator:
             dec_perfect_counts = self._perfect[di]
             for mi in range(len(self._metrics)):
                 if not facts.measurable[mi]:
-                    continue  # Unmeasurable for everyone: excluded uniformly.
+                    continue
                 dec_total[mi] += 1
                 if dec_perfect[mi]:
                     dec_perfect_counts[mi] += 1
-            # Union (emitted under the legacy `overall` key): denominator is
-            # any-metric-measurable — the union dual of the old every-metric
-            # gate — so ARM/PE functions whose byte_match abstained still count
-            # through GED/type_match instead of leaving the column entirely.
             if facts.any_measurable:
                 self._overall_total[di] += 1
                 if facts.union_perfect[di]:
@@ -429,7 +387,6 @@ class _ComboAccumulator:
                 dec: [self._errored[di], self._scope[di]]
                 for di, dec in enumerate(self._decompilers)
             },
-            # Per-decompiler recompilation success: [# compiled, # byte_match-measured].
             "compile": {
                 dec: [self._compiled[di], self._compile_total[di]]
                 for di, dec in enumerate(self._decompilers)
@@ -542,7 +499,7 @@ def _cost_block(content: Content, function_data: FunctionData) -> dict[str, Any]
                 "n_binaries": entry.get("binaries"),
                 "basis": "batch",
             },
-            "dollars": None,  # a traditional decompiler has no per-token cost
+            "dollars": None,
         }
     for dec, entry in (info.get("llm") or {}).items():
         if dec not in visible:
@@ -586,12 +543,8 @@ def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dic
 
     content = load_content()
     decompilers = function_data.decompilers
-    # Decompilers rendered ONLY on the sample-set view (codex/claude-code): run on
-    # the sample-set slice only, so on other presets they would be near-empty under
-    # the shared denominator. The client (app.js) keeps their rows off non-sample-set
-    # views; their data still ships. Match by exact id or base name, like `hidden`.
-    # Also fed to the normalize gate via _function_facts: off the sample-set preset
-    # these backends never gate the normalize=1 universe (see _active_combos).
+    # Shown only on the sample-set preset: elsewhere these backends would be
+    # near-empty under the shared denominator. Their data still ships.
     sample_set_only = [
         d for d in decompilers if is_hidden(d, content.site.sample_set_only_decompilers)
     ]
@@ -602,7 +555,6 @@ def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dic
     preset_names = [preset.name for preset in presets]
     ged_present = "ged" in metrics
 
-    # No presets: one synthetic combo that every function is active under.
     match_all = not preset_names
     combo_names = [ALL_PRESET] if match_all else preset_names
 
@@ -631,21 +583,12 @@ def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dic
         "projects_evaluated": scoreboard.projects_evaluated
         or sorted({group.project for group in function_data.groups}),
         "decompilers": decompilers,
-        # Decompilers the client shows only on the sample-set preset (see above).
         "sample_set_only": sample_set_only,
         "decompiler_versions": function_data.decompiler_versions,
-        # Official display names / links / prettified versions the client renders in
-        # place of raw ids. Keyed by the same (hidden-filtered) decompiler ids, so
-        # the registry can never reintroduce a hidden backend.
         "decompiler_registry": _decompiler_registry(
             content, decompilers, function_data.decompiler_versions
         ),
         "metrics": metrics,
-        # How to name and order those metrics on screen. `metrics` above is the run's
-        # raw order (whatever the metrics happened to be registered in); the site sorts
-        # and labels by this registry, which comes from content/metrics.toml. Without
-        # it the columns would read "byte_match | ged | type_match" instead of
-        # "Structure | Types | Recompile".
         "metric_registry": {
             spec.name: {
                 "display_name": spec.display_name,
@@ -656,18 +599,8 @@ def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dic
             if spec.name in metrics
         },
         "presets": resolve_presets(function_data, content),
-        # Which view the site opens on, from views.toml's `default = true`. The
-        # skeleton already marks that section `active`, so this is the schema's
-        # record of the choice rather than the client's routing input (routing
-        # happens before this file lands).
         "default_view": content.default_view,
-        # Corpus-wide, selector-independent: `binaries` here counts BUILDS (one per
-        # binary x opt level), the same population each combo's `binaries` is a
-        # subset of. It can exceed every combo's count — a group whose function list
-        # is empty is never active anywhere.
         "totals": {"functions": total_functions, "binaries": len(function_data.groups)},
-        # GLOBAL, not per-combo: decompile time and estimated LLM $ do not vary by
-        # preset/normalize, so the data page's cost table ships once up here.
         "cost": _cost_block(content, function_data),
         "combos": {
             combo_key(name, normalize): accumulator.result()
@@ -698,10 +631,6 @@ def _decompiler_registry(
             entry["display_name"] = spec.display_name
             if spec.url:
                 entry["url"] = spec.url
-            # `license` (open/closed-source) and `logo` (a shipped .dlogo-<id>
-            # background) are presentation-only; the client renders the license as a
-            # muted tag in the stacked name cell and shows a logo when SHOW_LOGOS is
-            # on. Emit each only when set, so the payload stays minimal.
             if spec.license:
                 entry["license"] = spec.license
             if spec.logo:
@@ -761,8 +690,6 @@ def resolve_presets(
             "name": preset.name,
             "label": spec.label if spec else (preset.label or preset.name),
             "description": spec.description if spec else preset.description,
-            # The leaderboard's per-dataset explainer (registry-only: data written
-            # before the field existed has none to fall back on).
             "long_description": spec.long_description if spec else "",
         }
         if preset.name == default_name:
@@ -904,8 +831,6 @@ def build_dataset_page(function_data: FunctionData) -> dict[str, Any]:
     loc_by_project = info.get("loc_by_project") or {}
 
     stats = _project_stats(function_data)
-    # Emit each project's presets in the selector's canonical order (not set order),
-    # so the payload is deterministic and rebuilds byte-identically.
     preset_order = [p.name for p in function_data.dataset_presets]
     projects = [
         _ProjectRow(
@@ -923,12 +848,10 @@ def build_dataset_page(function_data: FunctionData) -> dict[str, Any]:
         for cat in content.categories
     ]
 
-    # `unique_binaries` sums each project's distinct binary names — binaries are
-    # unique within a project, not across the corpus (many projects ship a `main`).
     summary = {
         "projects": len(projects),
         "unique_binaries": sum(p.binaries for p in projects),
-        "builds": len(function_data.groups),  # binary x opt-level instances
+        "builds": len(function_data.groups),
         "functions": sum(p.functions for p in projects),
         "total_loc": info.get("total_loc") or 0,
     }
@@ -958,8 +881,6 @@ def build_dataset_page(function_data: FunctionData) -> dict[str, Any]:
     return {
         "summary": summary,
         "categories": categories,
-        # Table order: biggest project first (stable, so equal-LOC projects keep
-        # their name order). Sorted AFTER the totals above are summed.
         "projects": [p.as_dict() for p in sorted(projects, key=lambda p: -p.loc)],
         "joern": {
             "source": {"lost": source_lost, "total": source_total},

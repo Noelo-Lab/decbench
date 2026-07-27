@@ -57,11 +57,10 @@ def main() -> int:
     bv.update_analysis_and_wait()
     load_base = int(bv.start)
 
-    # ELF-file-space address for a binja function start (mirrors binja_raw).
     def elf_addr(start: int) -> int:
         return (int(start) - load_base) + elf_base
 
-    # Thumb functions (ARM) can carry the low bit set; compare with it cleared.
+    # ARM Thumb functions can carry the low bit set; compare with it cleared.
     def matches(addr: int) -> bool:
         if target_addrs is None:
             return True
@@ -81,9 +80,8 @@ def main() -> int:
     _emit({"type": "meta", "load_base": load_base, "count": len(selected)})
 
     options: Options = Decompiler.create_options()
-    # Keep a single stubborn function from wedging the whole binary: bound the
-    # logic-engine timeouts (dewolf's dominant slow path — sympy/z3 on complex
-    # conditions). These are milliseconds.
+    # Bound dewolf's dominant slow path (sympy/z3 on complex conditions) so one
+    # stubborn function cannot wedge the binary. In milliseconds.
     for key in ("logic.engine.dead_path_timeout", "logic.engine.dead_loop_timeout"):
         with contextlib.suppress(Exception):
             options.set(key, 2000)
@@ -93,8 +91,6 @@ def main() -> int:
         name = str(func.name or f"sub_{func.start:x}")
         started = time.time()
         try:
-            # dewolf accepts a function identifier: the binja Function works
-            # directly (its frontend resolves name/address/object).
             _task, code = decompiler.decompile(func, options)
             if code and code.strip():
                 _emit(

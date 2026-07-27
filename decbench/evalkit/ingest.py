@@ -54,8 +54,6 @@ KIT_FORMAT_VERSION = 1
 
 _DEC_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
-# Default overlay-refresh columns (mirrors scripts/reeval_ged.py DECOMPILERS);
-# next_steps appends the new dec_id so a reeval pass covers every column.
 _REEVAL_DEFAULTS = (
     "angr",
     "ghidra",
@@ -68,9 +66,8 @@ _REEVAL_DEFAULTS = (
     "claude-code",
 )
 
-# The LLM backends are absent from scripts/reeval_bytematch.py's tuple by design
-# (their byte_match rides on inline checkpoint values), so the byte_match
-# refresh command must not name them.
+# The LLM backends' byte_match rides on inline checkpoint values, so the
+# byte_match refresh command must not name them.
 _LLM_BASENAMES = ("codex", "claude-code", "kimi-code")
 
 
@@ -93,11 +90,11 @@ class _Entry:
     """One submitted binary, fully resolved and ready to merge."""
 
     project: str
-    opt: str  # OptimizationLevel value, e.g. "O0"
-    stem: str  # tree/checkpoint binary key
-    binary: Path  # the unstripped on-disk binary
+    opt: str
+    stem: str
+    binary: Path
     result: DecompilationResult
-    addrs: set[int]  # kept DWARF low_pcs (restricts source-CFG extraction)
+    addrs: set[int]
 
 
 @dataclass
@@ -112,9 +109,6 @@ def _warn(warnings: list[str], msg: str) -> None:
     _l.warning("%s", msg)
 
 
-# --------------------------------------------------------------------------- #
-# Submission loading
-# --------------------------------------------------------------------------- #
 def _open_submission(submission: Path, stack: contextlib.ExitStack) -> tuple[dict, Path]:
     """Load the packaged ``results.json`` and the directory holding its ``.c`` files.
 
@@ -130,7 +124,6 @@ def _open_submission(submission: Path, stack: contextlib.ExitStack) -> tuple[dic
         try:
             with zipfile.ZipFile(submission) as zf:
                 for name in zf.namelist():
-                    # package.py emits flat archives; be defensive anyway.
                     if name.startswith(("/", "..")) or ".." in Path(name).parts:
                         raise EvalKitError(f"unsafe path in {submission.name}: {name!r}")
                 zf.extractall(tmp)
@@ -149,7 +142,6 @@ def _open_submission(submission: Path, stack: contextlib.ExitStack) -> tuple[dic
 
     results_path = root / "results.json"
     if not results_path.is_file():
-        # A zip may nest one top-level folder if it was re-zipped by hand.
         nested = [d / "results.json" for d in sorted(root.iterdir()) if d.is_dir()]
         hits = [p for p in nested if p.is_file()]
         if len(hits) == 1:
@@ -239,9 +231,6 @@ def _parse_addr(value: object) -> int | None:
     return None
 
 
-# --------------------------------------------------------------------------- #
-# C snippet extraction
-# --------------------------------------------------------------------------- #
 def _extract_definition(text: str, name: str) -> str | None:
     """Locate ``name(...) { ... }`` directly when ``split_c_functions`` missed it.
 
@@ -253,7 +242,7 @@ def _extract_definition(text: str, name: str) -> str | None:
     for m in re.finditer(r"\b" + re.escape(name) + r"\s*\(", text):
         n = len(text)
         depth = 0
-        j = m.end() - 1  # at the opening paren
+        j = m.end() - 1
         while j < n:
             ch = text[j]
             if ch == "(":
@@ -269,7 +258,7 @@ def _extract_definition(text: str, name: str) -> str | None:
         while k < n and text[k] in " \t\r\n":
             k += 1
         if k >= n or text[k] != "{":
-            continue  # a call or prototype, not a definition
+            continue
         depth = 0
         e = k
         while e < n:
@@ -284,7 +273,6 @@ def _extract_definition(text: str, name: str) -> str | None:
         if e >= n:
             continue
         start = text.rfind("\n", 0, m.start()) + 1
-        # Pull in a return type that sits on its own preceding line(s).
         lines = text[:start].splitlines(keepends=True)
         while lines:
             prev = lines[-1].strip()
@@ -295,9 +283,6 @@ def _extract_definition(text: str, name: str) -> str | None:
     return None
 
 
-# --------------------------------------------------------------------------- #
-# Per-entry build
-# --------------------------------------------------------------------------- #
 def _build_entry(
     tree: Path,
     manifest: set[tuple[str, str, str, str]],
@@ -322,7 +307,7 @@ def _build_entry(
     opt = ident.get("opt")
     stem = ident.get("binary")
     file_name = ident.get("file")
-    # Explicit per-name isinstance checks (not all(...)) so mypy narrows to str.
+    # Per-name checks rather than all(...) so mypy narrows each to str.
     if (
         not isinstance(project, str)
         or not project
@@ -349,8 +334,6 @@ def _build_entry(
         raise EvalKitError(f"submission is missing the listed file {c_name}")
     c_text = c_path.read_text(errors="replace")
 
-    # The unstripped on-disk binary: prefer the FULL original filename (lossless
-    # for multi-dot names like libacl.so.1.1.2301), fall back to the stem.
     try:
         binary = resolve.discover_binary(tree, opt, project, file_name or stem)
     except FileNotFoundError:
@@ -405,13 +388,9 @@ def _build_entry(
             )
             continue
         if dwarf_name != sub_name:
-            # Same semantics as the run driver's _relabel_to_dwarf: rename the
-            # function's OWN identifier inside its own snippet; call sites to
-            # sibling functions keep their submitted names (as they do for every
-            # stripped-binary backend).
             code = re.sub(r"\b" + re.escape(sub_name) + r"\b", dwarf_name, code)
             counters.relabeled += 1
-        low_pc = name2addr.get(dwarf_name, addr)  # export shipped name_to_addr addresses
+        low_pc = name2addr.get(dwarf_name, addr)
         prev = kept.get(dwarf_name)
         if prev is not None:
             _warn(
@@ -451,15 +430,10 @@ def _build_entry(
     )
 
 
-# --------------------------------------------------------------------------- #
-# Checkpoints
-# --------------------------------------------------------------------------- #
 def _load_checkpoint(path: Path) -> dict:
     """Load (or initialize) a per-project checkpoint pickle."""
     if not path.exists():
         return {"decompile": {}, "evaluate": {}}
-    # Register plugin/metric modules so the pickle resolves every class
-    # (mirrors results_store.load_checkpoints).
     import decbench.decompilers  # noqa: F401
     import decbench.metrics  # noqa: F401
 
@@ -560,9 +534,6 @@ def _opt_key(section: dict, opt: str) -> Any:
     return enum_key
 
 
-# --------------------------------------------------------------------------- #
-# Inline evaluation (all imports lazy — evaluate=False never reaches here)
-# --------------------------------------------------------------------------- #
 def _stems_for_addrs(binary: Path, addrs: set[int], stems: set[str]) -> set[str]:
     """The ``.i`` TU stems whose DWARF subprograms cover ``addrs``.
 
@@ -584,7 +555,6 @@ def _stems_for_addrs(binary: Path, addrs: set[int], stems: set[str]) -> set[str]
     try:
         for cu in dw.iter_CUs():
             lp = dw.line_program_for_CU(cu)
-            # DWARF v4/v5 decl_file indexing — see resolve._dwarf_addr_to_name.
             version = 4
             if lp is not None:
                 version = lp.header.get("version", cu.header.get("version", 4))
@@ -656,7 +626,7 @@ def _evaluate_group(
             for e in entries:
                 got = _stems_for_addrs(e.binary, e.addrs, set(i_by_stem))
                 if not got:
-                    needed = set(i_by_stem)  # unknown TU: parse everything
+                    needed = set(i_by_stem)
                     break
                 needed |= got
             for stem in sorted(needed):
@@ -680,15 +650,9 @@ def _evaluate_group(
     return out
 
 
-# --------------------------------------------------------------------------- #
-# Follow-up commands
-# --------------------------------------------------------------------------- #
 def _next_steps(tree: Path, dec_id: str) -> str:
     """The exact follow-up commands to publish the new column."""
     reeval = ",".join((*_REEVAL_DEFAULTS, dec_id))
-    # byte_match's overlay script excludes the LLM backends by design (their
-    # byte_match rides on inline checkpoint values), so its list is the shared
-    # defaults minus those, plus the new column.
     bm_reeval = ",".join((*(d for d in _REEVAL_DEFAULTS if d not in _LLM_BASENAMES), dec_id))
     return (
         f"Next steps to publish '{dec_id}':\n"
@@ -718,9 +682,6 @@ def _next_steps(tree: Path, dec_id: str) -> str:
     )
 
 
-# --------------------------------------------------------------------------- #
-# Entry point
-# --------------------------------------------------------------------------- #
 def ingest_submission(
     submission: Path,
     tree: Path,
@@ -804,8 +765,6 @@ def ingest_submission(
             f"binaries; none for: {shown}{more}",
         )
 
-    # Load every touched checkpoint and refuse duplicate ingest up front, before
-    # any artifact or checkpoint is written.
     by_project: dict[str, list[_Entry]] = {}
     for e in entries:
         by_project.setdefault(e.project, []).append(e)
@@ -827,14 +786,12 @@ def ingest_submission(
         _l.info("force: overwriting %d existing %s slice(s)", len(conflicts), dec_id)
         _purge_stale_slices(tree, ckpts, dec_id, seen_slices, warnings)
 
-    # Artifacts: the same layout the run driver writes.
     for e in entries:
         dec_out = tree / e.opt / e.project / "decompiled"
         dec_out.mkdir(parents=True, exist_ok=True)
         e.result.to_c_file(dec_out / f"{dec_id}_{e.stem}.c")
         e.result.to_toml(dec_out / f"{dec_id}_{e.stem}.toml")
 
-    # Optional inline evaluation (the only path that may import pyjoern).
     evals: dict[tuple[str, str], dict[str, dict[str, MetricResult]]] = {}
     if evaluate:
         import decbench.metrics  # noqa: F401 — register the metric plugins
@@ -850,12 +807,9 @@ def ingest_submission(
                 tree, project, opt, ents, metric_names, needs_source, warnings
             )
 
-    # Additive checkpoint merge, then one atomic write per project. The
-    # checkpoint is RE-READ here rather than reusing the copy loaded before the
-    # conflict check: inline evaluation can run for hours, and writing back a
-    # snapshot from before it would silently revert anything another process
-    # (e.g. a concurrent run_benchmark on other decompilers) checkpointed in the
-    # meantime. The purge is re-applied to the fresh copy for the same reason.
+    # Re-read the checkpoint rather than reusing the pre-conflict-check copy: inline
+    # evaluation can run for hours, and writing back the older snapshot would revert
+    # anything a concurrent process checkpointed meanwhile.
     for project, ents in by_project.items():
         ckpt = _load_checkpoint(ckpt_dir / f"{project}.pkl")
         if conflicts:
@@ -864,9 +818,8 @@ def ingest_submission(
             dsec = ckpt["decompile"]
             okey = _opt_key(dsec, e.opt)
             dsec.setdefault(okey, {}).setdefault(e.stem, {})[dec_id] = e.result
-            # Clear any prior metric results for this column FIRST: a re-ingest
-            # with --no-evaluate (or one whose evaluation failed) must not leave
-            # the previous submission's numbers attached to the new code.
+            # Clear first, so a re-ingest with --no-evaluate cannot leave the previous
+            # submission's numbers attached to the new code.
             esec = ckpt["evaluate"]
             ekey = _opt_key(esec, e.opt)
             esec.setdefault(ekey, {}).setdefault(e.stem, {}).pop(dec_id, None)

@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 class DecompilerConfig(BaseModel):
     """Configuration for a decompiler."""
 
-    # Timeouts
     function_timeout_seconds: float = Field(
         default=600.0,
         description="Timeout per function in seconds",
@@ -25,17 +24,10 @@ class DecompilerConfig(BaseModel):
         description="Timeout per binary in seconds",
     )
 
-    # Output options
     dump_line_mappings: bool = Field(
         default=True,
         description="Generate line-to-address mappings",
     )
-    dump_early_metrics: bool = Field(
-        default=True,
-        description="Pre-compute metrics during decompilation",
-    )
-
-    # Decompiler-specific options
     extra_options: dict[str, Any] = Field(
         default_factory=dict,
         description="Decompiler-specific configuration options",
@@ -60,7 +52,6 @@ class Decompiler(ABC):
                 ...
     """
 
-    # Class attributes to be overridden
     name: str = "base"
     display_name: str = "Base Decompiler"
     version: str | None = None
@@ -72,10 +63,8 @@ class Decompiler(ABC):
             config: Configuration for the decompiler
         """
         self.config = config or DecompilerConfig()
-        # Set by the registry when a versioned spec (``name@version``) is
-        # resolved, so multiple versions of one decompiler run as distinct,
-        # comparable entries. ``requested_version`` is the pinned label from
-        # the spec; ``get_version()`` reports the realized/actual version.
+        # Set by the registry from a ``name@version`` spec. ``requested_version`` is the
+        # pinned label; ``get_version()`` reports the realized version.
         self.requested_version: str | None = None
         self._spec_id: str | None = None
 
@@ -157,27 +146,6 @@ class Decompiler(ABC):
             return result.functions[function_name].decompiled_code
 
         return None
-
-    def discover_functions(self, binary_path: Path) -> list[tuple[str, int]]:
-        """Discover functions in a binary.
-
-        Default implementation returns empty list.
-        Override to provide function discovery.
-
-        Args:
-            binary_path: Path to the binary
-
-        Returns:
-            List of (function_name, address) tuples
-        """
-        return []
-
-    def cleanup(self) -> None:
-        """Clean up any resources used by the decompiler.
-
-        Called after decompilation is complete.
-        """
-        pass
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(name={self.name!r})"

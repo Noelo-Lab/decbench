@@ -33,9 +33,6 @@ import random
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-# Same-package internals: the sample-set's even-spread sampler and seed
-# resolution, reused so the tiers obey the identical project/binary spread
-# rules as the dataset presets.
 from decbench.scoring.datasets import _resolve_seed, _sample_even
 
 if TYPE_CHECKING:
@@ -43,12 +40,8 @@ if TYPE_CHECKING:
 
 __all__ = ["DIFFICULTY_TIERS", "select_view_functions"]
 
-#: Tier names, in display order.
 DIFFICULTY_TIERS = ("easy", "medium", "hard")
 
-#: At most this many hard-tier candidates come from any one project, so a single
-#: pathological project cannot fill the whole tier. Relaxed only if the tier
-#: would otherwise come up short.
 _HARD_PER_PROJECT_CAP = 10
 
 
@@ -135,7 +128,6 @@ def select_view_functions(
         "medium": _sample_even(medium_pool, quota, chosen, used_bins, rng),
     }
 
-    # hard: worst-first, capped per project (relax the cap only if short).
     hard_pool.sort(key=lambda t: -t[2])
     picked: list[tuple[BinaryGroup, FunctionRecord]] = []
     per_project: dict[str, int] = {}

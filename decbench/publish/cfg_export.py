@@ -38,8 +38,6 @@ logger = logging.getLogger(__name__)
 
 Logger = Callable[[str], None]
 
-# One function's serialized CFG: node ids (0..n-1), edges, readable labels, and
-# the ids of the entry / exit nodes (the only node attributes GED reads).
 CfgSerial = tuple[list[int], list[list[int]], dict[str, str], list[int], list[int]]
 
 
