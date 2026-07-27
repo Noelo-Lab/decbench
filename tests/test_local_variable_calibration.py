@@ -51,6 +51,20 @@ def _target(
     )
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["Var1", "pVar2", "ppVar3", "ppuVar4", "iVar5", "pcVar6"],
+)
+def test_ghidra_default_var_names_are_synthetic(name: str) -> None:
+    source = [_variable("source", name, 0x1000)]
+    decompiled = [_variable("decompiled", name, 0x1000)]
+
+    oracle = build_name_oracle(source, decompiled)
+
+    assert oracle["source_status"]["source"] == "synthetic"
+    assert oracle["decompiled_status"]["decompiled"] == "synthetic"
+
+
 def test_stable_hash_sample_is_order_independent() -> None:
     targets = [_target(f"fn_{index}", 0x1000 + index) for index in range(20)]
     first = deterministic_sample(targets, size=7, seed="fixed")

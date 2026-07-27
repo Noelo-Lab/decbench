@@ -252,5 +252,5 @@ The completed semantic-audit artifacts are:
   `416810495abdd1476612f58f327b2f48884a6dbdc452236f87b8de9f4e05de38`
 
 The audit package and completed merge validate with 896/896 cases. The focused
-scorer, calibration, and semantic-audit suite passes 36 tests with one
+scorer, calibration, and semantic-audit suite passes 42 tests with one
 environment-dependent skip; Ruff, Black, and `git diff --check` are clean.

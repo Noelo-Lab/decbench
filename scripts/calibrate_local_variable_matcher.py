@@ -92,7 +92,7 @@ _SYNTHETIC_NAME_PATTERNS = (
         r"^(?:param|local|stack|temp|tmp|varnode|field|array|joined)_[0-9a-f]+$",
         re.IGNORECASE,
     ),
-    re.compile(r"^(?:(?:p|pp|u|i|c|b|s|l|d|f)*Var)\d+$"),
+    re.compile(r"^[puicbsldf]*Var\d+$"),
     re.compile(r"^(?:unaff|extraout|in|out)_[A-Za-z0-9_]+$", re.IGNORECASE),
     # Compiler/debugger-generated identifiers.
     re.compile(r"^(?:D|iftmp|pretmp|profiler|__compound_literal)\.?\d+$"),
