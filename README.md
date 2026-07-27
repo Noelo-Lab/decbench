@@ -118,7 +118,7 @@ skipped for the entire run (why: [docs/metrics.md](docs/metrics.md)).
 ## Republishing the site
 
 Most users never need to build the site. It only needs republishing when the
-published results change — new runs, new decompilers, updated scores. CI never
+published results change: new runs, new decompilers, updated scores. CI never
 builds it: the tree under `site/` is built locally, committed, and deployed by
 Actions. The build + publish guide (delivery modes, the three-step publish
 flow, and where the site's text lives) is in [docs/site.md](docs/site.md).
