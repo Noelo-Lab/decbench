@@ -47,4 +47,4 @@ long_description = "The LARGE dataset includes only large functions from the OPT
 name = "sample-set"
 label = "sample-set"
 description = "~250 functions evenly sampled across unoptimized/optimized/inlined/large/ARM-unoptimized and projects"
-long_description = "The SAMPLE-SET dataset is a sampled version of the entire benchmark (unoptimized, optimized, inlined, ...) meant to give decompiler developers a small but significant sample to improve upon. It also allows for cheaper runs for quick development. It is likely that a perfect score here will be a near-perfect score on all other datasets."
+long_description = "The SAMPLE-SET dataset is a sampled version of the entire benchmark (unoptimized, optimized, inlined, ...) meant to give decompiler developers a small but significant sample to improve upon. It also allows for cheaper runs for quick development. It is likely that a perfect score here will be a near-perfect score on all other datasets. **WARNING:** results from LLMs can be biased since this dataset is open-source and some LLMs have shown capability for perfect recall on assembly-only samples. See changelog for details."
