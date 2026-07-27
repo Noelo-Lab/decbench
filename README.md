@@ -182,23 +182,3 @@ showing 1 of 356, largest margin first
 ── libacl / O0 / getfacl ──  results/sailr_full/O0/libacl/compiled/getfacl
    0x281a  get_list   angr=0*  ghidra=38  Δ38
 ```
-
-## Published datasets
-
-Benchmark runs can be published as a public, reusable dataset (compiled
-binaries, preprocessed sources, source/decompiled CFGs, per-function results and
-scores) and pulled back down without recompiling or re-decompiling:
-
-```bash
-# Download a published config: sample-set / large / unoptimized / optimized /
-# inlined / full.
-decbench download sample-set --dest ./decbench-data
-#   (thin alias for the standalone `decbench-data` consumer package; fetch a
-#    subset with --include binaries,sources,cfgs,results,scores)
-
-# Publish a results tree to the dataset repo layout.
-python scripts/publish_dataset.py results/full_run --dest ~/github/decbench-dataset
-```
-
-See [docs/dataset-publishing.md](docs/dataset-publishing.md) for the repo layout,
-the publisher, and the lightweight consumer CLI.
