@@ -26,12 +26,47 @@ _AGG_RETURN = re.compile(r"^([A-Za-z_][\w ]*?)\s*\[\d+\]\s+([A-Za-z_]\w*\s*\()",
 # ``@`` is not legal C and breaks Joern's parse for the whole function.
 _REG_ANNOTATION = re.compile(r"\s*@\s*[a-z]\w+\b")
 
+# Tab and newline are the emitted source's own layout, not literal payload.
+_KEEP_RAW_BYTES = frozenset({0x09, 0x0A})
+
+
+def escape_literal_control_bytes(text: str) -> str:
+    """Escape raw control bytes appearing inside string/char literals.
+
+    A decompiler that inlines ``.rodata`` verbatim emits e.g. an ANSI colour
+    sequence as a raw ``0x1B``. That is valid C, but it makes pyjoern's fast
+    parser emit non-JSON, which fails the whole invocation rather than the one
+    function. Only literal interiors are rewritten, and ``\\x1b`` is the same
+    bytes to the compiler, so control flow is untouched.
+    """
+    out: list[str] = []
+    in_string = in_char = pending_escape = False
+    for char in text:
+        code = ord(char)
+        if pending_escape:
+            out.append(char)
+            pending_escape = False
+            continue
+        if char == "\\" and (in_string or in_char):
+            out.append(char)
+            pending_escape = True
+            continue
+        if char == '"' and not in_char:
+            in_string = not in_string
+        elif char == "'" and not in_string:
+            in_char = not in_char
+        if (in_string or in_char) and code not in _KEEP_RAW_BYTES and (code < 0x20 or code == 0x7F):
+            out.append(f"\\x{code:02x}")
+        else:
+            out.append(char)
+    return "".join(out)
+
 
 def sanitize_decompiled_c(text: str) -> str:
     """Clean decompiler-specific C quirks that break Joern's parser.
 
     GED only cares about CFG *structure*, so these edits are purely to make the
-    body parseable — they never touch control flow. Three tool-specific quirks:
+    body parseable — they never touch control flow. Four tool-specific quirks:
 
     * **Aggregate/array return type** (angr/ghidra): ``T [N] name(...)``
       is rewritten to ``T name(...)``. Anchored to the start of a line so a real
@@ -40,11 +75,13 @@ def sanitize_decompiled_c(text: str) -> str:
       is not valid C.
     * **128-bit types** (ida): ``__int128`` is widened to ``long long`` (the exact
       width is irrelevant to the CFG).
+    * **Raw control bytes in literals**: escaped, so a verbatim ``.rodata`` string
+      cannot make pyjoern's fast parser emit non-JSON and void the invocation.
     """
     text = _AGG_RETURN.sub(r"\1 \2", text)
     text = _REG_ANNOTATION.sub("", text)
     text = text.replace("unsigned __int128", "unsigned long long").replace("__int128", "long long")
-    return text
+    return escape_literal_control_bytes(text)
 
 
 def _is_system_header(path: str) -> bool:
