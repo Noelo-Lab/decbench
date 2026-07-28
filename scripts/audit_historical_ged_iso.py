@@ -34,7 +34,6 @@ from decbench.utils.cfg import (
 
 if __package__:
     from scripts.reeval_ged import (
-        CANONICAL_DECOMPILERS,
         INLINE_SANITIZED,
         LEGACY_AMBIGUOUS,
         LEGACY_RAW,
@@ -52,7 +51,6 @@ if __package__:
     )
 else:
     from reeval_ged import (  # type: ignore[no-redef]
-        CANONICAL_DECOMPILERS,
         INLINE_SANITIZED,
         LEGACY_AMBIGUOUS,
         LEGACY_RAW,
@@ -537,6 +535,40 @@ def audit_bound_inputs(audit: dict[str, Any]) -> set[str]:
     return slices
 
 
+def audit_bound_promoted_slices(root: Path, audit: dict[str, Any]) -> set[str]:
+    """Verify and load the exact slice set projected into the score overlay."""
+    descriptor = audit.get("promoted_slice_manifest")
+    if not isinstance(descriptor, dict):
+        raise RuntimeError("GED audit is missing its promoted slice manifest descriptor")
+    sidecar_path = root / "ged_new.slices.json"
+    path_value = descriptor.get("path")
+    expected_sha256 = descriptor.get("sha256")
+    if (
+        not isinstance(path_value, str)
+        or Path(path_value).resolve() != sidecar_path.resolve()
+        or not isinstance(expected_sha256, str)
+        or not sidecar_path.is_file()
+        or file_sha256(sidecar_path) != expected_sha256
+    ):
+        raise RuntimeError("GED audit promoted slice manifest no longer matches")
+    slices = load_historical_slice_manifest(sidecar_path)
+    if descriptor.get("slice_count") != len(slices):
+        raise RuntimeError("GED audit promoted slice manifest count differs")
+    return slices
+
+
+def promoted_artifacts(root: Path, promoted_slices: set[str]) -> list[Artifact]:
+    """Resolve exactly the artifacts named by the promoted slice sidecar."""
+    decompilers = tuple(sorted({slice_key.split("::", 3)[3] for slice_key in promoted_slices}))
+    rows = build_artifacts(root, decompilers, None)
+    selected = [row for row in rows if f"{row[0]}::{row[1]}::{row[2]}::{row[3]}" in promoted_slices]
+    observed = {f"{row[0]}::{row[1]}::{row[2]}::{row[3]}" for row in selected}
+    if observed != promoted_slices:
+        missing = sorted(promoted_slices - observed)
+        raise RuntimeError(f"promoted GED artifacts are missing: {missing[:10]}")
+    return selected
+
+
 def verify_overlay_projection(
     root: Path,
     slice_keys: set[str],
@@ -874,9 +906,10 @@ def run_audit(root: Path, workers: int) -> dict[str, Any]:
     audit_sha256 = file_sha256(audit_path)
     audit = json.loads(audit_path.read_text())
     historical_overlay_slices = audit_bound_inputs(audit)
+    promoted_slices = audit_bound_promoted_slices(root, audit)
     baseline_path = Path(audit["comparison_baseline"]["path"])
     old_scores = load_published_ged_scores(root, baseline_path)
-    artifact_rows = build_artifacts(root, CANONICAL_DECOMPILERS, None)
+    artifact_rows = promoted_artifacts(root, promoted_slices)
     artifacts = {
         f"{opt}::{project}::{stem}::{decompiler}": Path(c_path)
         for opt, project, stem, decompiler, c_path in artifact_rows

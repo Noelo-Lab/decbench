@@ -71,6 +71,14 @@ OPT_LEVELS = ("O0", "O2", "O2-noinline")
 SRC_OPT = "O0"
 
 
+def promoted_decompilers(
+    selected: tuple[str, ...] | None = None,
+) -> tuple[str, ...]:
+    """Return built-in columns plus any explicitly selected external columns."""
+    requested = SELECTED_DECOMPILERS if selected is None else selected
+    return tuple(dict.fromkeys((*CANONICAL_DECOMPILERS, *requested)))
+
+
 def checkpoint_signature() -> dict[str, int | str]:
     from decbench.metrics.ged import GED_MAX_NODES, GEDMetric
 
@@ -1206,7 +1214,7 @@ def main() -> None:
     historical_manifest_sha256 = file_sha256(historical_manifest_path)
     old_scores = load_published_ged_scores(root, baseline_path)
     selected_artifacts = build_artifacts(root, SELECTED_DECOMPILERS, only)
-    canonical_artifacts = build_artifacts(root, CANONICAL_DECOMPILERS, None)
+    canonical_artifacts = build_artifacts(root, promoted_decompilers(), None)
     required_sources = {
         (opt, project) for opt, project, _stem, _decompiler, _path in selected_artifacts
     }
@@ -1332,7 +1340,8 @@ def main() -> None:
     # Sidecar of EVERY slice this reeval evaluated, including empty ones, so the
     # overlay merge can tell "evaluated, found nothing" (clears stale inline values)
     # from "never evaluated" (keeps them).
-    write_json_atomic(root / "ged_new.slices.json", sorted(slices))
+    sidecar_path = root / "ged_new.slices.json"
+    write_json_atomic(sidecar_path, sorted(slices))
     audit_path = root / "ged_large_graph_audit.json"
     audit = build_large_graph_audit(old_scores, merged, large_graph_records, signature)
     audit["comparison_baseline"] = {
@@ -1343,6 +1352,11 @@ def main() -> None:
         "path": str(historical_manifest_path.resolve()),
         "sha256": historical_manifest_sha256,
         "slice_count": len(historical_covered),
+    }
+    audit["promoted_slice_manifest"] = {
+        "path": str(sidecar_path.resolve()),
+        "sha256": file_sha256(sidecar_path),
+        "slice_count": len(slices),
     }
     write_json_atomic(audit_path, audit, indent=2)
     perf = sum(1 for v in merged.values() if v.get("perfect"))

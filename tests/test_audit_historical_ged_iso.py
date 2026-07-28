@@ -69,6 +69,22 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def test_promoted_artifacts_follow_external_sidecar_slice(tmp_path: Path) -> None:
+    artifact = tmp_path / "O0/proj/decompiled/mydec_bin.c"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("// Function: f @ 0x1000\nint f(void) { return 0; }\n")
+    promoted = {"O0::proj::bin::mydec"}
+
+    assert historical_iso.promoted_artifacts(tmp_path, promoted) == [
+        ("O0", "proj", "bin", "mydec", str(artifact))
+    ]
+
+
+def test_promoted_artifacts_reject_missing_sidecar_slice(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="promoted GED artifacts are missing"):
+        historical_iso.promoted_artifacts(tmp_path, {"O0::proj::bin::mydec"})
+
+
 def _audit_for_record(key: str, record: dict, old_value: float) -> dict:
     return {
         "summary": {
@@ -733,6 +749,11 @@ def test_standalone_pass_enriches_only_audit(tmp_path: Path) -> None:
                 "historical_overlay_manifest": {
                     "path": str(historical_manifest),
                     "sha256": _sha(historical_manifest),
+                    "slice_count": 1,
+                },
+                "promoted_slice_manifest": {
+                    "path": str(sidecar.resolve()),
+                    "sha256": _sha(sidecar),
                     "slice_count": 1,
                 },
                 "coverage": {

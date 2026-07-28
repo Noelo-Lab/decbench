@@ -66,6 +66,14 @@ def _graph(nodes: int, edges: int) -> nx.DiGraph:
     return graph
 
 
+def test_promoted_decompilers_keep_builtins_and_selected_external_ids() -> None:
+    promoted = reeval_ged.promoted_decompilers(("angr", "mydec", "ghidra@12.1"))
+
+    assert promoted[: len(reeval_ged.CANONICAL_DECOMPILERS)] == (reeval_ged.CANONICAL_DECOMPILERS)
+    assert promoted.count("angr") == 1
+    assert promoted[-2:] == ("mydec", "ghidra@12.1")
+
+
 @pytest.mark.parametrize(
     ("baseline", "historical_slices"),
     [
