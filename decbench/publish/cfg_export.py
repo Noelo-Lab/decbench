@@ -1,18 +1,19 @@
 """Source-CFG serialization for the published dataset (contract §5).
 
-The GED metric (``cfgutils.similarity.vj_ged``) is almost purely structural — it
-scores from per-node parent/child counts — but it also reads each node's
-``is_entrypoint`` / ``is_exitpoint`` flags (an entry/exit mismatch penalty). So a
-lossless serialization needs the graph topology **plus** those two flags, and
-nothing else (labels are not used by GED). This module writes, per binary, the
-``function -> CFG`` map that ``pipeline/evaluate.py`` scores that binary
-against: the project's ``.i`` CFGs parsed **per translation unit** and then
-resolved through :func:`decbench.utils.cfg.resolved_source_for_binary` — the
-binary's own TU wins, other TUs are the fallback, and empty prototypes never
-displace a real body. Each DiGraph is relabeled to ``0..n-1`` with the
-entry/exit node ids and the degeneracy verdict recorded. :func:`rebuild_cfg`
-reconstructs a GED-ready ``nx.DiGraph`` from one serialized function, so the
-exact GED value is reproducible offline.
+The GED metric is almost purely structural: it checks directed isomorphism,
+then uses either the VJ-GED cost model or a large-graph size lower bound. Those
+paths read graph topology and each node's ``is_entrypoint`` /
+``is_exitpoint`` flags. So a lossless serialization needs the graph topology
+**plus** those two flags, and nothing else (labels are not used by GED). This
+module writes, per binary, the ``function -> CFG`` map that
+``pipeline/evaluate.py`` scores that binary against: the project's ``.i`` CFGs
+parsed **per translation unit** and then resolved through
+:func:`decbench.utils.cfg.resolved_source_for_binary` — the binary's own TU wins,
+other TUs are the fallback, and empty prototypes never displace a real body.
+Each DiGraph is relabeled to ``0..n-1`` with the entry/exit node ids and the
+degeneracy verdict recorded. :func:`rebuild_cfg` reconstructs a GED-ready
+``nx.DiGraph`` from one serialized function, so the exact GED value is
+reproducible offline through :class:`decbench.metrics.ged.GEDMetric`.
 
 A project-wide, name-keyed, last-writer-wins union is NOT a valid export: a
 declaration-only view of a function (Joern emits a single ``Nop`` block for it)
@@ -73,7 +74,7 @@ class RealStatement:
 
 
 class CfgNode:
-    """A minimal CFG node exposing the two flags ``vj_ged`` reads.
+    """A minimal CFG node exposing the two role flags GED reads.
 
     Rebuilt graphs use these so GED reproduces exactly; identity is the node id.
     """
@@ -124,9 +125,9 @@ def rebuild_cfg(func_cfg: dict) -> DiGraph:  # type: ignore[type-arg]
     """Reconstruct a GED-ready ``nx.DiGraph`` from one serialized function CFG.
 
     Nodes are :class:`CfgNode` instances carrying the stored entry/exit flags, so
-    ``cfgutils.similarity.vj_ged`` runs on the result and reproduces the exact
-    GED value the pipeline computed. A CFG recorded as non-degenerate also gets
-    :class:`RealStatement` markers so
+    :class:`decbench.metrics.ged.GEDMetric` can reproduce the pipeline's score
+    when given this source graph and the corresponding decompiled CFG. A CFG
+    recorded as non-degenerate also gets :class:`RealStatement` markers so
     :func:`decbench.utils.cfg.is_degenerate_source_cfg` agrees offline (JSONs
     written before that field existed simply keep the old behaviour).
     """

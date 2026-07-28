@@ -290,6 +290,11 @@ rebuilds from these JSONs are structurally identical to the ones
 binaries, and every one of the 97 scored functions has a scorable source CFG
 (the published union managed 76).
 
+For score reproduction, pass the rebuilt graph and the decompiled CFG through
+`GEDMetric.compute_for_function`; do not call `cfgutils.similarity.vj_ged`
+directly. `GEDMetric` owns the isomorphism-first fast path, the VJ-GED size
+limit, and the non-isomorphic large-graph fallback used for stored scores.
+
 ## 6. `.gitattributes` (LFS)
 
 The published binaries have no extension, so the publisher adds its own rules so
