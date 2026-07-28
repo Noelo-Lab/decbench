@@ -372,7 +372,7 @@ def extract_cfgs_from_source(
             "pyjoern is required for CFG extraction. " "Install with: pip install pyjoern"
         ) from e
 
-    cfgs = {}
+    cfgs: dict[str, DiGraph] = {}
     # Joern names its workspace after the input basename, so a unique temp name is
     # what keeps concurrent parses of the same filename from colliding.
     temp_c_path = Path(tempfile.mktemp(suffix=".c"))
@@ -431,7 +431,7 @@ def extract_cfgs_from_decompilation(
             "pyjoern is required for CFG extraction. " "Install with: pip install pyjoern"
         ) from e
 
-    cfgs = {}
+    cfgs: dict[str, DiGraph] = {}
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".c", delete=False) as f:
         marked_sources = [

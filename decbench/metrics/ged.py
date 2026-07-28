@@ -115,10 +115,12 @@ def _is_isomorphic(source_cfg: DiGraph, decompiled_cfg: DiGraph) -> bool:
         ("role", "iso_color"),
         ((False, False), -1),
     )
-    return nx.is_isomorphic(
-        source_graph,
-        decompiled_graph,
-        node_match=node_match,
+    return bool(
+        nx.is_isomorphic(
+            source_graph,
+            decompiled_graph,
+            node_match=node_match,
+        )
     )
 
 
