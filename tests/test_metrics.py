@@ -160,6 +160,274 @@ class TestGEDMetric:
         result = metric.compute_for_function(func, source_cfg=g, decompiled_cfg=g)
         assert result.value == 0.0
 
+    def test_ged_large_isomorphic_cfgs_bypass_limit(self, monkeypatch) -> None:
+        """Graph isomorphism is checked before the VJ-GED size cutoff."""
+        import networkx as nx
+
+        import decbench.metrics.ged as ged_module
+        from decbench.metrics.ged import GEDMetric
+
+        class CFGNode:
+            def __init__(self, index: int, *, entry: bool = False, exit: bool = False):
+                self.index = index
+                self.is_entrypoint = entry
+                self.is_exitpoint = exit
+
+        def path_graph() -> nx.DiGraph:
+            nodes = [CFGNode(i, entry=i == 0, exit=i == 7) for i in range(8)]
+            graph = nx.DiGraph()
+            graph.add_edges_from(zip(nodes, nodes[1:], strict=False))
+            return graph
+
+        monkeypatch.setattr(ged_module, "GED_MAX_NODES", 3)
+        monkeypatch.setenv("DECBENCH_NO_CACHE", "1")
+        metric = GEDMetric()
+        metric._get_vj_ged = lambda: pytest.fail("VJ-GED must not run for isomorphic CFGs")
+        func = FunctionDecompilation(name="test", address=0x1000, decompiled_code="")
+
+        result = metric.compute_for_function(
+            func,
+            source_cfg=path_graph(),
+            decompiled_cfg=path_graph(),
+        )
+
+        assert result.value == 0.0
+        assert result.metadata["method"] == "isomorphism"
+        assert result.metadata["isomorphic"] is True
+
+    def test_refined_isomorphism_matches_role_aware_networkx(self) -> None:
+        """Joint refinement only prunes; it does not change isomorphism."""
+        import random
+
+        import networkx as nx
+
+        from decbench.metrics.ged import _is_isomorphic, _role_graph
+
+        class CFGNode:
+            def __init__(self, index: int, *, entry: bool = False, exit: bool = False):
+                self.index = index
+                self.is_entrypoint = entry
+                self.is_exitpoint = exit
+
+        rng = random.Random(20260728)
+        role_match = nx.algorithms.isomorphism.categorical_node_match(
+            "role",
+            (False, False),
+        )
+        for node_count in range(2, 18):
+            source_nodes = [
+                CFGNode(
+                    index,
+                    entry=index == 0,
+                    exit=index == node_count - 1,
+                )
+                for index in range(node_count)
+            ]
+            decompiled_nodes = [
+                CFGNode(
+                    index,
+                    entry=index == 0,
+                    exit=index == node_count - 1,
+                )
+                for index in range(node_count)
+            ]
+            source = nx.DiGraph()
+            source.add_nodes_from(source_nodes)
+            for left in source_nodes:
+                for right in source_nodes:
+                    if left is not right and rng.random() < 0.14:
+                        source.add_edge(left, right)
+
+            permutation = list(range(node_count))
+            rng.shuffle(permutation)
+            decompiled = nx.DiGraph()
+            decompiled.add_nodes_from(decompiled_nodes[index] for index in permutation)
+            decompiled.add_edges_from(
+                (
+                    decompiled_nodes[left.index],
+                    decompiled_nodes[right.index],
+                )
+                for left, right in source.edges()
+            )
+
+            assert _is_isomorphic(source, decompiled)
+            assert nx.is_isomorphic(
+                _role_graph(source),
+                _role_graph(decompiled),
+                node_match=role_match,
+            )
+
+            if source.number_of_edges() > 0:
+                left, right = next(iter(decompiled.edges()))
+                decompiled.remove_edge(left, right)
+                expected = nx.is_isomorphic(
+                    _role_graph(source),
+                    _role_graph(decompiled),
+                    node_match=role_match,
+                )
+                assert _is_isomorphic(source, decompiled) is expected
+
+    def test_ged_large_role_mismatch_cannot_approximate_to_zero(self, monkeypatch) -> None:
+        """Equal-sized non-isomorphic CFGs remain non-perfect above the cutoff."""
+        import networkx as nx
+
+        import decbench.metrics.ged as ged_module
+        from decbench.metrics.ged import GEDMetric
+
+        class CFGNode:
+            def __init__(self, index: int, *, entry: bool = False, exit: bool = False):
+                self.index = index
+                self.is_entrypoint = entry
+                self.is_exitpoint = exit
+
+        def path_graph(*, reverse_roles: bool) -> nx.DiGraph:
+            nodes = [
+                CFGNode(
+                    i,
+                    entry=i == (7 if reverse_roles else 0),
+                    exit=i == (0 if reverse_roles else 7),
+                )
+                for i in range(8)
+            ]
+            graph = nx.DiGraph()
+            graph.add_edges_from(zip(nodes, nodes[1:], strict=False))
+            return graph
+
+        monkeypatch.setattr(ged_module, "GED_MAX_NODES", 3)
+        monkeypatch.setenv("DECBENCH_NO_CACHE", "1")
+        metric = GEDMetric()
+        metric._get_vj_ged = lambda: pytest.fail("VJ-GED must not run above the cutoff")
+        func = FunctionDecompilation(name="test", address=0x1000, decompiled_code="")
+
+        result = metric.compute_for_function(
+            func,
+            source_cfg=path_graph(reverse_roles=False),
+            decompiled_cfg=path_graph(reverse_roles=True),
+        )
+
+        assert result.value == 1.0
+        assert result.metadata["method"] == "size_lower_bound"
+        assert result.metadata["isomorphic"] is False
+        assert result.metadata["approximated"] is True
+
+    def test_ged_nonisomorphic_vj_zero_cannot_be_perfect(self, monkeypatch) -> None:
+        """VJ-GED's degree-only zero is not a perfect structural match."""
+        pytest.importorskip("cfgutils")
+        import networkx as nx
+
+        from decbench.metrics.ged import GEDMetric
+
+        class CFGNode:
+            is_entrypoint = False
+            is_exitpoint = False
+
+        source_nodes = [CFGNode() for _ in range(6)]
+        source = nx.DiGraph()
+        source.add_edges_from(
+            (source_nodes[index], source_nodes[(index + 1) % 6]) for index in range(6)
+        )
+
+        decompiled_nodes = [CFGNode() for _ in range(6)]
+        decompiled = nx.DiGraph()
+        decompiled.add_edges_from(
+            [
+                (decompiled_nodes[0], decompiled_nodes[1]),
+                (decompiled_nodes[1], decompiled_nodes[2]),
+                (decompiled_nodes[2], decompiled_nodes[0]),
+                (decompiled_nodes[3], decompiled_nodes[4]),
+                (decompiled_nodes[4], decompiled_nodes[5]),
+                (decompiled_nodes[5], decompiled_nodes[3]),
+            ]
+        )
+
+        monkeypatch.setenv("DECBENCH_NO_CACHE", "1")
+        func = FunctionDecompilation(name="test", address=0x1000, decompiled_code="")
+        result = GEDMetric().compute_for_function(
+            func,
+            source_cfg=source,
+            decompiled_cfg=decompiled,
+        )
+
+        assert result.value == 1.0
+        assert result.raw_value == 0.0
+        assert result.metadata["vj_ged_raw"] == 0.0
+        assert result.metadata["isomorphic"] is False
+
+    def test_ged_vj_defaults_missing_node_roles_to_false(self, monkeypatch) -> None:
+        """Plain NetworkX nodes use the same default roles in exact and VJ paths."""
+        import math
+
+        import networkx as nx
+
+        from decbench.metrics.ged import GEDMetric
+
+        source = nx.DiGraph([(0, 1), (1, 2), (2, 3)])
+        decompiled = nx.DiGraph([(0, 1), (0, 2), (0, 3)])
+        monkeypatch.setenv("DECBENCH_NO_CACHE", "1")
+        func = FunctionDecompilation(name="test", address=0x1000, decompiled_code="")
+
+        result = GEDMetric().compute_for_function(
+            func,
+            source_cfg=source,
+            decompiled_cfg=decompiled,
+        )
+
+        assert math.isfinite(result.value)
+        assert result.value > 0.0
+        assert result.metadata["method"] == "vj_ged"
+
+    def test_accelerated_vj_ged_matches_cfgutils(self) -> None:
+        """The compiled assignment solver preserves cfgutils' VJ-GED values."""
+        import random
+
+        import networkx as nx
+        from cfgutils.similarity import vj_ged as cfgutils_vj_ged
+
+        from decbench.metrics.vj_ged import vj_ged
+
+        class CFGNode:
+            def __init__(self, index: int, *, entry: bool, exit: bool):
+                self.index = index
+                self.is_entrypoint = entry
+                self.is_exitpoint = exit
+
+        rng = random.Random(20260727)
+        for source_count in range(1, 9):
+            for decompiled_count in range(1, 9):
+                source_nodes = [
+                    CFGNode(
+                        index,
+                        entry=index == 0 and rng.random() < 0.8,
+                        exit=index == source_count - 1 and rng.random() < 0.8,
+                    )
+                    for index in range(source_count)
+                ]
+                decompiled_nodes = [
+                    CFGNode(
+                        index,
+                        entry=index == 0 and rng.random() < 0.8,
+                        exit=index == decompiled_count - 1 and rng.random() < 0.8,
+                    )
+                    for index in range(decompiled_count)
+                ]
+                source = nx.DiGraph()
+                source.add_nodes_from(source_nodes)
+                decompiled = nx.DiGraph()
+                decompiled.add_nodes_from(decompiled_nodes)
+                for left in source_nodes:
+                    for right in source_nodes:
+                        if left is not right and rng.random() < 0.2:
+                            source.add_edge(left, right)
+                for left in decompiled_nodes:
+                    for right in decompiled_nodes:
+                        if left is not right and rng.random() < 0.2:
+                            decompiled.add_edge(left, right)
+
+                assert vj_ged(source, decompiled) == cfgutils_vj_ged(
+                    source,
+                    decompiled,
+                )
+
 
 class TestTypeMatchMetric:
     """Tests for the type match metric."""

@@ -114,10 +114,7 @@ def test_update_byte_match_slice_scoped() -> None:
 
 
 def test_read_ged_overlay_covers_evaluated_empty_slices(tmp_path: Path) -> None:
-    """The evaluated-slice set unions the payload keys, the sidecar, AND the
-    reeval_ged/ checkpoint filenames — so an evaluated-but-empty slice (present in
-    the cache with no entries) still clears stale inline GED, even without a
-    sidecar (older trees). Regression guard for the 219-slice re-inflation."""
+    """Legacy checkpoint names cover evaluated-empty slices without a sidecar."""
     root = tmp_path
     (root / "ged_new.json").write_text(
         json.dumps({"O0::projA::binA::angr::f1": {"value": 0.0, "perfect": True}})
@@ -136,6 +133,21 @@ def test_read_ged_overlay_covers_evaluated_empty_slices(tmp_path: Path) -> None:
     update_ged(fd, payload, covered=covered)
     noinline = fd.groups[1]
     assert "ged" not in noinline.functions[0].values["kuna"]
+
+
+def test_read_ged_overlay_sidecar_excludes_stale_checkpoints(tmp_path: Path) -> None:
+    root = tmp_path
+    (root / "ged_new.json").write_text(
+        json.dumps({"O0::projA::binA::angr::f1": {"value": 0.0, "perfect": True}})
+    )
+    (root / "ged_new.slices.json").write_text(json.dumps(["O0::projA::binA::angr"]))
+    (root / "reeval_ged").mkdir()
+    (root / "reeval_ged" / "O2-noinline__retired__binA__phoenix.json").write_text("{}")
+
+    payload, covered = read_ged_overlay(root)
+
+    assert payload is not None
+    assert covered == {("O0", "projA", "binA", "angr")}
 
 
 def test_merge_typematch_overlay() -> None:
