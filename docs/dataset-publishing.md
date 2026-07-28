@@ -220,13 +220,14 @@ Counts come from the actual walk (do not hardcode). Config descriptions mirror
 
 ## 5. Source-CFG serialization — `pipeline_data/source_cfgs/<opt>/<project>/<stem>.json`
 
-**GED is almost purely structural** — `cfgutils.similarity.vj_ged` (the
-metric's engine) scores from graph topology (per-node parent/child counts via a
-positional `GraphCache`) **plus** each node's `is_entrypoint` / `is_exitpoint`
-flags (an entry/exit mismatch penalty); it never reads labels or any other
-attribute. So a lossless serialization is the topology plus the entry/exit node
-ids, and nothing else. Store, per binary, the `function → CFG` map the pipeline
-used:
+**GED is almost purely structural** — the metric first performs directed
+NetworkX isomorphism over graph topology plus each node's `is_entrypoint` /
+`is_exitpoint` roles. Non-isomorphic graphs within the configured size limit
+then use DecBench's compiled linear-assignment implementation of cfgutils's
+VJ-GED cost model, whose node costs use parent/child counts plus those same
+entry/exit roles; labels and other attributes are never read.
+So a lossless serialization is the topology plus the entry/exit node ids, and
+nothing else. Store, per binary, the `function → CFG` map the pipeline used:
 
 ```jsonc
 {
