@@ -1,6 +1,6 @@
 """Raw Glaurung decompiler backend (native, via the glaurung CLI).
 
-Glaurung (https://github.com/…/glaurung) is an AI-native reverse-engineering
+Glaurung (https://github.com/mjbommar/glaurung) is an AI-native reverse-engineering
 framework whose decompiler is a pure-Rust LLIR pipeline (CFG discovery → lift →
 SSA → control-flow structuring → AST lowering → expression reconstruction → DCE
 → name/arg/type recovery). Like ``kuna``, it ships as a standalone CLI, so this
@@ -35,12 +35,15 @@ a documented follow-up; Glaurung decodes ARM as Thumb by default. Structured
 ``VariableInfo`` is not emitted yet; type_match uses its C-signature text-parsing
 path over the emitted ``long name(long arg0, …)`` prototype.
 
-Locate the CLI via ``$GLAURUNG_BIN`` (an explicit path) or ``glaurung`` on
-``$PATH``.
+Locate the CLI via ``$GLAURUNG_BIN`` (an explicit path), the DecBench
+decompiler configuration, or ``glaurung`` on ``$PATH``. When no native CLI
+resolves, the backend uses the image built by
+``decbench decompiler-build glaurung``.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -55,6 +58,7 @@ from typing import Any
 from decbench.decompilers.base import Decompiler, DecompilerConfig
 from decbench.decompilers.raw import common
 from decbench.decompilers.registry import register_decompiler
+from decbench.decompilers.spec import load_versions_config, version_settings
 from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
@@ -68,6 +72,84 @@ _l = logging.getLogger(__name__)
 # function per binary, so --vas is the normal path; this is just a safety valve.
 _MAX_VAS_INLINE = 400
 
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_DOCKER_DIR = _REPO_ROOT / "docker"
+_IMAGE_REV_FILE = "/opt/glaurung.rev"
+_DEFAULT_REPO = "https://github.com/mjbommar/glaurung.git"
+_DEFAULT_REF = "master"
+_SHA = re.compile(r"^[0-9a-fA-F]{7,40}$")
+
+
+def _executable(path: Path) -> Path | None:
+    """Return ``path`` only when it names an executable file."""
+    return path if path.is_file() and os.access(path, os.X_OK) else None
+
+
+def _glaurung_bin(version: str | None = None) -> Path | None:
+    """Resolve native Glaurung with explicit configuration taking precedence."""
+    configured = os.environ.get("GLAURUNG_BIN")
+    if configured:
+        return _executable(Path(configured))
+
+    settings = [version_settings("glaurung", version)]
+    default = load_versions_config().get("glaurung")
+    if isinstance(default, dict):
+        settings.append(default)
+    for source in settings:
+        binary = source.get("binary")
+        if binary:
+            executable = _executable(Path(str(binary)).expanduser())
+            if executable is not None:
+                return executable
+
+    discovered = shutil.which("glaurung")
+    return Path(discovered) if discovered else None
+
+
+def _docker_bin() -> str | None:
+    return shutil.which("docker")
+
+
+def _image_present(image: str) -> bool:
+    """Whether ``image`` exists locally, without building or pulling it."""
+    docker = _docker_bin()
+    if not docker or not image:
+        return False
+    try:
+        process = subprocess.run(
+            [docker, "image", "inspect", image],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=60,
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    return process.returncode == 0
+
+
+def _resolve_ref(repo: str, ref: str) -> str | None:
+    """Resolve a source ref to an immutable SHA for an honest Docker rebuild."""
+    if _SHA.fullmatch(ref):
+        return ref
+    git = shutil.which("git")
+    if git is None:
+        _l.warning("glaurung: git is unavailable; cannot resolve %s", ref)
+        return None
+    try:
+        process = subprocess.run(
+            [git, "ls-remote", repo, ref],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except Exception as error:  # noqa: BLE001
+        _l.warning("glaurung: could not resolve %s in %s: %s", ref, repo, error)
+        return None
+    if process.returncode != 0 or not process.stdout.strip():
+        _l.warning("glaurung: %s does not name a ref in %s", ref, repo)
+        return None
+    return process.stdout.split()[0]
+
 
 @register_decompiler("glaurung")
 class RawGlaurungDecompiler(Decompiler):
@@ -75,44 +157,142 @@ class RawGlaurungDecompiler(Decompiler):
 
     name = "glaurung"
     display_name = "Glaurung"
+    image = "decbench/glaurung:latest"
+    dockerfile = "glaurung.Dockerfile"
 
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
-        self._payload_cache: dict[str, Any] = {}
+        self._payload_cache: dict[tuple[str, frozenset[int] | None], list[dict[str, Any]]] = {}
+        self._version_probed = False
+        self._version_value: str | None = None
 
     #
     # Locating the binary (mirrors kuna_raw's $KUNA_BIN / which)
     #
 
-    @staticmethod
-    def _glaurung_bin() -> str | None:
-        env = os.environ.get("GLAURUNG_BIN")
-        if env and Path(env).is_file():
-            return env
-        return shutil.which("glaurung")
+    @property
+    def _image(self) -> str:
+        return os.environ.get("GLAURUNG_IMAGE") or self.image
+
+    def _glaurung_bin(self) -> Path | None:
+        return _glaurung_bin(self.requested_version)
+
+    def _select_path(self) -> tuple[str, Path | None]:
+        executable = self._glaurung_bin()
+        if executable is not None:
+            return "native", executable
+        if _image_present(self._image):
+            return "docker", None
+        return "none", None
 
     #
     # Decompiler interface
     #
 
     def is_available(self) -> bool:
-        return self._glaurung_bin() is not None
+        return self._select_path()[0] != "none"
+
+    @classmethod
+    def build_image(cls, no_cache: bool = False) -> int:
+        """Build the pinned Glaurung image used when no native CLI resolves."""
+        docker = _docker_bin()
+        if docker is None:
+            raise RuntimeError("docker binary not found on PATH")
+        dockerfile = _DOCKER_DIR / cls.dockerfile
+        if not dockerfile.is_file():
+            raise FileNotFoundError(f"Dockerfile not found: {dockerfile}")
+
+        image = os.environ.get("GLAURUNG_IMAGE") or cls.image
+        repo = os.environ.get("GLAURUNG_REPO") or _DEFAULT_REPO
+        ref = os.environ.get("GLAURUNG_REF") or _DEFAULT_REF
+        resolved = _resolve_ref(repo, ref)
+        if resolved is None:
+            no_cache = True
+            _l.warning(
+                "glaurung: building without cache because %s could not be resolved",
+                ref,
+            )
+
+        command = [docker, "build", "-f", str(dockerfile), "-t", image]
+        command += ["--build-arg", f"GLAURUNG_REPO={repo}"]
+        command += ["--build-arg", f"GLAURUNG_REF={resolved or ref}"]
+        if no_cache:
+            command.append("--no-cache")
+        command.append(str(_DOCKER_DIR))
+        return subprocess.run(command).returncode
 
     def get_version(self) -> str | None:
-        exe = self._glaurung_bin()
-        if not exe:
+        if not self._version_probed:
+            self._version_value = self._probe_version()
+            self._version_probed = True
+        return self._version_value
+
+    def _probe_version(self) -> str | None:
+        configured = os.environ.get("GLAURUNG_VERSION")
+        if configured:
+            return configured
+        mode, executable = self._select_path()
+        if mode == "docker":
+            return self._docker_version()
+        if executable is None:
             return None
+
+        version = ""
         try:
             p = subprocess.run(
-                [exe, "--version"], capture_output=True, text=True, timeout=30
+                [str(executable), "--version"],
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             out = (p.stdout or p.stderr or "").strip()
             m = re.search(r"(\d+\.\d+\.\d+\S*)", out)
             if m:
-                return m.group(1)
-            return out.splitlines()[0] if out else "unknown"
+                version = m.group(1)
+            elif out:
+                version = out.splitlines()[0]
         except Exception:  # noqa: BLE001
-            return "unknown"
+            pass
+
+        try:
+            revision = subprocess.run(
+                ["git", "-C", str(executable.resolve().parent), "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if revision.returncode == 0 and revision.stdout.strip():
+                suffix = f" (glaurung {version})" if version else ""
+                return f"git-{revision.stdout.strip()}{suffix}"
+        except Exception:  # noqa: BLE001
+            pass
+        return version or self.requested_version or "unknown"
+
+    def _docker_version(self) -> str:
+        docker = _docker_bin()
+        if docker:
+            try:
+                process = subprocess.run(
+                    [
+                        docker,
+                        "run",
+                        "--rm",
+                        "--network",
+                        "none",
+                        "--entrypoint",
+                        "cat",
+                        self._image,
+                        _IMAGE_REV_FILE,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if process.returncode == 0 and process.stdout.strip():
+                    return f"git-{process.stdout.strip()}"
+            except Exception as error:  # noqa: BLE001
+                _l.debug("glaurung: could not read image revision: %s", error)
+        return self._image.rsplit(":", 1)[-1] if ":" in self._image else "unknown"
 
     def discover_functions(self, binary_path: Path) -> list[tuple[str, int]]:
         """Enumerate (name, ELF-file-space addr) for the benchmarkable functions."""
@@ -124,12 +304,8 @@ class RawGlaurungDecompiler(Decompiler):
             _l.error("glaurung-raw: discover failed on %s: %s", binary_path, e)
             return []
         text_range = common.elf_text_range(binary_path)
-        out = [
-            (str(r.get("name") or ""), int(r.get("entry_va") or 0)) for r in records
-        ]
-        out = [
-            (n, a) for (n, a) in out if not common.should_skip_function(n, a, text_range)
-        ]
+        out = [(str(r.get("name") or ""), int(r.get("entry_va") or 0)) for r in records]
+        out = [(n, a) for (n, a) in out if not common.should_skip_function(n, a, text_range)]
         return sorted(out, key=lambda x: x[1])
 
     def decompile_binary(
@@ -141,10 +317,12 @@ class RawGlaurungDecompiler(Decompiler):
         progress_path: Path | None = None,
     ) -> DecompilationResult:
         """Decompile a whole binary (one CLI invocation, load-once)."""
-        if not self.is_available():
+        run_via, _ = self._select_path()
+        if run_via == "none":
             raise RuntimeError(
                 f"Decompiler '{self.name}' is not available "
-                f"(glaurung CLI not found; set $GLAURUNG_BIN or add it to PATH)"
+                "(set GLAURUNG_BIN, install glaurung on PATH, or run "
+                f"`decbench decompiler-build {self.name}`)"
             )
 
         start = time.time()
@@ -154,7 +332,13 @@ class RawGlaurungDecompiler(Decompiler):
         timed_out = False
 
         def _meta(partial: bool) -> DecompilerMetadata:
-            extra: dict[str, Any] = {"backend": "glaurung", "via": "raw"}
+            extra: dict[str, Any] = {
+                "backend": "glaurung",
+                "via": "raw",
+                "run_via": run_via,
+            }
+            if run_via == "docker":
+                extra["image"] = self._image
             if partial:
                 extra["partial"] = True
             return DecompilerMetadata(
@@ -186,10 +370,10 @@ class RawGlaurungDecompiler(Decompiler):
         except subprocess.TimeoutExpired as e:
             timed_out = True
             _l.warning("glaurung-raw timed out on %s: %s", binary_path, e)
-            return self._error_result(binary_path, start, "timeout", timed_out=True)
+            return self._error_result(binary_path, start, "timeout", run_via, timed_out=True)
         except Exception as e:  # noqa: BLE001
             _l.error("glaurung-raw failed on %s: %s", binary_path, e)
-            return self._error_result(binary_path, start, str(e))
+            return self._error_result(binary_path, start, str(e), run_via)
 
         # 2. Index by name, filter to the benchmarkable + source-narrowed set.
         by_name = {str(r.get("name") or ""): r for r in records}
@@ -197,9 +381,7 @@ class RawGlaurungDecompiler(Decompiler):
             (
                 (n, int(r.get("entry_va") or 0))
                 for n, r in by_name.items()
-                if not common.should_skip_function(
-                    n, int(r.get("entry_va") or 0), text_range
-                )
+                if not common.should_skip_function(n, int(r.get("entry_va") or 0), text_range)
             ),
             key=lambda x: x[1],
         )
@@ -239,12 +421,35 @@ class RawGlaurungDecompiler(Decompiler):
     # glaurung CLI plumbing
     #
 
-    def _build_command(
-        self, binary_path: Path, function_names: set[int] | None
-    ) -> list[str]:
-        exe = self._glaurung_bin()
-        assert exe is not None
-        cmd = [exe, "decompile", str(binary_path), "--style", "decbench", "--format", "json"]
+    def _build_command(self, binary_path: Path, function_names: set[int] | None) -> list[str]:
+        mode, executable = self._select_path()
+        if mode == "none":
+            raise RuntimeError("no native Glaurung executable or local Docker image")
+        run_path = str(binary_path)
+        if mode == "docker":
+            docker = _docker_bin()
+            if docker is None:
+                raise RuntimeError("docker binary not found on PATH")
+            run_path = f"/in/{binary_path.name}"
+            cmd = [
+                docker,
+                "run",
+                "--rm",
+                "--network",
+                "none",
+                "--read-only",
+                "--tmpfs",
+                "/tmp:rw,noexec,nosuid,size=64m",
+                "-e",
+                "HOME=/tmp",
+                "-v",
+                f"{binary_path.resolve()}:{run_path}:ro",
+                self._image,
+            ]
+        else:
+            assert executable is not None
+            cmd = [str(executable)]
+        cmd += ["decompile", run_path, "--style", "decbench", "--format", "json"]
         # Target-scoped when we know the DWARF target set and it is small enough
         # for the command line; otherwise decompile the whole binary and narrow.
         if function_names and len(function_names) <= _MAX_VAS_INLINE:
@@ -266,14 +471,10 @@ class RawGlaurungDecompiler(Decompiler):
         try:
             os.killpg(os.getpgid(p.pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError, OSError):
-            try:
+            with contextlib.suppress(Exception):
                 p.kill()
-            except Exception:  # noqa: BLE001
-                pass
-        try:
+        with contextlib.suppress(Exception):
             p.wait(timeout=15)
-        except Exception:  # noqa: BLE001
-            pass
 
     def _timeout_seconds(self) -> float | None:
         env = os.environ.get("DECBENCH_GLAURUNG_TIMEOUT")
@@ -292,7 +493,10 @@ class RawGlaurungDecompiler(Decompiler):
         Cached per (resolved path, target-set) so ``discover_functions`` +
         ``decompile_binary`` don't pay for two loads.
         """
-        key = (str(binary_path), None if function_names is None else frozenset(function_names))
+        key = (
+            str(binary_path),
+            None if function_names is None else frozenset(function_names),
+        )
         if key in self._payload_cache:
             return self._payload_cache[key]
         cmd = self._build_command(binary_path, function_names)
@@ -349,8 +553,21 @@ class RawGlaurungDecompiler(Decompiler):
         )
 
     def _error_result(
-        self, binary_path: Path, start: float, err: str, timed_out: bool = False
+        self,
+        binary_path: Path,
+        start: float,
+        err: str,
+        run_via: str,
+        timed_out: bool = False,
     ) -> DecompilationResult:
+        extra: dict[str, Any] = {
+            "error": err,
+            "backend": "glaurung",
+            "via": "raw",
+            "run_via": run_via,
+        }
+        if run_via == "docker":
+            extra["image"] = self._image
         return DecompilationResult(
             binary_path=binary_path,
             binary_name=binary_path.stem,
@@ -360,6 +577,6 @@ class RawGlaurungDecompiler(Decompiler):
                 total_time_seconds=time.time() - start,
                 timeout_occurred=timed_out,
                 failed_functions=["all"],
-                extra={"error": err, "backend": "glaurung", "via": "raw"},
+                extra=extra,
             ),
         )

@@ -29,6 +29,7 @@ Locate the CLI via ``$GLAURUNG_BIN`` or ``glaurung`` on ``$PATH``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -105,6 +106,21 @@ class GlaurungAgenticDecompiler(Decompiler):
             return max(1, int(self._opt("fn_workers", "DECBENCH_GLAURUNG_FN_WORKERS", 1)))
         except (TypeError, ValueError):
             return 1
+
+    def _stage_timeout_ms(self) -> int:
+        try:
+            return max(
+                2000,
+                int(
+                    self._opt(
+                        "stage_timeout_ms",
+                        "DECBENCH_GLAURUNG_LLM_STAGE_TIMEOUT_MS",
+                        120000,
+                    )
+                ),
+            )
+        except (TypeError, ValueError):
+            return 120000
 
     # --- availability / version -------------------------------------------
 
@@ -270,22 +286,10 @@ class GlaurungAgenticDecompiler(Decompiler):
 
     # --- one function ------------------------------------------------------
 
-    def _explain_one(
-        self, binary_path: Path, addr: int, output_dir: Path | None
-    ) -> str | None:
+    def _explain_one(self, binary_path: Path, addr: int, output_dir: Path | None) -> str | None:
         """Run ``glaurung explain --func <addr> --format json`` once; return the
         rewritten C (``c_prototype`` + ``source``), or ``None`` on failure."""
-        exe = self._glaurung_bin()
-        assert exe is not None
-        cmd = [
-            exe,
-            "explain",
-            str(binary_path),
-            "--func",
-            str(int(addr)),
-            "--format",
-            "json",
-        ]
+        cmd = self._build_explain_command(binary_path, addr)
         env = dict(os.environ)
         env["GLAURUNG_LLM_MODEL"] = self._model()
         p = subprocess.Popen(
@@ -305,22 +309,70 @@ class GlaurungAgenticDecompiler(Decompiler):
         if self._save_traces() and output_dir is not None:
             self._write_trace(output_dir, addr, cmd, stdout, stderr)
 
-        if not (stdout or "").strip():
+        if p.returncode != 0 or not (stdout or "").strip():
             return None
         try:
             payload = json.loads(stdout)
         except json.JSONDecodeError:
             return None
-        source = payload.get("source")
-        if not source or not str(source).strip():
+        source = self._validated_source(payload, addr)
+        if source is None:
             return None
         proto = payload.get("c_prototype") or payload.get("prototype")
-        source = str(source)
         # Prepend the recovered prototype as a leading comment if the rewrite did
         # not already open with a definition (helps the type_match signature scan).
         if proto and str(proto).strip() and "(" not in source.splitlines()[0]:
             source = f"// {str(proto).strip()}\n{source}"
         return source
+
+    @staticmethod
+    def _validated_source(payload: object, addr: int) -> str | None:
+        """Accept only target-matched C whose required stages used the LLM."""
+        if not isinstance(payload, dict):
+            return None
+        entry_va = payload.get("entry_va")
+        if not isinstance(entry_va, int) or (entry_va & ~1) != (addr & ~1):
+            return None
+        if payload.get("language") != "c":
+            return None
+        stages = payload.get("stages")
+        if not isinstance(stages, dict):
+            return None
+        required = (
+            "infer_function_signature",
+            "classify_function_role",
+            "rewrite_function_idiomatic",
+        )
+        for stage_name in required:
+            stage = stages.get(stage_name)
+            if not isinstance(stage, dict) or stage.get("source") != "llm":
+                return None
+        source = payload.get("source")
+        if not isinstance(source, str) or not source.strip() or "```" in source:
+            return None
+        return source
+
+    def _build_explain_command(self, binary_path: Path, addr: int) -> list[str]:
+        """Build the audited agentic invocation for one target address."""
+        executable = self._glaurung_bin()
+        assert executable is not None
+        return [
+            executable,
+            "explain",
+            str(binary_path),
+            "--func",
+            str(int(addr)),
+            "--style",
+            "c",
+            "--fidelity",
+            "tldr",
+            "--no-layer0",
+            "--timeout-ms",
+            str(self._stage_timeout_ms()),
+            "--require-llm",
+            "--format",
+            "json",
+        ]
 
     # --- plumbing ----------------------------------------------------------
 
@@ -351,11 +403,7 @@ class GlaurungAgenticDecompiler(Decompiler):
         try:
             os.killpg(os.getpgid(p.pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError, OSError):
-            try:
+            with contextlib.suppress(Exception):
                 p.kill()
-            except Exception:  # noqa: BLE001
-                pass
-        try:
+        with contextlib.suppress(Exception):
             p.wait(timeout=15)
-        except Exception:  # noqa: BLE001
-            pass
