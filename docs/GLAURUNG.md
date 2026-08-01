@@ -1,6 +1,6 @@
 # Glaurung backends (`glaurung`, `glaurung-agentic`)
 
-Two backends for [Glaurung](https://github.com/…/glaurung), an AI-native
+Two backends for [Glaurung](https://github.com/mjbommar/glaurung), an AI-native
 reverse-engineering framework. Both live in
 `decbench/decompilers/raw/glaurung_raw.py` and `…/glaurung_agentic.py`.
 
@@ -36,7 +36,11 @@ Config (env):
 
 | var | meaning |
 |-----|---------|
-| `GLAURUNG_BIN` | explicit path to the `glaurung` CLI (else found on `$PATH`) |
+| `GLAURUNG_BIN` | explicit CLI path; invalid explicit paths fail closed |
+| `GLAURUNG_IMAGE` | raw fallback image (default `decbench/glaurung:latest`) |
+| `GLAURUNG_REPO` | source repository used by `decompiler-build` |
+| `GLAURUNG_REF` | source branch, tag, or SHA used by `decompiler-build` |
+| `GLAURUNG_VERSION` | native version label outside a Git checkout |
 | `DECBENCH_GLAURUNG_TIMEOUT` | per-binary wall-clock seconds (else `binary_timeout_seconds`) |
 | `DECBENCH_GLAURUNG_TIMEOUT_MS` | per-function analysis budget (ms) |
 | `DECBENCH_GLAURUNG_LIMIT` | `--all` fallback function cap (default 30000) |
@@ -62,18 +66,50 @@ decbench evaluate <bin> -s <src> -d glaurung-agentic@openai:gpt-5.4-mini
 which is forwarded to `explain` via `GLAURUNG_LLM_MODEL`. Requires `OPENAI_API_KEY`
 (default openai model) or `ANTHROPIC_API_KEY` (fallback / an `anthropic:*` spec)
 in the environment. Config: `DECBENCH_GLAURUNG_FN_WORKERS` (concurrency),
-`DECBENCH_GLAURUNG_LLM_TIMEOUT` (per-function seconds), `DECBENCH_GLAURUNG_SAVE_TRACES`.
+`DECBENCH_GLAURUNG_LLM_TIMEOUT` (per-function seconds),
+`DECBENCH_GLAURUNG_LLM_STAGE_TIMEOUT_MS` (per-stage budget, default 120000),
+and `DECBENCH_GLAURUNG_SAVE_TRACES`.
+
+Every invocation passes `--require-llm`. The backend accepts output only when
+the signature, role, and idiomatic-rewrite stages each report `source = llm`;
+an API outage or heuristic fallback becomes a failed function, never silently
+enters the agentic result column.
 
 ## Installing the Glaurung CLI
 
-Glaurung is a maturin project exposing a `glaurung` console script backed by a
-native Rust extension:
+The reproducible benchmark installation needs Docker only:
 
+```bash
+decbench decompiler-build glaurung
+decbench list-decompilers
+decbench run projects/sailr/bzip2.toml -O O0 -d glaurung
 ```
-pip install "git+https://github.com/…/glaurung@<tag>"   # needs a Rust toolchain at build time
-# or install a prebuilt manylinux wheel (no toolchain needed), then:
+
+`decompiler-build` resolves `GLAURUNG_REF` to an immutable SHA before building
+`docker/glaurung.Dockerfile`. The multi-stage image compiles Glaurung's Rust
+extension from that checkout using its committed `uv.lock`, copies only the
+runtime environment into the final image, and records the source revision at
+`/opt/glaurung.rev`. A raw run mounts the target binary read-only, disables
+container networking, and does not forward API credentials.
+
+Developers may instead use a native Glaurung working tree. Glaurung is a
+maturin project exposing a `glaurung` console script backed by a native Rust
+extension:
+
+```bash
+git clone https://github.com/mjbommar/glaurung
+cd glaurung
+uv sync --frozen
 export GLAURUNG_BIN="$(command -v glaurung)"
 ```
+
+Selection is native first and container second. Set `GLAURUNG_BIN` explicitly
+when benchmarking a working tree; its value wins outright, including when it
+is invalid, so a typo cannot silently benchmark a stale image.
+
+The container is deliberately raw-only. `glaurung-agentic` runs externally
+with the contributor's API credentials against DecBench's frozen 250-function
+sample kit; credentials are never built into or forwarded to the raw image.
 
 ## Scope / limitations (v1)
 

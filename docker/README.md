@@ -1,13 +1,14 @@
 # DecBench docker images
 
-This directory is decbench's single Docker home. Three images are the
-**external-CLI** decompiler backends in `decbench/decompilers/dockerized.py`:
+This directory is decbench's single Docker home. Four images package
+**external-CLI** decompiler backends:
 
 | backend  | spec id  | image tag                | Dockerfile           | native?              |
 |----------|----------|--------------------------|----------------------|----------------------|
 | RetDec   | `retdec` | `decbench/retdec:latest` | `retdec.Dockerfile`  | no (Docker only)     |
 | Reko     | `reko`   | `decbench/reko:latest`   | `reko.Dockerfile`    | no (Docker only)     |
 | r2dec    | `r2dec`  | `decbench/r2dec:latest`  | `r2dec.Dockerfile`   | **yes** (radare2)    |
+| Glaurung | `glaurung` | `decbench/glaurung:latest` | `glaurung.Dockerfile` | **yes** |
 
 Unlike the canonical raw backends (angr/ghidra/ida/binja — declib-free drivers
 of each tool's own API, `decbench/decompilers/raw/`), these ship as standalone
@@ -39,6 +40,7 @@ Build explicitly with the CLI (which calls `DockerizedDecompiler.build_image()`)
 decbench decompiler-build retdec
 decbench decompiler-build reko
 decbench decompiler-build r2dec
+decbench decompiler-build glaurung
 ```
 
 `build_image()` runs `docker build -f docker/<dockerfile> -t <image> docker/`
@@ -85,6 +87,16 @@ tolerant); `out.json` is a JSON list of `{"addr", "baddr", "name", "code"}`
 entries — one per function, keyed by radare2's own analysis addresses, so
 nothing is split by symbol.
 
+### Glaurung
+
+The raw Glaurung backend remains address-scoped rather than whole-program. It
+prefers `GLAURUNG_BIN`, DecBench configuration, or `$PATH`, then falls back to
+the image. `decompiler-build` resolves `GLAURUNG_REF` to an immutable source
+commit, and the image records it at `/opt/glaurung.rev`. At runtime the backend
+mounts only the input binary, read-only, disables networking, and captures the
+same JSON the native CLI emits. The image contains no credentials and is never
+used for `glaurung-agentic`.
+
 ## Other images (not decompiler backends)
 
 ### decbench-compile (`compile.Dockerfile`)
@@ -111,7 +123,8 @@ manually (no `decompiler-build` hook); see `docs/decompilers.md`.
 
 ## Files in this directory
 
-- `retdec.Dockerfile`, `reko.Dockerfile`, `r2dec.Dockerfile` — the decompiler
+- `retdec.Dockerfile`, `reko.Dockerfile`, `r2dec.Dockerfile`,
+  `glaurung.Dockerfile` — the decompiler
   backend images.
 - `compile.Dockerfile` — the `decbench-compile` cross-compile image (see above).
 - `llm-agents.Dockerfile` — the codex/claude-code container mode (see above).
