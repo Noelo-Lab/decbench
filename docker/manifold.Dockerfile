@@ -1,8 +1,18 @@
 # Manifold decompiler image for decbench.
 #
-# Build (from repo root or docker/):
+# Build:
+#   decbench decompiler-build manifold
+#
+# Prefer that over a bare `docker build`. Docker keys the `git clone` layer on
+# the command string, which does not change when the branch moves -- so
+#
 #   docker build -f docker/manifold.Dockerfile -t decbench/manifold:latest docker/
-#   # or simply:  decbench decompiler-build manifold
+#
+# re-run after manifold gains commits reuses the cached clone and silently
+# rebuilds the SAME revision, in about a second. `decompiler-build` resolves
+# MANIFOLD_REF to a SHA and passes it as the build arg, so the clone layer is
+# invalidated exactly when upstream moved and stays cached when it did not. By
+# hand, pass the SHA yourself (`--build-arg MANIFOLD_REF=<sha>`) or --no-cache.
 #
 # Run (decbench's ManifoldDecompiler._run_docker does this):
 #   docker run --rm \

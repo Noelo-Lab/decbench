@@ -390,6 +390,49 @@ def test_build_image_builds_the_dockerfile_with_the_docker_dir_as_context(
     assert Path(build[-1]) == dockerfile.parent
 
 
+def test_build_passes_a_resolved_sha_so_a_rebuild_is_not_stale(
+    monkeypatch, fake_docker: Path, tmp_path: Path
+) -> None:
+    """The whole point of resolving the ref: docker keys the clone layer on the
+    command string, so a bare `master` rebuilds the revision already cached."""
+    monkeypatch.setenv("MANIFOLD_REF", "master")
+    calls: list[list[str]] = []
+
+    def fake_ls_remote(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "fb5b1bfdeadbeef\trefs/heads/master\n", "")
+
+    import decbench.decompilers.raw.manifold_raw as mr
+
+    monkeypatch.setattr(mr, "_resolve_ref", lambda repo, ref: "fb5b1bfdeadbeef")
+    assert ManifoldDecompiler.build_image() == 0
+
+    build = next(c for c in _docker_calls(fake_docker) if c[0] == "build")
+    assert "MANIFOLD_REF=fb5b1bfdeadbeef" in build, "must pin the SHA, not the branch name"
+    assert "--no-cache" not in build, "an unchanged upstream should still hit the cache"
+
+
+def test_build_falls_back_to_no_cache_when_the_ref_cannot_be_resolved(
+    monkeypatch, fake_docker: Path
+) -> None:
+    """Offline or a bad ref: a slow honest build beats a fast stale one."""
+    import decbench.decompilers.raw.manifold_raw as mr
+
+    monkeypatch.setattr(mr, "_resolve_ref", lambda repo, ref: None)
+    assert ManifoldDecompiler.build_image() == 0
+
+    build = next(c for c in _docker_calls(fake_docker) if c[0] == "build")
+    assert "--no-cache" in build
+
+
+def test_resolve_ref_passes_through_a_sha_without_touching_the_network(monkeypatch) -> None:
+    import decbench.decompilers.raw.manifold_raw as mr
+
+    monkeypatch.setattr(mr.shutil, "which", lambda n: None)  # no git available
+    assert mr._resolve_ref("https://example/repo", "fb5b1bf") == "fb5b1bf"
+    assert mr._resolve_ref("https://example/repo", "master") is None
+
+
 def test_registry_backend_exposes_the_build_hook() -> None:
     """The CLI finds the builder by getattr, so it must live on the instance."""
     assert callable(getattr(DecompilerRegistry.get("manifold"), "build_image", None))

@@ -71,6 +71,13 @@ _DOCKER_DIR = _REPO_ROOT / "docker"
 # Path inside the image holding the manifold revision it was built from.
 _IMAGE_REV_FILE = "/opt/manifold.rev"
 
+# Upstream manifold, and the revision the image builds. Both mirror the
+# Dockerfile's ARG defaults and are overridable by the matching env vars.
+_DEFAULT_REPO = "https://github.com/changliu98/manifold"
+_DEFAULT_REF = "master"
+
+_SHA = re.compile(r"^[0-9a-fA-F]{7,40}$")
+
 
 def _executable(path: Path) -> Path | None:
     """``path`` if it is a runnable file, else None."""
@@ -124,6 +131,40 @@ def _run_env() -> dict[str, str]:
 
 def _docker_bin() -> str | None:
     return shutil.which("docker")
+
+
+def _resolve_ref(repo: str, ref: str) -> str | None:
+    """``ref`` resolved to a commit SHA against ``repo``, or None if it cannot be.
+
+    This is what keeps a rebuild honest. Docker keys the ``RUN git clone`` layer
+    on the command string, which does not change when the branch moves, so
+    rebuilding against a bare ``master`` reuses the cached clone and silently
+    ships the revision the image already had. Passing the resolved SHA as the
+    build arg changes that layer's key exactly when upstream moved -- and leaves
+    it cached, along with the expensive apt/rust/z3 layers, when it did not.
+    """
+    if _SHA.match(ref):
+        return ref
+    git = shutil.which("git")
+    if not git:
+        _l.warning(
+            "manifold: git not found; cannot resolve %s, rebuild may reuse a stale clone", ref
+        )
+        return None
+    try:
+        proc = subprocess.run(
+            [git, "ls-remote", repo, ref],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except Exception as e:  # noqa: BLE001
+        _l.warning("manifold: could not reach %s to resolve %s: %s", repo, ref, e)
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip():
+        _l.warning("manifold: %s does not name a ref in %s", ref, repo)
+        return None
+    return proc.stdout.split()[0]
 
 
 def _image_present(image: str) -> bool:
@@ -429,6 +470,11 @@ class ManifoldDecompiler(Decompiler):
         decompiler-build manifold`` picks this up through its ``build_image``
         hook. The build clones and compiles manifold from source, so it takes
         several minutes.
+
+        ``MANIFOLD_REPO`` / ``MANIFOLD_REF`` select what is built. The ref is
+        resolved to a SHA first, so re-running this after manifold gains commits
+        actually rebuilds instead of reusing the cached clone -- see
+        :func:`_resolve_ref`.
         """
         docker = _docker_bin()
         if not docker:
@@ -437,7 +483,18 @@ class ManifoldDecompiler(Decompiler):
         if not dockerfile_path.is_file():
             raise FileNotFoundError(f"Dockerfile not found: {dockerfile_path}")
         image = os.environ.get("MANIFOLD_IMAGE") or cls.image
+        repo = os.environ.get("MANIFOLD_REPO") or _DEFAULT_REPO
+        ref = os.environ.get("MANIFOLD_REF") or _DEFAULT_REF
+        resolved = _resolve_ref(repo, ref)
+        if resolved is None:
+            # Better a slow honest build than a fast stale one.
+            _l.warning("manifold: building %s with --no-cache (could not resolve %s)", image, ref)
+            no_cache = True
+        else:
+            _l.info("manifold: %s resolves to %s", ref, resolved)
         cmd = [docker, "build", "-f", str(dockerfile_path), "-t", image]
+        cmd += ["--build-arg", f"MANIFOLD_REPO={repo}"]
+        cmd += ["--build-arg", f"MANIFOLD_REF={resolved or ref}"]
         if no_cache:
             cmd.append("--no-cache")
         cmd.append(str(_DOCKER_DIR))
