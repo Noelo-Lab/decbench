@@ -8,12 +8,25 @@ one process call decompiles the whole binary and writes a single ``.c`` file.
 
 This backend therefore:
 
-* shells out to the ``manifold`` executable once per binary (with a timeout),
+* runs manifold once per binary (with a timeout),
 * splits the emitted translation unit into per-function definitions with a
   brace/string-aware scanner, and
 * recovers each function's address from the ``FUN_<hex>`` names manifold gives
   functions in a stripped binary (falling back to the ELF symbol table when the
   binary still carries symbols).
+
+That single run happens over one of two paths, tried in this order:
+
+* **native** -- a ``manifold`` executable resolved from ``MANIFOLD_BIN``, the
+  decompilers config, or ``$PATH``;
+* **Docker** -- the ``decbench/manifold:latest`` image built from
+  ``docker/manifold.Dockerfile`` by ``decbench decompiler-build manifold``,
+  which compiles manifold (Rust + a pinned Z3) from source so a host needs
+  nothing installed but Docker.
+
+Both paths write the same whole-program ``.c``, so everything downstream of the
+run is shared. Native wins when both exist: it avoids the container round-trip
+and lets a developer benchmark a working tree.
 
 Addresses are reported in **ELF-file space**, matching the other raw backends:
 manifold reads the ELF's own virtual addresses, so its addresses are already in
@@ -50,6 +63,13 @@ from decbench.models.decompilation import (
 _l = logging.getLogger(__name__)
 
 _FUN_NAME = re.compile(r"^FUN_([0-9a-fA-F]+)$")
+
+# manifold_raw.py -> raw -> decompilers -> decbench -> repo root.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_DOCKER_DIR = _REPO_ROOT / "docker"
+
+# Path inside the image holding the manifold revision it was built from.
+_IMAGE_REV_FILE = "/opt/manifold.rev"
 
 
 def _executable(path: Path) -> Path | None:
@@ -100,6 +120,32 @@ def _run_env() -> dict[str, str]:
     if threads:
         env["RAYON_NUM_THREADS"] = threads
     return env
+
+
+def _docker_bin() -> str | None:
+    return shutil.which("docker")
+
+
+def _image_present(image: str) -> bool:
+    """True iff ``docker image inspect <image>`` succeeds.
+
+    Never builds: building manifold is a multi-minute side effect, so it stays
+    an explicit ``decbench decompiler-build manifold``, as for the other
+    container-backed backends.
+    """
+    docker = _docker_bin()
+    if not docker or not image:
+        return False
+    try:
+        proc = subprocess.run(
+            [docker, "image", "inspect", image],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=60,
+        )
+        return proc.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _strip_comments_and_strings(text: str) -> str:
@@ -338,19 +384,79 @@ def _symbol_addresses(binary_path: Path) -> dict[str, int]:
 
 @register_decompiler("manifold")
 class ManifoldDecompiler(Decompiler):
-    """Manifold driven as a one-shot whole-binary subprocess."""
+    """Manifold driven as a one-shot whole-binary run, natively or in Docker."""
 
     name = "manifold"
     display_name = "Manifold"
 
+    #: Docker image built from :attr:`dockerfile`, used when no native manifold
+    #: executable resolves. ``MANIFOLD_IMAGE`` overrides the tag.
+    image = "decbench/manifold:latest"
+    #: Dockerfile basename under ``docker/`` that builds :attr:`image`.
+    dockerfile = "manifold.Dockerfile"
+
+    #: Memo for :meth:`get_version`. Probing the Docker path costs a container
+    #: spawn, and results ask for the version once per binary.
+    _version_probed: bool = False
+    _version_value: str | None = None
+
+    @property
+    def _image(self) -> str:
+        return os.environ.get("MANIFOLD_IMAGE") or self.image
+
+    def _select_path(self) -> tuple[str, Path | None]:
+        """``("native", exe)``, ``("docker", None)``, or ``("none", None)``.
+
+        Native first: it skips the container round-trip and lets a developer
+        benchmark a working tree without rebuilding an image.
+        """
+        exe = _manifold_bin(self.requested_version)
+        if exe is not None:
+            return "native", exe
+        if _image_present(self._image):
+            return "docker", None
+        return "none", None
+
     def is_available(self) -> bool:
-        return _manifold_bin(self.requested_version) is not None
+        return self._select_path()[0] != "none"
+
+    @classmethod
+    def build_image(cls, no_cache: bool = False) -> int:
+        """Build the manifold image; returns the ``docker build`` exit code.
+
+        Runs ``docker build -f docker/manifold.Dockerfile -t <image> docker/``,
+        the same shape as the container-backed backends, so ``decbench
+        decompiler-build manifold`` picks this up through its ``build_image``
+        hook. The build clones and compiles manifold from source, so it takes
+        several minutes.
+        """
+        docker = _docker_bin()
+        if not docker:
+            raise RuntimeError("docker binary not found on PATH")
+        dockerfile_path = _DOCKER_DIR / cls.dockerfile
+        if not dockerfile_path.is_file():
+            raise FileNotFoundError(f"Dockerfile not found: {dockerfile_path}")
+        image = os.environ.get("MANIFOLD_IMAGE") or cls.image
+        cmd = [docker, "build", "-f", str(dockerfile_path), "-t", image]
+        if no_cache:
+            cmd.append("--no-cache")
+        cmd.append(str(_DOCKER_DIR))
+        _l.info("Building %s: %s", image, " ".join(cmd))
+        return subprocess.run(cmd).returncode
 
     def get_version(self) -> str | None:
+        if not self._version_probed:
+            self._version_value = self._probe_version()
+            self._version_probed = True
+        return self._version_value
+
+    def _probe_version(self) -> str | None:
         env = os.environ.get("MANIFOLD_VERSION")
         if env:
             return env
-        exe = _manifold_bin(self.requested_version)
+        mode, exe = self._select_path()
+        if mode == "docker":
+            return self._docker_version()
         if exe is None:
             return None
         # No --version flag; identify the build by the revision it was built from.
@@ -367,6 +473,60 @@ class ManifoldDecompiler(Decompiler):
         except Exception:  # noqa: BLE001
             pass
         return self.requested_version or "unknown"
+
+    def _docker_version(self) -> str | None:
+        """The revision baked into the image, as the same ``git-<rev>`` string a
+        native run reports. Falls back to the image tag if the file is absent."""
+        docker = _docker_bin()
+        image = self._image
+        if docker:
+            try:
+                proc = subprocess.run(
+                    [docker, "run", "--rm", "--entrypoint", "cat", image, _IMAGE_REV_FILE],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if proc.returncode == 0 and proc.stdout.strip():
+                    return f"git-{proc.stdout.strip()}"
+            except Exception as e:  # noqa: BLE001
+                _l.debug("manifold: could not read %s from %s: %s", _IMAGE_REV_FILE, image, e)
+        return image.rsplit(":", 1)[-1] if ":" in image else "unknown"
+
+    def _run_docker(
+        self,
+        binary_path: Path,
+        work_dir: Path,
+        out_name: str,
+        timeout_s: float,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run manifold in its image: binary read-only at ``/in``, ``work_dir``
+        read-write at ``/work``, output written to ``/work/<out_name>``.
+
+        Same mount layout the retdec/reko/r2dec images use. It is spelled out
+        here rather than reused from ``dockerized.py`` because that module
+        imports this package, so the reverse import would be a cycle.
+        """
+        docker = _docker_bin()
+        if not docker:
+            raise RuntimeError("docker binary not found on PATH")
+        cmd = [
+            docker,
+            "run",
+            "--rm",
+            "-v",
+            f"{binary_path.resolve()}:/in/{binary_path.name}:ro",
+            "-v",
+            f"{work_dir.resolve()}:/work",
+        ]
+        # Cap the container's rayon pool exactly as MANIFOLD_THREADS caps a
+        # native run, so N binaries in parallel do not each grab every core.
+        threads = os.environ.get("MANIFOLD_THREADS")
+        if threads:
+            cmd += ["-e", f"RAYON_NUM_THREADS={threads}"]
+        cmd += [self._image, f"/in/{binary_path.name}", f"/work/{out_name}"]
+        _l.debug("manifold docker run: %s", " ".join(cmd))
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
 
     def discover_functions(self, binary_path: Path) -> list[tuple[str, int]]:
         result = self.decompile_binary(binary_path)
@@ -387,9 +547,13 @@ class ManifoldDecompiler(Decompiler):
         manifold has no per-function entry point, so the narrowing is applied to
         the emitted functions rather than to the work.
         """
-        exe = _manifold_bin(self.requested_version)
-        if exe is None:
-            raise RuntimeError("Decompiler 'manifold' is not available (set MANIFOLD_BIN)")
+        mode, exe = self._select_path()
+        if mode == "none":
+            raise RuntimeError(
+                "Decompiler 'manifold' is not available (set MANIFOLD_BIN to a "
+                f"manifold executable, or run `decbench decompiler-build {self.name}` "
+                f"to build the {self._image} image)"
+            )
 
         start_time = time.time()
         elf_base = common.elf_min_vaddr(binary_path)
@@ -397,13 +561,19 @@ class ManifoldDecompiler(Decompiler):
         timeout_s = self.config.binary_timeout_seconds
 
         def _meta(failed: list[str], extra: dict[str, Any]) -> DecompilerMetadata:
+            # Stop the clock before probing the version: on the Docker path that
+            # probe is a container spawn, which is not decompilation time.
+            elapsed = time.time() - start_time
+            run_via: dict[str, Any] = {"run_via": mode}
+            if mode == "docker":
+                run_via["image"] = self._image
             return DecompilerMetadata(
                 decompiler_name=self.id,
                 decompiler_version=self.get_version(),
-                total_time_seconds=time.time() - start_time,
+                total_time_seconds=elapsed,
                 timeout_occurred=bool(extra.get("timeout")),
                 failed_functions=failed,
-                extra={"backend": "manifold", "via": "raw", **extra},
+                extra={"backend": "manifold", "via": "raw", **run_via, **extra},
             )
 
         def _error(msg: str, timed_out: bool = False) -> DecompilationResult:
@@ -416,16 +586,20 @@ class ManifoldDecompiler(Decompiler):
             )
 
         with tempfile.TemporaryDirectory(prefix="manifold-dec-") as tmp:
+            # The container writes into this same directory (bind-mounted at
+            # /work), so both paths read the result back from one place.
             out_c = Path(tmp) / f"{binary_path.stem}.c"
-            cmd = [str(exe), str(binary_path), str(out_c)]
             try:
-                proc = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout_s,
-                    env=_run_env(),
-                )
+                if mode == "docker":
+                    proc = self._run_docker(binary_path, Path(tmp), out_c.name, timeout_s)
+                else:
+                    proc = subprocess.run(
+                        [str(exe), str(binary_path), str(out_c)],
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout_s,
+                        env=_run_env(),
+                    )
             except subprocess.TimeoutExpired:
                 return _error(f"timeout after {timeout_s}s", timed_out=True)
             except Exception as e:  # noqa: BLE001
