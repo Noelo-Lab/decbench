@@ -340,13 +340,15 @@ class GlaurungAgenticDecompiler(Decompiler):
             return None
         required = (
             "infer_function_signature",
-            "classify_function_role",
             "rewrite_function_idiomatic",
         )
         for stage_name in required:
             stage = stages.get(stage_name)
             if not isinstance(stage, dict) or stage.get("source") != "llm":
                 return None
+        role = stages.get("classify_function_role")
+        if not isinstance(role, dict) or role.get("source") not in {"llm", "heuristic"}:
+            return None
         source = payload.get("source")
         if not isinstance(source, str) or not source.strip() or "```" in source:
             return None

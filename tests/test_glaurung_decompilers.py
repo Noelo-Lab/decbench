@@ -300,6 +300,9 @@ def test_agentic_payload_requires_observed_llm_provenance() -> None:
 
     assert dec._validated_source(payload, 0x8350) == payload["source"]
 
+    payload["stages"]["classify_function_role"] = {"source": "heuristic"}
+    assert dec._validated_source(payload, 0x8350) == payload["source"]
+
     payload["stages"]["rewrite_function_idiomatic"] = {"source": "heuristic"}
     assert dec._validated_source(payload, 0x8350) is None
 

@@ -71,9 +71,11 @@ in the environment. Config: `DECBENCH_GLAURUNG_FN_WORKERS` (concurrency),
 and `DECBENCH_GLAURUNG_SAVE_TRACES`.
 
 Every invocation passes `--require-llm`. The backend accepts output only when
-the signature, role, and idiomatic-rewrite stages each report `source = llm`;
-an API outage or heuristic fallback becomes a failed function, never silently
-enters the agentic result column.
+the signature and idiomatic-rewrite stages each report `source = llm`. Role
+classification may report `heuristic` because that stage intentionally skips
+an API call when its deterministic classifier is already at least 0.70
+confident; errors and API fallbacks still fail closed rather than silently
+entering the agentic result column.
 
 ## Installing the Glaurung CLI
 
