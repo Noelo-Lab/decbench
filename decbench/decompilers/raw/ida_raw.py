@@ -120,7 +120,8 @@ class RawIDADecompiler(Decompiler):
 
         start_time = time.time()
         elf_base = common.elf_min_vaddr(binary_path)
-        text_range = common.elf_text_range(binary_path)
+        text_range = common.elf_text_ranges(binary_path)
+        addr_targets = common.addr_targets_of(function_names)
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
         failed_functions: list[str] = []
@@ -154,7 +155,7 @@ class RawIDADecompiler(Decompiler):
             if not ida_hexrays.init_hexrays_plugin():
                 raise RuntimeError("Hex-Rays decompiler not available")
             try:
-                enumerated = self._enumerate(elf_base, text_range)
+                enumerated = self._enumerate(elf_base, text_range, addr_targets)
                 if functions is not None:
                     requested = {n for (n, _a) in functions}
                     enumerated = [(n, a) for (n, a) in enumerated if n in requested]
@@ -220,7 +221,8 @@ class RawIDADecompiler(Decompiler):
     def _enumerate(
         self,
         elf_base: int,
-        text_range: tuple[int, int] | None,
+        text_range: common.TextRanges,
+        addr_targets: set[int] | None = None,
     ) -> list[tuple[str, int]]:
         """Enumerate (name, ELF-space addr) for benchmarkable functions.
 
@@ -243,7 +245,7 @@ class RawIDADecompiler(Decompiler):
                 continue
             name = ida_name.get_ea_name(ea) or ""
             file_addr = (int(ea) - image_base) + elf_base
-            if common.should_skip_function(name, file_addr, text_range):
+            if common.should_skip_function(name, file_addr, text_range, addr_targets):
                 continue
             out.append((name, file_addr))
         return sorted(out, key=lambda x: x[1])

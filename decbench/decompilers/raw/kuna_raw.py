@@ -111,7 +111,8 @@ class RawKunaDecompiler(Decompiler):
             )
 
         start = time.time()
-        text_range = common.elf_text_range(binary_path)
+        text_range = common.elf_text_ranges(binary_path)
+        addr_targets = common.addr_targets_of(function_names)
         decompiled: dict[str, FunctionDecompilation] = {}
         failed: list[str] = []
         timed_out = False
@@ -158,7 +159,9 @@ class RawKunaDecompiler(Decompiler):
             (
                 (n, int(r.get("address") or 0))
                 for n, r in records.items()
-                if not common.should_skip_function(n, int(r.get("address") or 0), text_range)
+                if not common.should_skip_function(
+                    n, int(r.get("address") or 0), text_range, addr_targets
+                )
             ),
             key=lambda x: x[1],
         )

@@ -64,43 +64,12 @@ _l = logging.getLogger(__name__)
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DOCKER_DIR = _REPO_ROOT / "docker"
 
-_SKIP_NAMES = frozenset(
-    {
-        "_start",
-        "__libc_start_main",
-        "__libc_csu_init",
-        "__libc_csu_fini",
-        "_init",
-        "_fini",
-        "__do_global_dtors_aux",
-        "register_tm_clones",
-        "deregister_tm_clones",
-        "frame_dummy",
-        "__libc_start_call_main",
-        "_dl_relocate_static_pie",
-        "__gmon_start__",
-        "__stack_chk_fail",
-    }
-)
-
-_SKIP_PREFIXES = ("thunk_", "j_", "__imp_", ".plt", "_dl_")
-
-
-def _elf_text_range(binary_path: Path) -> tuple[int, int] | None:
-    """[start, end) virtual-address range of the ``.text`` section, or None."""
-    try:
-        from elftools.elf.elffile import ELFFile
-
-        with open(binary_path, "rb") as f:
-            elf = ELFFile(f)
-            text = elf.get_section_by_name(".text")
-            if text is None:
-                return None
-            start = text["sh_addr"]
-            return (start, start + text["sh_size"])
-    except Exception as e:  # noqa: BLE001
-        _l.debug("Failed to read .text range for %s: %s", binary_path, e)
-        return None
+#: Back-compat aliases. The name filter, the section filter, and the
+#: DWARF-target exemption all live in ``raw.common`` now — ONE rule for every
+#: backend (see :func:`raw_common.should_skip_function`).
+_SKIP_NAMES = raw_common.SKIP_NAMES
+_SKIP_PREFIXES = raw_common.SKIP_PREFIXES
+_elf_text_range = raw_common.elf_text_ranges
 
 
 def elf_function_symbols(binary_path: Path) -> list[tuple[str, int]]:
@@ -108,7 +77,8 @@ def elf_function_symbols(binary_path: Path) -> list[tuple[str, int]]:
 
     Addresses are in **ELF file space** (``st_value``), which matches DWARF and
     the declib-backed decompilers. CRT/compiler helpers, import thunks, and
-    anything outside ``.text`` are filtered out. Returned sorted by address.
+    anything outside the ``.text`` family are filtered out. Returned sorted by
+    address.
     """
     try:
         from elftools.elf.elffile import ELFFile
@@ -117,7 +87,7 @@ def elf_function_symbols(binary_path: Path) -> list[tuple[str, int]]:
         _l.debug("pyelftools unavailable: %s", e)
         return []
 
-    text_range = _elf_text_range(binary_path)
+    text_range = raw_common.elf_text_ranges(binary_path)
     out: dict[str, int] = {}
     try:
         with open(binary_path, "rb") as f:
@@ -132,12 +102,7 @@ def elf_function_symbols(binary_path: Path) -> list[tuple[str, int]]:
                     name = sym.name or ""
                     if not addr or not name:
                         continue
-                    if name in _SKIP_NAMES:
-                        continue
-                    if text_range is not None:
-                        if not (text_range[0] <= addr < text_range[1]):
-                            continue
-                    elif name.startswith(_SKIP_PREFIXES):
+                    if raw_common.should_skip_function(name, addr, text_range):
                         continue
                     out.setdefault(name, addr)
     except Exception as e:  # noqa: BLE001
@@ -553,33 +518,12 @@ def _r2_bare_name(name: str) -> str:
     return name.rsplit(".", 1)[-1] if name else name
 
 
-def _addr_targets_of(function_names: set[int] | set[str] | None) -> set[int]:
-    """The int (ELF-file-space) addresses in the driver's function filter."""
-    if not function_names:
-        return set()
-    return {int(x) for x in function_names if isinstance(x, int) and not isinstance(x, bool)}
-
-
-def _skip_r2_function(
-    bare_name: str,
-    file_addr: int,
-    text_range: tuple[int, int] | None,
-    addr_targets: set[int] | None,
-) -> bool:
-    """Whether to drop an r2-discovered function, honouring the source targets.
-
-    A function whose address is one of ``addr_targets`` (the DWARF ``low_pc``
-    source functions the driver asked for) is a VERIFIED real function and is
-    always kept: the ``.text`` heuristic behind :func:`should_skip_function`
-    misfires on binaries with the code split across multiple executable
-    sections (e.g. u-boot's tiny ``.text`` + 486 KB ``.text_rest``, freertos),
-    where the real functions live outside the one detected ``.text`` and would
-    otherwise be dropped — the exact reason r2dec scored 0 on those ARM targets.
-    Non-target functions still go through the normal filter.
-    """
-    if addr_targets and raw_common._addr_matches(file_addr, addr_targets):
-        return False
-    return raw_common.should_skip_function(bare_name, file_addr, text_range)
+#: Back-compat aliases for what used to be r2dec-only logic. The DWARF-target
+#: exemption these implemented — a function whose address is one the driver
+#: asked for is a VERIFIED real function and is kept whatever section it landed
+#: in — is now part of the shared filter, so every backend gets it.
+_addr_targets_of = raw_common.addr_targets_of
+_skip_r2_function = raw_common.should_skip_function
 
 
 def _func_ident_in_code(code: str) -> str | None:
@@ -736,7 +680,7 @@ class R2DecDecompiler(DockerizedDecompiler):
     def _discover(
         r: Any,
         elf_base: int,
-        text_range: tuple[int, int] | None,
+        text_range: raw_common.TextRanges,
         baddr: int,
         addr_targets: set[int] | None = None,
     ) -> list[tuple[str, int, int]]:
@@ -744,10 +688,11 @@ class R2DecDecompiler(DockerizedDecompiler):
 
         Uses radare2's ``aflj`` (function list). ``file_addr`` is ELF-file space
         (``r2_addr - baddr + elf_base``). Imports/PLT/reloc stubs, the entrypoint
-        alias, CRT helpers, and anything outside ``.text`` are dropped — EXCEPT a
-        function whose address is one of ``addr_targets`` (the driver's DWARF
-        ``low_pc`` source set), which is a verified real function and is kept
-        regardless of the ``.text`` heuristic (see :func:`_skip_r2_function`).
+        alias, CRT helpers, and anything outside the ``.text`` family are dropped
+        — EXCEPT a function whose address is one of ``addr_targets`` (the
+        driver's DWARF ``low_pc`` source set), which is a verified real function
+        and is kept regardless of the section heuristic (see
+        :func:`raw_common.should_skip_function`).
         """
         funcs = r.cmdj("aflj") or []
         out: list[tuple[str, int, int]] = []
@@ -913,7 +858,7 @@ class R2DecDecompiler(DockerizedDecompiler):
 
         start = time.time()
         elf_base = raw_common.elf_min_vaddr(binary_path)
-        text_range = raw_common.elf_text_range(binary_path)
+        text_range = raw_common.elf_text_ranges(binary_path)
         decompiled: dict[str, FunctionDecompilation] = {}
         failed: list[str] = []
         used_cmd = "pdc"
@@ -994,7 +939,7 @@ class R2DecDecompiler(DockerizedDecompiler):
             )
         start = time.time()
         elf_base = raw_common.elf_min_vaddr(binary_path)
-        text_range = raw_common.elf_text_range(binary_path)
+        text_range = raw_common.elf_text_ranges(binary_path)
 
         addr_targets: list[int] | None = None
         ints: set[int] = set()

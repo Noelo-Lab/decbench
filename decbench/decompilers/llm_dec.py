@@ -456,7 +456,7 @@ class _AgentDecompiler(Decompiler):
         try:
             from decbench.decompilers.dockerized import elf_function_symbols
 
-            text_range = common.elf_text_range(binary_path)
+            text_range = common.elf_text_ranges(binary_path)
             syms = [
                 (n, a)
                 for n, a in elf_function_symbols(binary_path)
