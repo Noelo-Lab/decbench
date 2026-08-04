@@ -1005,7 +1005,7 @@ def download(config, dest, repo_path, include, revision) -> None:
 @main.command("decompiler-build")
 @click.argument("name")
 def decompiler_build(name) -> None:
-    """Build the Docker image for a dockerized decompiler (reko/retdec/r2dec)."""
+    """Build the Docker image for a decompiler (reko/retdec/r2dec/manifold)."""
     from rich.console import Console
 
     import decbench.decompilers  # noqa: F401  (register backends)

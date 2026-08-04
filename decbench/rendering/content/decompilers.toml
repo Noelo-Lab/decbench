@@ -73,6 +73,13 @@ license = "open-source"
 logo = true
 
 [[decompiler]]
+id = "manifold"
+display_name = "Manifold"
+url = "https://github.com/changliu98/manifold"
+license = "open-source"
+logo = true
+
+[[decompiler]]
 id = "codex"
 display_name = "Codex"
 url = "https://openai.com/codex/"
