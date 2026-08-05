@@ -43,7 +43,9 @@ from decbench.pipeline.evaluate import evaluate_project  # noqa: E402
 from decbench.pipeline.executor import PipelineConfig, PipelineExecutor  # noqa: E402
 from decbench.results_store import PROJECT_DIRS  # noqa: F401,E402
 from decbench.results_store import gather_project_tomls as gather_tomls
+from decbench.utils import binfmt  # noqa: E402
 from decbench.utils.cfg import extract_cfgs_from_source
+from decbench.utils.langs import strip_source_ext  # noqa: E402
 
 OPT_LEVELS = [
     OptimizationLevel.O0,
@@ -151,7 +153,12 @@ def project_source_functions(
     Reads the binary's DWARF and keeps DW_TAG_subprogram entries that have a
     low_pc (i.e. are defined in this binary) AND whose decl_file basename stem
     is one of ``source_stems`` (the project's compiled translation units, e.g.
-    grep's ``src/*.c``). This excludes bundled gnulib/system-header functions —
+    grep's ``src/*.c``). Name and decl_file are read through
+    ``DW_AT_specification``/``DW_AT_abstract_origin`` so C++ out-of-line member
+    definitions — which carry neither on the defining DIE — are found; stems are
+    compared with the source extension stripped from both sides, because a C
+    unit's preprocessed stem is ``foo`` (``foo.i``) while a C++ one is ``foo.cc``
+    (``foo.cc.ii``). This excludes bundled gnulib/system-header functions —
     matching SAILR's "evaluate the project's own code" intent — and shrinks the
     decompile/evaluate workload by ~1-2 orders of magnitude on gnulib-heavy
     binaries. The address (DWARF low_pc, in ELF-file space) is the key so the
@@ -162,50 +169,38 @@ def project_source_functions(
     if not source_stems:
         return {}
     try:
-        from decbench.utils import binfmt
-
         dw = binfmt.dwarf_info(binary_path)
     except Exception:  # noqa: BLE001
         return {}
     if dw is None:
         return {}
     addr2name: dict[int, str] = {}
+    file_tables: dict[int, list] = {}
+    stem_index = {strip_source_ext(s): s for s in source_stems}
     try:
         for cu in dw.iter_CUs():
-            lp = dw.line_program_for_CU(cu)
-            # DW_AT_decl_file is 1-based pre-DWARF5 and 0-based in DWARF5; the placeholder
-            # makes the index line up either way.
-            version = 4
-            if lp is not None:
-                version = lp.header.get("version", cu.header.get("version", 4))
-            files: list = [] if version >= 5 else [None]
-            if lp is not None:
-                for fe in lp["file_entry"]:
-                    nm = fe.name
-                    files.append(nm.decode() if isinstance(nm, bytes) else nm)
             for die in cu.iter_DIEs():
-                if die.tag != "DW_TAG_subprogram":
+                if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
                     continue
-                attrs = die.attributes
-                if "DW_AT_low_pc" not in attrs or "DW_AT_name" not in attrs:
+                name = binfmt.die_str_attr(die, "DW_AT_name")
+                if name is None:
                     continue
-                fi = attrs.get("DW_AT_decl_file")
-                if fi is None or not (0 <= fi.value < len(files)) or files[fi.value] is None:
+                fi, owner = binfmt.die_attr_owner(die, "DW_AT_decl_file")
+                if fi is None:
                     continue
-                base = os.path.basename(files[fi.value])
-                stem = base[:-2] if base.endswith(".c") else base
-                matched: str | None = None
-                if stem in source_stems:
-                    matched = stem
-                else:
-                    for s in source_stems:
-                        if s.endswith("-" + stem) or s.endswith("_" + stem):
-                            matched = s
+                files = binfmt.cu_file_table(dw, owner.cu, file_tables)
+                if not (0 <= fi.value < len(files)) or files[fi.value] is None:
+                    continue
+                stem = strip_source_ext(os.path.basename(files[fi.value]))
+                matched = stem_index.get(stem)
+                if matched is None:
+                    for norm, original in stem_index.items():
+                        if norm.endswith("-" + stem) or norm.endswith("_" + stem):
+                            matched = original
                             break
                 if matched is not None:
-                    nm = attrs["DW_AT_name"].value
-                    lp_addr = int(attrs["DW_AT_low_pc"].value)
-                    addr2name[lp_addr] = nm.decode() if isinstance(nm, bytes) else nm
+                    lp_addr = int(die.attributes["DW_AT_low_pc"].value)
+                    addr2name[lp_addr] = name
                     if stem_out is not None:
                         stem_out[lp_addr] = matched
     except Exception:  # noqa: BLE001

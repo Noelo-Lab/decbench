@@ -13,6 +13,7 @@ from decbench.pipeline.compile import compile_projects
 from decbench.pipeline.decompile import decompile_projects
 from decbench.pipeline.evaluate import evaluate_projects
 from decbench.scoring.scoreboard import build_scoreboard_from_function_data
+from decbench.utils.langs import PREPROC_EXTS
 
 if TYPE_CHECKING:
     from decbench.models.scoreboard import Scoreboard
@@ -322,7 +323,9 @@ class PipelineExecutor:
                 else:
                     print(f"Warning: no ELF binaries found in {compiled_dir}")
 
-                i_files = {f.stem: f for f in sorted(compiled_dir.glob("*.i"))}
+                i_files = {
+                    f.stem: f for ext in PREPROC_EXTS for f in sorted(compiled_dir.glob(f"*{ext}"))
+                }
                 if i_files:
                     project.preprocessed_sources[opt] = i_files
                     print(

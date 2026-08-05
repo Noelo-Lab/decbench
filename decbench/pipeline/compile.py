@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from decbench.compilers.gcc import GCCCompiler
 from decbench.models.project import OptimizationLevel, Project, RemoteType
+from decbench.utils.langs import SOURCE_EXTS
 
 if TYPE_CHECKING:
     from decbench.compilers.base import CompileResult
@@ -164,8 +165,9 @@ def compile_project(
         # Dedup by basename, SHALLOWEST path first: plain sorted() would put arch/foo.c
         # before foo.c and let an unrelated nested duplicate shadow the compiled file.
         src_dir = source_dir / config.source_dir if config.source_dir else source_dir
+        candidates = [p for ext in SOURCE_EXTS for p in src_dir.rglob(f"*{ext}")]
         seen: set[str] = set()
-        for c_file in sorted(src_dir.rglob("*.c"), key=lambda p: (len(p.parts), str(p))):
+        for c_file in sorted(candidates, key=lambda p: (len(p.parts), str(p))):
             if c_file.name in seen:
                 continue
             seen.add(c_file.name)

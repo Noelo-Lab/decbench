@@ -8,6 +8,8 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from decbench.utils.langs import CXX_PREPROC_EXTS, PREPROC_EXTS
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -101,9 +103,9 @@ def _is_system_header(path: str) -> bool:
 
 
 def strip_system_headers(preprocessed: str) -> str:
-    """Drop inlined system-header code from a preprocessed (.i) translation unit.
+    """Drop inlined system-header code from a preprocessed (``.i``/``.ii``) unit.
 
-    A ``.i`` file is the project source with EVERY ``#include`` expanded inline,
+    A preprocessed file is the project source with EVERY ``#include`` expanded inline,
     so it is dominated (80-98%) by glibc/toolchain headers. Joern then either
     times out parsing megabytes of headers or drowns the project's own functions
     in thousands of header inlines — which is why GED "source-parse failures"
@@ -195,21 +197,32 @@ def resolved_source_for_binary(
     return resolved
 
 
+def temp_parse_suffix(source_path: Path) -> str:
+    """The temp-file suffix Joern must see for ``source_path``'s language.
+
+    Joern picks its frontend from the file extension, and its C frontend returns
+    ZERO functions for C++ input — so a ``.ii`` (preprocessed C++) translation
+    unit handed over as ``.c`` silently scores nothing. Preprocessed C++ becomes
+    ``.cpp``; everything else stays ``.c``.
+    """
+    return ".cpp" if source_path.suffix in CXX_PREPROC_EXTS else ".c"
+
+
 def extract_cfgs_from_source(
     source_path: Path, sanitize_decompiled: bool = False
 ) -> dict[str, DiGraph]:
-    """Extract CFGs from a C source file using pyjoern.
+    """Extract CFGs from a C or C++ source file using pyjoern.
 
     Args:
-        source_path: Path to C source file (.c or .i). For ``.i`` files the
-            inlined system headers are stripped first (see
-            :func:`strip_system_headers`) so Joern parses only the project's own
-            (already-preprocessed, correctly-ifdef'd) code — fast and complete.
+        source_path: Path to a source file (``.c``, or preprocessed ``.i``/``.ii``).
+            For preprocessed files the inlined system headers are stripped first
+            (see :func:`strip_system_headers`) so Joern parses only the project's
+            own (already-preprocessed, correctly-ifdef'd) code — fast and complete.
         sanitize_decompiled: When True and ``source_path`` is a *decompiled* ``.c``
-            (i.e. NOT a ``.i`` ground-truth source), run its text through
+            (i.e. NOT a preprocessed ground-truth source), run its text through
             :func:`sanitize_decompiled_c` before parsing so decompiler-specific
-            quirks don't drop the function from GED. Never applied to ``.i`` files
-            — sanitizing ground truth would be wrong.
+            quirks don't drop the function from GED. Never applied to preprocessed
+            files — sanitizing ground truth would be wrong.
 
     Returns:
         Dictionary mapping function names to CFG DiGraphs
@@ -222,16 +235,20 @@ def extract_cfgs_from_source(
         )
 
     cfgs = {}
+    text = source_path.read_text(errors="replace")
+    if source_path.suffix in PREPROC_EXTS:
+        text = strip_system_headers(text)
+    elif sanitize_decompiled:
+        text = sanitize_decompiled_c(text)
+
     # Joern names its workspace after the input basename, so a unique temp name is
-    # what keeps concurrent parses of the same filename from colliding.
-    temp_c_path = Path(tempfile.mktemp(suffix=".c"))
-    if source_path.suffix == ".i":
-        temp_c_path.write_text(strip_system_headers(source_path.read_text(errors="replace")))
-    else:
-        text = source_path.read_text(errors="replace")
-        if sanitize_decompiled:
-            text = sanitize_decompiled_c(text)
-        temp_c_path.write_text(text)
+    # what keeps concurrent parses of the same filename from colliding. The suffix
+    # is what selects Joern's frontend (see :func:`temp_parse_suffix`).
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=temp_parse_suffix(source_path), delete=False
+    ) as f:
+        f.write(text)
+        temp_c_path = Path(f.name)
     parse_path = temp_c_path
 
     try:

@@ -83,9 +83,10 @@ nothing. Fix: drop the matching Joern **v4.0.150** `joern-cli` into
 
 ## The benchmark corpus
 
-All targets are C project TOMLs under `projects/`; a "full run" spans all of
-`projects/{sailr,cps,malware}/*.toml` (both drivers gather them via
-`gather_tomls()`; `cps/disabled/` excluded).
+Targets are project TOMLs under `projects/`; a "full run" spans all of
+`projects/{sailr,cps,malware,cpp}/*.toml` (both drivers gather them via
+`gather_tomls()`; `cps/disabled/` excluded). Everything except `projects/cpp/`
+is C.
 
 - **sailr** — 26 sailr-eval Debian packages in `projects/sailr/*.toml`, each
   built at O0 / O2 / O2-noinline, labeled by kind + domain. Compiles on the
@@ -100,9 +101,9 @@ All targets are C project TOMLs under `projects/`; a "full run" spans all of
   with `scripts/cps_compile_smoke.py` inside the image. angr/Ghidra decompile
   ARM; byte_match abstains for ARM on hosts without the arm-none-eabi
   toolchain — GED/type_match carry these targets. The two C++ autopilots
-  (ArduPilot, PX4) are DISABLED in `projects/cps/disabled/` (decbench has no
-  C++ support yet — pyjoern/GED is C-only); their recipes are verified-working
-  and re-enable by moving the TOML back up to `projects/cps/`.
+  (ArduPilot, PX4) are still DISABLED in `projects/cps/disabled/`; their
+  recipes are verified-working and re-enable by moving the TOML back up to
+  `projects/cps/`, but neither has been run through the C++ path below.
 - **malware** — REAL MALWARE targets in `projects/malware/*.toml` (C, from
   theZoo): mirai (ELF/gcc), mydoom, x0r-usb, minipig, dexter (PE/MinGW).
   (mirai-win was removed 2026-07-23: theZoo's "Win32.Mirai" is actually
@@ -117,6 +118,35 @@ All targets are C project TOMLs under `projects/`; a "full run" spans all of
   `utils/binfmt.py` (byte_match needs the MinGW toolchain, else it abstains).
   See `projects/malware/README.md` (DO NOT EXECUTE). Binaries never leave
   `results/`.
+- **cpp** — the C++ targets in `projects/cpp/*.toml`: currently **leveldb**
+  (Google's embedded key-value store, CMake, x86 host build). Read
+  [C++ targets](#c-targets) before using their numbers.
+
+### C++ targets
+
+C++ works end-to-end as of `projects/cpp/leveldb.toml`; the mechanics live in
+[metrics.md](metrics.md#preprocessed-iii-files-are-required--source-cfgs-come-exclusively-from-them).
+Three things are worth knowing before reading a C++ number:
+
+- **No demangler is involved anywhere.** DWARF `DW_AT_name` for
+  `leveldb::DBImpl::Get` is `"Get"`, and Joern's C++ frontend keys on the short
+  name too, so both sides of the match already speak unqualified names. Mangled
+  `_ZN...` never appears.
+- **Same-name collisions make a C++ target's absolute GED incomparable to a C
+  project's.** Because matching is by unqualified name, leveldb's 7-8
+  same-named methods per name (`Next`, `Seek`, `SeekToFirst`, `Name` — one per
+  iterator class) all collapse onto whichever body won the per-name reduction.
+  Rank C++ targets against each other; do not read leveldb's GED next to
+  grep's. Qualified-name keying is the fix and is not implemented.
+- **Not publishable to the dataset yet.** The publish/dataset paths still glob
+  only `*.i`, so a C++ project's source CFGs never make it into the exported
+  tree (see metrics.md for the file list).
+
+CMake-based C++ TOMLs have two traps worth copying from leveldb's: leave
+`CMAKE_BUILD_TYPE` **empty** (a named type appends its own `-O` flag AFTER
+`CMAKE_CXX_FLAGS` and silently overrides the level being measured), and set
+`BUILD_SHARED_LIBS=ON` (a static `.a` is not a linked binary, so the collector
+skips it and the library under test never gets decompiled).
 
 ### Optimization levels
 

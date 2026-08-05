@@ -6,11 +6,19 @@ drivers and `decbench run projects/cps/*.toml` will not pick them up).
 
 ## Why
 
-decbench does not support **C++** yet. The GED metric extracts source control-
-flow graphs with pyjoern, which is C-oriented, so C++ projects produce no `.i`
-preprocessed sources and cannot be scored on GED. (They also exhibit the usual
-C++-from-binary friction — name mangling, `this` pointers, vtables — which makes
-type recovery harder.)
+These were disabled when decbench had no **C++** support. That reason is now
+out of date: C++ works end-to-end (see `projects/cpp/leveldb.toml` and
+[docs/benchmarking.md](../../../docs/benchmarking.md#c-targets)). The original
+rationale — "pyjoern is C-oriented, so C++ projects produce no `.i` and cannot
+be scored" — was wrong on both halves: a C++ translation unit does get
+preprocessed, just to `.ii` rather than `.i`, and Joern parses it fine once the
+file is handed to its C++ frontend by extension.
+
+What still holds is that neither autopilot has ever been *run* through that
+path. They are large cross-compiled Cortex-M/-A firmware, so re-enabling one is
+a measurement exercise (build time, Joern parse health on hundreds of C++ TUs,
+and the same-name collision caveat that applies to every C++ target), not a
+flip of a switch. They stay here until someone does that work.
 
 | target | dominant language |
 | --- | --- |

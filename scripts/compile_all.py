@@ -1,11 +1,11 @@
 #!/usr/bin/env python
-"""Compile every sailr project at every opt level into a persistent dir.
+"""Compile every corpus project at every opt level into a persistent dir.
 
 Build-verification driver: runs the real ``compile_project`` code path for
 each (project, opt) pair in parallel, persisting binaries under
 ``<out>/<opt>/<project>/compiled/`` so a later ``--skip-compile`` decompile
-+ evaluate run can reuse them. Prints a per-target binary/.i count table and
-writes ``compile_report.json`` for the orchestrator.
++ evaluate run can reuse them. Prints a per-target binary/preprocessed count
+table and writes ``compile_report.json`` for the orchestrator.
 """
 
 from __future__ import annotations
@@ -20,12 +20,18 @@ from pathlib import Path
 
 from decbench.models.project import OptimizationLevel, Project
 from decbench.pipeline.compile import compile_project
+from decbench.utils.langs import PREPROC_EXTS, SOURCE_EXTS
 
 # 'fork' deadlocks when a worker is forked while the parent's pool-management
 # thread holds an internal mutex.
 _MP = multiprocessing.get_context("spawn")
 
-PROJECT_DIRS = [Path("projects/sailr"), Path("projects/cps"), Path("projects/malware")]
+PROJECT_DIRS = [
+    Path("projects/sailr"),
+    Path("projects/cps"),
+    Path("projects/malware"),
+    Path("projects/cpp"),
+]
 
 
 def gather_tomls() -> list[Path]:
@@ -43,17 +49,18 @@ OPT_LEVELS = [
 
 
 def _count_outputs(out_dir: Path, opt: str, name: str) -> tuple[int, int]:
-    """Return (elf_binary_count, i_file_count) in the compiled dir."""
+    """Return (elf_binary_count, preprocessed_file_count) in the compiled dir."""
     import struct
 
     compiled = out_dir / opt / name / "compiled"
     if not compiled.is_dir():
         return (0, 0)
+    skip = (".o", ".a", ".s", ".h", *PREPROC_EXTS, *SOURCE_EXTS)
     elfs = 0
     for entry in compiled.iterdir():
         if not entry.is_file() or entry.is_symlink():
             continue
-        if entry.suffix in (".i", ".o", ".a", ".s", ".c", ".h"):
+        if entry.suffix in skip:
             continue
         try:
             with open(entry, "rb") as f:
@@ -64,7 +71,7 @@ def _count_outputs(out_dir: Path, opt: str, name: str) -> tuple[int, int]:
                     elfs += 1
         except (OSError, struct.error):
             continue
-    i_files = len(list(compiled.glob("*.i")))
+    i_files = sum(len(list(compiled.glob(f"*{ext}"))) for ext in PREPROC_EXTS)
     return (elfs, i_files)
 
 

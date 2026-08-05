@@ -6,7 +6,7 @@ address space as the rest of DecBench:
 * :func:`name_to_addr` follows ``project_source_functions``
   (``scripts/run_benchmark.py``): DWARF ``DW_TAG_subprogram`` entries with a
   ``low_pc``, optionally filtered to the project's own translation units via
-  ``DW_AT_decl_file`` stems (the compiled ``.i`` stems).
+  ``DW_AT_decl_file`` stems (the compiled ``.i``/``.ii`` stems).
 * :class:`AddrLookup` follows ``_relabel_to_dwarf``'s tolerance rules when
   mapping a reported address back to a DWARF name: exact, Thumb ``addr & ~1``,
   PE ``addr + min_vaddr`` (ImageBase), and both combined.
@@ -26,33 +26,33 @@ import os
 import struct
 from pathlib import Path
 
+from decbench.utils.langs import PREPROC_EXTS, strip_source_ext
+
 _l = logging.getLogger(__name__)
 
 
 def source_stems(tree: Path, opt: str, project: str) -> set[str]:
-    """Stems of the project's preprocessed ``.i`` translation units at ``opt``.
+    """Stems of the project's preprocessed (``.i``/``.ii``) units at ``opt``.
 
     These are the ``DW_AT_decl_file`` filter used to keep only functions defined
     in the project's own sources (excluding bundled gnulib etc.). An empty set
-    means the tree has no ``.i`` files for this slice (caller decides whether to
-    fall back to an unfiltered walk).
+    means the tree has no preprocessed files for this slice (caller decides
+    whether to fall back to an unfiltered walk).
     """
     compiled = Path(tree) / opt / project / "compiled"
-    return {f.stem for f in compiled.glob("*.i")}
-
-
-def _decode(value: bytes | str) -> str:
-    return value.decode() if isinstance(value, bytes) else str(value)
+    return {f.stem for ext in PREPROC_EXTS for f in compiled.glob(f"*{ext}")}
 
 
 def _dwarf_addr_to_name(binary: Path, stems: set[str] | None) -> dict[int, str]:
     """DWARF subprogram walk: ``low_pc -> DW_AT_name`` (decl-file-filtered).
 
     Mirrors ``project_source_functions`` (scripts/run_benchmark.py) including its
-    DWARF v4/v5 ``decl_file`` index handling and the object-prefixed stem match
-    (``mydoom-main.i`` <-> decl ``main.c``). When ``stems`` is None the
-    decl-file filter is skipped and every named subprogram with a ``low_pc`` is
-    kept. Returns an empty map when the binary has no usable DWARF.
+    DWARF v4/v5 ``decl_file`` index handling, the ``DW_AT_specification`` chase
+    that finds C++ out-of-line definitions, the source-extension-agnostic stem
+    comparison, and the object-prefixed stem match (``mydoom-main.i`` <-> decl
+    ``main.c``). When ``stems`` is None the decl-file filter is skipped and every
+    named subprogram with a ``low_pc`` is kept. Returns an empty map when the
+    binary has no usable DWARF.
     """
     from decbench.utils import binfmt
 
@@ -64,37 +64,29 @@ def _dwarf_addr_to_name(binary: Path, stems: set[str] | None) -> dict[int, str]:
     if dw is None:
         return {}
     addr2name: dict[int, str] = {}
+    file_tables: dict[int, list[str | None]] = {}
+    stem_index = {strip_source_ext(s): s for s in (stems or ())}
     try:
         for cu in dw.iter_CUs():
-            files: list[str | None] = []
-            if stems is not None:
-                lp = dw.line_program_for_CU(cu)
-                # DW_AT_decl_file is 1-based pre-DWARF5 and 0-based in DWARF5; the placeholder
-                # makes the index line up either way.
-                version = 4
-                if lp is not None:
-                    version = lp.header.get("version", cu.header.get("version", 4))
-                files = [] if version >= 5 else [None]
-                if lp is not None:
-                    for fe in lp["file_entry"]:
-                        files.append(_decode(fe.name))
             for die in cu.iter_DIEs():
-                if die.tag != "DW_TAG_subprogram":
+                if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
                     continue
-                attrs = die.attributes
-                if "DW_AT_low_pc" not in attrs or "DW_AT_name" not in attrs:
+                name = binfmt.die_str_attr(die, "DW_AT_name")
+                if name is None:
                     continue
                 if stems is not None:
-                    fi = attrs.get("DW_AT_decl_file")
-                    if fi is None or not (0 <= fi.value < len(files)) or files[fi.value] is None:
+                    fi, owner = binfmt.die_attr_owner(die, "DW_AT_decl_file")
+                    if fi is None:
                         continue
-                    base = os.path.basename(files[fi.value])  # type: ignore[arg-type]
-                    stem = base[:-2] if base.endswith(".c") else base
-                    if stem not in stems and not any(
-                        s.endswith("-" + stem) or s.endswith("_" + stem) for s in stems
+                    files = binfmt.cu_file_table(dw, owner.cu, file_tables)
+                    if not (0 <= fi.value < len(files)) or files[fi.value] is None:
+                        continue
+                    stem = strip_source_ext(os.path.basename(files[fi.value]))  # type: ignore[arg-type]
+                    if stem not in stem_index and not any(
+                        s.endswith("-" + stem) or s.endswith("_" + stem) for s in stem_index
                     ):
                         continue
-                addr2name[int(attrs["DW_AT_low_pc"].value)] = _decode(attrs["DW_AT_name"].value)
+                addr2name[int(die.attributes["DW_AT_low_pc"].value)] = name
     except Exception as e:  # noqa: BLE001
         _l.warning("DWARF walk failed for %s: %s", binary, e)
         return {}
