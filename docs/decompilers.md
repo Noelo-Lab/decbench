@@ -47,6 +47,9 @@ Key conventions (all families):
 - Functions outside `.text` (PLT/thunks) and CRT helpers are skipped.
 - `FunctionDecompilation.variables` (`VariableInfo`) carries stack vars/args
   for the type metric; line maps are best-effort (angr/Ghidra populate them).
+  `VariableInfo.arg_index` must be the **ABI position**, not the order the tool
+  happens to enumerate its locals in — type_match pairs arguments by that index
+  (see [metrics.md](metrics.md#argument-positions-must-be-abi-positions)).
 - **Decompiler identity is `name` or `name@version`** (`spec.py`): the
   registry resolves `ghidra@12.1` to a versioned instance whose `.id` flows
   through results/scoreboard/report as a distinct column. Per-version settings

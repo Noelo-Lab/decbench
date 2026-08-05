@@ -72,6 +72,38 @@ TYPE_MAP: dict[str, str] = {
 
 QUALIFIERS = ["unsigned", "signed", "const", "volatile", "register", "static", "extern"]
 
+# A trailing run of ``*``s, so TYPE_MAP can be applied to the POINTEE.
+_PTR_SUFFIX = re.compile(r"^(.*?)((?:\s*\*)+)$")
+
+# One C++ namespace/class qualifier, e.g. the ``leveldb::`` of
+# ``leveldb::TableBuilder *``. Digits cannot start a token, so a Ghidra symbol
+# version prefix like ``GLIBC_2.2.5::`` is left alone.
+_NAMESPACE_QUALIFIER = re.compile(r"\b[A-Za-z_]\w*\s*::\s*")
+
+
+def _map_pointee(form: str) -> str:
+    """``TYPE_MAP`` applied through a pointer spelling: ``int4 *`` -> ``int*``.
+
+    The scalar rows already normalize ``int4``, but a pointer spelling never
+    reached them, so a decompiler writing ``int4 *`` could not match DWARF's
+    ``int*`` while one writing ``int *`` could.
+    """
+    m = _PTR_SUFFIX.match(form)
+    if m is None:
+        return form
+    mapped = TYPE_MAP.get(m.group(1).strip())
+    return form if mapped is None else mapped + m.group(2)
+
+
+def _strip_namespaces(form: str) -> str:
+    """``leveldb::TableBuilder*`` -> ``TableBuilder*``.
+
+    DWARF records a C++ class/typedef under its UNQUALIFIED ``DW_AT_name``, so
+    a decompiler printing the fully-qualified name could never match ground
+    truth on a C++ target.
+    """
+    return _NAMESPACE_QUALIFIER.sub("", form).strip()
+
 
 def normalize_type(type_str: str) -> set[str]:
     """Normalize a type string to a set of equivalent representations.
@@ -111,9 +143,13 @@ def normalize_type(type_str: str) -> set[str]:
 
     forms |= {re.sub(r"\s*\*", "*", f) for f in forms}
 
+    forms |= {_strip_namespaces(f) for f in forms}
+
+    forms |= {_map_pointee(f) for f in forms}
+
     forms |= {TYPE_MAP[f] for f in forms if f in TYPE_MAP}
 
-    return forms
+    return {f for f in forms if f}
 
 
 # Uncommitted types recover a variable's SIZE but not a committed C type. Matching
@@ -418,7 +454,13 @@ def _parse_type_die(die: Any, dwarfinfo: Any) -> tuple[list[str], int]:
         names.extend(child_names)
         return names, size
 
-    elif tag == "DW_TAG_pointer_type":
+    elif tag in (
+        "DW_TAG_pointer_type",
+        "DW_TAG_reference_type",
+        "DW_TAG_rvalue_reference_type",
+    ):
+        # A reference is a pointer in the ABI and every decompiler renders it as
+        # one; without this arm every reference-typed GT variable became "void".
         child_names, _ = _parse_type_die(type_die, dwarfinfo)
         if not child_names:
             child_names = ["void"]
@@ -771,7 +813,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "4"
+    cache_version = "5"
 
     weight = 1.0
     lower_is_better = False
