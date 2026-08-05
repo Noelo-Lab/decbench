@@ -244,11 +244,19 @@ def extract_ground_truth_types(binary_path: Path) -> dict[str, list[dict[str, An
 
 
 def _parse_function_die(die: Any, dwarfinfo: Any) -> tuple[str | None, list[dict[str, Any]]]:
-    """Parse a DW_TAG_subprogram DIE to extract function variable types."""
-    if "DW_AT_name" not in die.attributes:
-        return None, []
+    """Parse a DW_TAG_subprogram DIE to extract function variable types.
 
-    func_name = die.attributes["DW_AT_name"].value.decode("utf-8", "replace")
+    The name is read through ``DW_AT_specification``/``DW_AT_abstract_origin``:
+    a C++ out-of-line member definition carries the body but keeps its name on
+    the in-class declaration it references. C subprograms always name themselves
+    on the defining DIE, so the chase never fires and C ground truth is byte-for-
+    byte what it was.
+    """
+    from decbench.utils import binfmt
+
+    func_name = binfmt.die_str_attr(die, "DW_AT_name")
+    if func_name is None:
+        return None, []
     variables: list[dict[str, Any]] = []
 
     arg_index = 0

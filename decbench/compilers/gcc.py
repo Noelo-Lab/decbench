@@ -10,6 +10,20 @@ from pathlib import Path
 
 from decbench.compilers.base import Compiler, CompileResult
 from decbench.models.project import opt_gcc_flags
+from decbench.utils.langs import PREPROC_EXTS, SOURCE_EXTS, preprocessed_ext
+
+# Build by-products that are never a linked binary, so they are skipped before
+# the (more expensive) ELF/PE sniff.
+_NON_BINARY_EXTS = (".o", ".a", ".s", ".h", ".hh", ".hpp", *PREPROC_EXTS, *SOURCE_EXTS)
+
+
+def find_preprocessed(base_path: Path) -> Path | None:
+    """First existing ``base_path`` re-suffixed with a preprocessed extension."""
+    for ext in PREPROC_EXTS:
+        candidate = base_path.with_suffix(ext)
+        if candidate.exists():
+            return candidate
+    return None
 
 
 class GCCCompiler(Compiler):
@@ -94,7 +108,8 @@ class GCCCompiler(Compiler):
 
         stem = source_path.stem
         object_path = output_dir / f"{stem}.o"
-        preprocessed_path = output_dir / f"{stem}.i" if emit_preprocessed else None
+        pp_ext = preprocessed_ext(source_path)
+        preprocessed_path = output_dir / f"{stem}{pp_ext}" if emit_preprocessed else None
 
         flags = list(self.base_flags)
         flags.extend(opt_gcc_flags(optimization))
@@ -130,7 +145,7 @@ class GCCCompiler(Compiler):
                 )
 
             if emit_preprocessed and not preprocessed_path.exists():
-                alt_path = source_path.with_suffix(".i")
+                alt_path = source_path.with_suffix(pp_ext)
                 if alt_path.exists():
                     shutil.move(str(alt_path), str(preprocessed_path))
 
@@ -294,7 +309,7 @@ class GCCCompiler(Compiler):
                         continue
                     if entry.is_symlink():
                         continue
-                    if entry.suffix in (".o", ".a", ".i", ".s", ".c", ".h"):
+                    if entry.suffix in _NON_BINARY_EXTS:
                         continue
                     if not self._is_linked_binary(entry):
                         continue
@@ -306,14 +321,14 @@ class GCCCompiler(Compiler):
 
                     obj_file = entry.with_suffix(".o")
                     c_file = entry.with_suffix(".c")
-                    i_file = entry.with_suffix(".i")
+                    i_file = find_preprocessed(entry)
                     dest_i = None
-                    if i_file.exists():
+                    if i_file is not None:
                         dest_i = output_dir / i_file.name
                         shutil.copy2(i_file, dest_i)
                     elif obj_file.exists():
-                        alt_i = obj_file.with_suffix(".i")
-                        if alt_i.exists() and alt_i != i_file:
+                        alt_i = find_preprocessed(obj_file)
+                        if alt_i is not None:
                             dest_i = output_dir / alt_i.name
                             shutil.copy2(alt_i, dest_i)
 
@@ -325,8 +340,8 @@ class GCCCompiler(Compiler):
                     ))
 
                 for obj_file in project_dir.rglob("*.o"):
-                    i_file = obj_file.with_suffix(".i")
-                    if i_file.exists():
+                    i_file = find_preprocessed(obj_file)
+                    if i_file is not None:
                         dest_i = output_dir / i_file.name
                         if not dest_i.exists():
                             shutil.copy2(i_file, dest_i)

@@ -19,31 +19,53 @@ lossless — see [dataset-publishing.md](dataset-publishing.md)).
   `DECBENCH_GED_MAX_NODES` nodes (default 60, read in `metrics/ged.py`) — a
   few huge optimized CFGs would otherwise dominate a run.
 
-### Preprocessed `.i` files are REQUIRED — source CFGs come EXCLUSIVELY from them
+### Preprocessed `.i`/`.ii` files are REQUIRED — source CFGs come EXCLUSIVELY from them
 
 `pipeline/evaluate.py` (via `project.preprocessed_sources`),
 `scripts/run_benchmark.py`, and `pipeline/executor.py` (which globs
-`compiled_dir/*.i`) all build the source-side CFGs by feeding `.i` files to
-`utils/cfg.py extract_cfgs_from_source` (system headers stripped, then pyjoern
-`parse_source`). `.i` over `.c` is deliberate: Joern needs macro-expanded,
-ifdef-resolved code to parse completely — raw `.c` with unexpanded includes
-parses incompletely. Without `.i` the pipeline takes the "No preprocessed
-sources" branch and **GED is silently None for every function of the run — no
-error**.
+`compiled_dir/*.i` and `*.ii`) all build the source-side CFGs by feeding the
+preprocessed units to `utils/cfg.py extract_cfgs_from_source` (system headers
+stripped, then pyjoern `parse_source`). Preprocessed over raw source is
+deliberate: Joern needs macro-expanded, ifdef-resolved code to parse
+completely — raw `.c` with unexpanded includes parses incompletely. Without
+them the pipeline takes the "No preprocessed sources" branch and **GED is
+silently None for every function of the run — no error**.
 
-byte_match/type_match don't use `.i` (`requires_source_cfg = False`;
-gcc-recompile and DWARF respectively), and sample source extraction only
-*falls back* to `.i`. So do NOT disable `Project.emit_preprocessed` (default
-True, `models/project.py`) or `-save-temps=obj` in the default `base_flags`
-(`compilers/gcc.py`). The only `.i`-free evaluation path is the
-published-dataset `--source-cfgs` flow (precomputed `source_cfgs/*.json`,
-built FROM `.i` at publish time by `publish/cfg_export.py`) — and that path
-cannot score type_match.
+gcc names the preprocessed output after the LANGUAGE, not the flag: a C unit
+yields `.i` and a C++ unit `.ii`. Joern picks its frontend the same way, and
+its **C frontend returns ZERO functions for C++ input** — so `utils/cfg.py`
+chooses the temp-file suffix from the input (`.ii` -> `.cpp`, `.i` -> `.c`)
+via `temp_parse_suffix`. Handing a `.ii` to Joern as `.c` scores nothing at
+all (measured on a leveldb TU: 0 functions as `.c`, 393 as `.cpp`).
+
+byte_match/type_match don't use the preprocessed units
+(`requires_source_cfg = False`; gcc-recompile and DWARF respectively), and
+sample source extraction only *falls back* to them. So do NOT disable
+`Project.emit_preprocessed` (default True, `models/project.py`) or
+`-save-temps=obj` in the default `base_flags` (`compilers/gcc.py`). The only
+preprocessed-free evaluation path is the published-dataset `--source-cfgs`
+flow (precomputed `source_cfgs/*.json`, built FROM the preprocessed units at
+publish time by `publish/cfg_export.py`) — and that path cannot score
+type_match. The publish/dataset paths still glob only `*.i`
+(`publish/layout.py`, `publish/cfg_export.py`, `dataset.py`,
+`evalkit/ingest.py`, `scripts/reeval_ged.py`,
+`scripts/compute_dataset_info.py`), so a C++ project cannot be published to the
+dataset yet.
 
 Source-side matching is per-TU: `pipeline/evaluate.py` matches a binary's OWN
 translation unit first, cross-TU best-by-name only as fallback (avoids
 same-name collisions across TUs). The old JOERN_FAILURES.md failure analysis
 lives in git history; Joern parse-health stats render on the site's data page.
+
+**C++ name collisions.** Matching is by UNQUALIFIED name on both sides (DWARF
+`DW_AT_name` is `Get`, not `leveldb::DBImpl::Get`, and Joern's C++ frontend
+keys on the short name too — so no demangler is involved anywhere). A C++
+binary therefore collapses every same-named method onto one entry: leveldb has
+7-8 `Next`/`Seek`/`SeekToFirst`/`Name` methods, one per iterator class, and
+they are all scored against whichever body won `best_source_by_name`. A C++
+target's absolute GED is consequently **not comparable to a C project's** —
+compare C++ targets to each other. Qualified-name keying (Joern `fullName` +
+DWARF parent-DIE walking) is the fix and is not implemented.
 
 ## Type Correctness — `metrics/type_match.py`
 
@@ -65,6 +87,30 @@ backends that carry no `VariableInfo`, e.g. LLM agents and external
 submissions: the C signature is parsed into ABI-positioned args + locals). At
 `-O2`, register locals that decompilers fold into expressions count as misses
 for everyone uniformly.
+
+A subprogram's name is read through `binfmt.die_attr` rather than straight off
+the DIE, because gcc keeps a C++ out-of-line member definition's `DW_AT_name`
+on the in-class declaration it references. Without that chase, leveldb's
+ground truth is 97 functions instead of 4,236. See
+[DWARF reference chains](#dwarf-reference-chains-c-vs-c) for why this does not
+change any C value.
+
+### DWARF reference chains (C vs C++)
+
+`utils/binfmt.py` `die_attr` / `die_str_attr` / `die_attr_owner` read a DIE
+attribute through the reference chain gcc uses to split a definition from its
+declaration. The two reference attributes are NOT equivalent:
+
+- **`DW_AT_specification`** is C++-only (out-of-line member definition ->
+  in-class declaration). Following it can never change a C result, so it is
+  always followed.
+- **`DW_AT_abstract_origin`** is used in C too — for the out-of-line copy gcc
+  keeps of a function it also inlined. Following it in C would newly surface
+  ~10-20% more functions in the pinned corpus (measured on grep at O2: 262 ->
+  314 DWARF subprograms). It is therefore followed **only in a C++
+  compilation unit** (`binfmt.cu_is_cxx`, on `DW_AT_language`), which keeps
+  every existing C binary bit-identical. Enabling it for C is a deliberate,
+  corpus-invalidating change that has not been made.
 
 ## Recompilation Bytematch — `metrics/byte_match.py`
 
@@ -127,6 +173,11 @@ over seen (decompiled, source) pairs skip recomputation.
 - **Caching is deterministic by content: if you change a metric's algorithm,
   bump its `cache_version` class attr** — else stale values are served — or
   run with `DECBENCH_NO_CACHE=1`.
+- The converse also matters: a change that is **provably a no-op for existing
+  input** must NOT bump `cache_version`, because the frozen rival checkpoints
+  are pinned and a needless bump forces a corpus-wide recompute. The C++
+  `DW_AT_specification` chase is the worked example — see
+  [DWARF reference chains](#dwarf-reference-chains-c-vs-c).
 - Cache root: `DECBENCH_CACHE_DIR`; disable entirely with
   `DECBENCH_NO_CACHE=1`.
 

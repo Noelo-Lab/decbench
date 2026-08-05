@@ -56,6 +56,7 @@ PROJECT_DIRS = [
     _REPO_ROOT / "projects/sailr",
     _REPO_ROOT / "projects/cps",
     _REPO_ROOT / "projects/malware",
+    _REPO_ROOT / "projects/cpp",
 ]
 
 GUARD_PRINT_CAP = 100

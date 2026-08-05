@@ -1,0 +1,66 @@
+# DecBench Project Configuration: leveldb
+# Google's LevelDB — an embedded ordered key-value store, and DecBench's first
+# C++ target. It is a good C++ probe: heavy on classes, virtual dispatch, STL
+# containers and templates, but with no external dependencies beyond a C++11
+# compiler, so a build is reproducible anywhere gcc is.
+#
+# CAVEAT — leveldb's absolute GED is NOT comparable to a C project's. DecBench
+# matches source functions to decompiled ones by UNQUALIFIED name (both DWARF
+# DW_AT_name and Joern's C++ frontend key on the short name), so the 7-8
+# same-named methods a C++ binary carries per name (`Next`, `Seek`, `Name`,
+# `SeekToFirst`, ... one per iterator class) all collapse onto whichever body
+# won the per-name reduction — usually the largest. Rank C++ targets against
+# each other, not against the C corpus. Qualified-name keying is tracked as
+# follow-up work.
+
+name = "leveldb"
+version = "1.23"
+
+source_remote = "https://github.com/google/leveldb"
+remote_type = "git"
+
+# leveldb builds out-of-tree into `build/`, but source_dir stays "." (the clone
+# root) so the collector's rglob sees BOTH the build outputs (binaries, objects,
+# and the .ii preprocessed units that -save-temps=obj drops next to them) and the
+# .cc sources under db/ table/ util/, which pipeline/compile.py copies into
+# compiled/ for the report's source pane. Pointing it at "build" loses the .cc.
+package_dir = "leveldb"
+source_dir = "."
+
+post_download_cmds = []
+
+# CMAKE_BUILD_TYPE is deliberately EMPTY: a named build type appends its own
+# CMAKE_CXX_FLAGS_<TYPE> (e.g. `-O3 -DNDEBUG` for Release) AFTER CMAKE_CXX_FLAGS,
+# which would silently override the optimization level DecBench is measuring.
+# CMAKE_CXX_FLAGS carries $CFLAGS, which the pipeline sets to the base flags plus
+# the level's -O flag.
+#
+# BUILD_SHARED_LIBS=ON because the collector only takes LINKED binaries: a static
+# libleveldb.a is skipped, which would leave only the 90 KB `leveldbutil` and
+# throw away the library that is the actual benchmark target.
+#
+# Tests and benchmarks are OFF because they vendor googletest/benchmark, whose
+# thousands of template instantiations would dominate every metric's denominator
+# and measure GoogleTest instead of leveldb.
+pre_make_cmds = [
+  'cmake -S . -B build -DCMAKE_BUILD_TYPE= -DCMAKE_CXX_COMPILER=g++ -DCMAKE_CXX_FLAGS="$CFLAGS" -DLEVELDB_BUILD_TESTS=OFF -DLEVELDB_BUILD_BENCHMARKS=OFF -DBUILD_SHARED_LIBS=ON',
+]
+
+# The `rm` drops CMake's compiler-probe binaries (a.out,
+# CMakeDetermineCompilerABI_*.bin), which are real ELF executables under
+# build/CMakeFiles/<cmake-version>/ and would otherwise be collected as targets.
+# It lives in make_cmd because ProjectConfig.post_make_cmds is declared but never
+# executed by pipeline/compile.py.
+make_cmd = 'cmake --build build -j && rm -rf build/CMakeFiles/3.*'
+
+labels = ["cpp", "library", "database", "key-value-store"]
+
+[compilation]
+optimization_levels = ["O0", "O2", "O2-noinline"]
+base_flags = ["-g", "-fno-builtin", "-save-temps=obj"]
+c_compiler = "gcc"
+# cpp_compiler is recorded for documentation only — pipeline/compile.py builds a
+# GCCCompiler from c_compiler and never reads it, and wiring it into the build
+# env would newly define $CXX for all 40 existing C projects. The build picks its
+# C++ compiler explicitly via -DCMAKE_CXX_COMPILER above.
+cpp_compiler = "g++"
