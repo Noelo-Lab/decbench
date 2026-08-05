@@ -235,16 +235,20 @@ def extract_cfgs_from_source(
         )
 
     cfgs = {}
-    # Joern names its workspace after the input basename, so a unique temp name is
-    # what keeps concurrent parses of the same filename from colliding.
-    temp_c_path = Path(tempfile.mktemp(suffix=temp_parse_suffix(source_path)))
+    text = source_path.read_text(errors="replace")
     if source_path.suffix in PREPROC_EXTS:
-        temp_c_path.write_text(strip_system_headers(source_path.read_text(errors="replace")))
-    else:
-        text = source_path.read_text(errors="replace")
-        if sanitize_decompiled:
-            text = sanitize_decompiled_c(text)
-        temp_c_path.write_text(text)
+        text = strip_system_headers(text)
+    elif sanitize_decompiled:
+        text = sanitize_decompiled_c(text)
+
+    # Joern names its workspace after the input basename, so a unique temp name is
+    # what keeps concurrent parses of the same filename from colliding. The suffix
+    # is what selects Joern's frontend (see :func:`temp_parse_suffix`).
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=temp_parse_suffix(source_path), delete=False
+    ) as f:
+        f.write(text)
+        temp_c_path = Path(f.name)
     parse_path = temp_c_path
 
     try:
