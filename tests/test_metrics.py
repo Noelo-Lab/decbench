@@ -597,6 +597,121 @@ int main() {
         assert result.metadata["matched_by"] == "structured"
         assert result.metadata["tp"] == 1
 
+    def test_type_map_reaches_pointer_spellings(self) -> None:
+        """``int4 *`` must normalize like ``int4`` does, one indirection out."""
+        from decbench.metrics.type_match import normalize_type
+
+        assert "int*" in normalize_type("int4 *")
+        assert "int*" in normalize_type("int4*")
+        assert "long long*" in normalize_type("undefined8 *")
+        assert "char**" in normalize_type("undefined1 **")
+        # An unmapped pointee is left exactly as it was.
+        assert normalize_type("Slice *") == {"Slice *", "Slice*"}
+
+    def test_pointer_normalization_does_not_cross_widths(self) -> None:
+        """The pointee mapping declares no new equivalence: ``int4 *`` is not
+        ``long long*``, and a scalar never becomes a pointer."""
+        from decbench.metrics.type_match import normalize_type
+
+        assert "long long*" not in normalize_type("int4 *")
+        assert not any("*" in f for f in normalize_type("int4"))
+
+    def test_namespace_qualifier_is_stripped(self) -> None:
+        """DWARF's ``DW_AT_name`` is unqualified, so IDA's ``leveldb::X *``
+        needs the qualifier dropped to reach ground truth."""
+        from decbench.metrics.type_match import normalize_type
+
+        assert "TableBuilder*" in normalize_type("leveldb::TableBuilder *")
+        assert "Mutex*" in normalize_type("leveldb::port::Mutex *")
+        assert "string" in normalize_type("std::string")
+
+    def test_namespace_strip_leaves_c_types_alone(self) -> None:
+        """No C spelling gains a form from the qualifier strip — including a
+        Ghidra symbol-version prefix, whose token starts with a digit."""
+        from decbench.metrics.type_match import normalize_type
+
+        assert normalize_type("unsigned int") == {"unsigned int", "int"}
+        assert normalize_type("char *") == {"char *", "char*"}
+        assert normalize_type("GLIBC_2.2.5::stderr") == {"GLIBC_2.2.5::stderr"}
+
+    def test_namespaced_pointer_matches_unqualified_ground_truth(self) -> None:
+        """End to end: IDA's C++ spelling scores against the DWARF name."""
+        from decbench.metrics.type_match import TypeMatchMetric
+
+        func = FunctionDecompilation(
+            name="Add",
+            address=0x1000,
+            decompiled_code="// no decls",
+            variables=[
+                VariableInfo(name="a1", type="leveldb::TableBuilder *", kind="arg", arg_index=0),
+            ],
+        )
+        gt_vars = [
+            {"name": "this", "type": ["TableBuilder*"], "is_arg": True, "arg_index": 0},
+        ]
+
+        result = TypeMatchMetric().compute_for_function(func, ground_truth_vars=gt_vars)
+        assert result.value == 1.0
+
+    def test_reference_ground_truth_is_a_pointer(self, tmp_path) -> None:
+        """A C++ reference parameter must land as a pointer type, not ``void``.
+
+        Every decompiler renders a reference as a pointer, so ``void`` made those
+        ground-truth variables unmatchable for all of them.
+        """
+        import shutil
+        import subprocess
+
+        if shutil.which("g++") is None:
+            pytest.skip("needs g++")
+
+        from decbench.metrics.type_match import extract_ground_truth_types
+
+        src = tmp_path / "r.cc"
+        src.write_text(
+            "struct Blob { int a; int b; };\n"
+            "int Take(const Blob& in, Blob&& moved) { return in.a + moved.b; }\n"
+            "int main() { Blob b{1, 2}; return Take(b, Blob{3, 4}); }\n"
+        )
+        binary = tmp_path / "r.bin"
+        subprocess.run(
+            ["g++", "-g", "-O0", str(src), "-o", str(binary)], check=True, capture_output=True
+        )
+
+        take = extract_ground_truth_types(binary).get("Take")
+        assert take is not None
+        by_name = {v["name"]: v for v in take}
+        assert "Blob*" in by_name["in"]["type"]
+        assert "Blob*" in by_name["moved"]["type"]
+        assert by_name["in"]["type"] != ["void"]
+
+    def test_c_ground_truth_has_no_reference_types(self, tmp_path) -> None:
+        """The reference arm cannot move a C result: C has no reference DIEs."""
+        import shutil
+        import subprocess
+
+        if shutil.which("gcc") is None:
+            pytest.skip("needs gcc")
+
+        from decbench.utils import binfmt
+
+        src = tmp_path / "c.c"
+        src.write_text(
+            "struct Blob { int a; };\n"
+            "int take(const struct Blob *in, int n) { return in->a + n; }\n"
+            "int main(void) { struct Blob b = {1}; return take(&b, 2); }\n"
+        )
+        binary = tmp_path / "c.bin"
+        subprocess.run(
+            ["gcc", "-g", "-O0", str(src), "-o", str(binary)], check=True, capture_output=True
+        )
+
+        dw = binfmt.dwarf_info(binary)
+        assert dw is not None
+        tags = {die.tag for cu in dw.iter_CUs() for die in cu.iter_DIEs()}
+        assert "DW_TAG_reference_type" not in tags
+        assert "DW_TAG_rvalue_reference_type" not in tags
+
 
 class TestByteMatchMetric:
     """Tests for the byte match metric."""

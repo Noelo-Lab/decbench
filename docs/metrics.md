@@ -73,6 +73,12 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
+Current `cache_version="5"`, bumped for the pointer-`TYPE_MAP` rule below — the
+only one of the three normalization rules that changes an existing C value. The
+per-function key covers the decompiled variables and the DWARF ground truth but
+NOT `normalize_type`, so only a normalization change can serve stale values;
+a change to what DWARF yields mints a new key on its own and must NOT bump
+(see [Metric caching](#metric-caching)).
 
 Unified 3-pass matching against `FunctionDecompilation.variables`:
 
@@ -94,6 +100,40 @@ on the in-class declaration it references. Without that chase, leveldb's
 ground truth is 97 functions instead of 4,236. See
 [DWARF reference chains](#dwarf-reference-chains-c-vs-c) for why this does not
 change any C value.
+
+### Type-string normalization (`normalize_type`)
+
+A type matches when the ground-truth and decompiled form SETS intersect, so
+`normalize_type` returns every equivalent spelling of one type string. Adding a
+form can only ever create a match, never destroy one — an audit over leveldb
+plus zlib/bzip2/grep/coreutils (30k+ function×decompiler pairs) found zero
+per-function score decreases from the normalization rules below.
+
+- **`TYPE_MAP` applies through pointers.** `int4 *` normalizes to `int*`
+  exactly as the scalar `int4` normalizes to `int`. No new equivalence is
+  declared: the pointee is looked up in the same table, so `int4 *` still does
+  not match `long long*`, and a scalar never becomes a pointer.
+- **C++ namespace qualifiers are stripped.** DWARF records a class or typedef
+  under its UNQUALIFIED `DW_AT_name` (`TableBuilder`), so a decompiler printing
+  `leveldb::TableBuilder *` needs the qualifier dropped to reach ground truth.
+  Only `identifier::` tokens are removed, which cannot start with a digit — a
+  Ghidra symbol-version prefix like `GLIBC_2.2.5::stderr` is left alone. C
+  spellings gain no forms from this rule.
+- **A C++ reference is ground truth as a pointer.** `DW_TAG_reference_type` and
+  `DW_TAG_rvalue_reference_type` share the `DW_TAG_pointer_type` arm of
+  `_parse_type_die`, because a reference is a pointer in the ABI and every
+  decompiler renders it as one. Without it every reference-typed ground-truth
+  variable was `void` and unmatchable for all decompilers (17.5% of leveldb's).
+  C has no reference DIEs, so this rule cannot move a C result.
+
+### Argument positions must be ABI positions
+
+Pass 1 pairs a DWARF formal parameter with the decompiled variable carrying the
+same `arg_index`, so a backend that fills `arg_index` in any other order
+silently scores itself against the wrong ground-truth variable. Hex-Rays'
+`cfunc.get_lvars()` enumerates in allocation order, NOT declared order, so
+`decompilers/raw/ida_raw.py` takes positions from `cfunc.argidx`. Any new
+backend must do the same.
 
 ### DWARF reference chains (C vs C++)
 
