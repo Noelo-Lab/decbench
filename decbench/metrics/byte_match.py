@@ -230,7 +230,7 @@ class ByteMatchMetric(Metric):
     requires_source_cfg = False
     requires_decompiled_cfg = False
 
-    cache_version = "5"
+    cache_version = "6"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
@@ -280,7 +280,10 @@ class ByteMatchMetric(Metric):
                 },
             )
         flags = binfmt.producer_flags(original_binary_path) + ["-c", "-fno-builtin", "-w"]
-        arch_mode = binfmt.capstone_arch_mode(info)
+        thumb = binfmt.elf_function_is_thumb(
+            original_binary_path, decompiled.name, decompiled.address
+        )
+        arch_mode = binfmt.capstone_arch_mode(info, thumb=thumb)
 
         original_bytes = binfmt.function_bytes(
             original_binary_path, decompiled.name, decompiled.address
