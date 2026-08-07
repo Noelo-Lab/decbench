@@ -7,7 +7,8 @@ drivers and `decbench run projects/cps/*.toml` will not pick them up).
 ## Why
 
 These were disabled when decbench had no **C++** support. That reason is now
-out of date: C++ works end-to-end (see `projects/cpp/leveldb.toml` and
+out of date: C++ works end-to-end (see `projects/cpp/disabled/leveldb.toml`,
+itself disabled because C++ support is still experimental, and
 [docs/benchmarking.md](../../../docs/benchmarking.md#c-targets)). The original
 rationale — "pyjoern is C-oriented, so C++ projects produce no `.i` and cannot
 be scored" — was wrong on both halves: a C++ translation unit does get

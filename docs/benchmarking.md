@@ -85,8 +85,9 @@ nothing. Fix: drop the matching Joern **v4.0.150** `joern-cli` into
 
 Targets are project TOMLs under `projects/`; a "full run" spans all of
 `projects/{sailr,cps,malware,cpp}/*.toml` (both drivers gather them via
-`gather_tomls()`; `cps/disabled/` excluded). Everything except `projects/cpp/`
-is C.
+`gather_tomls()`; `cps/disabled/` and `cpp/disabled/` excluded). Everything
+except `projects/cpp/` is C — and **every C++ target ships disabled**, so a
+default full run is C-only.
 
 - **sailr** — 26 sailr-eval Debian packages in `projects/sailr/*.toml`, each
   built at O0 / O2 / O2-noinline, labeled by kind + domain. Compiles on the
@@ -118,13 +119,17 @@ is C.
   `utils/binfmt.py` (byte_match needs the MinGW toolchain, else it abstains).
   See `projects/malware/README.md` (DO NOT EXECUTE). Binaries never leave
   `results/`.
-- **cpp** — the C++ targets in `projects/cpp/*.toml`: currently **leveldb**
-  (Google's embedded key-value store, CMake, x86 host build). Read
-  [C++ targets](#c-targets) before using their numbers.
+- **cpp** — the C++ targets. **Experimental, and disabled by default**: the
+  only target, **leveldb** (Google's embedded key-value store, CMake, x86 host
+  build), sits in `projects/cpp/disabled/` and so matches no
+  `projects/cpp/*.toml` glob. The support code is always active; only the
+  target list is gated. See `projects/cpp/disabled/README.md` to enable one,
+  and read [C++ targets](#c-targets) before using any C++ number.
 
 ### C++ targets
 
-C++ works end-to-end as of `projects/cpp/leveldb.toml`; the mechanics live in
+C++ works end-to-end as of `projects/cpp/disabled/leveldb.toml` (experimental,
+and disabled by default — see `projects/cpp/disabled/README.md`); the mechanics live in
 [metrics.md](metrics.md#preprocessed-iii-files-are-required--source-cfgs-come-exclusively-from-them).
 Three things are worth knowing before reading a C++ number:
 
