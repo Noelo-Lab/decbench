@@ -45,7 +45,7 @@ from decbench.results_store import PROJECT_DIRS  # noqa: F401,E402
 from decbench.results_store import gather_project_tomls as gather_tomls
 from decbench.utils import binfmt  # noqa: E402
 from decbench.utils.cfg import extract_cfgs_from_source
-from decbench.utils.langs import strip_source_ext  # noqa: E402
+from decbench.utils.langs import build_stem_index, strip_source_ext  # noqa: E402
 
 OPT_LEVELS = [
     OptimizationLevel.O0,
@@ -176,7 +176,7 @@ def project_source_functions(
         return {}
     addr2name: dict[int, str] = {}
     file_tables: dict[int, list] = {}
-    stem_index = {strip_source_ext(s): s for s in source_stems}
+    stem_index = build_stem_index(source_stems)
     try:
         for cu in dw.iter_CUs():
             for die in cu.iter_DIEs():

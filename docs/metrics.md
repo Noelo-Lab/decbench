@@ -38,6 +38,17 @@ chooses the temp-file suffix from the input (`.ii` -> `.cpp`, `.i` -> `.c`)
 via `temp_parse_suffix`. Handing a `.ii` to Joern as `.c` scores nothing at
 all (measured on a leveldb TU: 0 functions as `.c`, 393 as `.cpp`).
 
+Every collection site therefore globs BOTH extensions through
+`utils/langs.py preprocessed_by_stem` — `pipeline/executor.py`,
+`evalkit/ingest.py`, `scripts/reeval_ged.py`, `scripts/run_small.py`,
+`scripts/cps_compile_smoke.py`. A site that hard-codes `*.i` does not error on a
+C++ project; it reports "no sources" and every source-side metric silently
+abstains, which is how `scripts/reeval_ged.py` produced a `ged_new.json` with no
+C++ entries at all. The **only** remaining `*.i`-only globs are the
+dataset/publish family — `publish/cfg_export.py`, `publish/layout.py`,
+`dataset.py`, `scripts/compute_dataset_info.py` — which is why a C++ project is
+not publishable to the dataset yet (see benchmarking.md).
+
 byte_match/type_match don't use the preprocessed units
 (`requires_source_cfg = False`; gcc-recompile and DWARF respectively), and
 sample source extraction only *falls back* to them. So do NOT disable
@@ -73,12 +84,21 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="5"`, bumped for the pointer-`TYPE_MAP` rule below — the
-only one of the three normalization rules that changes an existing C value. The
+Current `cache_version="6"`, bumped for the narrowed pointee rule below — the
+only one of the normalization rules that changes an existing C value. The
 per-function key covers the decompiled variables and the DWARF ground truth but
 NOT `normalize_type`, so only a normalization change can serve stale values;
 a change to what DWARF yields mints a new key on its own and must NOT bump
 (see [Metric caching](#metric-caching)).
+
+**The ground-truth payload must be ORDER-STABLE.** `_parse_variable_die` returns
+`type` and `rbp_offset` as SORTED lists. They land in the cache key through
+`stable_hash` → `json.dumps(sort_keys=True)`, which orders dict keys but not list
+elements, so building them with `list(set(...))` made the key depend on
+`PYTHONHASHSEED` and the disk cache mostly missed across processes (measured on
+bzip2/ghidra, 108 functions: cold 5 hits / 103 misses, then a second process at
+the default random seed 25/83 and a third 51/57 — versus 108/0 with sorted
+lists). Any new list in that payload must be sorted too.
 
 Unified 3-pass matching against `FunctionDecompilation.variables`:
 
@@ -105,14 +125,45 @@ change any C value.
 
 A type matches when the ground-truth and decompiled form SETS intersect, so
 `normalize_type` returns every equivalent spelling of one type string. Adding a
-form can only ever create a match, never destroy one — an audit over leveldb
-plus zlib/bzip2/grep/coreutils (30k+ function×decompiler pairs) found zero
-per-function score decreases from the normalization rules below.
+form can only ever create a match, never destroy one; *removing* a rule (as the
+pointee narrowing below does) can only destroy matches. Both directions are
+scoring-policy changes and must bump `cache_version`.
 
-- **`TYPE_MAP` applies through pointers.** `int4 *` normalizes to `int*`
-  exactly as the scalar `int4` normalizes to `int`. No new equivalence is
-  declared: the pointee is looked up in the same table, so `int4 *` still does
-  not match `long long*`, and a scalar never becomes a pointer.
+- **`TYPE_MAP` applies through pointers, but only for COMMITTED pointees.**
+  `int4 *` normalizes to `int*` exactly as the scalar `int4` normalizes to
+  `int`, and `size_t *` to `long long*`. **This does declare new equivalences**
+  — every same-width, sign-agnostic pair the scalar table already equates now
+  also holds one indirection out (`int32_t*` ↔ `int*`, `int64_t*` ↔ `size_t*`,
+  `uchar *` ↔ `unsigned char*`). Enumerated over the C corpus (838 binary×opt
+  slices, 3,693 decompiled and 3,102 ground-truth spellings), the rule turns
+  **152 (decompiled, ground-truth) spelling pairs from a miss into a match**;
+  the earlier claim that it "declares no new equivalence" was false.
+
+  What it must NOT do is credit a *non-recovery*. `_POINTEE_MAP` therefore
+  excludes the nine TYPE_MAP rows that name a WIDTH rather than a type —
+  `undefined`/`undefined1`/`undefined2`/`undefined4`/`undefined8` (Ghidra's and
+  kuna's `TYPE_UNKNOWN`) and `_BYTE`/`_WORD`/`_DWORD`/`_QWORD` (Hex-Rays'
+  unknown-width slots). `undefined8 *` is "pointer to 8 unknown bytes" and stays
+  a **miss** against `size_t*`, matching `_uncommitted_size`'s rule that a
+  width-only spelling against a pointer is a real miss. Routing the whole table
+  through the pointer instead (the state between PRs #60 and #65) declared 203
+  pairs equal, 51 of them with a placeholder pointee.
+
+  The excluded set is deliberately NARROWER than `_UNCOMMITTED_TYPES`, which is
+  a *generosity* rule (which spellings may match any same-width scalar) rather
+  than a claim that its members fail to name a type. IDA's `__int8`, Ghidra's
+  `uchar`, and kuna's `int4`/`int8` are committed integer spellings — each of
+  those decompilers emits a *separate* placeholder for an unrecovered slot
+  (`_BYTE`, `undefined1`, and kuna's `xunknown4`, which prints as `undefined4`),
+  so choosing the named spelling is evidence of a real recovery. Excluding them
+  as well would cost IDA 9 of its 37 perfect functions on grep (mean −0.033)
+  for no gain in correctness.
+
+  Both sides of the comparison go through `normalize_type`, so the rule applies
+  to the DWARF payload as well. On C that is measurably a no-op: `_parse_type_die`
+  already walks the whole typedef chain and returns every name, so a ground-truth
+  `size_t*` already carries `long unsigned int*` → `long long*`. The ground-truth
+  payload hash is **identical with and without the rule on all 690 C binaries**.
 - **C++ namespace qualifiers are stripped.** DWARF records a class or typedef
   under its UNQUALIFIED `DW_AT_name` (`TableBuilder`), so a decompiler printing
   `leveldb::TableBuilder *` needs the qualifier dropped to reach ground truth.
@@ -218,6 +269,12 @@ over seen (decompiled, source) pairs skip recomputation.
   are pinned and a needless bump forces a corpus-wide recompute. The C++
   `DW_AT_specification` chase is the worked example — see
   [DWARF reference chains](#dwarf-reference-chains-c-vs-c).
+- **Keep every key input order-stable.** `stable_hash` canonicalizes through
+  `json.dumps(sort_keys=True)`, which orders dict keys but NOT list elements, so
+  a `list(set(...))` anywhere in a key input makes the key depend on
+  `PYTHONHASHSEED` and the cache misses across processes while still being
+  fail-safe (a miss just recomputes). Sort such lists at construction, and pin
+  `PYTHONHASHSEED` when measuring cache behaviour.
 - Cache root: `DECBENCH_CACHE_DIR`; disable entirely with
   `DECBENCH_NO_CACHE=1`.
 

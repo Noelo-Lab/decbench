@@ -26,7 +26,7 @@ import os
 import struct
 from pathlib import Path
 
-from decbench.utils.langs import PREPROC_EXTS, strip_source_ext
+from decbench.utils.langs import PREPROC_EXTS, build_stem_index, strip_source_ext
 
 _l = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ def _dwarf_addr_to_name(binary: Path, stems: set[str] | None) -> dict[int, str]:
         return {}
     addr2name: dict[int, str] = {}
     file_tables: dict[int, list[str | None]] = {}
-    stem_index = {strip_source_ext(s): s for s in (stems or ())}
+    stem_index = build_stem_index(stems or ())
     try:
         for cu in dw.iter_CUs():
             for die in cu.iter_DIEs():
