@@ -138,3 +138,114 @@ def test_cu_is_cxx_distinguishes_the_languages(tmp_path: Path) -> None:
     c = _build(tmp_path, "h.c", C_SRC, "gcc", "-O0")
     assert all(binfmt.cu_is_cxx(d.cu) for d in _subprograms(cxx))
     assert not any(binfmt.cu_is_cxx(d.cu) for d in _subprograms(c))
+
+
+def test_preprocessed_by_stem_finds_both_extensions(tmp_path: Path) -> None:
+    """A collection site that globs only ``*.i`` sees nothing in a C++ tree."""
+    from decbench.utils.langs import preprocessed_by_stem
+
+    assert preprocessed_by_stem(tmp_path / "missing") == {}
+    (tmp_path / "grep.i").write_text("")
+    (tmp_path / "db_impl.cc.ii").write_text("")
+    (tmp_path / "notes.txt").write_text("")
+    assert preprocessed_by_stem(tmp_path) == {
+        "grep": tmp_path / "grep.i",
+        "db_impl.cc": tmp_path / "db_impl.cc.ii",
+    }
+
+
+def test_preprocessed_by_stem_warns_on_a_shadowed_unit(tmp_path: Path, caplog) -> None:
+    """``parser.i`` and ``parser.ii`` share a stem; the loss must not be silent."""
+    import logging
+
+    from decbench.utils.langs import preprocessed_by_stem
+
+    (tmp_path / "parser.i").write_text("")
+    (tmp_path / "parser.ii").write_text("")
+    with caplog.at_level(logging.WARNING):
+        found = preprocessed_by_stem(tmp_path)
+    assert found == {"parser": tmp_path / "parser.i"}
+    assert "collision" in caplog.text
+
+
+def test_build_stem_index_warns_instead_of_dropping_silently(caplog) -> None:
+    """``main.cc`` and ``main.cpp`` both strip to ``main``."""
+    import logging
+
+    from decbench.utils.langs import build_stem_index
+
+    assert build_stem_index(["grep", "db_impl.cc"]) == {"grep": "grep", "db_impl": "db_impl.cc"}
+    with caplog.at_level(logging.WARNING):
+        index = build_stem_index(["main.cc", "main.cpp"])
+    assert index == {"main": "main.cc"}
+    assert "collision" in caplog.text
+
+
+def test_binary_limit_keeps_a_cxx_projects_sources(tmp_path: Path) -> None:
+    """--binary-limit/--binary-sample must not empty preprocessed_sources.
+
+    The keys are ``db_impl.cc`` (from ``db_impl.cc.ii``) and can never equal a
+    binary stem, so comparing raw stems dropped every C++ source and the project
+    scored zero functions with no error.
+    """
+    from decbench.models.project import OptimizationLevel, Project, ProjectConfig
+    from decbench.pipeline.executor import keep_sources_of_retained_binaries
+
+    opt = OptimizationLevel.O2
+    project = Project(
+        name="leveldb",
+        config=ProjectConfig(name="leveldb", repo_url="https://example.invalid/leveldb"),
+    )
+    project.compiled_binaries[opt] = [tmp_path / "db_impl", tmp_path / "grep"]
+    project.preprocessed_sources[opt] = {
+        "db_impl.cc": tmp_path / "db_impl.cc.ii",
+        "grep": tmp_path / "grep.i",
+        "version_set.cc": tmp_path / "version_set.cc.ii",
+    }
+
+    keep_sources_of_retained_binaries(project, opt)
+
+    assert set(project.preprocessed_sources[opt]) == {"db_impl.cc", "grep"}
+
+
+def test_every_source_collection_site_globs_both_extensions() -> None:
+    """No `*.i`-only glob outside the dataset/publish family.
+
+    Those four are C-only by disclosure (docs/benchmarking.md); anywhere else a
+    hard-coded ``*.i`` means a C++ project silently gets no sources and no score.
+    """
+    import re
+
+    repo = Path(__file__).resolve().parent.parent
+    allowed = {
+        "decbench/publish/cfg_export.py",
+        "decbench/publish/layout.py",
+        "decbench/dataset.py",
+        "scripts/compute_dataset_info.py",
+    }
+    pattern = re.compile(r"""glob\(\s*["']\*\.i["']""")
+    offenders = set()
+    for path in sorted(repo.rglob("*.py")):
+        rel = path.relative_to(repo).as_posix()
+        if rel.startswith(("tests/", ".venv/", "build/")):
+            continue
+        if pattern.search(path.read_text(errors="replace")):
+            offenders.add(rel)
+    extra = sorted(offenders - allowed)
+    assert not extra, f"undisclosed .i-only collection sites: {extra}"
+
+
+def test_leveldb_cmake_probe_cleanup_is_version_agnostic() -> None:
+    """CMake 4.x writes build/CMakeFiles/4.0.x/, so a `3.*` glob leaves its
+    compiler-probe binaries in the tree as benchmark targets."""
+    repo = Path(__file__).resolve().parent.parent
+    candidates = [
+        repo / "projects/cpp/leveldb.toml",
+        repo / "projects/cpp/disabled/leveldb.toml",
+    ]
+    toml_path = next((p for p in candidates if p.is_file()), None)
+    if toml_path is None:
+        pytest.skip("leveldb.toml not present")
+    text = toml_path.read_text()
+    assert "CMakeFiles/3." not in text
+    assert "rm -rf build/CMakeFiles/[0-9]*" in text

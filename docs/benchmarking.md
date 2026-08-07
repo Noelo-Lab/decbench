@@ -143,9 +143,13 @@ Three things are worth knowing before reading a C++ number:
   iterator class) all collapse onto whichever body won the per-name reduction.
   Rank C++ targets against each other; do not read leveldb's GED next to
   grep's. Qualified-name keying is the fix and is not implemented.
-- **Not publishable to the dataset yet.** The publish/dataset paths still glob
-  only `*.i`, so a C++ project's source CFGs never make it into the exported
-  tree (see metrics.md for the file list).
+- **Not publishable to the dataset yet.** Four files still glob only `*.i` —
+  `publish/cfg_export.py`, `publish/layout.py`, `dataset.py`, and
+  `scripts/compute_dataset_info.py` — so a C++ project's source CFGs never make
+  it into the exported tree. Every *evaluation* collection site now globs both
+  extensions via `utils/langs.py preprocessed_by_stem`;
+  `tests/test_cpp_support.py` pins that list, so adding a fifth `*.i`-only glob
+  fails the suite.
 
 CMake-based C++ TOMLs have two traps worth copying from leveldb's: leave
 `CMAKE_BUILD_TYPE` **empty** (a named type appends its own `-O` flag AFTER
@@ -379,6 +383,18 @@ coverage (`--allow-drops` / `DECBENCH_ALLOW_DROPS=1` overrides;
 `--audit` scans checkpoints/artifacts/overlays/published for silent gaps.
 After adding a decompiler, refresh the overlays and re-finalize before
 publishing.
+
+**A reeval can only fix what the checkpoint recorded.** `reeval_typematch.py`
+recomputes the METRIC from `FunctionDecompilation.variables`; it cannot repair a
+backend that stored the wrong thing. The live case: PR #60 fix 3 corrected IDA's
+`arg_index` from Hex-Rays allocation order to `cfunc.argidx`, but every
+`checkpoints/*.pkl` in `results/full_run` was written BEFORE that fix and still
+carries the scrambled indices, so re-scoring from checkpoints reproduces the old
+IDA numbers exactly. **The published IDA type_match column can only be corrected
+by re-running IDA** (`run_benchmark.py ... --decompilers ida`, then refresh the
+overlays and finalize). The same reasoning applies to any future backend-side
+fix: ask whether the change is in the metric (reeval is enough) or in what the
+decompiler recorded (re-run required).
 
 ```bash
 # Recompute ONLY byte_match over an existing tree WITHOUT re-decompiling

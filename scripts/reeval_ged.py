@@ -28,6 +28,10 @@ import pickle
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from decbench.utils.langs import preprocessed_by_stem  # noqa: E402
+
 DECOMPILERS = (
     "angr",
     "ghidra",
@@ -71,7 +75,7 @@ def build_source_cfgs(root: Path, projects: list[str], workers: int) -> Path:
             continue
         ifiles = [
             str(f)
-            for f in sorted(comp.glob("*.i"))
+            for f in preprocessed_by_stem(comp).values()
             if "conftest" not in f.name and not f.name.startswith("a-")
         ]
         if ifiles:

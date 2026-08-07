@@ -72,8 +72,26 @@ TYPE_MAP: dict[str, str] = {
 
 QUALIFIERS = ["unsigned", "signed", "const", "volatile", "register", "static", "extern"]
 
-# A trailing run of ``*``s, so TYPE_MAP can be applied to the POINTEE.
+# A trailing run of ``*``s, so a pointee spelling can be normalized.
 _PTR_SUFFIX = re.compile(r"^(.*?)((?:\s*\*)+)$")
+
+# Spellings that mean "N bytes of UNKNOWN type" rather than naming a C type:
+# Ghidra's and kuna's TYPE_UNKNOWN (``undefinedN``) and Hex-Rays' unknown-width
+# stack slots (``_QWORD`` …). Every decompiler that emits one of these also has a
+# committed spelling for the same width in the same output (Ghidra ``uint``, IDA
+# ``__int32``, kuna ``int4`` — a TYPE_INT core type, distinct from its TYPE_UNKNOWN
+# ``xunknown4``), so choosing a placeholder is positive evidence that the type was
+# NOT recovered.
+_PLACEHOLDER_TYPES = re.compile(r"^(?:undefined\d*|_(?:BYTE|WORD|DWORD|QWORD))$")
+
+# The subset of TYPE_MAP that may be applied to a POINTEE. A pointer spelling names
+# the type of the thing pointed AT, so routing the whole table through a pointer
+# would declare ``undefined8 *`` ("pointer to 8 unknown bytes") equal to ``size_t *``
+# — crediting a non-recovery as a recovery, and contradicting _UNCOMMITTED_TYPES'
+# rule that a width-only spelling against a pointer is a real miss.
+_POINTEE_MAP: dict[str, str] = {
+    k: v for k, v in TYPE_MAP.items() if not _PLACEHOLDER_TYPES.match(k)
+}
 
 # One C++ namespace/class qualifier, e.g. the ``leveldb::`` of
 # ``leveldb::TableBuilder *``. Digits cannot start a token, so a Ghidra symbol
@@ -82,16 +100,18 @@ _NAMESPACE_QUALIFIER = re.compile(r"\b[A-Za-z_]\w*\s*::\s*")
 
 
 def _map_pointee(form: str) -> str:
-    """``TYPE_MAP`` applied through a pointer spelling: ``int4 *`` -> ``int*``.
+    """``_POINTEE_MAP`` applied through a pointer spelling: ``size_t *`` -> ``long long*``.
 
-    The scalar rows already normalize ``int4``, but a pointer spelling never
-    reached them, so a decompiler writing ``int4 *`` could not match DWARF's
-    ``int*`` while one writing ``int *`` could.
+    Only COMMITTED pointee spellings are mapped (see :data:`_POINTEE_MAP`); a
+    width-only placeholder such as ``undefined8`` or ``_QWORD`` is left alone, so
+    ``undefined8 *`` stays a miss against ``size_t*``. Applies to both sides of
+    the comparison, since ``normalize_type`` is shared by the decompiled and the
+    DWARF ground-truth payload.
     """
     m = _PTR_SUFFIX.match(form)
     if m is None:
         return form
-    mapped = TYPE_MAP.get(m.group(1).strip())
+    mapped = _POINTEE_MAP.get(m.group(1).strip())
     return form if mapped is None else mapped + m.group(2)
 
 
@@ -154,7 +174,10 @@ def normalize_type(type_str: str) -> set[str]:
 
 # Uncommitted types recover a variable's SIZE but not a committed C type. Matching
 # one against a same-width ground-truth SCALAR is fair; against a pointer or
-# aggregate it is a real miss, so those are excluded from _UNCOMMITTED_GT_SCALARS.
+# aggregate it is a real miss, so those are excluded from _SIZE_SCALARS. This set is
+# wider than _PLACEHOLDER_TYPES on purpose: it is the GENEROSITY rule (which
+# spellings may match any same-width scalar), not a claim that every member fails to
+# name a type.
 _UNCOMMITTED_TYPES = re.compile(
     r"^\s*(?:"
     r"undefined\d*"
@@ -367,10 +390,14 @@ def _parse_variable_die(
     for t in type_names:
         all_forms.update(normalize_type(t))
 
+    # SORTED, not list(set(...)): this payload goes into the type_match cache key
+    # via stable_hash -> json.dumps, which orders dict keys but not list elements.
+    # A set's iteration order depends on PYTHONHASHSEED, so unsorted lists made
+    # the key differ between processes and ~77% of the disk cache went unread.
     return {
         "name": name,
-        "type": list(all_forms),
-        "rbp_offset": list(set(offsets)),
+        "type": sorted(all_forms),
+        "rbp_offset": sorted(set(offsets)),
         "size": size,
         "is_arg": is_arg,
         "arg_index": arg_index if is_arg else None,
@@ -813,7 +840,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "5"
+    cache_version = "6"
 
     weight = 1.0
     lower_is_better = False

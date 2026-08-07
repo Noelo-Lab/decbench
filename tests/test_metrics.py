@@ -597,24 +597,125 @@ int main() {
         assert result.metadata["matched_by"] == "structured"
         assert result.metadata["tp"] == 1
 
-    def test_type_map_reaches_pointer_spellings(self) -> None:
+    def test_type_map_reaches_committed_pointer_spellings(self) -> None:
         """``int4 *`` must normalize like ``int4`` does, one indirection out."""
         from decbench.metrics.type_match import normalize_type
 
         assert "int*" in normalize_type("int4 *")
         assert "int*" in normalize_type("int4*")
-        assert "long long*" in normalize_type("undefined8 *")
-        assert "char**" in normalize_type("undefined1 **")
+        assert "long long*" in normalize_type("size_t *")
+        assert "char**" in normalize_type("uint8_t **")
         # An unmapped pointee is left exactly as it was.
         assert normalize_type("Slice *") == {"Slice *", "Slice*"}
 
     def test_pointer_normalization_does_not_cross_widths(self) -> None:
-        """The pointee mapping declares no new equivalence: ``int4 *`` is not
-        ``long long*``, and a scalar never becomes a pointer."""
+        """``int4 *`` is not ``long long*``, and a scalar never becomes a pointer."""
         from decbench.metrics.type_match import normalize_type
 
         assert "long long*" not in normalize_type("int4 *")
         assert not any("*" in f for f in normalize_type("int4"))
+
+    def test_placeholder_pointees_are_never_mapped(self) -> None:
+        """A pointer to N UNKNOWN bytes is not a recovery of a committed type.
+
+        ``undefinedN`` (Ghidra/kuna TYPE_UNKNOWN) and ``_BYTE``/``_WORD``/
+        ``_DWORD``/``_QWORD`` (Hex-Rays unknown-width slots) are the only
+        TYPE_MAP rows excluded from the pointee mapping; every other row names a
+        committed C type and is mapped.
+        """
+        from decbench.metrics.type_match import _POINTEE_MAP, TYPE_MAP, normalize_type
+
+        assert set(TYPE_MAP) - set(_POINTEE_MAP) == {
+            "undefined",
+            "undefined1",
+            "undefined2",
+            "undefined4",
+            "undefined8",
+            "_BYTE",
+            "_WORD",
+            "_DWORD",
+            "_QWORD",
+        }
+        for form in ("undefined8 *", "_QWORD *", "_BYTE *", "undefined *", "undefined1 **"):
+            assert normalize_type(form) == {form, form.replace(" ", "")}
+        # The scalar rows are untouched -- only the POINTER spelling is excluded.
+        assert "long long" in normalize_type("undefined8")
+        assert "int" in normalize_type("_DWORD")
+
+    def test_uncommitted_pointer_is_a_miss_against_ground_truth(self) -> None:
+        """End to end: ``undefined8 *`` must not score as a recovery of ``size_t *``."""
+        from decbench.metrics.type_match import TypeMatchMetric, normalize_type
+
+        # The DWARF payload is normalized at extraction time, so normalize here too.
+        gt_vars = [
+            {
+                "name": "n",
+                "type": sorted(normalize_type("size_t*")),
+                "is_arg": True,
+                "arg_index": 0,
+            }
+        ]
+
+        def score(decompiled_type: str) -> float:
+            func = FunctionDecompilation(
+                name="f",
+                address=0x1000,
+                decompiled_code="// no decls",
+                variables=[VariableInfo(name="a1", type=decompiled_type, kind="arg", arg_index=0)],
+            )
+            return TypeMatchMetric().compute_for_function(func, ground_truth_vars=gt_vars).value
+
+        assert score("undefined8 *") == 0.0
+        assert score("_QWORD *") == 0.0
+        # ... while a committed spelling of the same type still matches.
+        assert score("size_t *") == 1.0
+        assert score("unsigned long long *") == 1.0
+
+    def test_ground_truth_payload_is_hash_seed_independent(self, tmp_path) -> None:
+        """The DWARF payload feeds the metric cache key through ``stable_hash``,
+        which sorts dict keys but NOT list elements. Unsorted lists made the key
+        depend on ``PYTHONHASHSEED``, so the disk cache mostly missed across
+        processes."""
+        import os
+        import shutil
+        import subprocess
+        import sys
+
+        cc = shutil.which("cc") or shutil.which("gcc")
+        if cc is None:
+            pytest.skip("no C compiler available")
+
+        src = tmp_path / "t.c"
+        src.write_text(
+            "#include <stddef.h>\n"
+            "int helper(int first, char *second, size_t third) {\n"
+            "    long fourth = first * 2;\n"
+            "    unsigned char fifth = (unsigned char)third;\n"
+            "    return fourth + (second != 0) + fifth;\n"
+            "}\n"
+            "int main(int argc, char **argv) { return helper(argc, argv[0], 1); }\n"
+        )
+        binary = tmp_path / "t"
+        subprocess.run([cc, "-g", "-O0", "-o", str(binary), str(src)], check=True)
+
+        prog = (
+            "import json,sys;"
+            "from decbench.caching import stable_hash;"
+            "from decbench.metrics.type_match import extract_ground_truth_types;"
+            "print(stable_hash(extract_ground_truth_types(sys.argv[1])))"
+        )
+        digests = set()
+        for seed in ("0", "1", "12345"):
+            env = {**os.environ, "PYTHONHASHSEED": seed}
+            out = subprocess.run(
+                [sys.executable, "-c", prog, str(binary)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            digests.add(out.stdout.strip())
+        assert len(digests) == 1, f"ground-truth hash varies with PYTHONHASHSEED: {digests}"
 
     def test_namespace_qualifier_is_stripped(self) -> None:
         """DWARF's ``DW_AT_name`` is unqualified, so IDA's ``leveldb::X *``

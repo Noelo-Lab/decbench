@@ -49,9 +49,13 @@ pre_make_cmds = [
 # The `rm` drops CMake's compiler-probe binaries (a.out,
 # CMakeDetermineCompilerABI_*.bin), which are real ELF executables under
 # build/CMakeFiles/<cmake-version>/ and would otherwise be collected as targets.
-# It lives in make_cmd because ProjectConfig.post_make_cmds is declared but never
-# executed by pipeline/compile.py.
-make_cmd = 'cmake --build build -j && rm -rf build/CMakeFiles/3.*'
+# That directory is named after the CMake VERSION, so the glob must not hard-code
+# a major: CMake 4.x writes build/CMakeFiles/4.0.x/, which a `3.*` glob leaves in
+# place, silently adding the probes to the benchmark. `[0-9]*` is the version
+# directories and nothing else. It lives in make_cmd because
+# ProjectConfig.post_make_cmds is declared but never executed by
+# pipeline/compile.py.
+make_cmd = 'cmake --build build -j && rm -rf build/CMakeFiles/[0-9]*'
 
 labels = ["cpp", "library", "database", "key-value-store"]
 
