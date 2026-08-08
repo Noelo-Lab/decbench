@@ -5,7 +5,7 @@ reverse-engineering framework. Both live in
 `decbench/decompilers/raw/glaurung_raw.py` and `…/glaurung_agentic.py`.
 
 **Glaurung is a from-scratch native decompiler, not a wrapper.** Its decompiler
-is a ~27-pass Rust LLIR pipeline — CFG discovery → semantic lift
+is a multi-pass Rust LLIR pipeline — CFG discovery → semantic lift
 (`lift_x86`/`lift_arm64`) → SSA → control-flow structuring → AST lowering →
 expression reconstruction → DCE → ABI arg / name / type recovery → C render. It
 does **not** call Ghidra/RetDec/angr (contrast `kuna`, a Ghidra-decompiler port,
@@ -101,7 +101,7 @@ extension:
 ```bash
 git clone https://github.com/mjbommar/glaurung
 cd glaurung
-uv sync --frozen
+uv sync --locked --no-dev
 export GLAURUNG_BIN="$(command -v glaurung)"
 ```
 
@@ -117,8 +117,9 @@ sample kit; credentials are never built into or forwarded to the raw image.
 
 - **Architecture:** the LLIR lifter supports **x86-64, AArch64, and ARM32/Thumb-2**
   (ARMv7). The DecBench CPS firmware is Cortex-M Thumb, so the ARM slice is
-  covered; Glaurung decodes ARM as Thumb by default (A32-only binaries are a
-  documented follow-up).
+  covered. ARM32 mode selection uses ELF mapping symbols, function-symbol Thumb
+  bits, and bounded decode probes; dedicated round-trip lanes cover both Thumb-2
+  and A32.
 - **Structured variables:** not emitted yet. type_match uses its C-signature
   text-parsing path over the emitted prototype; line-mappings are omitted (GED
   parses the C directly). Scalar widths and pointer-ness are recovered; struct

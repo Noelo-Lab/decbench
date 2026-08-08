@@ -38,7 +38,7 @@ RUN git clone "${GLAURUNG_REPO}" /src/glaurung \
     && git rev-parse --short HEAD > /src/glaurung.rev
 
 WORKDIR /src/glaurung
-RUN uv sync --frozen --no-dev --no-editable \
+RUN uv sync --locked --no-dev --no-editable \
     && glaurung --version
 
 FROM python:3.12-slim-bookworm

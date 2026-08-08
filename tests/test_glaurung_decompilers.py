@@ -268,6 +268,36 @@ class TestDockerInstall:
         assert "decbench/glaurung:latest" in run
         assert run[-2:] == ["--vas", hex(target)]
 
+    def test_nonzero_exit_with_json_fails_closed(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_docker: Path,
+        tiny_binary: Path,
+    ) -> None:
+        """Partial-looking output from a failed process is not benchmark evidence."""
+        target = _func_address(tiny_binary, "add_nums")
+        monkeypatch.setenv(
+            "FAKE_GLAURUNG_JSON",
+            json.dumps(
+                [
+                    {
+                        "name": "add_nums",
+                        "entry_va": target,
+                        "pseudocode": "int add_nums(int a, int b) { return a + b; }",
+                    }
+                ]
+            ),
+        )
+        monkeypatch.setenv("FAKE_DOCKER_RUN_RC", "7")
+
+        result = RawGlaurungDecompiler().decompile_binary(
+            tiny_binary, function_names={target}
+        )
+
+        assert result.functions == {}
+        assert result.decompiler.failed_functions == ["all"]
+        assert "exited 7" in result.decompiler.extra["error"]
+
 
 def test_agentic_command_requires_real_llm_and_sets_stage_budget(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path

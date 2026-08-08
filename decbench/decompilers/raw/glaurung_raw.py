@@ -30,8 +30,9 @@ filtering (CRT/PLT exclusion, DWARF source-address narrowing) is applied here
 with the shared ``common`` helpers, exactly like the other raw backends.
 
 Architecture support: x86-64, AArch64, and **ARM32/Thumb-2** (the DecBench CPS
-firmware is Cortex-M Thumb, so this covers the ARM slice). A32-only binaries are
-a documented follow-up; Glaurung decodes ARM as Thumb by default. Structured
+firmware is Cortex-M Thumb, so this covers the ARM slice). ARM32 mode selection
+uses ELF mapping symbols, function-symbol Thumb bits, and bounded decode probes;
+both Thumb-2 and A32 have dedicated round-trip lanes. Structured
 ``VariableInfo`` is not emitted yet; type_match uses its C-signature text-parsing
 path over the emitted ``long name(long arg0, …)`` prototype.
 
@@ -515,7 +516,7 @@ class RawGlaurungDecompiler(Decompiler):
         finally:
             if p.poll() is None:
                 self._kill_group(p)
-        if p.returncode != 0 and not (stdout or "").strip():
+        if p.returncode != 0:
             tail = (stderr or "")[-500:]
             raise RuntimeError(f"glaurung exited {p.returncode}: {tail}")
         records = self._parse_records(stdout)
