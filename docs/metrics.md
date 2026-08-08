@@ -8,16 +8,32 @@ before changing any of them — and bump the metric's `cache_version` if you do
 
 ## Structural Correctness — GED (`metrics/ged.py`)
 
-CFG Graph Edit Distance between source and decompiled code. The engine is
-`cfgutils.similarity.vj_ged`, which is almost purely structural: it scores
-graph topology plus each node's `is_entrypoint`/`is_exitpoint` flags and never
-reads labels (which is what makes the published source-CFG serialization
+CFG Graph Edit Distance between source and decompiled code. A directed
+NetworkX isomorphism check handles perfect matches; non-isomorphic graphs use
+the cfgutils VJ-GED cost model or the large-graph lower bound. DecBench solves
+VJ-GED's assignment matrix with SciPy's compiled linear-assignment solver
+instead of cfgutils' equivalent pure-Python Munkres implementation. All three
+paths read graph topology plus each node's `is_entrypoint`/`is_exitpoint` roles
+and never read labels (which makes the published source-CFG serialization
 lossless — see [dataset-publishing.md](dataset-publishing.md)).
 
-- Decompiled-side CFGs are parsed from the decompiled C via pyjoern.
-- Exact GED is super-polynomial, so runs cap it to CFGs ≤
-  `DECBENCH_GED_MAX_NODES` nodes (default 60, read in `metrics/ged.py`) — a
-  few huge optimized CFGs would otherwise dominate a run.
+- Decompiled-side CFGs are parsed from the decompiled C via pyjoern after
+  syntax sanitization and expansion of macros defined in that output. This
+  mirrors the source side's macro-expanded input; includes are removed before
+  the host preprocessor runs, and preprocessing failure falls back to the
+  sanitized text.
+- Every pair first receives a directed graph-isomorphism check that includes
+  entry/exit roles. An isomorphic pair is always GED 0, regardless of graph
+  size. Joint isomorphism-invariant neighborhood colors are attached before
+  the same NetworkX check to prune VF2's search on large, structurally similar
+  CFGs; they do not filter or approximate any pair.
+- Non-isomorphic pairs up to `DECBENCH_GED_MAX_NODES` nodes (default 200,
+  read in `metrics/ged.py`) use VJ-GED. Its compiled assignment solver is
+  score-equivalent to cfgutils' implementation and makes the 200-node default
+  practical. Larger pairs use the nonzero lower bound from their
+  node/edge-count differences so a few huge optimized CFGs cannot dominate a
+  run. The lower bound is floored at 1 after isomorphism fails, preserving the
+  contract that GED 0 means graph-isomorphic.
 
 ### Preprocessed `.i`/`.ii` files are REQUIRED — source CFGs come EXCLUSIVELY from them
 
@@ -30,6 +46,10 @@ deliberate: Joern needs macro-expanded, ifdef-resolved code to parse
 completely — raw `.c` with unexpanded includes parses incompletely. Without
 them the pipeline takes the "No preprocessed sources" branch and **GED is
 silently None for every function of the run — no error**.
+
+The extractor writes stripped `.i` text to a temporary `.c` file and stripped
+`.ii` text to a temporary `.cpp` file because Joern chooses its frontend from
+that suffix. It does not read or fall back to the project's original source.
 
 gcc names the preprocessed output after the LANGUAGE, not the flag: a C unit
 yields `.i` and a C++ unit `.ii`. Joern picks its frontend the same way, and
@@ -59,14 +79,15 @@ flow (precomputed `source_cfgs/*.json`, built FROM the preprocessed units at
 publish time by `publish/cfg_export.py`) — and that path cannot score
 type_match. The publish/dataset paths still glob only `*.i`
 (`publish/layout.py`, `publish/cfg_export.py`, `dataset.py`,
-`evalkit/ingest.py`, `scripts/reeval_ged.py`,
 `scripts/compute_dataset_info.py`), so a C++ project cannot be published to the
 dataset yet.
 
 Source-side matching is per-TU: `pipeline/evaluate.py` matches a binary's OWN
 translation unit first, cross-TU best-by-name only as fallback (avoids
-same-name collisions across TUs). The old JOERN_FAILURES.md failure analysis
-lives in git history; Joern parse-health stats render on the site's data page.
+same-name collisions across TUs). It is also per optimization level: an O0
+source CFG is not valid ground truth for O2 merely because both inputs came
+from the same project. The old JOERN_FAILURES.md failure analysis lives in git
+history; Joern parse-health stats render on the site's data page.
 
 **C++ name collisions.** Matching is by UNQUALIFIED name on both sides (DWARF
 `DW_AT_name` is `Get`, not `leveldb::DBImpl::Get`, and Joern's C++ frontend

@@ -660,6 +660,8 @@ numbers are the overlays, not the checkpoint inline values — see
 # 1. Refresh the GED + byte_match overlays, extending each script's default
 #    decompiler list with the new id (DECBENCH_REEVAL_DECOMPILERS overrides the
 #    hardcoded tuple; keep the defaults, add yours):
+DECBENCH_GED_BASELINE=/path/to/frozen-function-results.json \
+DECBENCH_GED_HISTORICAL_SLICES=/path/to/frozen-ged-overlay-slices.json \
 DECBENCH_REEVAL_DECOMPILERS=angr,ghidra,ida,binja,kuna,r2dec,dewolf,codex,claude-code,mydec \
   python scripts/reeval_ged.py results/full_run 16
 DECBENCH_REEVAL_DECOMPILERS=angr,ghidra,ida,binja,kuna,r2dec,dewolf,mydec \

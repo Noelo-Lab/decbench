@@ -229,7 +229,7 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 
 - `DECBENCH_DECOMPILERS` (default `angr,ghidra`)
 - `DECBENCH_DECOMPILE_TIMEOUT` (s, default 300)
-- `DECBENCH_GED_MAX_NODES` (60; read in `metrics/ged.py`, takes effect during
+- `DECBENCH_GED_MAX_NODES` (200; read in `metrics/ged.py`, takes effect during
   runs)
 - `DECBENCH_OPT_LEVELS` (comma list, e.g. `"O0"` to narrow the run)
 - `DECBENCH_METRICS` (comma list, e.g. `"ged"` for a GED-only run)
@@ -284,10 +284,45 @@ to the project's own source functions via DWARF `decl_file`
 (`project_source_functions`), (b) imposes a hard per-binary timeout via
 killable subprocess, (c) recovers partial results on timeout
 (`decompile_binary(progress_path=...)` pickles after each function), and
-(d) caps exact GED to CFGs ≤ `DECBENCH_GED_MAX_NODES` nodes
-(super-polynomial; a few huge optimized CFGs otherwise dominate). These make
-angr tractable and bound the run; default in-process `decbench run` does none
-of them.
+(d) runs directed graph isomorphism for every CFG pair, then caps VJ-GED to
+non-isomorphic CFGs ≤ `DECBENCH_GED_MAX_NODES` nodes. VJ-GED uses a compiled
+linear-assignment solver with the same cost model as cfgutils' pure-Python
+Munkres implementation. A few still-larger optimized CFGs otherwise dominate.
+These make angr tractable and bound the run; default in-process `decbench run`
+does none of them.
+
+`scripts/reeval_ged.py` requires `DECBENCH_GED_BASELINE` to name a frozen
+published FunctionData JSON and `DECBENCH_GED_HISTORICAL_SLICES` to name the
+matching frozen `ged_new.slices.json`. The score aggregate cannot distinguish
+overlay values from inline values, so it is not a substitute for the sidecar.
+The driver validates both files before writing, records their
+paths and hashes in the audit, and binds each checkpoint to its historical
+source basis plus a digest of that slice's frozen scores. Legacy overlays span
+both sides of the decompiled-C sanitizer change, so the driver parses both raw
+and sanitized candidate text and uses published candidate coverage, the old
+60-node fallback identity, and the exact pre-cutoff VJ-GED identity to recover
+the parse mode for each slice. Conflicting evidence aborts the refresh;
+indistinguishable modes remain explicit and are replayed both ways by the
+historical-isomorphism audit.
+The promotion projection always includes the built-in decompilers plus any
+external IDs explicitly named by `DECBENCH_REEVAL_DECOMPILERS`; its exact slice
+set is written to `ged_new.slices.json` and hash-bound into the audit.
+After a complete refresh, `scripts/audit_historical_ged_iso.py <tree>
+[workers]` classifies historical isomorphism for every pair reconstructed as
+crossing the old 60-node cutoff. Every pair is reparsed with the historical
+generated-C preprocessing behavior and passed to directed role-aware NetworkX
+isomorphism, including pairs whose unequal node or edge counts let NetworkX
+reject them immediately. Each record also compares its reconstructed size
+fallback with the frozen published score. A missing replayed graph or fallback
+mismatch aborts the exact audit instead of fabricating evidence or claiming
+that today's parser reproduced the historical graph sizes.
+Legacy-overlay candidates use the evidence-reconciled
+raw/sanitized mode stored in the score checkpoint. If the frozen outputs cannot
+distinguish the two modes, both graphs must give the same directed role-aware
+isomorphism result. Newer, inline-only candidates retain the sanitizer used by
+their original evaluation. The pass is resumable under
+`reeval_ged_historical_iso/`, verifies the score overlay and audit projection
+before promotion, and enriches only `ged_large_graph_audit.json`.
 
 Other driver facts:
 
@@ -368,6 +403,19 @@ inline values — and `function_results.json` is only ever written through
 corrected values (sanitized decompiled parses, per-TU source matching,
 non-finite dropped, compilability fixup); the per-project checkpoints still
 hold the ORIGINAL inline values from each decompiler's first evaluation.
+
+`reeval_ged.py` signs each per-slice checkpoint with the GED cache version,
+node limit, audit schema, historical source basis, and frozen-score evidence
+digest, so a metric, provenance, or baseline change invalidates the old
+reevaluation instead of silently reusing it. A semantic refresh promotes
+`ged_new.json` only after every current artifact slice has a matching
+checkpoint. Its source CFG caches are keyed by optimization level and by the
+content of the stripped `.i` input; O0 source CFGs must never be reused for O2
+or O2-noinline merely because the project is the same. It also writes
+`ged_large_graph_audit.json`, containing separate per-decompiler censuses for
+the CFG inputs seen by the historical 60-node evaluator and the corrected
+same-optimization/macro-expanded inputs, graph sizes and methods, and old/new
+score changes against the required frozen `DECBENCH_GED_BASELINE`.
 
 The canonical rebuild is `scripts/finalize_results.py <tree>` (also what
 `run_benchmark.py`'s finalize calls): ALL checkpoints (never scoped — a

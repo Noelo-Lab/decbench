@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -27,6 +29,15 @@ _AGG_RETURN = re.compile(r"^([A-Za-z_][\w ]*?)\s*\[\d+\]\s+([A-Za-z_]\w*\s*\()",
 
 # ``@`` is not legal C and breaks Joern's parse for the whole function.
 _REG_ANNOTATION = re.compile(r"\s*@\s*[a-z]\w+\b")
+_PREPROCESSOR_CONTROL = re.compile(
+    r"^\s*#\s*(?:define|undef|if|ifdef|ifndef|elif|else|endif)\b",
+    re.M,
+)
+_INCLUDE_DIRECTIVE = re.compile(r"^\s*#\s*include\b[^\n]*(?:\n|$)", re.M)
+_FUNCTION_MARKER = re.compile(
+    r"^// Function: ([A-Za-z_]\w*)(?: @ 0x[0-9a-fA-F]+)?\s*$",
+    re.M,
+)
 
 # Tab and newline are the emitted source's own layout, not literal payload.
 _KEEP_RAW_BYTES = frozenset({0x09, 0x0A})
@@ -84,6 +95,138 @@ def sanitize_decompiled_c(text: str) -> str:
     text = _REG_ANNOTATION.sub("", text)
     text = text.replace("unsigned __int128", "unsigned long long").replace("__int128", "long long")
     return escape_literal_control_bytes(text)
+
+
+def needs_decompiled_preprocessing(text: str) -> bool:
+    """Whether decompiled C contains directives whose expansion can change its CFG."""
+    return _PREPROCESSOR_CONTROL.search(text) is not None
+
+
+def _mask_c_noncode(text: str) -> str:
+    masked = list(text)
+    state = "code"
+    index = 0
+    while index < len(text):
+        char = text[index]
+        next_char = text[index + 1] if index + 1 < len(text) else ""
+        if state == "code":
+            if char == "/" and next_char == "/":
+                masked[index] = masked[index + 1] = " "
+                state = "line_comment"
+                index += 2
+                continue
+            if char == "/" and next_char == "*":
+                masked[index] = masked[index + 1] = " "
+                state = "block_comment"
+                index += 2
+                continue
+            if char in {'"', "'"}:
+                masked[index] = " "
+                state = "string" if char == '"' else "character"
+        elif state == "line_comment":
+            if char == "\n":
+                state = "code"
+            else:
+                masked[index] = " "
+        elif state == "block_comment":
+            if char == "*" and next_char == "/":
+                masked[index] = masked[index + 1] = " "
+                state = "code"
+                index += 2
+                continue
+            if char != "\n":
+                masked[index] = " "
+        else:
+            if char == "\\" and next_char:
+                masked[index] = masked[index + 1] = " "
+                index += 2
+                continue
+            masked[index] = " " if char != "\n" else "\n"
+            if state == "string" and char == '"' or state == "character" and char == "'":
+                state = "code"
+        index += 1
+    return "".join(masked)
+
+
+def _definition_name_span(segment: str, name: str) -> tuple[int, int] | None:
+    code = _mask_c_noncode(segment)
+    for match in re.finditer(rf"\b{re.escape(name)}\s*\(", code):
+        line_start = code.rfind("\n", 0, match.start()) + 1
+        if code[line_start : match.start()].lstrip().startswith("#"):
+            continue
+        depth = 0
+        for index in range(code.find("(", match.start()), len(code)):
+            char = code[index]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    suffix = code[index + 1 :]
+                    brace = suffix.find("{")
+                    semicolon = suffix.find(";")
+                    if brace >= 0 and (semicolon < 0 or brace < semicolon):
+                        return match.start(), match.start() + len(name)
+                    break
+    return None
+
+
+def _protect_macro_colliding_definitions(text: str) -> tuple[str, dict[str, str]]:
+    markers = list(_FUNCTION_MARKER.finditer(text))
+    replacements: list[tuple[int, int, str]] = []
+    restore: dict[str, str] = {}
+    for index, marker in enumerate(markers):
+        name = marker.group(1)
+        segment_start = marker.end()
+        segment_end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+        span = _definition_name_span(text[segment_start:segment_end], name)
+        if span is None:
+            continue
+        sentinel = f"__decbench_function_{index}_macro_guard"
+        if sentinel in text:
+            raise ValueError(f"reserved preprocessing sentinel already present: {sentinel}")
+        start, end = span
+        replacements.append((segment_start + start, segment_start + end, sentinel))
+        restore[sentinel] = name
+    for start, end, sentinel in reversed(replacements):
+        text = f"{text[:start]}{sentinel}{text[end:]}"
+    return text, restore
+
+
+def preprocess_decompiled_c(text: str) -> str:
+    """Expand locally defined macros before Joern parses decompiled C."""
+    if not needs_decompiled_preprocessing(text):
+        return text
+
+    compiler = shutil.which("gcc") or shutil.which("cc")
+    if compiler is None:
+        logger.warning("Cannot preprocess decompiled C: no host C preprocessor found")
+        return text
+
+    safe_text = _INCLUDE_DIRECTIVE.sub("\n", text)
+    safe_text, restore = _protect_macro_colliding_definitions(safe_text)
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".c") as source:
+            source.write(safe_text)
+            source.flush()
+            result = subprocess.run(
+                [compiler, "-E", "-x", "c", source.name],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        logger.warning("Cannot preprocess decompiled C: %s", e)
+        return text
+
+    if result.returncode != 0:
+        logger.warning("Cannot preprocess decompiled C: %s", result.stderr.strip())
+        return text
+    preprocessed = strip_system_headers(result.stdout)
+    for sentinel, name in restore.items():
+        preprocessed = preprocessed.replace(sentinel, name)
+    return preprocessed if preprocessed.strip() else text
 
 
 def _is_system_header(path: str) -> bool:
@@ -209,7 +352,10 @@ def temp_parse_suffix(source_path: Path) -> str:
 
 
 def extract_cfgs_from_source(
-    source_path: Path, sanitize_decompiled: bool = False
+    source_path: Path,
+    sanitize_decompiled: bool = False,
+    preprocess_decompiled: bool = True,
+    raise_on_error: bool = False,
 ) -> dict[str, DiGraph]:
     """Extract CFGs from a C or C++ source file using pyjoern.
 
@@ -223,23 +369,30 @@ def extract_cfgs_from_source(
             :func:`sanitize_decompiled_c` before parsing so decompiler-specific
             quirks don't drop the function from GED. Never applied to preprocessed
             files — sanitizing ground truth would be wrong.
+        preprocess_decompiled: Expand local preprocessing directives after
+            sanitization. Disable only to reproduce historical decompiled-side
+            CFG inputs for an audit.
+        raise_on_error: Propagate parser failures instead of treating them as an
+            empty parse. Batch reevaluation uses this to keep failed work pending.
 
     Returns:
         Dictionary mapping function names to CFG DiGraphs
     """
     try:
         from pyjoern import parse_source
-    except ImportError:
+    except ImportError as e:
         raise ImportError(
             "pyjoern is required for CFG extraction. " "Install with: pip install pyjoern"
-        )
+        ) from e
 
-    cfgs = {}
+    cfgs: dict[str, DiGraph] = {}
     text = source_path.read_text(errors="replace")
     if source_path.suffix in PREPROC_EXTS:
         text = strip_system_headers(text)
     elif sanitize_decompiled:
         text = sanitize_decompiled_c(text)
+        if preprocess_decompiled:
+            text = preprocess_decompiled_c(text)
 
     # Joern names its workspace after the input basename, so a unique temp name is
     # what keeps concurrent parses of the same filename from colliding. The suffix
@@ -255,6 +408,8 @@ def extract_cfgs_from_source(
         parsed = parse_source(parse_path)
 
         if parsed is None:
+            if raise_on_error:
+                raise RuntimeError(f"Joern returned no parse result for {source_path}")
             return cfgs
 
         for key, func in parsed.items():
@@ -266,6 +421,8 @@ def extract_cfgs_from_source(
 
     except Exception as e:
         logger.warning("CFG extraction from source %s failed: %s", source_path, e)
+        if raise_on_error:
+            raise
     finally:
         if temp_c_path is not None:
             temp_c_path.unlink(missing_ok=True)
@@ -286,18 +443,19 @@ def extract_cfgs_from_decompilation(
     """
     try:
         from pyjoern import parse_source
-    except ImportError:
+    except ImportError as e:
         raise ImportError(
             "pyjoern is required for CFG extraction. " "Install with: pip install pyjoern"
-        )
+        ) from e
 
-    cfgs = {}
+    cfgs: dict[str, DiGraph] = {}
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".c", delete=False) as f:
-        for func in decompilation.functions.values():
-            f.write(f"// Function: {func.name}\n")
-            f.write(sanitize_decompiled_c(func.decompiled_code))
-            f.write("\n\n")
+        marked_sources = [
+            (f"// Function: {func.name}\n" f"{sanitize_decompiled_c(func.decompiled_code)}")
+            for func in decompilation.functions.values()
+        ]
+        f.write(preprocess_decompiled_c("\n\n".join(marked_sources)))
 
         temp_path = Path(f.name)
 

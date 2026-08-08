@@ -118,21 +118,17 @@ def read_ged_overlay(root: Path) -> tuple[dict[str, dict] | None, set[Slice] | N
     """Load ``ged_new.json`` plus the set of slices the GED reeval EVALUATED.
 
     Returns ``(payload, covered)``; ``payload`` is None when there is no overlay.
-    ``covered`` is the union of three sources so an evaluated-but-empty slice
-    still clears its stale inline values (the exact class that silently
-    re-inflated 219 slices before this was hardened):
+    ``covered`` uses the sidecar when present so an evaluated-but-empty slice
+    still clears its stale inline values without allowing retired checkpoint
+    filenames to expand a current overlay's scope:
 
     * ``ged_new.slices.json`` — the authoritative list the new ``reeval_ged.py``
       writes (every evaluated slice, empty ones included);
-    * every per-slice checkpoint filename under ``reeval_ged/`` — the reeval
-      cache IS the evaluated-slice record, present even on trees whose overlay
-      predates the sidecar (the same ``__``↔``::`` stem convention the reeval
-      uses to build the sidecar);
     * the payload's own entry keys — a slice with entries is always covered.
 
-    Only when NONE of these exist (a bare ``ged_new.json`` with no reeval cache)
-    does coverage reduce to the entry keys — conservative: an unlisted empty
-    slice then keeps its inline value.
+    On older trees without a sidecar, per-slice checkpoint filenames under
+    ``reeval_ged/`` are also used as the evaluated-slice record. A bare
+    ``ged_new.json`` reduces coverage to its entry keys.
     """
     path = root / "ged_new.json"
     if not path.exists():
@@ -142,11 +138,13 @@ def read_ged_overlay(root: Path) -> tuple[dict[str, dict] | None, set[Slice] | N
     sidecar = root / "ged_new.slices.json"
     if sidecar.exists():
         covered |= {tuple(k.split("::", 3)) for k in json.loads(sidecar.read_text())}  # type: ignore[misc]
-    reeval_dir = root / "reeval_ged"
-    if reeval_dir.is_dir():
-        covered |= {
-            tuple(cp.stem.replace("__", "::").split("::", 3)) for cp in reeval_dir.glob("*.json")
-        }  # type: ignore[misc]
+    else:
+        reeval_dir = root / "reeval_ged"
+        if reeval_dir.is_dir():
+            covered |= {
+                tuple(cp.stem.replace("__", "::").split("::", 3))
+                for cp in reeval_dir.glob("*.json")
+            }  # type: ignore[misc]
     return payload, covered
 
 

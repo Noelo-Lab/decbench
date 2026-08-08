@@ -24,7 +24,6 @@ from decbench.dataset import (
     save_dataset,
 )
 from decbench.metrics.byte_match import ByteMatchMetric
-from decbench.utils.binfmt import function_bytes as _extract_function_bytes
 from decbench.metrics.ged import GEDMetric
 from decbench.metrics.type_match import TypeMatchMetric
 from decbench.models.decompilation import FunctionDecompilation, VariableInfo
@@ -36,6 +35,7 @@ from decbench.scoring.subset import (
     filter_function_data,
     size_distribution,
 )
+from decbench.utils.binfmt import function_bytes as _extract_function_bytes
 
 
 @pytest.fixture
@@ -102,6 +102,30 @@ def test_ged_cache_hit_across_fresh_instance(cache_dir):
     )
     metric2.compute_for_function(fd, source_cfg=g1, decompiled_cfg=g2)
     assert calls["n"] == 0, "value should come from the on-disk cache"
+
+
+def test_ged_cache_distinguishes_same_string_node_topologies(cache_dir):
+    class CFGNode:
+        is_entrypoint = False
+        is_exitpoint = False
+
+        def __str__(self) -> str:
+            return "same"
+
+    def graph(edges: list[tuple[int, int]]) -> nx.DiGraph:
+        nodes = [CFGNode() for _ in range(4)]
+        cfg = nx.DiGraph()
+        cfg.add_edges_from((nodes[src], nodes[dst]) for src, dst in edges)
+        return cfg
+
+    source = graph([(0, 1), (1, 2), (2, 3)])
+    same_path = graph([(0, 1), (1, 2), (2, 3)])
+    out_star = graph([(0, 1), (0, 2), (0, 3)])
+    fd = FunctionDecompilation(name="f", address=0x10, decompiled_code="", line_count=0)
+    metric = GEDMetric()
+
+    assert metric.compute_for_function(fd, source_cfg=source, decompiled_cfg=same_path).value == 0
+    assert metric.compute_for_function(fd, source_cfg=source, decompiled_cfg=out_star).value > 0
 
 
 def test_no_cache_disables_caching(cache_dir, monkeypatch):

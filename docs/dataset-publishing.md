@@ -220,13 +220,14 @@ Counts come from the actual walk (do not hardcode). Config descriptions mirror
 
 ## 5. Source-CFG serialization — `pipeline_data/source_cfgs/<opt>/<project>/<stem>.json`
 
-**GED is almost purely structural** — `cfgutils.similarity.vj_ged` (the
-metric's engine) scores from graph topology (per-node parent/child counts via a
-positional `GraphCache`) **plus** each node's `is_entrypoint` / `is_exitpoint`
-flags (an entry/exit mismatch penalty); it never reads labels or any other
-attribute. So a lossless serialization is the topology plus the entry/exit node
-ids, and nothing else. Store, per binary, the `function → CFG` map the pipeline
-used:
+**GED is almost purely structural** — the metric first performs directed
+NetworkX isomorphism over graph topology plus each node's `is_entrypoint` /
+`is_exitpoint` roles. Non-isomorphic graphs within the configured size limit
+then use DecBench's compiled linear-assignment implementation of cfgutils's
+VJ-GED cost model, whose node costs use parent/child counts plus those same
+entry/exit roles; labels and other attributes are never read.
+So a lossless serialization is the topology plus the entry/exit node ids, and
+nothing else. Store, per binary, the `function → CFG` map the pipeline used:
 
 ```jsonc
 {
@@ -288,6 +289,11 @@ rebuilds from these JSONs are structurally identical to the ones
 `pipeline/evaluate.py` resolves from `.i` for all 306 functions of all four
 binaries, and every one of the 97 scored functions has a scorable source CFG
 (the published union managed 76).
+
+For score reproduction, pass the rebuilt graph and the decompiled CFG through
+`GEDMetric.compute_for_function`; do not call `cfgutils.similarity.vj_ged`
+directly. `GEDMetric` owns the isomorphism-first fast path, the VJ-GED size
+limit, and the non-isomorphic large-graph fallback used for stored scores.
 
 ## 6. `.gitattributes` (LFS)
 
