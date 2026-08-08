@@ -15,7 +15,7 @@ NO CSS, NO JS, NO prose. Layout:
 - `content/` — **ALL maintainer-editable text.** `<view>.md` per view
   (leaderboard, **data**, **view**, changelog, **about**) + `site.toml`
   (brand/footer/banners/sidebar/side_stats, and `[decompilers] hidden` = the
-  site-hidden decompilers), `views.toml` (view registry: id, nav label,
+  site-hidden decompilers, currently Phoenix), `views.toml` (view registry: id, nav label,
   `requires_function_data`, which is `default`), `metrics.toml` (display
   name/short name/order/perfect definition — the ONE source of truth),
   `datasets.toml` (the 5 presets' label+description+`default`),

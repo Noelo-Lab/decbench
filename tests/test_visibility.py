@@ -1,9 +1,7 @@
 """Tests for render-time decompiler hiding (:mod:`decbench.rendering.visibility`).
 
-Nothing is hidden in the shipped config right now, so these exercise the
-mechanism with a synthetic decompiler name ("hiddendec"): the filter must strip
-a hidden decompiler from every list / map / payload while leaving the visible
-ones — and the inputs — untouched.
+The filter must strip a hidden decompiler from every list, map, and payload
+while leaving the visible decompilers and input models untouched.
 """
 
 from __future__ import annotations
@@ -126,13 +124,8 @@ def test_no_hidden_is_a_noop() -> None:
     assert out_sb is sb and out_fd is fd
 
 
-def test_shipped_config_hides_nothing() -> None:
-    """The shipped hidden list is exactly empty — any future hide is deliberate.
-
-    The last hidden decompiler was fully removed 2026-07-23; the hide mechanism
-    stays, but nothing should be silently hidden by default.
-    """
-    assert load_content().site.hidden_decompilers == ()
+def test_shipped_config_hides_phoenix() -> None:
+    assert load_content().site.hidden_decompilers == ("phoenix",)
 
 
 def test_build_site_omits_hidden_decompiler(
