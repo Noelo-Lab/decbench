@@ -72,6 +72,58 @@ TYPE_MAP: dict[str, str] = {
 
 QUALIFIERS = ["unsigned", "signed", "const", "volatile", "register", "static", "extern"]
 
+# A trailing run of ``*``s, so a pointee spelling can be normalized.
+_PTR_SUFFIX = re.compile(r"^(.*?)((?:\s*\*)+)$")
+
+# Spellings that mean "N bytes of UNKNOWN type" rather than naming a C type:
+# Ghidra's and kuna's TYPE_UNKNOWN (``undefinedN``) and Hex-Rays' unknown-width
+# stack slots (``_QWORD`` …). Every decompiler that emits one of these also has a
+# committed spelling for the same width in the same output (Ghidra ``uint``, IDA
+# ``__int32``, kuna ``int4`` — a TYPE_INT core type, distinct from its TYPE_UNKNOWN
+# ``xunknown4``), so choosing a placeholder is positive evidence that the type was
+# NOT recovered.
+_PLACEHOLDER_TYPES = re.compile(r"^(?:undefined\d*|_(?:BYTE|WORD|DWORD|QWORD))$")
+
+# The subset of TYPE_MAP that may be applied to a POINTEE. A pointer spelling names
+# the type of the thing pointed AT, so routing the whole table through a pointer
+# would declare ``undefined8 *`` ("pointer to 8 unknown bytes") equal to ``size_t *``
+# — crediting a non-recovery as a recovery, and contradicting _UNCOMMITTED_TYPES'
+# rule that a width-only spelling against a pointer is a real miss.
+_POINTEE_MAP: dict[str, str] = {
+    k: v for k, v in TYPE_MAP.items() if not _PLACEHOLDER_TYPES.match(k)
+}
+
+# One C++ namespace/class qualifier, e.g. the ``leveldb::`` of
+# ``leveldb::TableBuilder *``. Digits cannot start a token, so a Ghidra symbol
+# version prefix like ``GLIBC_2.2.5::`` is left alone.
+_NAMESPACE_QUALIFIER = re.compile(r"\b[A-Za-z_]\w*\s*::\s*")
+
+
+def _map_pointee(form: str) -> str:
+    """``_POINTEE_MAP`` applied through a pointer spelling: ``size_t *`` -> ``long long*``.
+
+    Only COMMITTED pointee spellings are mapped (see :data:`_POINTEE_MAP`); a
+    width-only placeholder such as ``undefined8`` or ``_QWORD`` is left alone, so
+    ``undefined8 *`` stays a miss against ``size_t*``. Applies to both sides of
+    the comparison, since ``normalize_type`` is shared by the decompiled and the
+    DWARF ground-truth payload.
+    """
+    m = _PTR_SUFFIX.match(form)
+    if m is None:
+        return form
+    mapped = _POINTEE_MAP.get(m.group(1).strip())
+    return form if mapped is None else mapped + m.group(2)
+
+
+def _strip_namespaces(form: str) -> str:
+    """``leveldb::TableBuilder*`` -> ``TableBuilder*``.
+
+    DWARF records a C++ class/typedef under its UNQUALIFIED ``DW_AT_name``, so
+    a decompiler printing the fully-qualified name could never match ground
+    truth on a C++ target.
+    """
+    return _NAMESPACE_QUALIFIER.sub("", form).strip()
+
 
 def normalize_type(type_str: str) -> set[str]:
     """Normalize a type string to a set of equivalent representations.
@@ -111,14 +163,21 @@ def normalize_type(type_str: str) -> set[str]:
 
     forms |= {re.sub(r"\s*\*", "*", f) for f in forms}
 
+    forms |= {_strip_namespaces(f) for f in forms}
+
+    forms |= {_map_pointee(f) for f in forms}
+
     forms |= {TYPE_MAP[f] for f in forms if f in TYPE_MAP}
 
-    return forms
+    return {f for f in forms if f}
 
 
 # Uncommitted types recover a variable's SIZE but not a committed C type. Matching
 # one against a same-width ground-truth SCALAR is fair; against a pointer or
-# aggregate it is a real miss, so those are excluded from _UNCOMMITTED_GT_SCALARS.
+# aggregate it is a real miss, so those are excluded from _SIZE_SCALARS. This set is
+# wider than _PLACEHOLDER_TYPES on purpose: it is the GENEROSITY rule (which
+# spellings may match any same-width scalar), not a claim that every member fails to
+# name a type.
 _UNCOMMITTED_TYPES = re.compile(
     r"^\s*(?:"
     r"undefined\d*"
@@ -244,11 +303,19 @@ def extract_ground_truth_types(binary_path: Path) -> dict[str, list[dict[str, An
 
 
 def _parse_function_die(die: Any, dwarfinfo: Any) -> tuple[str | None, list[dict[str, Any]]]:
-    """Parse a DW_TAG_subprogram DIE to extract function variable types."""
-    if "DW_AT_name" not in die.attributes:
-        return None, []
+    """Parse a DW_TAG_subprogram DIE to extract function variable types.
 
-    func_name = die.attributes["DW_AT_name"].value.decode("utf-8", "replace")
+    The name is read through ``DW_AT_specification``/``DW_AT_abstract_origin``:
+    a C++ out-of-line member definition carries the body but keeps its name on
+    the in-class declaration it references. C subprograms always name themselves
+    on the defining DIE, so the chase never fires and C ground truth is byte-for-
+    byte what it was.
+    """
+    from decbench.utils import binfmt
+
+    func_name = binfmt.die_str_attr(die, "DW_AT_name")
+    if func_name is None:
+        return None, []
     variables: list[dict[str, Any]] = []
 
     arg_index = 0
@@ -323,10 +390,14 @@ def _parse_variable_die(
     for t in type_names:
         all_forms.update(normalize_type(t))
 
+    # SORTED, not list(set(...)): this payload goes into the type_match cache key
+    # via stable_hash -> json.dumps, which orders dict keys but not list elements.
+    # A set's iteration order depends on PYTHONHASHSEED, so unsorted lists made
+    # the key differ between processes and ~77% of the disk cache went unread.
     return {
         "name": name,
-        "type": list(all_forms),
-        "rbp_offset": list(set(offsets)),
+        "type": sorted(all_forms),
+        "rbp_offset": sorted(set(offsets)),
         "size": size,
         "is_arg": is_arg,
         "arg_index": arg_index if is_arg else None,
@@ -410,7 +481,13 @@ def _parse_type_die(die: Any, dwarfinfo: Any) -> tuple[list[str], int]:
         names.extend(child_names)
         return names, size
 
-    elif tag == "DW_TAG_pointer_type":
+    elif tag in (
+        "DW_TAG_pointer_type",
+        "DW_TAG_reference_type",
+        "DW_TAG_rvalue_reference_type",
+    ):
+        # A reference is a pointer in the ABI and every decompiler renders it as
+        # one; without this arm every reference-typed GT variable became "void".
         child_names, _ = _parse_type_die(type_die, dwarfinfo)
         if not child_names:
             child_names = ["void"]
@@ -763,7 +840,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "4"
+    cache_version = "6"
 
     weight = 1.0
     lower_is_better = False

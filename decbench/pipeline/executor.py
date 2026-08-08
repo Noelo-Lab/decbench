@@ -13,9 +13,29 @@ from decbench.pipeline.compile import compile_projects
 from decbench.pipeline.decompile import decompile_projects
 from decbench.pipeline.evaluate import evaluate_projects
 from decbench.scoring.scoreboard import build_scoreboard_from_function_data
+from decbench.utils.langs import preprocessed_by_stem, strip_source_ext
 
 if TYPE_CHECKING:
     from decbench.models.scoreboard import Scoreboard
+
+
+def keep_sources_of_retained_binaries(project: Project, opt: OptimizationLevel) -> None:
+    """Drop preprocessed sources whose binary was cut by ``--binary-limit``/``--binary-sample``.
+
+    The two key shapes differ between C and C++: a C unit's preprocessed stem is
+    ``foo`` (from ``foo.i``) but CMake makes a C++ one ``db_impl.cc`` (from
+    ``db_impl.cc.ii``), which can never equal a binary stem. Comparing raw stems
+    therefore emptied the dict for every C++ project, and the run scored zero
+    functions with no error at all.
+    """
+    if opt not in project.preprocessed_sources:
+        return
+    keep = {b.stem for b in project.compiled_binaries.get(opt, [])}
+    project.preprocessed_sources[opt] = {
+        name: path
+        for name, path in project.preprocessed_sources[opt].items()
+        if strip_source_ext(name) in keep
+    }
 
 
 class PipelineConfig(BaseModel):
@@ -152,13 +172,7 @@ class PipelineExecutor:
                                 f"Limited to {self.config.binary_limit} binaries "
                                 f"for {project.name}/{opt.value}"
                             )
-                    if opt in project.preprocessed_sources:
-                        limited_names = {b.stem for b in project.compiled_binaries.get(opt, [])}
-                        project.preprocessed_sources[opt] = {
-                            name: path
-                            for name, path in project.preprocessed_sources[opt].items()
-                            if name in limited_names
-                        }
+                    keep_sources_of_retained_binaries(project, opt)
 
         if self.config.binary_sample is not None:
             import random
@@ -176,13 +190,7 @@ class PipelineExecutor:
                                 f"Sampled {self.config.binary_sample} binaries "
                                 f"for {project.name}/{opt.value}: {names}"
                             )
-                    if opt in project.preprocessed_sources:
-                        sampled_names = {b.stem for b in project.compiled_binaries.get(opt, [])}
-                        project.preprocessed_sources[opt] = {
-                            name: path
-                            for name, path in project.preprocessed_sources[opt].items()
-                            if name in sampled_names
-                        }
+                    keep_sources_of_retained_binaries(project, opt)
 
         if not self.config.skip_decompile:
             print(f"Decompiling with {self.config.decompilers or 'all'} decompilers...")
@@ -322,7 +330,7 @@ class PipelineExecutor:
                 else:
                     print(f"Warning: no ELF binaries found in {compiled_dir}")
 
-                i_files = {f.stem: f for f in sorted(compiled_dir.glob("*.i"))}
+                i_files = preprocessed_by_stem(compiled_dir)
                 if i_files:
                     project.preprocessed_sources[opt] = i_files
                     print(

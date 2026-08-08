@@ -44,6 +44,7 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
 )
+from decbench.utils.langs import preprocessed_by_stem
 
 if TYPE_CHECKING:
     from decbench.models.metrics import MetricResult
@@ -614,11 +615,11 @@ def _evaluate_group(
     best: dict = {}
     if needs_source:
         compiled = tree / opt / project / "compiled"
-        i_by_stem = {p.stem: p for p in sorted(compiled.glob("*.i"))}
+        i_by_stem = preprocessed_by_stem(compiled)
         if not i_by_stem:
             _warn(
                 warnings,
-                f"{project}/{opt}: no preprocessed .i sources in {compiled} — "
+                f"{project}/{opt}: no preprocessed .i/.ii sources in {compiled} — "
                 f"source-CFG metrics (GED) will not score",
             )
         else:

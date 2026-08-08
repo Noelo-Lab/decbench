@@ -20,6 +20,7 @@ from pathlib import Path
 
 from decbench.models.project import Project
 from decbench.pipeline.compile import compile_project
+from decbench.utils.langs import preprocessed_by_stem
 
 _EM = {0x28: "ARM", 0xB7: "AArch64", 0x3E: "x86-64", 0x03: "x86"}
 
@@ -56,7 +57,7 @@ def main() -> int:
             elfs[m] = elfs.get(m, 0) + 1
             if m in ("ARM", "AArch64"):
                 arm_bins.append(entry.name)
-    i_files = list(compiled.glob("*.i")) if compiled.is_dir() else []
+    i_files = list(preprocessed_by_stem(compiled).values())
 
     ok = sum(1 for r in results if r.success)
     print(f"compile results: {ok} ok / {len(results)} total")

@@ -83,9 +83,11 @@ nothing. Fix: drop the matching Joern **v4.0.150** `joern-cli` into
 
 ## The benchmark corpus
 
-All targets are C project TOMLs under `projects/`; a "full run" spans all of
-`projects/{sailr,cps,malware}/*.toml` (both drivers gather them via
-`gather_tomls()`; `cps/disabled/` excluded).
+Targets are project TOMLs under `projects/`; a "full run" spans all of
+`projects/{sailr,cps,malware,cpp}/*.toml` (both drivers gather them via
+`gather_tomls()`; `cps/disabled/` and `cpp/disabled/` excluded). Everything
+except `projects/cpp/` is C — and **every C++ target ships disabled**, so a
+default full run is C-only.
 
 - **sailr** — 26 sailr-eval Debian packages in `projects/sailr/*.toml`, each
   built at O0 / O2 / O2-noinline, labeled by kind + domain. Compiles on the
@@ -100,9 +102,9 @@ All targets are C project TOMLs under `projects/`; a "full run" spans all of
   with `scripts/cps_compile_smoke.py` inside the image. angr/Ghidra decompile
   ARM; byte_match abstains for ARM on hosts without the arm-none-eabi
   toolchain — GED/type_match carry these targets. The two C++ autopilots
-  (ArduPilot, PX4) are DISABLED in `projects/cps/disabled/` (decbench has no
-  C++ support yet — pyjoern/GED is C-only); their recipes are verified-working
-  and re-enable by moving the TOML back up to `projects/cps/`.
+  (ArduPilot, PX4) are still DISABLED in `projects/cps/disabled/`; their
+  recipes are verified-working and re-enable by moving the TOML back up to
+  `projects/cps/`, but neither has been run through the C++ path below.
 - **malware** — REAL MALWARE targets in `projects/malware/*.toml` (C, from
   theZoo): mirai (ELF/gcc), mydoom, x0r-usb, minipig, dexter (PE/MinGW).
   (mirai-win was removed 2026-07-23: theZoo's "Win32.Mirai" is actually
@@ -117,6 +119,43 @@ All targets are C project TOMLs under `projects/`; a "full run" spans all of
   `utils/binfmt.py` (byte_match needs the MinGW toolchain, else it abstains).
   See `projects/malware/README.md` (DO NOT EXECUTE). Binaries never leave
   `results/`.
+- **cpp** — the C++ targets. **Experimental, and disabled by default**: the
+  only target, **leveldb** (Google's embedded key-value store, CMake, x86 host
+  build), sits in `projects/cpp/disabled/` and so matches no
+  `projects/cpp/*.toml` glob. The support code is always active; only the
+  target list is gated. See `projects/cpp/disabled/README.md` to enable one,
+  and read [C++ targets](#c-targets) before using any C++ number.
+
+### C++ targets
+
+C++ works end-to-end as of `projects/cpp/disabled/leveldb.toml` (experimental,
+and disabled by default — see `projects/cpp/disabled/README.md`); the mechanics live in
+[metrics.md](metrics.md#preprocessed-iii-files-are-required--source-cfgs-come-exclusively-from-them).
+Three things are worth knowing before reading a C++ number:
+
+- **No demangler is involved anywhere.** DWARF `DW_AT_name` for
+  `leveldb::DBImpl::Get` is `"Get"`, and Joern's C++ frontend keys on the short
+  name too, so both sides of the match already speak unqualified names. Mangled
+  `_ZN...` never appears.
+- **Same-name collisions make a C++ target's absolute GED incomparable to a C
+  project's.** Because matching is by unqualified name, leveldb's 7-8
+  same-named methods per name (`Next`, `Seek`, `SeekToFirst`, `Name` — one per
+  iterator class) all collapse onto whichever body won the per-name reduction.
+  Rank C++ targets against each other; do not read leveldb's GED next to
+  grep's. Qualified-name keying is the fix and is not implemented.
+- **Not publishable to the dataset yet.** Four files still glob only `*.i` —
+  `publish/cfg_export.py`, `publish/layout.py`, `dataset.py`, and
+  `scripts/compute_dataset_info.py` — so a C++ project's source CFGs never make
+  it into the exported tree. Every *evaluation* collection site now globs both
+  extensions via `utils/langs.py preprocessed_by_stem`;
+  `tests/test_cpp_support.py` pins that list, so adding a fifth `*.i`-only glob
+  fails the suite.
+
+CMake-based C++ TOMLs have two traps worth copying from leveldb's: leave
+`CMAKE_BUILD_TYPE` **empty** (a named type appends its own `-O` flag AFTER
+`CMAKE_CXX_FLAGS` and silently overrides the level being measured), and set
+`BUILD_SHARED_LIBS=ON` (a static `.a` is not a linked binary, so the collector
+skips it and the library under test never gets decompiled).
 
 ### Optimization levels
 
@@ -392,6 +431,18 @@ coverage (`--allow-drops` / `DECBENCH_ALLOW_DROPS=1` overrides;
 `--audit` scans checkpoints/artifacts/overlays/published for silent gaps.
 After adding a decompiler, refresh the overlays and re-finalize before
 publishing.
+
+**A reeval can only fix what the checkpoint recorded.** `reeval_typematch.py`
+recomputes the METRIC from `FunctionDecompilation.variables`; it cannot repair a
+backend that stored the wrong thing. The live case: PR #60 fix 3 corrected IDA's
+`arg_index` from Hex-Rays allocation order to `cfunc.argidx`, but every
+`checkpoints/*.pkl` in `results/full_run` was written BEFORE that fix and still
+carries the scrambled indices, so re-scoring from checkpoints reproduces the old
+IDA numbers exactly. **The published IDA type_match column can only be corrected
+by re-running IDA** (`run_benchmark.py ... --decompilers ida`, then refresh the
+overlays and finalize). The same reasoning applies to any future backend-side
+fix: ask whether the change is in the metric (reeval is enough) or in what the
+decompiler recorded (re-run required).
 
 ```bash
 # Recompute ONLY byte_match over an existing tree WITHOUT re-decompiling

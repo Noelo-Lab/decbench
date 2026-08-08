@@ -40,6 +40,10 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from decbench.utils.langs import preprocessed_by_stem  # noqa: E402
+
 PREVIOUS_GED_MAX_NODES = 60
 CHECKPOINT_SCHEMA_VERSION = 6
 SOURCE_CACHE_SCHEMA_VERSION = 1
@@ -579,7 +583,7 @@ def historical_overlay_slices(root: Path) -> set[str]:
 
 
 def src_cfgs_for_i(i_path: str) -> tuple[str, dict]:
-    """Worker: extract (stripped) source CFGs for one .i file."""
+    """Worker: extract source CFGs from one stripped preprocessed unit."""
     from decbench.utils.cfg import extract_cfgs_from_source
 
     cfgs = extract_cfgs_from_source(Path(i_path), raise_on_error=True) or {}
@@ -596,7 +600,7 @@ def _source_inputs(root: Path, opt: str, project: str) -> list[Path]:
         return []
     return [
         path
-        for path in sorted(compiled.glob("*.i"))
+        for path in sorted(preprocessed_by_stem(compiled).values())
         if "conftest" not in path.name and not path.name.startswith("a-")
     ]
 

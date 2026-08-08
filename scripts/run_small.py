@@ -50,6 +50,7 @@ from decbench.scoring.function_data_builder import build_function_data  # noqa: 
 from decbench.scoring.report_extras import attach_extras  # noqa: E402
 from decbench.scoring.scoreboard import build_scoreboard, render_scoreboard_text  # noqa: E402
 from decbench.utils.cfg import extract_cfgs_from_source  # noqa: E402
+from decbench.utils.langs import preprocessed_by_stem  # noqa: E402
 
 
 def _is_elf(path: Path) -> bool:
@@ -67,7 +68,7 @@ def _is_elf(path: Path) -> bool:
 
 def _discover(compiled: Path) -> tuple[list[Path], dict[str, Path]]:
     binaries = sorted(p for p in compiled.iterdir() if p.is_file() and _is_elf(p))
-    sources = {p.stem: p for p in sorted(compiled.glob("*.i"))}
+    sources = preprocessed_by_stem(compiled)
     return binaries, sources
 
 

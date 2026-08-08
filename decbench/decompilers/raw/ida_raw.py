@@ -8,7 +8,8 @@ decompiler API directly:
 * decompile each with ``ida_hexrays.decompile(ea)`` -> ``cfunc``
 * C text from ``str(cfunc)``
 * variables from ``cfunc.lvars`` (args carry ``is_arg_var``; stack lvars carry
-  a frame location)
+  a frame location), with argument POSITIONS taken from ``cfunc.argidx`` —
+  ``get_lvars()`` enumerates in allocation order, not declared order
 
 IDA is **not functional on this machine** (only an unusable IDA 8.0 exists and
 ``idapro`` imports but cannot open a database here), so this backend is written
@@ -287,13 +288,33 @@ class RawIDADecompiler(Decompiler):
         return code
 
     @staticmethod
+    def _arg_positions(cfunc: Any, lvars: Any) -> dict[int, int]:
+        """``lvar index -> ABI argument position`` from ``cfunc.argidx``.
+
+        ``get_lvars()`` enumerates in Hex-Rays' internal allocation order, which
+        is NOT the declared argument order — on leveldb 53.8% of IDA's multi-arg
+        functions came out permuted (``ClipToRange`` yields ``a3, a1, a2``).
+        Since type_match matches arguments by ABI position, that silently
+        mis-scored IDA. ``cfunc_t::argidx`` is the canonical argument order; we
+        fall back to the enumeration order only if it is unavailable.
+        """
+        try:
+            order = [int(i) for i in cfunc.argidx]
+        except Exception:  # noqa: BLE001
+            order = []
+        if not order:
+            order = [i for i, lv in enumerate(lvars) if bool(getattr(lv, "is_arg_var", False))]
+        return {lvar_index: pos for pos, lvar_index in enumerate(order)}
+
+    @staticmethod
     def _extract_variables(cfunc: Any) -> list[VariableInfo]:
         """Pull arguments (ABI order) and stack locals from ``cfunc.lvars``.
 
         Hex-Rays ``lvar_t`` objects expose ``is_arg_var``, ``name``, ``width``
         (size in bytes), ``type()`` (a ``tinfo_t`` whose ``_print()``/``dstr()``
         gives a C type), and ``location`` for stack vars (``is_stk_off()`` /
-        ``stkoff()``).
+        ``stkoff()``). Argument POSITIONS come from ``cfunc.argidx``, not from
+        the enumeration order (see :meth:`_arg_positions`).
         """
         variables: list[VariableInfo] = []
         try:
@@ -301,8 +322,9 @@ class RawIDADecompiler(Decompiler):
         except Exception:  # noqa: BLE001
             return variables
 
-        arg_position = 0
-        for lvar in lvars:
+        arg_positions = RawIDADecompiler._arg_positions(cfunc, lvars)
+        fallback_position = len(arg_positions)
+        for lvar_index, lvar in enumerate(lvars):
             try:
                 name = str(getattr(lvar, "name", "") or "")
                 tinfo = lvar.type() if hasattr(lvar, "type") else None
@@ -321,6 +343,10 @@ class RawIDADecompiler(Decompiler):
                 continue
 
             if is_arg:
+                position = arg_positions.get(lvar_index)
+                if position is None:
+                    position = fallback_position
+                    fallback_position += 1
                 variables.append(
                     VariableInfo(
                         name=name,
@@ -328,10 +354,9 @@ class RawIDADecompiler(Decompiler):
                         stack_offset=None,
                         size=size,
                         kind="arg",
-                        arg_index=arg_position,
+                        arg_index=position,
                     )
                 )
-                arg_position += 1
             else:
                 stack_offset = None
                 try:
