@@ -120,6 +120,20 @@ Key conventions:
   than in the last update, or drastically changing rank. This can happen, but
   should only occur when MAJOR changes to the benchmark occur, like adding a 
   new metric or deleting many projects from the dataset.
+- **When pushing to the website, also verify the View page still has content.**
+  The leaderboard can look perfect while the View page silently loses every
+  source sample, because the numbers and the sample bodies come from different
+  places. Compare `site/data/samples.json` against the currently-published one
+  before pushing: the difficulty mix (`easy`/`medium`/`hard`/`sample-set`) and
+  the count of entries carrying a non-empty `source_code` must not drop.
+  `source_status` names the miss reason on any entry that lost its source.
+  The usual cause is running `scripts/finalize_results.py` (which rebuilds the
+  `easy`/`medium`/`hard` tiers) from the wrong directory: checkpoints store
+  binary paths RELATIVE to the repo root, so the run's cwd must be the checkout
+  that actually holds `results/` — a git worktree does not (`results*` is
+  gitignored), and every sample then fails with `binary_not_found`. Run the
+  finalize/info-writer scripts from the main checkout and select a different
+  code version with `PYTHONPATH=`, never by changing cwd.
 - **When updating results** be sure to keep the huggingface-side dataset up to
   date with our changes, found at https://huggingface.co/datasets/noelo-lab/decbench-dataset.
   You can usually find a local clone one directory above this repo in
