@@ -53,9 +53,10 @@ logo = true
 [[decompiler]]
 id = "kuna"
 display_name = "Kuna"
+url = "https://kuna.noelo.org"
 license = "closed-source"
 logo = true
-version_overrides = { "0.1.0" = "v1.0" }
+version_overrides = { "0.1.0" = "v1.0", "1.121" = "v1.121" }
 
 [[decompiler]]
 id = "r2dec"

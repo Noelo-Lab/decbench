@@ -88,7 +88,9 @@ class RawKunaDecompiler(Decompiler):
                 [kuna, "--version"], capture_output=True, text=True, timeout=30
             )
             out = (p.stdout or p.stderr or "").strip()
-            m = re.search(r"(\d+\.\d+\.\d+\S*)", out)
+            # Release builds stamp a MAJOR.MINOR version ("kuna 1.121"); dev builds
+            # fall back to the three-part Cargo version ("kuna 0.1.0").
+            m = re.search(r"(\d+\.\d+(?:\.\d+)?\S*)", out)
             if m:
                 return m.group(1)
             return out.splitlines()[0] if out else "unknown"
