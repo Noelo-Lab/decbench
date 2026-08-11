@@ -50,8 +50,7 @@ structurer was fully retired 2026-07-23; see CHANGELOG.md.)
 - **Glaurung** — native address-scoped CLI or the
   `decbench/glaurung:latest` image built by
   `decbench decompiler-build glaurung`. The image is a reproducible raw-only
-  install and requires no API credentials. `glaurung-agentic` remains a
-  separately funded, sample-set-only external evaluation route.
+  install and requires no API credentials.
 - **codex / claude-code / kimi-code** — LLM coding-agent backends,
   sample-set-only; see [decompilers.md](decompilers.md). codex and
   claude-code are logged in and available; kimi-code shows N until a Kimi

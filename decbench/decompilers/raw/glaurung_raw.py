@@ -1,11 +1,11 @@
 """Raw Glaurung decompiler backend (native, via the glaurung CLI).
 
-Glaurung (https://github.com/mjbommar/glaurung) is an AI-native reverse-engineering
-framework whose decompiler is a pure-Rust LLIR pipeline (CFG discovery → lift →
-SSA → control-flow structuring → AST lowering → expression reconstruction → DCE
-→ name/arg/type recovery). Like ``kuna``, it ships as a standalone CLI, so this
-backend *shells out* to it and parses JSON rather than importing a native Python
-module.
+Glaurung (https://github.com/mjbommar/glaurung) is a reverse-engineering
+framework whose deterministic decompiler is a Rust LLIR pipeline (CFG discovery
+→ lift → SSA → control-flow structuring → AST lowering → expression
+reconstruction → DCE → name/arg/type recovery). Like ``kuna``, it ships as a
+standalone CLI, so this backend *shells out* to it and parses JSON rather than
+importing a native Python module.
 
 It drives Glaurung's ``decompile`` command in its parseable-C mode
 (``--style decbench``), which emits a valid C translation-unit fragment per

@@ -22,7 +22,6 @@ import pytest
 
 import decbench.decompilers  # noqa: F401  (registers plugins)
 from decbench.decompilers.raw import common
-from decbench.decompilers.raw.glaurung_agentic import GlaurungAgenticDecompiler
 from decbench.decompilers.raw.glaurung_raw import RawGlaurungDecompiler
 from decbench.decompilers.registry import DecompilerRegistry
 
@@ -85,7 +84,6 @@ class TestRegistry:
     def test_backends_registered(self) -> None:
         registered = DecompilerRegistry.list_registered()
         assert "glaurung" in registered
-        assert "glaurung-agentic" in registered
 
     def test_native_backend_instantiates(self) -> None:
         dec = DecompilerRegistry.get("glaurung")
@@ -290,51 +288,11 @@ class TestDockerInstall:
         )
         monkeypatch.setenv("FAKE_DOCKER_RUN_RC", "7")
 
-        result = RawGlaurungDecompiler().decompile_binary(
-            tiny_binary, function_names={target}
-        )
+        result = RawGlaurungDecompiler().decompile_binary(tiny_binary, function_names={target})
 
         assert result.functions == {}
         assert result.decompiler.failed_functions == ["all"]
         assert "exited 7" in result.decompiler.extra["error"]
-
-
-def test_agentic_command_requires_real_llm_and_sets_stage_budget(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    executable = tmp_path / "glaurung"
-    executable.write_text("#!/bin/sh\nexit 0\n")
-    executable.chmod(0o755)
-    monkeypatch.setenv("GLAURUNG_BIN", str(executable))
-    monkeypatch.setenv("DECBENCH_GLAURUNG_LLM_STAGE_TIMEOUT_MS", "120000")
-
-    command = GlaurungAgenticDecompiler()._build_explain_command(tmp_path / "target.elf", 0x401000)
-
-    assert "--require-llm" in command
-    assert command[command.index("--timeout-ms") + 1] == "120000"
-
-
-def test_agentic_payload_requires_observed_llm_provenance() -> None:
-    """The accepted shape is taken from a paid bin_000.elf canary run."""
-    payload = {
-        "entry_va": 0x8350,
-        "language": "c",
-        "source": "void sub_8350(int fd) { (void)fd; }",
-        "stages": {
-            "infer_function_signature": {"source": "llm"},
-            "classify_function_role": {"source": "llm"},
-            "rewrite_function_idiomatic": {"source": "llm"},
-        },
-    }
-    dec = GlaurungAgenticDecompiler()
-
-    assert dec._validated_source(payload, 0x8350) == payload["source"]
-
-    payload["stages"]["classify_function_role"] = {"source": "heuristic"}
-    assert dec._validated_source(payload, 0x8350) == payload["source"]
-
-    payload["stages"]["rewrite_function_idiomatic"] = {"source": "heuristic"}
-    assert dec._validated_source(payload, 0x8350) is None
 
 
 class TestSmokeDecompile:
