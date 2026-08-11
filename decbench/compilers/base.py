@@ -18,7 +18,6 @@ class CompileResult:
     success: bool = False
     error_message: str | None = None
 
-    # Extracted metadata
     functions: list[tuple[str, int]] = field(default_factory=list)
 
 

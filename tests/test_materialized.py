@@ -36,7 +36,6 @@ timeout = false
 failed_functions = [ "broken_fn",]
 """
 
-# A 4-node diamond: 0 -> {1, 2} -> 3, entry 0, exit 3.
 CFG_JSON = {
     "opt": "O0",
     "project": "demo",
@@ -57,8 +56,6 @@ CFG_JSON = {
 def _write_tree(root: Path) -> Path:
     proj = root / "O0" / "demo"
     (proj / "compiled").mkdir(parents=True)
-    # A minimal but well-formed ELF64 header (e_type=EXEC at offset 16), padded
-    # so binfmt/resolve_binary header reads never run short.
     elf = b"\x7fELF" + bytes([2, 1, 1, 0]) + b"\x00" * 8 + struct.pack("<HH", 2, 0x3E)
     (proj / "compiled" / "demo").write_bytes(elf.ljust(64, b"\x00"))
     (proj / "decompiled").mkdir()
@@ -93,7 +90,6 @@ def test_discover_decompilations_shape_and_filter(tmp_path: Path) -> None:
     assert set(per_opt["demo"]) == {"ghidra"}
     assert per_opt["demo"]["ghidra"].function_count == 2
 
-    # Decompiler filter excludes non-matching artifacts entirely.
     assert discover_decompilations(tmp_path, [OptimizationLevel.O0], decompilers=["ida"]) == {}
 
 
@@ -109,7 +105,6 @@ def test_load_source_cfgs_rebuilds_ged_ready_graphs(tmp_path: Path) -> None:
     assert [n.id for n in entries] == [0]
     assert [n.id for n in exits] == [3]
 
-    # Missing dir -> None (caller falls back to .i extraction).
     assert load_source_cfgs(tmp_path, "O2", "demo") is None
 
 

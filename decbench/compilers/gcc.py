@@ -10,6 +10,20 @@ from pathlib import Path
 
 from decbench.compilers.base import Compiler, CompileResult
 from decbench.models.project import opt_gcc_flags
+from decbench.utils.langs import PREPROC_EXTS, SOURCE_EXTS, preprocessed_ext
+
+# Build by-products that are never a linked binary, so they are skipped before
+# the (more expensive) ELF/PE sniff.
+_NON_BINARY_EXTS = (".o", ".a", ".s", ".h", ".hh", ".hpp", *PREPROC_EXTS, *SOURCE_EXTS)
+
+
+def find_preprocessed(base_path: Path) -> Path | None:
+    """First existing ``base_path`` re-suffixed with a preprocessed extension."""
+    for ext in PREPROC_EXTS:
+        candidate = base_path.with_suffix(ext)
+        if candidate.exists():
+            return candidate
+    return None
 
 
 class GCCCompiler(Compiler):
@@ -35,24 +49,22 @@ class GCCCompiler(Compiler):
         self.gcc_path = gcc_path or self._find_gcc()
         self.target_arch = target_arch
 
-        # Default base flags for reproducible decompilation benchmarking.
-        # Inlining is governed by the optimization level (O2-noinline), not
+        # Inlining is governed by the optimization level (O2-noinline), not by these
         # base flags, so plain O2 stays a genuine O2.
         self.base_flags = base_flags or [
-            "-g",  # Debug symbols
-            "-fno-builtin",  # Don't use builtin optimizations
+            "-g",
+            "-fno-builtin",
         ]
 
     def _find_gcc(self) -> str | None:
         """Find GCC in PATH."""
-        # Try versioned GCC first
         for version in ["13", "12", "11", "10", "9", ""]:
             name = f"gcc-{version}" if version else "gcc"
             path = shutil.which(name)
             if path:
                 return path
 
-        return "gcc"  # Default, may fail if not found
+        return "gcc"
 
     def is_available(self) -> bool:
         """Check if GCC is available."""
@@ -76,7 +88,6 @@ class GCCCompiler(Compiler):
                 timeout=10,
             )
             if result.returncode == 0:
-                # First line contains version
                 return result.stdout.split("\n")[0]
         except Exception:
             pass
@@ -95,12 +106,11 @@ class GCCCompiler(Compiler):
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Output paths
         stem = source_path.stem
         object_path = output_dir / f"{stem}.o"
-        preprocessed_path = output_dir / f"{stem}.i" if emit_preprocessed else None
+        pp_ext = preprocessed_ext(source_path)
+        preprocessed_path = output_dir / f"{stem}{pp_ext}" if emit_preprocessed else None
 
-        # Build command
         flags = list(self.base_flags)
         flags.extend(opt_gcc_flags(optimization))
 
@@ -113,7 +123,7 @@ class GCCCompiler(Compiler):
         cmd = [
             self.gcc_path,
             *flags,
-            "-c",  # Compile only, no linking
+            "-c",
             "-o", str(object_path),
             str(source_path),
         ]
@@ -134,10 +144,8 @@ class GCCCompiler(Compiler):
                     error_message=result.stderr,
                 )
 
-            # Find preprocessed file (may be in different location)
             if emit_preprocessed and not preprocessed_path.exists():
-                # Check if it was created next to source
-                alt_path = source_path.with_suffix(".i")
+                alt_path = source_path.with_suffix(pp_ext)
                 if alt_path.exists():
                     shutil.move(str(alt_path), str(preprocessed_path))
 
@@ -173,15 +181,12 @@ class GCCCompiler(Compiler):
                 magic = f.read(4)
                 if magic != b"\x7fELF":
                     return False
-                # e_type is at offset 16, 2 bytes little-endian
                 f.seek(16)
                 e_type = struct.unpack("<H", f.read(2))[0]
-                # ET_EXEC = 2 (executable), ET_DYN = 3 (shared/PIE)
                 return e_type in (2, 3)
         except (OSError, struct.error):
             return False
 
-    # ELF e_machine -> short arch name (the ones we cross-compile for / against).
     _ELF_MACHINES = {
         0x28: "arm", 0xB7: "aarch64", 0x3E: "x86-64", 0x03: "x86",
         0xF3: "riscv", 0x08: "mips", 0x14: "ppc", 0x15: "ppc64",
@@ -194,12 +199,11 @@ class GCCCompiler(Compiler):
             with open(path, "rb") as f:
                 if f.read(4) != b"\x7fELF":
                     return None
-                f.seek(18)  # e_machine
+                f.seek(18)
                 return cls._ELF_MACHINES.get(struct.unpack("<H", f.read(2))[0], "other")
         except (OSError, struct.error):
             return None
 
-    # PE COFF Machine -> short arch name (for MinGW-built Windows malware).
     _PE_MACHINES = {0x14C: "x86", 0x8664: "x86-64", 0xAA64: "aarch64", 0x1C0: "arm"}
 
     @staticmethod
@@ -260,8 +264,6 @@ class GCCCompiler(Compiler):
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # project_root is where configure/make run from (the repo root).
-        # project_dir is where source files live (may be a subdirectory).
         if project_root is None:
             project_root = project_dir
         else:
@@ -269,7 +271,6 @@ class GCCCompiler(Compiler):
 
         results = []
 
-        # Set up environment with our compiler flags
         env = os.environ.copy()
         cflags = " ".join(self.base_flags + opt_gcc_flags(optimization))
         if extra_flags:
@@ -278,7 +279,6 @@ class GCCCompiler(Compiler):
         env["CFLAGS"] = cflags
         env["CC"] = self.gcc_path
 
-        # Run pre-commands (e.g., ./configure) from the project root
         if pre_commands:
             for cmd in pre_commands:
                 try:
@@ -291,10 +291,8 @@ class GCCCompiler(Compiler):
                         check=True,
                     )
                 except subprocess.CalledProcessError as e:
-                    # Pre-command failed, but continue
                     pass
 
-        # Use make if specified
         if make_command:
             try:
                 subprocess.run(
@@ -302,45 +300,35 @@ class GCCCompiler(Compiler):
                     shell=True,
                     cwd=project_root,
                     env=env,
-                    timeout=3600,  # 1h timeout for large serial builds (e.g. gnutls)
+                    timeout=3600,
                     check=True,
                 )
 
-                # Find linked ELF executables for decompilation.
-                # Decompilers need linked binaries (ET_EXEC/ET_DYN),
-                # not relocatable .o files (ET_REL).
                 for entry in project_dir.rglob("*"):
                     if not entry.is_file():
                         continue
                     if entry.is_symlink():
-                        # Library builds symlink lib.so -> lib.so.X -> lib.so.X.Y.Z;
-                        # only collect the real file once.
                         continue
-                    if entry.suffix in (".o", ".a", ".i", ".s", ".c", ".h"):
+                    if entry.suffix in _NON_BINARY_EXTS:
                         continue
                     if not self._is_linked_binary(entry):
                         continue
-                    # For cross-compiled projects, skip incidental host tools
-                    # (e.g. x86 mkimage) and keep only the target-arch binaries.
-                    # Accepts ELF and PE (MinGW-built malware) machine names.
                     if self.target_arch and self._binary_machine(entry) != self.target_arch:
                         continue
 
                     dest_bin = output_dir / entry.name
                     shutil.copy2(entry, dest_bin)
 
-                    # Find matching .c and .i files via the .o file
                     obj_file = entry.with_suffix(".o")
                     c_file = entry.with_suffix(".c")
-                    i_file = entry.with_suffix(".i")
+                    i_file = find_preprocessed(entry)
                     dest_i = None
-                    if i_file.exists():
+                    if i_file is not None:
                         dest_i = output_dir / i_file.name
                         shutil.copy2(i_file, dest_i)
                     elif obj_file.exists():
-                        # .i file may be named after the .o file
-                        alt_i = obj_file.with_suffix(".i")
-                        if alt_i.exists() and alt_i != i_file:
+                        alt_i = find_preprocessed(obj_file)
+                        if alt_i is not None:
                             dest_i = output_dir / alt_i.name
                             shutil.copy2(alt_i, dest_i)
 
@@ -351,10 +339,9 @@ class GCCCompiler(Compiler):
                         success=True,
                     ))
 
-                # Also copy .i and .o files for source CFG extraction
                 for obj_file in project_dir.rglob("*.o"):
-                    i_file = obj_file.with_suffix(".i")
-                    if i_file.exists():
+                    i_file = find_preprocessed(obj_file)
+                    if i_file is not None:
                         dest_i = output_dir / i_file.name
                         if not dest_i.exists():
                             shutil.copy2(i_file, dest_i)
@@ -367,7 +354,6 @@ class GCCCompiler(Compiler):
                 ))
 
         else:
-            # Compile individual files
             source_files = list(project_dir.glob(source_pattern))
 
             for source_file in source_files:

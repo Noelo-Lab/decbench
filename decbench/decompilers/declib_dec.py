@@ -36,7 +36,6 @@ if TYPE_CHECKING:
 
 _l = logging.getLogger(__name__)
 
-# CRT/compiler-generated functions that are not user code
 _SKIP_NAMES = frozenset({
     "_start", "__libc_start_main", "__libc_csu_init", "__libc_csu_fini",
     "_init", "_fini", "__do_global_dtors_aux", "register_tm_clones",
@@ -44,7 +43,6 @@ _SKIP_NAMES = frozenset({
     "_dl_relocate_static_pie", "__gmon_start__", "__stack_chk_fail",
 })
 
-# Name prefixes for thunks/imports that should not be benchmarked
 _SKIP_PREFIXES = ("thunk_", "j_", "__imp_", ".plt", "_dl_")
 
 
@@ -97,44 +95,17 @@ class DeclibDecompiler(Decompiler):
 
     name = "declib"
     display_name = "declib"
-    # declib backend identifier passed to DecompilerInterface.discover()
     force_decompiler: str = ""
-    # backends that benefit from a persistent project/cache directory
     _uses_project_dir: bool = False
 
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
-
-    #
-    # Decompiler interface
-    #
 
     def is_available(self) -> bool:  # pragma: no cover - overridden
         raise NotImplementedError
 
     def get_version(self) -> str | None:  # pragma: no cover - overridden
         raise NotImplementedError
-
-    def discover_functions(self, binary_path: Path) -> list[tuple[str, int]]:
-        """Discover functions using the declib backend."""
-        if not self.is_available():
-            return []
-
-        elf_base = _elf_min_vaddr(binary_path)
-        deci = None
-        try:
-            deci = self._make_deci(binary_path, None)
-            return [
-                (name, lifted_addr + elf_base)
-                for name, lifted_addr in self._enumerate_functions(
-                    deci, binary_path, elf_base
-                )
-            ]
-        except Exception as e:
-            _l.error("Failed to discover functions in %s: %s", binary_path, e)
-            return []
-        finally:
-            self._shutdown(deci)
 
     def decompile_binary(
         self,
@@ -175,7 +146,6 @@ class DeclibDecompiler(Decompiler):
             )
 
             if functions is not None:
-                # Caller addresses are in ELF/DWARF space; declib wants lifted.
                 target_funcs = [
                     (name, addr - elf_base) for name, addr in functions
                 ]
@@ -188,10 +158,8 @@ class DeclibDecompiler(Decompiler):
                 filtered = [
                     (n, a) for (n, a) in target_funcs if n in function_names
                 ]
-                # Only apply the filter if it actually matched something — if
-                # decompiler names don't line up with source names (e.g. a
-                # stripped/renamed binary), fall back to decompiling everything
-                # rather than producing an empty result.
+                # Apply the filter only if it matched: when decompiler names don't line up with
+                # source names, decompiling everything beats producing an empty result.
                 if filtered:
                     _l.debug(
                         "declib/%s: filtered %d/%d functions to source set for %s",
@@ -281,13 +249,6 @@ class DeclibDecompiler(Decompiler):
 
         return result
 
-    def cleanup(self) -> None:
-        """Per-binary interfaces are shut down inline; nothing persistent."""
-
-    #
-    # declib helpers
-    #
-
     def _make_deci(
         self, binary_path: Path, project_dir: Path | None
     ) -> DecompilerInterface:
@@ -316,7 +277,7 @@ class DeclibDecompiler(Decompiler):
         """Per-(binary, backend) cache dir; avoids project lock collisions."""
         if not self._uses_project_dir:
             return None
-        # NOTE: Ghidra forbids path elements starting with '.'
+        # Ghidra forbids path elements starting with '.'.
         base = output_dir if output_dir is not None else binary_path.parent
         return base / f"declib_{self.name}_projects" / binary_path.stem
 
@@ -347,9 +308,6 @@ class DeclibDecompiler(Decompiler):
             if not name or name in _SKIP_NAMES:
                 continue
             if text_range is not None:
-                # PLT stubs/import thunks live outside .text; inside .text we
-                # trust the section filter and never drop by name prefix (a
-                # user function may legitimately be called e.g. "j_compress").
                 file_addr = int(lifted_addr) + elf_base
                 if not (text_range[0] <= file_addr < text_range[1]):
                     continue
@@ -370,15 +328,12 @@ class DeclibDecompiler(Decompiler):
             lifted_addr, map_lines=self.config.dump_line_mappings
         )
         if (dec is None or not dec.text) and self.config.dump_line_mappings:
-            # Line mapping can fail independently of decompilation; retry
-            # without it rather than losing the function entirely.
             dec = deci.decompile(lifted_addr, map_lines=False)
         if dec is None or not dec.text:
             return None
 
         code = self._normalize_code(dec.text)
 
-        # declib line_map: {line_number: iterable[lifted_addr]} (set or list)
         line_mappings: list[LineMapping] = []
         if dec.line_map:
             for line_num, addrs in sorted(dec.line_map.items()):
@@ -427,9 +382,8 @@ class DeclibDecompiler(Decompiler):
 
         header = full_func.header
         if header is not None and header.args:
-            # declib keys args by positional index; preserve ABI order so the
-            # type metric can match arguments positionally (works even when
-            # the decompiler invents names like a0/a1).
+            # Preserve ABI order so the type metric can match arguments positionally, even
+            # when the decompiler invents names like a0/a1.
             for position, key in enumerate(sorted(header.args)):
                 arg = header.args[key]
                 variables.append(
@@ -471,7 +425,6 @@ class IDADeclibDecompiler(DeclibDecompiler):
     force_decompiler = "ida"
     _uses_project_dir = True
 
-    # IDA-specific C dialect -> standard C (order matters: __int64 first)
     _CODE_REPLACEMENTS = (
         ("unsigned __int64", "unsigned long long"),
         ("__int64", "long long"),
@@ -484,9 +437,7 @@ class IDADeclibDecompiler(DeclibDecompiler):
         ("_BYTE", "char"),
         ("_BOOL8", "long long"),
         ("_BOOL4", "int"),
-        # _Bool (not bool): compiles without <stdbool.h> when recompiled
         ("_BOOL", "_Bool"),
-        # Calling-convention/attribute annotations gcc cannot parse
         ("__cdecl ", ""),
         ("__fastcall ", ""),
         ("__stdcall ", ""),
@@ -570,8 +521,6 @@ class BinjaDeclibDecompiler(DeclibDecompiler):
 
     def is_available(self) -> bool:
         try:
-            # License errors raise non-ImportError exceptions; treat any
-            # failure as unavailable.
             import binaryninja  # noqa: F401
 
             return True

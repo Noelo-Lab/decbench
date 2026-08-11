@@ -15,20 +15,122 @@ if TYPE_CHECKING:
     from decbench.models.decompilation import FunctionDecompilation
 
 
-# Exact GED is super-polynomial; a handful of huge optimized CFGs can dominate a
-# whole benchmark run. Above this node count we fall back to a cheap structural
-# distance so the run stays bounded. Tunable via DECBENCH_GED_MAX_NODES.
-GED_MAX_NODES = int(os.environ.get("DECBENCH_GED_MAX_NODES") or "60")
+# VJ-GED becomes expensive on large cost matrices, so non-isomorphic graphs above
+# this node count fall back to a cheap structural distance.
+GED_MAX_NODES = int(os.environ.get("DECBENCH_GED_MAX_NODES") or "200")
 
-# A source CFG with this many nodes or fewer is NOT a usable structural graph.
-# In practice source_nodes == 1 means Joern only saw a prototype/declaration of
-# the function (or the wrong translation unit was matched), not its real body.
-# Scoring against such a graph inverts the metric: GED then rewards whichever
-# decompiler emitted the FEWEST nodes — a truncated one-block stub scores a
-# perfect 0 while a complete, correct decompilation is "penalized" by its real
-# size. Treat these like a missing source CFG (excluded from scoring) instead.
-# Tunable via DECBENCH_GED_MIN_SOURCE_NODES.
-GED_MIN_SOURCE_NODES = int(os.environ.get("DECBENCH_GED_MIN_SOURCE_NODES") or "1")
+
+def _node_role(node: Any) -> tuple[bool, bool]:
+    return (
+        bool(getattr(node, "is_entrypoint", False)),
+        bool(getattr(node, "is_exitpoint", False)),
+    )
+
+
+def _role_graph(cfg: DiGraph) -> DiGraph:
+    import networkx as nx
+
+    graph = nx.DiGraph()
+    graph.add_nodes_from((node, {"role": _node_role(node)}) for node in cfg.nodes())
+    graph.add_edges_from(cfg.edges())
+    return graph
+
+
+def _add_joint_refinement_colors(
+    source_graph: DiGraph,
+    decompiled_graph: DiGraph,
+    *,
+    rounds: int = 8,
+) -> None:
+    graphs = (source_graph, decompiled_graph)
+    colors: list[dict[Any, int]] = [{}, {}]
+
+    def assign(signatures: list[dict[Any, tuple[Any, ...]]]) -> list[dict[Any, int]]:
+        palette: dict[tuple[Any, ...], int] = {}
+        assigned: list[dict[Any, int]] = [{}, {}]
+        for graph_index, graph in enumerate(graphs):
+            for node in graph.nodes():
+                signature = signatures[graph_index][node]
+                assigned[graph_index][node] = palette.setdefault(
+                    signature,
+                    len(palette),
+                )
+        return assigned
+
+    initial = [
+        {
+            node: (
+                graph.nodes[node]["role"],
+                graph.in_degree(node),
+                graph.out_degree(node),
+            )
+            for node in graph.nodes()
+        }
+        for graph in graphs
+    ]
+    colors = assign(initial)
+
+    for _ in range(rounds):
+        refined = [
+            {
+                node: (
+                    colors[graph_index][node],
+                    tuple(
+                        sorted(
+                            colors[graph_index][predecessor]
+                            for predecessor in graph.predecessors(node)
+                        )
+                    ),
+                    tuple(
+                        sorted(
+                            colors[graph_index][successor] for successor in graph.successors(node)
+                        )
+                    ),
+                )
+                for node in graph.nodes()
+            }
+            for graph_index, graph in enumerate(graphs)
+        ]
+        new_colors = assign(refined)
+        if all(
+            len(set(new_colors[index].values())) == len(set(colors[index].values()))
+            for index in range(2)
+        ):
+            colors = new_colors
+            break
+        colors = new_colors
+
+    for graph_index, graph in enumerate(graphs):
+        for node, color in colors[graph_index].items():
+            graph.nodes[node]["iso_color"] = color
+
+
+def _is_isomorphic(source_cfg: DiGraph, decompiled_cfg: DiGraph) -> bool:
+    import networkx as nx
+
+    source_graph = _role_graph(source_cfg)
+    decompiled_graph = _role_graph(decompiled_cfg)
+    _add_joint_refinement_colors(source_graph, decompiled_graph)
+    node_match = nx.algorithms.isomorphism.categorical_node_match(
+        ("role", "iso_color"),
+        ((False, False), -1),
+    )
+    return bool(
+        nx.is_isomorphic(
+            source_graph,
+            decompiled_graph,
+            node_match=node_match,
+        )
+    )
+
+
+def _graph_cache_input(cfg: DiGraph) -> dict[str, list[Any]]:
+    nodes = list(cfg.nodes())
+    node_ids = {node: index for index, node in enumerate(nodes)}
+    return {
+        "roles": [_node_role(node) for node in nodes],
+        "edges": sorted((node_ids[src], node_ids[dst]) for src, dst in cfg.edges()),
+    }
 
 
 @register_metric("ged")
@@ -51,11 +153,7 @@ class GEDMetric(Metric):
     requires_source_cfg = True
     requires_decompiled_cfg = True
 
-    # v2: exclude only EMPTY-prototype source CFGs (all-Nop single block), not
-    # every <=1-node source, so genuine straight-line functions are scored; the
-    # non-finite (degenerate/error) result is dropped from the denominator at the
-    # recording layer (metrics/base.py) instead of counting as a failure.
-    cache_version = "2"
+    cache_version = "3"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
@@ -64,13 +162,14 @@ class GEDMetric(Metric):
     def _get_vj_ged(self):  # type: ignore
         if self._vj_ged is None:
             try:
-                from cfgutils.similarity import vj_ged
+                from decbench.metrics.vj_ged import vj_ged
 
                 self._vj_ged = vj_ged
-            except ImportError:
+            except ImportError as e:
                 raise ImportError(
-                    "cfgutils is required for GED metric. " "Install with: pip install cfgutils"
-                )
+                    "cfgutils and scipy are required for GED metric. "
+                    "Install with: pip install cfgutils scipy"
+                ) from e
         return self._vj_ged
 
     def compute_for_function(
@@ -86,18 +185,10 @@ class GEDMetric(Metric):
                 metadata={"error": "Missing CFG"},
             )
 
-        # EMPTY-prototype source CFG (see is_degenerate_source_cfg): Joern only
-        # saw a declaration (an all-Nop single block) because the function's
-        # defining translation unit wasn't captured, so there is no structure to
-        # compare against. Return non-finite so the recording layer DROPS it from
-        # GED's denominator (unmeasurable for everyone, uniformly), rather than
-        # counting it as a per-decompiler failure. Genuine single-block functions
-        # (real straight-line bodies) are NOT degenerate and ARE scored — a
-        # correct 1-block decompilation earns GED 0. Checked BEFORE the cache so
-        # entries recorded under the old (rewarding) semantics are never served.
-        # NOTE: a truncated decompilation (e.g. angr's CFGFast emitting a
-        # prologue-only stub) can still score well against a genuinely tiny source
-        # function; detecting that needs decompiler-side signals (future work).
+        # A degenerate source CFG has no structure to compare against, so return
+        # non-finite and let the recording layer drop it from GED's denominator rather
+        # than count it as a per-decompiler failure. Checked BEFORE the cache so entries
+        # recorded under the old (rewarding) semantics are never served.
         from decbench.utils.cfg import is_degenerate_source_cfg
 
         s_nodes = source_cfg.number_of_nodes()
@@ -111,14 +202,9 @@ class GEDMetric(Metric):
                 },
             )
 
-        # GED is a pure function of the two CFG structures (node/edge sets) and
-        # the oversize threshold. Key on their canonical, sorted shapes so the
-        # super-polynomial computation is never repeated for identical graphs.
         key_inputs = [
-            sorted(str(n) for n in source_cfg.nodes()),
-            sorted((str(u), str(v)) for u, v in source_cfg.edges()),
-            sorted(str(n) for n in decompiled_cfg.nodes()),
-            sorted((str(u), str(v)) for u, v in decompiled_cfg.edges()),
+            _graph_cache_input(source_cfg),
+            _graph_cache_input(decompiled_cfg),
             GED_MAX_NODES,
         ]
         return self._cached_value(
@@ -144,30 +230,47 @@ class GEDMetric(Metric):
             "decompiled_size": decomp_size,
         }
 
-        # Cheap structural fallback for oversized graphs: exact GED is too slow
-        # and these are rarely a perfect match anyway. The size delta is a sound
-        # LOWER BOUND on the true edit distance — but a 0 here only means the
-        # two graphs have the same node and edge counts (necessary, not
-        # sufficient, for a true structural match). Consumers can tell the
-        # approximation apart via the "approximated" metadata flag.
+        if _is_isomorphic(source_cfg, decompiled_cfg):
+            return MetricValue(
+                value=0.0,
+                raw_value=0.0,
+                metadata={**base_meta, "method": "isomorphism", "isomorphic": True},
+            )
+
         if s_nodes > GED_MAX_NODES or d_nodes > GED_MAX_NODES:
-            approx = float(
-                abs(s_nodes - d_nodes)
-                + abs(source_cfg.number_of_edges() - decompiled_cfg.number_of_edges())
+            approx = max(
+                1.0,
+                float(
+                    abs(s_nodes - d_nodes)
+                    + abs(source_cfg.number_of_edges() - decompiled_cfg.number_of_edges())
+                ),
             )
             return MetricValue(
                 value=approx,
                 raw_value=approx,
-                metadata={**base_meta, "approximated": True},
+                metadata={
+                    **base_meta,
+                    "method": "size_lower_bound",
+                    "isomorphic": False,
+                    "approximated": True,
+                },
             )
 
         vj_ged = self._get_vj_ged()
         try:
-            ged_value = vj_ged(source_cfg, decompiled_cfg)
+            raw_ged = float(vj_ged(source_cfg, decompiled_cfg))
+            ged_value = max(1.0, raw_ged)
+            metadata = {
+                **base_meta,
+                "method": "vj_ged",
+                "isomorphic": False,
+            }
+            if raw_ged != ged_value:
+                metadata["vj_ged_raw"] = raw_ged
             return MetricValue(
-                value=float(ged_value),
-                raw_value=ged_value,
-                metadata=base_meta,
+                value=ged_value,
+                raw_value=raw_ged,
+                metadata=metadata,
             )
         except Exception as e:
             return MetricValue(

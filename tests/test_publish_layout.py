@@ -90,10 +90,8 @@ def test_strip_decompilers_removes_all_traces():
     fd = make_fd()
     removed = strip_decompilers(fd, [STRIPPED])
     assert removed == [STRIPPED]
-    # No trace anywhere in the serialized dataset.
     dumped = json.dumps(fd.model_dump(mode="json"))
     assert STRIPPED not in dumped
-    # The kept decompiler is untouched.
     assert fd.decompilers == [KEPT]
     assert fd.decompiler_versions == {KEPT: "9.2"}
     assert fd.compile_rates == {KEPT: 0.9}
@@ -114,17 +112,14 @@ def test_strip_decompilers_idempotent_and_unknown():
     fd = make_fd()
     assert strip_decompilers(fd, [STRIPPED]) == [STRIPPED]
     before = fd.model_dump(mode="json")
-    # Second strip: nothing left to remove, data unchanged.
     assert strip_decompilers(fd, [STRIPPED]) == []
     assert fd.model_dump(mode="json") == before
-    # Unknown decompiler / empty exclusions: no-ops.
     assert strip_decompilers(fd, ["nonexistent"]) == []
     assert strip_decompilers(fd, []) == []
     assert fd.model_dump(mode="json") == before
 
 
 def test_strip_decompilers_reports_partial_traces():
-    # A decompiler present ONLY in hardest is still detected and removed.
     fd = make_fd()
     fd.decompilers = [KEPT]
     fd.decompiler_versions.pop(STRIPPED)
@@ -161,7 +156,6 @@ def test_load_dataset_strips_explicit_exclusions(results_tree: Path):
     fd = load_dataset(results_tree, exclude=(STRIPPED,))
     assert STRIPPED not in json.dumps(fd.model_dump(mode="json"))
     assert fd.decompilers == [KEPT]
-    # Presets were still assigned after the strip.
     assert [p.name for p in fd.dataset_presets]
 
 
@@ -187,7 +181,6 @@ def _publish_master(root: Path, dest: Path, exclude: tuple[str, ...]) -> Functio
 def test_write_master_scores_excludes_and_regenerates_scoreboard(results_tree: Path, tmp_path):
     from decbench.scoring.scoreboard import build_scoreboard_from_function_data
 
-    # The tree's own scoreboard aggregates BOTH decompilers.
     tree_sb = build_scoreboard_from_function_data(load_dataset(results_tree, exclude=()))
     tree_sb.to_toml(results_tree / "scoreboard.toml")
 
@@ -200,14 +193,11 @@ def test_write_master_scores_excludes_and_regenerates_scoreboard(results_tree: P
     sb_text = (dest / "results" / "scoreboard.toml").read_text()
     assert STRIPPED not in sb_text
     assert KEPT in sb_text
-    # The tree's own files still contain the excluded decompiler.
     assert STRIPPED in (results_tree / "function_results.json").read_text()
     assert STRIPPED in (results_tree / "scoreboard.toml").read_text()
 
 
 def test_write_master_scores_never_truncates_hardlinked_source(results_tree: Path, tmp_path):
-    # Simulate a previous hardlink-first publish: dest master shares the tree
-    # file's inode. A rewrite must break the link, not truncate through it.
     dest = tmp_path / "dataset"
     out = dest / "results" / "function_results.json"
     out.parent.mkdir(parents=True)
@@ -216,7 +206,7 @@ def test_write_master_scores_never_truncates_hardlinked_source(results_tree: Pat
     _publish_master(results_tree, dest, exclude=(STRIPPED,))
 
     source = (results_tree / "function_results.json").read_text()
-    assert STRIPPED in source  # tree file intact
+    assert STRIPPED in source
     assert STRIPPED not in out.read_text()
     assert (results_tree / "function_results.json").stat().st_ino != out.stat().st_ino
 
@@ -238,7 +228,5 @@ def test_write_master_scores_verbatim_scoreboard_without_exclusions(results_tree
 
 def test_full_config_has_publisher_description():
     assert _preset_description("full") != ""
-    # Scoring presets get their publisher-side text too (renderer copy lives
-    # elsewhere; the published dataset.toml must not have blank descriptions).
     for name in ("unoptimized", "optimized", "inlined", "large", "sample-set"):
         assert _preset_description(name) != ""

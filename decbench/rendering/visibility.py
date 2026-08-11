@@ -68,7 +68,6 @@ def _filter_function_data(function_data: FunctionData, hidden: set[str]) -> Func
         sample.decompiled = {d: c for d, c in sample.decompiled.items() if d in keep}
         sample.values = {d: v for d, v in sample.values.items() if d in keep}
         sample.perfects = {d: v for d, v in sample.perfects.items() if d in keep}
-    # A sample whose only shown output was a hidden decompiler has nothing left.
     fd.samples = [s for s in fd.samples if s.decompiled]
 
     fd.hardest = [h for h in fd.hardest if not is_hidden(h.decompiler, hidden)]

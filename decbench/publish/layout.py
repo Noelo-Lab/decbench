@@ -45,27 +45,18 @@ from decbench.utils.results_tree import (
 
 logger = logging.getLogger(__name__)
 
-# Normative constants from the publishing contract.
 DATASET_NAME = "decbench-dataset"
 DATASET_REPO_ID = "noelo-lab/decbench-dataset"
-# `full` is a publisher-only config (the master everything slice); it is no
-# longer a scoring preset, so select_groups/copy_artifacts special-case it.
 DEFAULT_CONFIGS = ["sample-set", "large", "unoptimized", "optimized", "inlined", "full"]
 _FULL = "full"
-# `full` is not a scoring preset, so its description is the publisher's to own.
 _FULL_DESCRIPTION = "everything — all projects and opt levels (O0 + O2 + O2-noinline)"
-# Decompilers stripped from published datasets by default — the dataset mirror
-# of the site's `[decompilers] hidden`. Empty since 2026-07-23, when the last
-# excluded backend was fully removed from the benchmark; the strip mechanism
-# stays for future use.
+# The dataset mirror of the site's `[decompilers] hidden`. Empty since the last
+# excluded backend was removed; the strip mechanism stays for future use.
 EXCLUDED_DECOMPILERS: tuple[str, ...] = ()
 
 Logger = Callable[[str], None]
 
 
-# --------------------------------------------------------------------------- #
-# Manifest models (contract §3). Written as plain JSON via ``model_dump``.
-# --------------------------------------------------------------------------- #
 class ProjectSources(BaseModel):
     """The stripped translation units published for one project."""
 
@@ -108,9 +99,6 @@ class ConfigManifest(BaseModel):
     binaries: list[BinaryManifestEntry] = Field(default_factory=list)
 
 
-# --------------------------------------------------------------------------- #
-# Internal per-group record produced by the copy walk.
-# --------------------------------------------------------------------------- #
 class GroupRecord(BaseModel):
     """A processed ``(project, opt, binary-stem)`` group, on disk in the dest."""
 
@@ -136,9 +124,6 @@ class LayoutResult(BaseModel):
     unresolved: list[str] = Field(default_factory=list)
 
 
-# --------------------------------------------------------------------------- #
-# Small filesystem helpers (mirror decbench.dataset patterns).
-# --------------------------------------------------------------------------- #
 def _sha256_of(path: Path) -> str:
     """SHA-256 of a file's bytes (streamed)."""
     h = hashlib.sha256()
@@ -171,9 +156,6 @@ def _relpath(path: Path, dest: Path) -> str:
     return path.relative_to(dest).as_posix()
 
 
-# --------------------------------------------------------------------------- #
-# Group selection.
-# --------------------------------------------------------------------------- #
 def strip_decompilers(fd: FunctionData, exclude: Iterable[str]) -> list[str]:
     """Remove every trace of the ``exclude``d decompilers from ``fd``, in place.
 
@@ -241,8 +223,6 @@ def load_dataset(
     stripped = strip_decompilers(fd, exclude)
     if stripped:
         logger.info("stripped excluded decompiler(s) from dataset: %s", ", ".join(stripped))
-    # Pin the sample-set to the tree's frozen manifest when one exists; the
-    # seeded draw is only the bootstrap for manifest-less trees.
     assign_datasets(fd, seed=seed, sample_members=load_sample_manifest(results_dir))
     return fd
 
@@ -270,9 +250,6 @@ def select_groups(
     return selected
 
 
-# --------------------------------------------------------------------------- #
-# Sources: strip system headers, dedup by stripped content, one dir per project.
-# --------------------------------------------------------------------------- #
 def build_project_sources(
     root: Path,
     dest: Path,
@@ -325,9 +302,6 @@ def build_project_sources(
     return sorted(content_to_path.values()), written_bytes
 
 
-# --------------------------------------------------------------------------- #
-# Copy walk: binaries + decompiled results + sources.
-# --------------------------------------------------------------------------- #
 def copy_artifacts(
     root: Path,
     dest: Path,
@@ -366,7 +340,6 @@ def copy_artifacts(
             result.bytes["binaries"] += _copy_file(real, bin_dst)
         result.counts["binaries"] += 1
 
-        # Decompiled results -> results/<dec>/<opt>/<project>/<stem>.c (+ .toml).
         results_map: dict[str, str] = {}
         dec_dir = decompiled_dir(root, opt, project)
         for dec in fd.decompilers:
@@ -405,7 +378,6 @@ def copy_artifacts(
             )
         )
 
-    # Sources: once per project appearing in the processed index.
     for project in sorted({g.project for g in result.groups}):
         paths, nbytes = build_project_sources(root, dest, project, write=do_sources)
         result.project_sources[project] = paths
@@ -443,11 +415,8 @@ def attach_source_cfgs(
 # --------------------------------------------------------------------------- #
 # Config manifests + filtered scores (contract §3).
 # --------------------------------------------------------------------------- #
-# Publisher-side one-liners for the config tables in dataset.toml / manifests.
-# The scoring presets deliberately carry no text of their own any more (their
-# display copy lives in decbench/rendering/content/datasets.toml, which publish
-# must not depend on), so the published descriptions are owned here and kept in
-# sync with that file by hand.
+# Owned here because publish must not depend on rendering/content/datasets.toml;
+# kept in sync with that file by hand.
 _CONFIG_DESCRIPTIONS = {
     _FULL: _FULL_DESCRIPTION,
     "unoptimized": "unoptimized builds (O0) — surfaces simple structural differences",
@@ -606,9 +575,6 @@ def write_master_scores(
     log(f"[master] wrote results/function_results.json ({'filtered' if partial else 'full'})")
 
 
-# --------------------------------------------------------------------------- #
-# Top-level index (contract §4).
-# --------------------------------------------------------------------------- #
 def write_dataset_toml(
     dest: Path,
     fd: FunctionData,
@@ -655,15 +621,10 @@ def write_dataset_toml(
     log(f"[index] dataset.toml: {n_projects} projects, {n_binaries} binaries, {n_functions} funcs")
 
 
-# --------------------------------------------------------------------------- #
-# .gitattributes (contract §6).
-# --------------------------------------------------------------------------- #
 _GITATTRIBUTES_LINES = [
     "binaries/** filter=lfs diff=lfs merge=lfs -text",
     "results/**/*.c -filter -diff -merge text",
     "results/function_results.json filter=lfs diff=lfs merge=lfs -text",
-    # Per-config filtered scores are large for broad configs (e.g. 'unoptimized' =
-    # every O0 function, ~tens of MB) — LFS-track them too.
     "configs/**/function_results.json filter=lfs diff=lfs merge=lfs -text",
 ]
 
@@ -690,9 +651,6 @@ def extend_gitattributes(dest: Path, log: Logger = print) -> None:
     log(f"[gitattributes] appended {len(to_add)} rule(s)")
 
 
-# --------------------------------------------------------------------------- #
-# Manifest + index driver (called after the copy walk and optional CFG step).
-# --------------------------------------------------------------------------- #
 def write_manifests_and_index(
     root: Path,
     dest: Path,

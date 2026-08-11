@@ -25,10 +25,6 @@ from pathlib import Path
 
 from decbench.models.function_data import FunctionData, HardestEntry, SampleEntry
 from decbench.models.scoreboard import Scoreboard
-
-# The overlay merges live in decbench.results_store now (slice-scoped clears; see
-# its docstrings) — this script keeps its historical role of an overlay remerge
-# over an existing function_results.json, without touching checkpoints.
 from decbench.results_store import (
     load_sample_manifest,
     read_ged_overlay,
@@ -50,7 +46,7 @@ from decbench.utils.source_extract import function_source, function_source_ex
 
 MARKER = re.compile(r"^// Function: (\S+) @ (0x[0-9a-fA-F]+)\s*$", re.M)
 PERFECT = {"ged": 0.0, "type_match": 1.0, "byte_match": 1.0}
-PER_TIER = 100  # View-page samples per difficulty tier
+PER_TIER = 100
 HARDEST_PER = 12
 
 
@@ -115,7 +111,7 @@ def build_samples(fd: FunctionData, reader: DiskReader) -> list[SampleEntry]:
                 if code:
                     decompiled[dec] = code
             if not decompiled:
-                continue  # nothing to compare
+                continue
             source, source_status = function_source_ex(binary, f.function)
             out.append(
                 SampleEntry(
@@ -209,18 +205,9 @@ def recompute_scoreboard(fd: FunctionData, old: Scoreboard) -> Scoreboard:
 
 def main() -> None:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else "results/sailr_full")
-    # --add-only: fold a PARTIAL byte_match_new (e.g. the Docker ARM/PE recompile)
-    # into an already-complete dataset without dropping existing (x86) values, and
-    # keep the existing compile_rates.
     add_only = "--add-only" in sys.argv[2:]
-    # --ged: merge ged_new.json (header-stripped source CFGs) instead of byte_match;
-    # keeps byte_match + compile_rates untouched.
     ged_mode = "--ged" in sys.argv[2:]
-    # --type-match: merge type_match_new.json (recomputed from checkpoints after a
-    # calibration fix) instead of byte_match; keeps byte_match/ged/compile_rates.
     tm_mode = "--type-match" in sys.argv[2:]
-    # --allow-drops: let the coverage guard's regressions through (see
-    # decbench.results_store.write_function_data_guarded).
     allow_drops = "--allow-drops" in sys.argv[2:]
     fd = FunctionData.from_json(root / "function_results.json")
     reader = DiskReader(root)
@@ -250,8 +237,6 @@ def main() -> None:
         rates_str = ", ".join(f"{d}={100*r:.1f}%" for d, r in (fd.compile_rates or {}).items())
         print(f"[rebuild] compile rates: {rates_str}", flush=True)
 
-    # The frozen manifest (when the tree has one) is the single source of truth
-    # for sample-set membership; the seeded draw only runs on manifest-less trees.
     assign_datasets(fd, sample_members=load_sample_manifest(root))
     fd.samples = build_samples(fd, reader)
     fd.hardest = build_hardest(fd, reader)

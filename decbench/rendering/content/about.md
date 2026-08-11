@@ -377,9 +377,10 @@ This also allows LLMs to compete, which may have no way to return to you somethi
 This can inject error because things like variables may be hard to align across samples, which has been [explored in prior work](https://arxiv.org/abs/2502.04536).
 
 ### Graph Edit Distance
-The Graph Edit Distance (GED) algorithm we use is the [Vujosevic Janicic](https://github.com/mahaloz/cfgutils/blob/main/cfgutils/similarity/ged/vujosevic_janicic_ged.py) algorithm (VJ-GED).
-Like most GED algorithms, this is an approximation, and in some cases can inject error (more distance than actually exists).
-However, the guarantee here is that a perfect graph will always be scored correctly since we do an isomorphic test first. 
+Every CFG pair receives an exact isomorphism test first, with no size limit, so a perfect graph is always scored correctly.
+Non-isomorphic graphs up to 200 nodes use the [Vujosevic Janicic](https://github.com/mahaloz/cfgutils/blob/main/cfgutils/similarity/ged/vujosevic_janicic_ged.py) algorithm (VJ-GED).
+Like most GED algorithms, VJ-GED is an approximation and can report more distance than actually exists.
+Larger non-isomorphic graphs use a nonzero lower bound from their node and edge count differences.
 
 There are other ways to inject error here.
 We largely use [Joern](https://joern.io/) to parse the decompilation of each project.

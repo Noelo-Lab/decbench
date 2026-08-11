@@ -30,7 +30,6 @@ def test_versioned_spec_sets_model():
     dec = DecompilerRegistry.get("codex@gpt-5.6-sol")
     assert dec.id == "codex@gpt-5.6-sol"
     assert dec._model() == "gpt-5.6-sol"
-    # The kimi model alias itself contains a slash and a dash.
     dec = DecompilerRegistry.get("kimi-code@kimi-code/k3")
     assert dec.id == "kimi-code@kimi-code/k3"
     assert dec._model() == "kimi-code/k3"
@@ -38,12 +37,10 @@ def test_versioned_spec_sets_model():
 
 def test_shared_prompt_states_the_policy():
     p = llm_dec.LLM_DECOMPILE_PROMPT.lower()
-    # Banned from decompilers, allowed simple disassemblers.
     assert "banned" in p
     for tool in ("ghidra", "ida", "hex-rays", "binary ninja", "angr"):
         assert tool in p
     assert "objdump" in p
-    # Reconstruct C faithful to the original source.
     assert "c source" in p or "reconstruct the original c" in p
 
 
@@ -64,7 +61,6 @@ def test_extract_c_from_bare_definition():
 def test_rename_func_matches_placeholder():
     code = "int wcomment(char *s) { return wcomment(s); }"
     renamed = llm_dec._rename_func(code, "sub_18a5")
-    # Both the definition and the recursive call are renamed.
     assert "int sub_18a5(" in renamed
     assert "wcomment" not in renamed
 
@@ -96,7 +92,7 @@ def test_cost_cap_truncates(monkeypatch, tmp_path):
     fake_bin.write_bytes(b"\x7fELF")
     res = dec.decompile_binary(fake_bin, function_names={i for i in range(20)})
     assert isinstance(res, DecompilationResult)
-    assert len(calls) == 3  # capped, not 20
+    assert len(calls) == 3
 
 
 def test_disasm_hint_on_real_binary():
@@ -105,7 +101,6 @@ def test_disasm_hint_on_real_binary():
     if not b.is_file():
         pytest.skip("sample binary not present")
     hint = llm_dec._disasm_hint(b, 0x18A5)
-    # Non-empty and looks like disassembly (has an address + a mnemonic).
     assert hint and "0x18a5" in hint
 
 

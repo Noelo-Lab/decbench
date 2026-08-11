@@ -70,7 +70,6 @@ class TestRegistry:
         for name in ALL_DECOMPILERS:
             dec = DecompilerRegistry.get(name)
             assert dec.name == name
-            # is_available must never raise
             assert isinstance(dec.is_available(), bool)
 
     def test_binja_registered_even_if_unavailable(self) -> None:
@@ -79,6 +78,88 @@ class TestRegistry:
         assert dec.display_name == "Binary Ninja"
         if not dec.is_available():
             assert dec.get_version() is None
+
+
+class _FakeTinfo:
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def dstr(self) -> str:
+        return self._text
+
+
+class _FakeLvar:
+    """The slice of Hex-Rays' ``lvar_t`` that ``_extract_variables`` reads."""
+
+    def __init__(self, name: str, type_str: str, is_arg: bool, width: int = 8) -> None:
+        self.name = name
+        self.is_arg_var = is_arg
+        self.width = width
+        self.location = None
+        self._tinfo = _FakeTinfo(type_str)
+
+    def type(self) -> _FakeTinfo:
+        return self._tinfo
+
+
+class _FakeCfunc:
+    def __init__(self, lvars: list[_FakeLvar], argidx: list[int] | None) -> None:
+        self._lvars = lvars
+        if argidx is not None:
+            self.argidx = argidx
+
+    def get_lvars(self) -> list[_FakeLvar]:
+        return self._lvars
+
+
+class TestIDAArgumentOrder:
+    """``get_lvars()`` enumerates in allocation order, so argument positions must
+    come from ``cfunc.argidx`` — otherwise type_match's by-ABI-position pass
+    compares the wrong pairs."""
+
+    @staticmethod
+    def _lvars() -> list[_FakeLvar]:
+        return [
+            _FakeLvar("a3", "int", True),
+            _FakeLvar("a1", "leveldb::Slice *", True),
+            _FakeLvar("a2", "char *", True),
+            _FakeLvar("v4", "int", False),
+        ]
+
+    def test_arg_index_follows_argidx_not_enumeration(self) -> None:
+        from decbench.decompilers.raw.ida_raw import RawIDADecompiler
+
+        cfunc = _FakeCfunc(self._lvars(), argidx=[1, 2, 0])
+        args = [v for v in RawIDADecompiler._extract_variables(cfunc) if v.kind == "arg"]
+        assert {v.name: v.arg_index for v in args} == {"a1": 0, "a2": 1, "a3": 2}
+        assert [v.type for v in sorted(args, key=lambda v: v.arg_index)] == [
+            "leveldb::Slice *",
+            "char *",
+            "int",
+        ]
+
+    def test_locals_are_untouched(self) -> None:
+        from decbench.decompilers.raw.ida_raw import RawIDADecompiler
+
+        cfunc = _FakeCfunc(self._lvars(), argidx=[1, 2, 0])
+        locals_ = [v for v in RawIDADecompiler._extract_variables(cfunc) if v.kind == "stack"]
+        assert [v.name for v in locals_] == ["v4"]
+        assert all(v.arg_index is None for v in locals_)
+
+    def test_falls_back_to_enumeration_without_argidx(self) -> None:
+        """An IDA build not exposing ``argidx`` keeps the previous behaviour."""
+        from decbench.decompilers.raw.ida_raw import RawIDADecompiler
+
+        cfunc = _FakeCfunc(self._lvars(), argidx=None)
+        args = [v for v in RawIDADecompiler._extract_variables(cfunc) if v.kind == "arg"]
+        assert {v.name: v.arg_index for v in args} == {"a3": 0, "a1": 1, "a2": 2}
+
+    def test_arg_var_missing_from_argidx_gets_a_trailing_slot(self) -> None:
+        from decbench.decompilers.raw.ida_raw import RawIDADecompiler
+
+        cfunc = _FakeCfunc(self._lvars(), argidx=[1, 2])
+        args = [v for v in RawIDADecompiler._extract_variables(cfunc) if v.kind == "arg"]
+        assert {v.name: v.arg_index for v in args} == {"a1": 0, "a2": 1, "a3": 2}
 
 
 @pytest.mark.parametrize("name", ["angr", "ida", "ghidra"])
@@ -99,12 +180,9 @@ class TestSmokeDecompile:
         func = result.functions["add_nums"]
         assert func.decompiled_code.strip()
         assert func.line_count > 0
-        # Structured variables must be populated (stack vars and/or args)
         assert func.variables, f"{name} produced no variables for add_nums"
         kinds = {v.kind for v in func.variables}
         assert kinds <= {"stack", "arg"}
-        # At -O0 every backend recovers at least one stack variable w/ offset
         assert any(v.stack_offset is not None for v in func.variables)
 
-        # Output files were written
         assert (tmp_path / f"{name}_{tiny_binary.stem}.c").exists()

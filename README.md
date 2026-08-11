@@ -26,10 +26,12 @@ DecBench evaluates decompilers using three core metrics:
 | **Type Correctness** | Variable type recovery | Compares decompiled variable types against DWARF debug info |
 | **Recompilation Bytematch** | Recompilable, semantically-equivalent code | Recompiles each decompiled function with the **original toolchain** (matching its format/arch/opt flags) after a compilability **fixup** pass, then diffs the assembly via Jaccard similarity with linker-dependent operands normalized away |
 
-A **Union** score tracks the percentage of functions where a decompiler achieves a perfect match on *one of three* metrics — i.e. the source was "perfect" by one direction.
+A **Union** score tracks the percentage of functions where a decompiler achieves a perfect match on *one of three* metrics, i.e. the source was "perfect" by one direction.
+
+Full methodology, including fairness edits to decompilers, is in [docs/metrics.md](docs/metrics.md).
 
 ## Quickstart
-DecBench runs a four-stage pipeline:
+DecBench runs a three-stage pipeline (plus reporting):
 
 ```
 Source Code (TOML config)
@@ -62,12 +64,30 @@ decbench list-decompilers
 decbench list-metrics
 ```
 
+### Compete externally
+
+If you have a decompiler you would like to add to DecBench, but would prefer to not open-source it or add a [harness](./decbench/decompilers/raw/), you can compete on the 250-function [sample-set](https://decbench.com/leaderboard/?dataset=sample-set) dataset.
+
+You can compete on it by downloading the dataset, decompiling each requested function, and sending back the zip to `decbench@mahaloz.re` or opening an issue. 
+This does not require installing decbench, and does not require you to build the site.
+
+```bash
+# download the dataset
+curl -L https://huggingface.co/datasets/noelo-lab/decbench-dataset/resolve/main/kits/decbench-evalkit-sample-set.zip -o kit.zip && unzip kit.zip
+
+# follow the README and decompile requested functions
+cd decbench-evalkit-sample-set && cat README.md
+
+# package and send the results 
+python package.py 
+```
+
 ## Generating results
 
 `decbench run` works for a single project, but real benchmark runs use the
-resilient drivers in `scripts/` — they checkpoint per project (so a multi-hour
-run survives crashes) and use the `spawn` multiprocessing context (the default
-`fork` deadlocks workers once angr's threads are live).
+resilient drivers in `scripts/` — they checkpoint per project, so a multi-hour
+run survives crashes. Driver internals and every env knob:
+[docs/benchmarking.md](docs/benchmarking.md).
 
 ```bash
 # 1. Compile every project at every opt level into a results tree.
@@ -87,79 +107,26 @@ This produces, under `results/sailr_full/`:
 - `scoreboard.toml` — machine-readable per-metric + overall scores
 - `function_results.json` — the per-function dataset the HTML report embeds
   (values, perfect flags, dataset tags, side-by-side **samples** with source,
-  **hardest** functions, per-decompiler **compile rates**)
+  per-decompiler **compile rates**)
 - `<opt>/<project>/{compiled,decompiled,evaluated}/` — intermediate artifacts
 
-The `compiled/` directories keep the preprocessed `.i` sources emitted at build
-time (`-save-temps=obj`) alongside the binaries — they are **required**, not
-build debris: GED's source-side CFGs are parsed exclusively from them, because
-Joern needs macro-expanded, ifdef-resolved code to parse completely (raw `.c`
-with unexpanded includes does not). Without the `.i` files, GED is silently
-skipped for the entire run.
+The `compiled/` directories keep the preprocessed `.i` sources alongside the
+binaries. They are **required**, not build debris: GED's source-side CFGs are
+parsed exclusively from them, and without the `.i` files GED is silently
+skipped for the entire run (why: [docs/metrics.md](docs/metrics.md)).
 
-## Rendering the site
+## Republishing the site
 
-Two commands render the **same page** from the same skeleton and the same
-content; they differ only in how it is delivered.
-
-| Command | Output | Use it when |
-|---------|--------|-------------|
-| `decbench report` | one self-contained `.html` (~7.1 MB) | you want a single file to open locally, email, or archive — CSS, JS, font and all data are inlined, so it works over `file://` |
-| `decbench site build` | a split tree in `site/` (~7.0 MB) | you are publishing to GitHub Pages — assets and data are separate files the browser caches, and only ~0.10 MB loads before first paint |
-
-```bash
-# Single self-contained file. Takes a SCOREBOARD path; if a sibling
-# function_results.json exists, the report is fully interactive.
-decbench report results/full_run/scoreboard.toml -o results/full_run/report.html
-
-# Deployable Pages tree. Takes a RESULTS TREE, and requires its
-# function_results.json — every view is computed from per-function data.
-decbench site build results/full_run -o site/
-```
-
-### Publishing to GitHub Pages
-
-CI **never builds the site** — building needs every decompiler, a ~1.9 GB Joern,
-and ~15 GB of compiled binaries. The maintainer builds locally and commits the
-tree; [`.github/workflows/pages.yml`](.github/workflows/pages.yml) only uploads
-what is already in `site/`.
-
-```bash
-decbench site build results/full_run -o site/      # 1. build locally
-git add site && git commit -m 'site: refresh'      # 2. commit it (site/ is deliberately NOT gitignored)
-git push                                           # 3. Actions deploys it
-```
-
-The workflow triggers on pushes to `main` that touch `site/**`, failing loudly if
-`site/index.html` or `site/data/aggregates.json` is missing; the tree's data
-contract is [`docs/SITE_DATA_SCHEMA.md`](docs/SITE_DATA_SCHEMA.md).
-
-### Editing the site's text
-
-**Every string a maintainer might want to reword lives in
-`decbench/rendering/content/` — not in `html.py`.** Edit a file there, re-render,
-done: no benchmark re-run, no Python.
-
-| File | Holds |
-|------|-------|
-| `<view>.md` | each view's title and prose — `leaderboard.md`, `data.md`, `view.md`, `changelog.md`, `about.md` |
-| `site.toml` | brand block, sidebar, footer, banners, side stats, and which decompilers are site-hidden / sample-set-only |
-| `views.toml` | the view registry — which views exist, nav order + labels, which is `default`, which need function data |
-| `metrics.toml` | per-metric display name, short column label, order, and the definition of *perfect* |
-| `datasets.toml` | the 5 dataset presets' labels + descriptions, and which is `default` |
-| `decompilers.toml` | the decompiler registry — official display names, project links, and version labels, rendered wherever the site names a decompiler |
-| `categories.toml` | the software-type taxonomy on the About page's dataset tables |
-| `pricing.toml` | per-model USD/MTok list prices for the Data page's cost table — applied at render time against the token facts in `FunctionData.cost_info` (gathered by `decbench/scoring/cost.py` via `scripts/compute_cost_info.py`), so a price fix needs only a re-render |
-
-The `.md` conventions are documented in `leaderboard.md`'s header. A view's `id`
-in `views.toml` must match its `<id>.md`. `datasets.toml` owns only preset
-*presentation* — which functions are *in* a preset is scoring logic in
-`decbench/scoring/datasets.py`.
+Most users never need to build the site. It only needs republishing when the
+published results change: new runs, new decompilers, updated scores. CI never
+builds it: the tree under `site/` is built locally, committed, and deployed by
+Actions. The build + publish guide (delivery modes, the three-step publish
+flow, and where the site's text lives) is in [docs/site.md](docs/site.md).
 
 ## Finding improvement cases
 
 You are a decompiler developer and you want to find ways to improve your decompiler based on these results?
-Use the `improvement` command, which can help you find good starting cases. 
+Use the `improvements` command, which can help you find good starting cases. 
 
 The example below uses **GED** (structural correctness — CFG graph edit distance, where **lower is better** and `0` is a perfect structural match):
 ```bash
@@ -177,23 +144,3 @@ showing 1 of 356, largest margin first
 ── libacl / O0 / getfacl ──  results/sailr_full/O0/libacl/compiled/getfacl
    0x281a  get_list   angr=0*  ghidra=38  Δ38
 ```
-
-## Published datasets
-
-Benchmark runs can be published as a public, reusable dataset (compiled
-binaries, preprocessed sources, source/decompiled CFGs, per-function results and
-scores) and pulled back down without recompiling or re-decompiling:
-
-```bash
-# Download a published config: sample-set / large / unoptimized / optimized /
-# inlined / full.
-decbench download sample-set --dest ./decbench-data
-#   (thin alias for the standalone `decbench-data` consumer package; fetch a
-#    subset with --include binaries,sources,cfgs,results,scores)
-
-# Publish a results tree to the dataset repo layout.
-python scripts/publish_dataset.py results/full_run --dest ~/github/decbench-dataset
-```
-
-See [docs/DATASET_PUBLISHING.md](docs/DATASET_PUBLISHING.md) for the repo layout,
-the publisher, and the lightweight consumer CLI.

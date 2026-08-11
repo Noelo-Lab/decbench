@@ -53,9 +53,10 @@ logo = true
 [[decompiler]]
 id = "kuna"
 display_name = "Kuna"
+url = "https://kuna.noelo.org"
 license = "closed-source"
 logo = true
-version_overrides = { "0.1.0" = "v1.0" }
+version_overrides = { "0.1.0" = "v1.0", "1.121" = "v1.121" }
 
 [[decompiler]]
 id = "r2dec"
@@ -69,6 +70,13 @@ version_overrides = { "r2-6.0.8" = "r2 6.0.8" }
 id = "dewolf"
 display_name = "dewolf"
 url = "https://github.com/fkie-cad/dewolf"
+license = "open-source"
+logo = true
+
+[[decompiler]]
+id = "manifold"
+display_name = "Manifold"
+url = "https://github.com/changliu98/manifold"
 license = "open-source"
 logo = true
 

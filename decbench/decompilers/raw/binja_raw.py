@@ -48,10 +48,6 @@ class RawBinjaDecompiler(Decompiler):
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
 
-    #
-    # Decompiler interface
-    #
-
     def is_available(self) -> bool:
         """Whether a licensed, importable Binary Ninja is present.
 
@@ -88,8 +84,6 @@ class RawBinjaDecompiler(Decompiler):
         """
         import binaryninja
 
-        # ``load`` runs analysis and is the modern entry point; fall back to the
-        # older BinaryViewType API if ``load`` is unavailable.
         if hasattr(binaryninja, "load"):
             bv = binaryninja.load(str(binary_path))
         else:
@@ -98,23 +92,6 @@ class RawBinjaDecompiler(Decompiler):
             with contextlib.suppress(Exception):
                 bv.update_analysis_and_wait()
         return bv
-
-    def discover_functions(self, binary_path: Path) -> list[tuple[str, int]]:
-        if not self.is_available():
-            return []
-        elf_base = common.elf_min_vaddr(binary_path)
-        text_range = common.elf_text_range(binary_path)
-        bv = None
-        try:
-            bv = self._load(binary_path)
-            return self._enumerate(bv, elf_base, text_range)
-        except Exception as e:  # noqa: BLE001
-            _l.error("binja-raw: failed to discover functions in %s: %s", binary_path, e)
-            return []
-        finally:
-            if bv is not None:
-                with contextlib.suppress(Exception):
-                    bv.file.close()
 
     def decompile_binary(
         self,
@@ -222,10 +199,6 @@ class RawBinjaDecompiler(Decompiler):
 
         return result
 
-    #
-    # Binary Ninja helpers
-    #
-
     @staticmethod
     def _binja_load_base(bv: Any) -> int:
         """The address binja loaded the binary at (its start/origin)."""
@@ -245,7 +218,6 @@ class RawBinjaDecompiler(Decompiler):
         out: list[tuple[str, int]] = []
         for func in bv.functions:
             try:
-                # Skip thunks / trampolines when binja flags them.
                 if getattr(func, "is_thunk", False):
                     continue
                 name = str(func.name or "")
@@ -302,7 +274,6 @@ class RawBinjaDecompiler(Decompiler):
                 cursor = bn.LinearViewCursor(lvo)
                 cursor.seek_to_begin()
                 lines: list[str] = []
-                # Bound the walk so a pathological function can't spin forever.
                 for _ in range(100000):
                     for ln in cursor.lines:
                         lines.append(str(ln))
@@ -310,22 +281,16 @@ class RawBinjaDecompiler(Decompiler):
                         break
                 return "\n".join(lines).strip("\n")
 
-            # Force HLIL (and thus pseudo-C) generation for THIS function before
-            # rendering. Even after full binary analysis, binja 3.1's linear-view
-            # language representation returns the literal 'Loading...' placeholder
-            # until the function's HLIL is generated (it's lazy per-function).
-            # Touching func.hlil forces that computation so the render yields real
-            # C — without this, ~all functions in large binaries (e.g. bash: 2486
-            # of 2499) render as Loading and get dropped.
+            # binja generates HLIL lazily per function, so linear view returns a literal
+            # 'Loading...' placeholder until it is touched — without this, nearly every
+            # function in a large binary renders as Loading and gets dropped.
             with contextlib.suppress(Exception):
                 _ = func.hlil
                 _ = len(list(func.hlil.instructions))
 
             text = _walk()
-            # If the body is STILL the 'Loading...' placeholder (not C), force
-            # this function's analysis and re-render once; a still-placeholder
-            # body is treated as a FAILURE (return "") rather than emitting junk
-            # that pollutes GED/byte_match.
+            # A still-placeholder body is a FAILURE rather than junk that would pollute
+            # GED/byte_match.
             if not text.strip() or "Loading..." in text:
                 with contextlib.suppress(Exception):
                     func.view.update_analysis_and_wait()
@@ -335,7 +300,6 @@ class RawBinjaDecompiler(Decompiler):
         except Exception:  # noqa: BLE001
             pass
 
-        # Fallback: stringify HLIL directly (not valid C, but better than empty).
         try:
             return "\n".join(str(line) for line in func.hlil.lines)
         except Exception:  # noqa: BLE001

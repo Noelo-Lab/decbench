@@ -66,28 +66,17 @@ __all__ = [
 CSS_FILE = "app.css"
 JS_FILE = "app.js"
 
-#: Icons shipped into the split site tree's root (``build_site``). Derived from
-#: ``assets/decbench_icon.png`` and vendored under ``assets/icons/`` (like the
-#: fonts) so the site renders them offline with no third-party dependency.
-FAVICON_FILE = "favicon.png"  # 64x64, <link rel="icon">
-APPLE_TOUCH_FILE = "apple-touch-icon.png"  # 180x180, iOS home-screen icon
-CARD_FILE = "decbench_card.png"  # 1200x630 Open Graph / Twitter share image
+FAVICON_FILE = "favicon.png"
+APPLE_TOUCH_FILE = "apple-touch-icon.png"
+CARD_FILE = "decbench_card.png"
 
-#: A comment stamped into every page this module builds. The split-site writer
-#: (:mod:`decbench.rendering.site`) uses it to tell a view subdirectory it wrote
-#: from an arbitrary directory a maintainer dropped in ``site/``: only a directory
-#: whose ``index.html`` carries this marker is safe to remove as a stale view.
+# Only a directory whose index.html carries this marker is safe to remove as a
+# stale view, so a maintainer's own directory under site/ is never deleted.
 SITE_PAGE_MARKER = "<!-- decbench:page -->"
 
-#: Theme bootstrap. Inlined into <head> BEFORE the stylesheet so the chosen theme
-#: is applied to <html> before first paint — a link/style loaded first would flash
-#: the default (dark) theme. It reads localStorage (in try/catch: file:// and
-#: privacy modes throw) plus an optional ``?theme=`` param (a debug/share
-#: convenience, documented in docs/SITE_DATA_SCHEMA.md), then stamps
-#: ``data-theme`` on the document element. Dark is the default and the only
-#: theme when nothing is stored; there is deliberately NO OS-preference detection
-#: — only an explicit user choice switches to light. Lives in the shared skeleton
-#: (not :class:`PageAssets`) so both delivery modes get it identically.
+# Must be inlined before the stylesheet so the theme applies before first paint.
+# There is deliberately NO OS-preference detection: dark is the default and only
+# an explicit user choice switches to light.
 _THEME_BOOTSTRAP = (
     "<script>(function(){try{"
     "var q=new URLSearchParams(location.search).get('theme');"
@@ -98,9 +87,6 @@ _THEME_BOOTSTRAP = (
     "}catch(e){}})();</script>"
 )
 
-#: The sidebar theme-toggle button. Both labels ship; CSS shows the right one for
-#: the active theme (data-theme), so it is correct at first paint and app.js only
-#: has to wire the click.
 _THEME_TOGGLE = (
     '<button class="ds-btn theme-toggle" id="theme-toggle" type="button"'
     ' aria-label="toggle light or dark theme">'
@@ -112,16 +98,10 @@ _ASSETS_DIR = "assets"
 _FONTS_DIR = "fonts"
 _ICONS_DIR = "icons"
 
-#: The single-file report's favicon: a small 32x32 icon inlined as a data: URI
-#: (the report links no files, and it stays light — see :func:`_inline_favicon_link`).
-#: It is never written to the site tree; only :data:`FAVICON_FILE` /
-#: :data:`APPLE_TOUCH_FILE` / :data:`CARD_FILE` are (:func:`iter_site_icons`).
 _INLINE_FAVICON_FILE = "favicon-32.png"
 
-# `url(fonts/x.woff2)` in app.css. It resolves against the STYLESHEET's url when
-# the sheet is linked (site/app.css -> site/fonts/x.woff2, correct) but against
-# the DOCUMENT's url when the sheet is inlined into a <style> — which is why the
-# single-file mode substitutes a data: URI rather than shipping a broken path.
+# A url() in app.css resolves against the stylesheet when linked but against the
+# document when inlined, so single-file mode substitutes a data: URI.
 _FONT_URL_RE = re.compile(r"url\((?P<q>['\"]?)(?P<path>fonts/[^)'\"]+)(?P=q)\)")
 _FONT_MIME = {
     ".woff2": "font/woff2",
@@ -129,11 +109,6 @@ _FONT_MIME = {
     ".ttf": "font/ttf",
     ".otf": "font/otf",
 }
-
-
-# --------------------------------------------------------------------------
-# Packaged assets
-# --------------------------------------------------------------------------
 
 
 def asset_text(name: str) -> str:
@@ -220,11 +195,6 @@ def _json_for_script(payload: Any) -> str:
     strict ``JSON.parse`` would reject an ``Infinity``, so the build fails loud.
     """
     return json.dumps(payload, allow_nan=False).replace("<", "\\u003c")
-
-
-# --------------------------------------------------------------------------
-# Delivery modes
-# --------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -352,11 +322,6 @@ def static_assets() -> PageAssets:
     )
 
 
-# --------------------------------------------------------------------------
-# Public entry points
-# --------------------------------------------------------------------------
-
-
 def render_html_report(
     scoreboard: Scoreboard,
     output_path: Path,
@@ -436,12 +401,7 @@ def build_page(
     )
     stamp = scoreboard.generated_at.strftime("%Y-%m-%d %H:%M")
 
-    # Theme UI ships only where the client that drives it does — the two
-    # data-bearing delivery modes. A scoreboard-only static report has no app.js,
-    # so a toggle would be inert and the bootstrap pointless; leave it untouched.
     theme_head = _THEME_BOOTSTRAP if has_data else ""
-    # og/twitter tags only when the caller supplies them (the split site); the
-    # single-file report is shared as a file, not a URL, so it emits none.
     social_head = _social_meta_html(social) if social is not None else ""
     if has_data:
         side_foot = (
@@ -486,11 +446,6 @@ def build_page(
     {assets.body_end_html}
 </body>
 </html>"""
-
-
-# --------------------------------------------------------------------------
-# Sidebar
-# --------------------------------------------------------------------------
 
 
 def _default_view_id(content: Content, visible: tuple[ViewSpec, ...]) -> str:
@@ -592,11 +547,6 @@ def _dataset_selector(function_data: FunctionData, content: Content) -> str:
         </div>"""
 
 
-# --------------------------------------------------------------------------
-# View sections
-# --------------------------------------------------------------------------
-
-
 def _view_section(
     content: Content,
     spec: ViewSpec,
@@ -672,16 +622,8 @@ def _generated_table(
             return _static_leaderboard_table(scoreboard, content)
         return '<table id="leaderboard-table"><thead><tr></tr></thead><tbody></tbody></table>'
     if view_id == "about" and function_data is None:
-        # With data, about.md carries the empty `metrics-perfect-table` scaffold
-        # inline (mid-page, where the metrics section sits) and app.js fills it;
-        # only the no-JS/no-data report needs a renderer-built static table.
         return _static_metrics_table(scoreboard, content)
     return ""
-
-
-# --------------------------------------------------------------------------
-# No-JS static fallbacks
-# --------------------------------------------------------------------------
 
 
 def _pct_class(pct: float) -> str:

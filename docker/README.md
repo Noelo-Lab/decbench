@@ -98,7 +98,7 @@ context (so `.dockerignore` applies), with the repo bind-mounted at runtime:
 docker build -f docker/compile.Dockerfile -t decbench-compile .
 ```
 
-See the full-run steps in the top-level CLAUDE.md and the file's own header for
+See the full-run steps in `docs/benchmarking.md` and the file's own header for
 the runtime `docker run` invocation.
 
 ### llm-agents (`llm-agents.Dockerfile`)
@@ -107,7 +107,7 @@ Container mode for the LLM coding-agent decompilers (`codex` / `claude-code`,
 `decbench/decompilers/llm_dec.py`): both agent CLIs plus only the allowed
 binary-inspection tools (objdump/readelf/nm/strings/xxd/file). The image is
 credential-free — the backend bind-mounts the host's token dirs per call. Built
-manually (no `decompiler-build` hook); see `docs/LLM_DECOMPILERS.md`.
+manually (no `decompiler-build` hook); see `docs/decompilers.md`.
 
 ## Files in this directory
 

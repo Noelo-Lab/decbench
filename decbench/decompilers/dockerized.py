@@ -61,11 +61,9 @@ from decbench.models.decompilation import (
 
 _l = logging.getLogger(__name__)
 
-# Repo root: decbench/decompilers/dockerized.py -> repo root is parents[2].
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DOCKER_DIR = _REPO_ROOT / "docker"
 
-# CRT/compiler-generated functions that are not user code (mirrors declib_dec).
 _SKIP_NAMES = frozenset(
     {
         "_start",
@@ -85,13 +83,7 @@ _SKIP_NAMES = frozenset(
     }
 )
 
-# Name prefixes for thunks/imports that should not be benchmarked.
 _SKIP_PREFIXES = ("thunk_", "j_", "__imp_", ".plt", "_dl_")
-
-
-# --------------------------------------------------------------------------- #
-# ELF helpers (symbol table -> ELF-file-space function addresses)
-# --------------------------------------------------------------------------- #
 
 
 def _elf_text_range(binary_path: Path) -> tuple[int, int] | None:
@@ -130,7 +122,6 @@ def elf_function_symbols(binary_path: Path) -> list[tuple[str, int]]:
     try:
         with open(binary_path, "rb") as f:
             elf = ELFFile(f)
-            # Prefer the full .symtab; .dynsym rarely has STT_FUNC for static fns.
             for sec in elf.iter_sections():
                 if not isinstance(sec, SymbolTableSection):
                     continue
@@ -148,7 +139,6 @@ def elf_function_symbols(binary_path: Path) -> list[tuple[str, int]]:
                             continue
                     elif name.startswith(_SKIP_PREFIXES):
                         continue
-                    # First definition wins (some names appear in both tables).
                     out.setdefault(name, addr)
     except Exception as e:  # noqa: BLE001
         _l.debug("Failed to enumerate symbols for %s: %s", binary_path, e)
@@ -157,13 +147,6 @@ def elf_function_symbols(binary_path: Path) -> list[tuple[str, int]]:
     return sorted(out.items(), key=lambda kv: kv[1])
 
 
-# --------------------------------------------------------------------------- #
-# Whole-program C -> per-function splitting
-# --------------------------------------------------------------------------- #
-
-# Matches a C function *definition* opening line: an identifier immediately
-# followed by '(' and an eventual '{'. Captures the function name. Deliberately
-# permissive: decompiler output is not clean C.
 _FUNC_DEF_RE = re.compile(
     r"^[A-Za-z_][\w\s\*\(\),:<>\[\]&]*?\b([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{",
     re.MULTILINE,
@@ -191,7 +174,6 @@ def split_c_functions(combined_c: str) -> dict[str, str]:
             i += 1
             continue
         name = m.group(1)
-        # Accumulate from this line until braces balance back to zero.
         depth = 0
         opened = False
         chunk: list[str] = []
@@ -199,7 +181,6 @@ def split_c_functions(combined_c: str) -> dict[str, str]:
         while j < n:
             cur = lines[j]
             chunk.append(cur)
-            # Count braces, ignoring those in strings/char-literals crudely.
             stripped = _strip_c_literals(cur)
             depth += stripped.count("{")
             depth -= stripped.count("}")
@@ -209,7 +190,6 @@ def split_c_functions(combined_c: str) -> dict[str, str]:
                 break
             j += 1
         snippet = "".join(chunk).rstrip() + "\n"
-        # Keep the first definition of a given name.
         results.setdefault(name, snippet)
         i = j + 1
     return results
@@ -221,17 +201,10 @@ def _strip_c_literals(line: str) -> str:
     Crude but good enough to stop ``"}"`` inside a string from unbalancing the
     brace counter. Not a real lexer.
     """
-    # Drop line comments.
     line = re.sub(r"//.*", "", line)
-    # Blank out double-quoted strings and single-quoted chars.
     line = re.sub(r'"(?:\\.|[^"\\])*"', '""', line)
     line = re.sub(r"'(?:\\.|[^'\\])*'", "''", line)
     return line
-
-
-# --------------------------------------------------------------------------- #
-# Dockerized base
-# --------------------------------------------------------------------------- #
 
 
 class DockerizedDecompiler(Decompiler):
@@ -245,19 +218,14 @@ class DockerizedDecompiler(Decompiler):
     name = "dockerized"
     display_name = "Dockerized Decompiler"
 
-    #: Docker image tag this backend runs, e.g. ``"decbench/retdec:latest"``.
     image: str = ""
-    #: Dockerfile basename under ``docker/`` used to build :attr:`image`.
     dockerfile: str = ""
-    #: Per-binary container timeout (seconds). Configurable via config below.
     container_timeout: float = 1800.0
 
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
         if config is not None and config.binary_timeout_seconds:
             self.container_timeout = float(config.binary_timeout_seconds)
-
-    # -- availability / build ------------------------------------------- #
 
     @staticmethod
     def _docker_bin() -> str | None:
@@ -315,18 +283,15 @@ class DockerizedDecompiler(Decompiler):
         ]
         if no_cache:
             cmd.append("--no-cache")
-        cmd.append(str(_DOCKER_DIR))  # build context = docker/ dir
+        cmd.append(str(_DOCKER_DIR))
         _l.info("Building %s: %s", cls.image, " ".join(cmd))
         proc = subprocess.run(cmd)
         return proc.returncode
 
     def get_version(self) -> str | None:
-        # Image tag is the best version proxy without running the container.
         if not self.image:
             return None
         return self.image.rsplit(":", 1)[-1] if ":" in self.image else "latest"
-
-    # -- decompilation -------------------------------------------------- #
 
     def _container_decompile(self, binary_path: Path, work_dir: Path) -> str:
         """Run the container and return whole-program C as a string.
@@ -447,8 +412,6 @@ class DockerizedDecompiler(Decompiler):
         output_dir: Path | None,
     ) -> DecompilationResult:
         """Assemble a :class:`DecompilationResult` from whole-program C."""
-        # Determine the function set + addresses from the ELF symbol table so
-        # addresses are ELF-file-space and match DWARF.
         if functions is not None:
             name_to_addr = {n: a for n, a in functions}
         else:
@@ -504,18 +467,9 @@ class DockerizedDecompiler(Decompiler):
             output_dir=output_dir,
         )
 
-    def discover_functions(self, binary_path: Path) -> list[tuple[str, int]]:
-        """Discover functions from the ELF symbol table (no container needed)."""
-        return elf_function_symbols(binary_path)
-
     def _normalize_code(self, code: str) -> str:
         """Hook for dialect normalization. Default identity."""
         return code
-
-
-# --------------------------------------------------------------------------- #
-# RetDec
-# --------------------------------------------------------------------------- #
 
 
 @register_decompiler("retdec")
@@ -531,8 +485,6 @@ class RetDecDecompiler(DockerizedDecompiler):
     dockerfile = "retdec.Dockerfile"
 
     def _container_decompile(self, binary_path: Path, work_dir: Path) -> str:
-        # The image's ENTRYPOINT runs retdec-decompiler; emit C to /work/out.c.
-        # retdec-decompiler writes <output>.c plus several sidecar files.
         proc = self._run_docker(
             args=[f"/in/{binary_path.name}", "-o", "/work/out.c"],
             binary_path=binary_path,
@@ -541,16 +493,10 @@ class RetDecDecompiler(DockerizedDecompiler):
         out_c = work_dir / "out.c"
         if out_c.is_file():
             return out_c.read_text(errors="replace")
-        # Some retdec builds write directly next to the input; nothing to read.
         raise RuntimeError(
             f"retdec produced no out.c (rc={proc.returncode}): "
             f"{proc.stderr[-500:] if proc.stderr else ''}"
         )
-
-
-# --------------------------------------------------------------------------- #
-# Reko
-# --------------------------------------------------------------------------- #
 
 
 @register_decompiler("reko")
@@ -568,8 +514,6 @@ class RekoDecompiler(DockerizedDecompiler):
     dockerfile = "reko.Dockerfile"
 
     def _container_decompile(self, binary_path: Path, work_dir: Path) -> str:
-        # The image ships /opt/reko/decompile.sh which runs Reko on the binary
-        # and consolidates the emitted C into /work/out.c.
         proc = self._run_docker(
             args=[f"/in/{binary_path.name}", "/work/out.c"],
             binary_path=binary_path,
@@ -584,26 +528,13 @@ class RekoDecompiler(DockerizedDecompiler):
         )
 
 
-# --------------------------------------------------------------------------- #
-# r2dec (radare2's r2dec decompiler)
-# --------------------------------------------------------------------------- #
-
-# r2 flag names that are NOT user code (the ELF/PE entrypoint aliases). Imports
-# and PLT/reloc stubs are dropped by ``_r2_is_import``; the .text-range + CRT
-# filter (raw_common.should_skip_function) handles the rest.
 _R2_ENTRY_NAMES = frozenset({"entry0", "entry1", "entry.init0", "entry.fini0", "entry.preinit0"})
 
-# C keywords that would spuriously match the definition regex (``if (x) {``).
 _C_KEYWORDS = frozenset({"if", "while", "for", "switch", "return", "do", "else", "sizeof", "case"})
 
-# A C function *definition* opener. Tolerates r2's dotted pseudo-names
-# (``fcn.00003bed``, which the built-in ``pdc`` emits verbatim) as well as the
-# sanitized ``fcn_00003bed`` r2dec's ``pdd`` uses. The captured identifier is the
-# one that actually appears in the emitted code — we key each function by it so
-# the run driver's address-relabel (which rewrites the name in the code AND the
-# key) lines the decompiled CFG up with the source for GED. The parameter list is
-# matched **non-greedily** so an ``ident (...)`` inside a comment cannot swallow
-# text up to the real function's ``) {``.
+# Tolerates both r2 pseudo-name spellings (``fcn.00003bed`` from ``pdc`` and
+# ``fcn_00003bed`` from ``pdd``). The parameter list is matched non-greedily so
+# an ``ident (...)`` inside a comment cannot swallow text up to the real ``) {``.
 _R2_DEF_RE = re.compile(r"\b([A-Za-z_][\w.]*)\s*\([^;{}]*?\)\s*\{")
 
 
@@ -702,10 +633,7 @@ class R2DecDecompiler(DockerizedDecompiler):
     image = "decbench/r2dec:latest"
     dockerfile = "r2dec.Dockerfile"
 
-    # r2pipe open flags: -2 silences stderr; apply relocs; no ANSI color.
     _R2_FLAGS = ["-2", "-e", "bin.relocs.apply=true", "-e", "scr.color=0"]
-
-    # -- availability / path selection ---------------------------------- #
 
     @staticmethod
     def _native_available() -> bool:
@@ -787,8 +715,6 @@ class R2DecDecompiler(DockerizedDecompiler):
             return "native"
         return super().get_version()
 
-    # -- entry point ---------------------------------------------------- #
-
     def decompile_binary(
         self,
         binary_path: Path,
@@ -805,8 +731,6 @@ class R2DecDecompiler(DockerizedDecompiler):
         return self._decompile_native(
             binary_path, functions, output_dir, function_names, progress_path
         )
-
-    # -- shared discovery / narrowing / assembly ------------------------ #
 
     @staticmethod
     def _discover(
@@ -831,7 +755,7 @@ class R2DecDecompiler(DockerizedDecompiler):
             name = fn.get("name") or ""
             raw = fn.get("addr")
             if raw is None:
-                raw = fn.get("offset")  # older r2 aflj schema
+                raw = fn.get("offset")
             if not name or raw is None:
                 continue
             if _r2_is_import(name) or name in _R2_ENTRY_NAMES:
@@ -977,8 +901,6 @@ class R2DecDecompiler(DockerizedDecompiler):
         with contextlib.suppress(Exception):
             result.to_toml(output_dir / f"{self.name}_{binary_path.stem}.toml")
 
-    # -- native r2pipe path --------------------------------------------- #
-
     def _decompile_native(
         self,
         binary_path: Path,
@@ -1017,7 +939,6 @@ class R2DecDecompiler(DockerizedDecompiler):
             baddr = self._r2_baddr(r)
             used_cmd = self._probe_decompile_cmd(r)
             if functions is not None:
-                # Explicit (name, ELF-addr) allowlist: define + decompile each.
                 for name, fa in functions:
                     raw = int(fa) - elf_base + baddr
                     with contextlib.suppress(Exception):
@@ -1058,8 +979,6 @@ class R2DecDecompiler(DockerizedDecompiler):
         self._write_artifacts(result, output_dir, binary_path)
         return result
 
-    # -- docker (real r2dec) path --------------------------------------- #
-
     def _decompile_docker(
         self,
         binary_path: Path,
@@ -1077,9 +996,6 @@ class R2DecDecompiler(DockerizedDecompiler):
         elf_base = raw_common.elf_min_vaddr(binary_path)
         text_range = raw_common.elf_text_range(binary_path)
 
-        # Address filter the container applies (DWARF low_pc / ELF-file space).
-        # From the int address set the driver passes, or an explicit (name, addr)
-        # allowlist — so a filtered call never decompiles the whole binary.
         addr_targets: list[int] | None = None
         ints: set[int] = set()
         if function_names:
@@ -1122,8 +1038,6 @@ class R2DecDecompiler(DockerizedDecompiler):
                 error = str(e)
                 _l.error("%s docker failed on %s: %s", self.name, binary_path, e)
 
-        # Normalize container entries -> discovered triples, then narrow (the
-        # container already filtered by address, so this is a defensive re-check).
         by_addr: dict[int, tuple[str, str]] = {}
         discovered: list[tuple[str, int, int]] = []
         addr_targets = _addr_targets_of(function_names)
@@ -1166,12 +1080,9 @@ class R2DecDecompiler(DockerizedDecompiler):
             timed_out=timed_out,
             error=error,
         )
-        # Whole-container run is atomic, so this is a single best-effort checkpoint.
         raw_common.dump_progress(progress_path, result)
         self._write_artifacts(result, output_dir, binary_path)
         return result
-
-    # -- r2 helpers ----------------------------------------------------- #
 
     @staticmethod
     def _r2_baddr(r: Any) -> int:

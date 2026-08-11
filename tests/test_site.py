@@ -30,16 +30,8 @@ from decbench.rendering.content import load_content
 from decbench.rendering.html import render_html_report
 from decbench.rendering.site import build_site
 
-# `hardest` and `history` are deliberately absent: both are still stored in
-# function_results.json but no longer shipped — the View page's `hard` difficulty
-# tier (inside samples.json) replaced the Hardest view, and the Historical view
-# was removed outright.
 DATA_FILES = ["aggregates", "dataset", "samples"]
 
-# One `<view>/index.html` subpage per visible view (all five, given data), so
-# /leaderboard/, /data/, ... are directly linkable. `changelog` is a prose-only
-# view (no per-function data, no generated table). The `data` subpage shares its
-# directory with the data/*.json payloads — deliberate (see SITE_DATA_SCHEMA.md).
 VIEW_IDS = ["leaderboard", "data", "view", "about", "changelog"]
 
 
@@ -118,13 +110,10 @@ def function_data() -> FunctionData:
     )
 
 
-# -- the emitted tree ------------------------------------------------------
-
-
 def test_build_site_writes_the_documented_tree(
     tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
 ) -> None:
-    """The tree is the contract in docs/SITE_DATA_SCHEMA.md; pages.yml deploys it."""
+    """The tree is the contract in docs/site.md; pages.yml deploys it."""
     out = tmp_path / "site"
     build_site(scoreboard, function_data, out)
 
@@ -135,14 +124,12 @@ def test_build_site_writes_the_documented_tree(
         "app.js",
         ".nojekyll",
         "CNAME",
-        # Favicon, apple-touch icon, and the Open Graph / Twitter share card.
         "favicon.png",
         "apple-touch-icon.png",
         "decbench_card.png",
         "fonts/source-code-pro-latin.woff2",
         *(f"data/{name}.json" for name in DATA_FILES),
         *(f"{view}/index.html" for view in VIEW_IDS),
-        # The marker-less redirect stub keeping old /distance/ links alive.
         "distance/index.html",
     }
 
@@ -166,7 +153,6 @@ def test_aggregates_carry_the_registry_and_the_default_view(
 
     assert agg["metric_registry"]["ged"]["short_name"] == "Structure"
     assert agg["default_view"] == "leaderboard"
-    # Every (preset x normalize) combination is precomputed, not recomputed client-side.
     assert set(agg["combos"]) == {
         "unoptimized|0",
         "unoptimized|1",
@@ -186,7 +172,7 @@ def test_preset_text_comes_from_the_content_registry(
     unopt = next(p for p in agg["presets"] if p["name"] == "unoptimized")
     assert unopt["label"] == "unoptimized"
     assert "O0" in unopt["description"]
-    assert "UNOPTIMIZED" in unopt["long_description"]  # the leaderboard explainer
+    assert "UNOPTIMIZED" in unopt["long_description"]
     assert unopt["default"] is True
 
 
@@ -197,9 +183,6 @@ def test_nojekyll_is_present(
     out = tmp_path / "site"
     build_site(scoreboard, function_data, out)
     assert (out / ".nojekyll").exists()
-
-
-# -- idempotency -----------------------------------------------------------
 
 
 def test_rebuild_is_byte_identical(
@@ -230,9 +213,6 @@ def test_rebuild_removes_stale_data_files(
     assert (out / "data" / "aggregates.json").exists()
 
 
-# -- the linkable subpage tree ---------------------------------------------
-
-
 def test_each_visible_view_gets_a_subpage(
     tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
 ) -> None:
@@ -260,15 +240,11 @@ def test_legacy_distance_redirect_stub(
     html = stub.read_text()
     assert "../data/" in html
     assert SITE_PAGE_MARKER not in html
-    # Canonicalizes to the new PAGE (not the anchor), and lands on the distance
-    # SECTION: the script honors an incoming #hash but defaults to #distance, and
-    # preserves the ?query a deep link carries (meta refresh drops both).
     domain = load_content().site.pages_domain
     assert f'<link rel="canonical" href="https://{domain}/data/">' in html
     assert '<meta http-equiv="refresh" content="0; url=../data/#distance">' in html
     assert 'location.replace("../data/" + location.search + (location.hash || "#distance"))' in html
 
-    # A rebuild keeps the stub (the prune loop must treat it as a user page).
     build_site(scoreboard, function_data, out)
     assert stub.is_file()
 
@@ -288,7 +264,6 @@ def test_subpage_carries_prefixed_assets_and_opens_on_its_own_view(
 
     assert "<base" not in about
     assert 'window.__DECBENCH_ROOT__ = "../"' in about
-    # Its own section (and nav item) is the active one, not the site default.
     assert '<section class="view active" id="view-about"' in about
     assert '<section class="view active" id="view-leaderboard"' not in about
     assert '<link rel="stylesheet" href="../app.css">' in about
@@ -340,9 +315,6 @@ def test_rebuild_prunes_stale_view_dirs_but_spares_user_dirs(
         assert (out / view / "index.html").is_file()
 
 
-# -- linked vs inlined -----------------------------------------------------
-
-
 def test_index_links_assets_and_does_not_inline_them(
     tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
 ) -> None:
@@ -353,10 +325,8 @@ def test_index_links_assets_and_does_not_inline_them(
 
     assert '<link rel="stylesheet" href="app.css">' in index
     assert '<script src="app.js"></script>' in index
-    # No inline payload => app.js fetches data/*.json.
     assert "__DECBENCH_INLINE__" not in index
     assert "<style>" not in index
-    # The stylesheet is a sibling of fonts/, so its relative url() resolves.
     assert "url(fonts/source-code-pro-latin.woff2)" in (out / "app.css").read_text()
 
 
@@ -373,7 +343,6 @@ def test_single_file_report_inlines_everything(
     assert "window.__DECBENCH_INLINE__" in html
     assert '<link rel="stylesheet"' not in html
     assert "<script src=" not in html
-    # The font is embedded, not referenced by a path that would not resolve.
     assert "url(data:font/woff2;base64," in html
     assert "url(fonts/source-code-pro-latin.woff2)" not in html
 
@@ -433,8 +402,6 @@ def test_inline_json_cannot_close_the_script_tag(tmp_path: Path, scoreboard: Sco
     html = path.read_text()
 
     assert "\\u003c/script>" in html
-    # The only literal </script> tags are the ones the renderer itself emits: the
-    # <head> theme bootstrap, the inline data payload, and the client script.
     assert html.count("</script>") == 3
 
 
@@ -450,12 +417,8 @@ def test_report_without_data_ships_no_client(tmp_path: Path, scoreboard: Scorebo
 
     assert "__DECBENCH_INLINE__" not in html
     assert "<script" not in html
-    # Still styled, and still showing real numbers from the scoreboard.
     assert "<style>" in html
     assert "interactive views unavailable" in html.lower()
-
-
-# -- the shared skeleton ---------------------------------------------------
 
 
 def test_both_modes_render_the_same_skeleton(
@@ -499,13 +462,10 @@ def test_theme_bootstrap_and_toggle_ship_in_both_data_modes(
     render_html_report(scoreboard, report, function_data)
     single = report.read_text()
 
-    # Split mode links app.css; the single-file report inlines a <style> block.
     for html, sheet in ((index, '<link rel="stylesheet"'), (single, "<style>")):
         assert "localStorage.getItem('decbench-theme')" in html
         assert "document.documentElement.dataset.theme" in html
-        # The bootstrap must run BEFORE the stylesheet or the default theme flashes.
         assert html.index("decbench-theme") < html.index(sheet)
-        # The sidebar toggle button ships both CSS-driven labels.
         assert 'id="theme-toggle"' in html
         assert "[ light mode ]" in html
         assert "[ dark mode ]" in html
@@ -518,9 +478,6 @@ def test_scoreboard_only_report_has_no_theme_ui(tmp_path: Path, scoreboard: Scor
     render_html_report(scoreboard, path, None)
     html = path.read_text()
 
-    # Functional markers only: the inlined stylesheet's comments mention the
-    # localStorage key in prose, so match the bootstrap's actual code and the
-    # button id instead.
     assert "localStorage.getItem('decbench-theme')" not in html
     assert "document.documentElement.dataset.theme" not in html
     assert 'id="theme-toggle"' not in html
@@ -534,11 +491,8 @@ def test_build_site_writes_the_custom_domain_cname(
     out = tmp_path / "site"
     build_site(scoreboard, function_data, out)
     domain = load_content().site.pages_domain
-    assert domain  # site.toml carries one today
+    assert domain
     assert (out / "CNAME").read_text() == f"{domain}\n"
-
-
-# -- favicon and social share metadata -------------------------------------
 
 
 def _meta_content(html: str, attr: str, value: str) -> str:
@@ -556,7 +510,6 @@ def test_favicon_and_share_card_ship_at_the_tree_root(
     build_site(scoreboard, function_data, out)
     for name in ("favicon.png", "apple-touch-icon.png", "decbench_card.png"):
         assert (out / name).is_file(), name
-    # The share card is the real Open Graph image, not an empty stub.
     assert (out / "decbench_card.png").stat().st_size > 1000
     assert (out / "favicon.png").read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
 
@@ -595,7 +548,6 @@ def test_root_and_subpage_carry_matching_social_meta(
     assert _meta_content(index, "property", "og:title") == "DecBench — decompiler benchmark"
     assert _meta_content(index, "name", "twitter:card") == "summary_large_image"
     assert _meta_content(index, "property", "og:image") == f"https://{domain}/decbench_card.png"
-    # The description names the #1 decompiler by its display name.
     assert top_name in _meta_content(index, "property", "og:description")
 
     about = (out / "about" / "index.html").read_text()
@@ -634,13 +586,9 @@ def test_social_meta_absent_without_a_pages_domain(
     index = (out / "index.html").read_text()
     assert "og:title" not in index
     assert "twitter:card" not in index
-    # ...but the favicon still ships and is still linked.
     assert (out / "favicon.png").is_file()
     assert '<link rel="icon" type="image/png" href="favicon.png">' in index
     assert not (out / "CNAME").exists()
-
-
-# -- sample-set manifest pinning at build time -----------------------------
 
 
 def test_site_build_pins_sample_set_to_the_manifest(

@@ -26,8 +26,8 @@ import multiprocessing
 import sys
 from pathlib import Path
 
-# Match the run drivers: 'fork' deadlocks once angr's threads are live, and library
-# code reached from here may create pools.
+# 'fork' deadlocks once angr's threads are live, and library code reached from
+# here may create pools.
 if multiprocessing.get_start_method(allow_none=True) != "spawn":
     multiprocessing.set_start_method("spawn", force=True)
 

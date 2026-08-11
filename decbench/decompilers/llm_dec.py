@@ -18,7 +18,7 @@ the design:
   gates *which* functions reach the backend (``DECBENCH_SAMPLESET_MANIFEST`` in
   ``scripts/run_benchmark.py``), and the backend adds a belt-and-suspenders
   per-binary hard cap (:data:`_DEFAULT_MAX_FUNCS`) so a mis-configured run can
-  never fan out across the whole corpus. See ``docs/LLM_DECOMPILERS.md``.
+  never fan out across the whole corpus. See ``docs/decompilers.md``.
 * **Auth.** The CLIs authenticate with the host user's own credentials
   (``~/.codex/auth.json`` / ``~/.claude/.credentials.json`` or
   ``ANTHROPIC_API_KEY``/``OPENAI_API_KEY``). Run on the host, the subprocess
@@ -58,35 +58,13 @@ from decbench.models.decompilation import (
 
 _l = logging.getLogger(__name__)
 
-# Per-binary hard cap on how many functions a single decompile call will send to
-# the agent. The sample-set takes at most a handful of functions per binary, so
-# this is a runaway guard: even if the driver's sample-set gate is forgotten and
-# the backend is pointed at a gnulib-heavy binary with hundreds of source
-# functions, it will never issue more than this many (very expensive) agent
-# calls for one binary. Override with DECBENCH_LLM_MAX_FUNCS or the ``max_funcs``
-# config key.
 _DEFAULT_MAX_FUNCS = 8
 
-# Per-function wall-clock budget for one agent invocation (seconds). Manual
-# decompilation of one function — read disassembly, reason, write C — is slow;
-# the run driver's per-binary budget must comfortably exceed this times the
-# per-binary function count. Override with DECBENCH_LLM_TIMEOUT or ``timeout``.
 _DEFAULT_TIMEOUT = 900
 
-# The single-function C output file the agent is told to write, inside its
-# per-function working directory. Reading a known file is far more reliable than
-# scraping the agent's chat transcript; stdout is only the fallback.
 _OUTFILE = "decompiled.c"
 
 
-# ---------------------------------------------------------------------------
-# The shared decompilation prompt (the "common prompt for LLM systems").
-# ---------------------------------------------------------------------------
-#: The task/system instruction shared by every LLM decompiler backend. It states
-#: the goal (reconstruct original-source-faithful C), the hard tool policy (no
-#: decompilers; simple disassemblers like objdump only), the method, and the
-#: file-based output contract. Per-function specifics (binary, address, arch, a
-#: disassembly hint, the output path) are appended by :meth:`_build_prompt`.
 LLM_DECOMPILE_PROMPT = """\
 You are an expert reverse engineer performing MANUAL decompilation by hand.
 
@@ -136,10 +114,6 @@ def _creds_present(*candidates: Path) -> bool:
     return any(p.is_file() for p in candidates)
 
 
-# Matches a function *definition* header: ``name(params) {``. Anchored on the
-# name-before-parens rather than the return type, so a preceding prose line
-# cannot bleed into the match (the name/params/brace are the reliable part; the
-# return type is recovered by extending to the start of the name's line).
 _FUNC_HEADER_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{")
 
 
@@ -242,8 +216,7 @@ def _disasm_hint(binary_path: Path, addr: int, max_bytes: int = 640) -> str:
         fmt = binfmt.detect(binary_path)
         if fmt is None:
             return ""
-        # ARM: DWARF low_pc is even, but a Thumb function's real entry has the
-        # T-bit set; disassemble as Thumb when the address is odd.
+        # An odd DWARF low_pc is a Thumb entry (T-bit set), not a byte offset.
         thumb = fmt.arch == "arm" and bool(addr & 1)
         am = binfmt.capstone_arch_mode(fmt, thumb=thumb)
         if am is None:
@@ -253,7 +226,6 @@ def _disasm_hint(binary_path: Path, addr: int, max_bytes: int = 640) -> str:
         for insn in md.disasm(blob, addr & ~1 if thumb else addr):
             lines.append(f"  0x{insn.address:x}: {insn.mnemonic} {insn.op_str}".rstrip())
             if insn.mnemonic in ("ret", "retq", "bx", "pop") and len(lines) > 3:
-                # Stop shortly after a plausible epilogue return.
                 break
             if len(lines) >= 80:
                 break
@@ -271,26 +243,20 @@ class _AgentDecompiler(Decompiler):
     parsing, checkpointing, and result assembly — lives here.
     """
 
-    # Subclass contract.
-    cli: str = ""  # the CLI binary name (must be on PATH)
-    default_model: str = ""  # model id used when config/env do not override
-    #: Credential files (relative to $HOME) that indicate the CLI is logged in.
+    cli: str = ""
+    default_model: str = ""
     cred_files: tuple[str, ...] = ()
-    #: Env vars that also count as valid credentials (e.g. an API key).
     cred_env: tuple[str, ...] = ()
 
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
         self._version_cache: str | None = None
 
-    # --- configuration -----------------------------------------------------
-
     def _settings(self) -> dict[str, Any]:
         """Per-version config (``decompilers.toml``), with a ``default`` fallback."""
         s = version_settings(self.name, self.requested_version)
         if not s and self.requested_version is None:
             s = version_settings(self.name, "default")
-        # extra_options (from DecompilerConfig) win over the TOML file.
         merged = dict(s)
         merged.update(self.config.extra_options or {})
         return merged
@@ -304,7 +270,6 @@ class _AgentDecompiler(Decompiler):
         return val if val not in (None, "") else default
 
     def _model(self) -> str:
-        # A pinned spec (codex@gpt-5.6) makes the version label the model id.
         if self.requested_version:
             return str(self.requested_version)
         return str(self._opt("model", "DECBENCH_LLM_MODEL", self.default_model))
@@ -332,8 +297,6 @@ class _AgentDecompiler(Decompiler):
         img = self._opt("docker_image", "DECBENCH_LLM_DOCKER_IMAGE", "")
         return str(img) or None
 
-    # --- availability / version -------------------------------------------
-
     def is_available(self) -> bool:
         if shutil.which(self.cli) is None:
             return False
@@ -355,17 +318,13 @@ class _AgentDecompiler(Decompiler):
             )
             out = (proc.stdout or proc.stderr or "").strip().splitlines()
             if out:
-                # e.g. "codex-cli 0.144.1" / "2.1.215 (Claude Code)"
                 toks = out[0].split()
                 ver = next((t for t in toks if any(c.isdigit() for c in t)), out[0])
         except Exception:  # noqa: BLE001
             ver = ""
         self._version_cache = ver
-        # Report the model too, so scoreboard versions distinguish gpt-5.6 etc.
         model = self._model()
         return f"{model} ({ver})" if ver else (model or None)
-
-    # --- subclass hooks ----------------------------------------------------
 
     def _agent_argv(self, workdir: Path, prompt: str, model: str) -> list[str]:
         """Return the CLI argv (run with ``cwd=workdir``). Subclass implements."""
@@ -374,8 +333,6 @@ class _AgentDecompiler(Decompiler):
     def _agent_env(self) -> dict[str, str]:
         """Environment for the agent subprocess. Subclass may extend."""
         return dict(os.environ)
-
-    # --- the decompile entrypoint -----------------------------------------
 
     def decompile_binary(
         self,
@@ -396,9 +353,6 @@ class _AgentDecompiler(Decompiler):
             decompiler=DecompilerMetadata(
                 decompiler_name=self.id,
                 decompiler_version=self.get_version(),
-                # slice_scoped: this backend only ever attempts an explicit
-                # target slice (the sample-set manifest); functions outside it
-                # were never attempted and must not be stamped decompiled=False.
                 extra={
                     "backend": self.name,
                     "via": "llm-agent",
@@ -445,15 +399,11 @@ class _AgentDecompiler(Decompiler):
                         decompiled_code=code,
                         line_count=code.count("\n") + 1,
                         metadata=common.extract_metrics(code),
-                        # Structured cost capture (data page's cost section):
-                        # per-function wall time incl. tool use, and the call's
-                        # token usage when the session log parsed. Best-effort.
                         time_seconds=elapsed,
                         llm_tokens=tokens,
                     )
                 else:
                     failed.append(name)
-                # Checkpoint partials so a hard-timeout kill still credits finished work.
                 result.decompiler.failed_functions = list(failed)
                 result.decompiler.total_time_seconds = time.time() - started
                 common.dump_progress(progress_path, result)
@@ -464,8 +414,6 @@ class _AgentDecompiler(Decompiler):
             t0 = time.time()
             try:
                 out = self._decompile_one(binary_path, name, addr, output_dir)
-                # Tolerant unpack: a subclass/test override may still return the
-                # bare code string from before the cost-capture tuple existed.
                 if isinstance(out, tuple):
                     code, elapsed, tokens = out
                 else:
@@ -476,10 +424,6 @@ class _AgentDecompiler(Decompiler):
                 elapsed = time.time() - t0
             _record(name, addr, code, elapsed, tokens)
 
-        # A binary's sampled functions are independent agent calls, so run them
-        # concurrently — a single-binary/multi-function project otherwise decompiles
-        # one function at a time while the run's other workers sit idle. Pool size
-        # via DECBENCH_LLM_FN_WORKERS / the ``fn_workers`` config key.
         workers = min(self._fn_workers(), len(targets))
         if workers <= 1:
             for name, addr in targets:
@@ -491,8 +435,6 @@ class _AgentDecompiler(Decompiler):
         result.decompiler.failed_functions = failed
         result.decompiler.total_time_seconds = time.time() - started
         return result
-
-    # --- helpers -----------------------------------------------------------
 
     def _select_targets(
         self,
@@ -511,8 +453,6 @@ class _AgentDecompiler(Decompiler):
             return [(n, int(a)) for n, a in functions]
         if function_names:
             return [(f"sub_{int(a):x}", int(a)) for a in sorted(function_names)]
-        # No filter given (e.g. a bare `decbench run`). Enumerate real symbols in
-        # .text; a stripped binary yields nothing, which is the intended guard.
         try:
             from decbench.decompilers.dockerized import elf_function_symbols
 
@@ -546,11 +486,8 @@ class _AgentDecompiler(Decompiler):
         t0 = time.time()
         with tempfile.TemporaryDirectory(prefix=f"llmdec_{self.name}_") as tmp:
             workdir = Path(tmp)
-            # Copy the (stripped) binary in under a NEUTRAL name so the agent gets
-            # no identity signal from the filename. The original name (e.g. `grep`,
-            # `gzip`, `nuttx`) would tell an LLM exactly which open-source program
-            # it is looking at and let it recall the source from memory instead of
-            # reverse-engineering — an advantage a mechanical decompiler never gets.
+            # Neutral filename: the real name would let the agent recall the upstream
+            # source from memory instead of reverse-engineering it.
             local = workdir / "target.bin"
             shutil.copy2(binary_path, local)
             outfile = workdir / _OUTFILE
@@ -581,8 +518,6 @@ class _AgentDecompiler(Decompiler):
             if not code:
                 code = _extract_c(stdout)
             final = _rename_func(_sanitize(code), name) if code else None
-            # Capture the trace BEFORE the temp dir (and the agent's session file
-            # under it, for claude) is torn down.
             elapsed = time.time() - t0
             session = self._save_trace(
                 output_dir,
@@ -596,8 +531,6 @@ class _AgentDecompiler(Decompiler):
                 elapsed=elapsed,
                 timed_out=timed_out,
             )
-            # Structured cost capture, best-effort: a token-parse failure must
-            # never break the decompilation itself.
             tokens: dict[str, int] | None = None
             if session is not None:
                 try:
@@ -661,9 +594,6 @@ class _AgentDecompiler(Decompiler):
                 f"## Reconstructed C\n\n```c\n{code or '(none — failed)'}\n```\n"
             )
             (trace_dir / f"{label}.md").write_text(body)
-            # The CLI's own session log carries every shell command it ran (the
-            # authoritative record for auditing tool use). claude: session JSONL
-            # under its config; codex: the rollout named by the session id.
             session = trace_dir / f"{label}.session.jsonl"
             self._copy_session_jsonl(workdir, transcript, session)
             return session if session.is_file() else None
@@ -713,7 +643,6 @@ class _AgentDecompiler(Decompiler):
             "-w",
             "/work",
         ]
-        # Mount whatever host credential dirs exist, read-only.
         token_dirs = (
             (home / ".codex", "/root/.codex"),
             (home / ".claude", "/root/.claude"),
@@ -737,7 +666,6 @@ class _AgentDecompiler(Decompiler):
             "HOME=/root",
             image,
         ]
-        # Inside the container the workdir is /work, so rebuild the argv against it.
         argv = self._agent_argv(Path("/work"), prompt, model)
         return docker + argv, {"env": env}
 
@@ -790,9 +718,7 @@ class CodexDecompiler(_AgentDecompiler):
     name = "codex"
     display_name = "OpenAI Codex CLI"
     cli = "codex"
-    # ``gpt-5.6-sol`` is the gpt-5.6 variant a ChatGPT-account login exposes to
-    # Codex (bare ``gpt-5.6`` / ``gpt-5.6-codex`` are rejected there with a 400).
-    # Override per config/spec for an API-key login that allows other ids.
+    # A ChatGPT-account login only accepts the ``-sol`` variant; bare ids 400.
     default_model = "gpt-5.6-sol"
     cred_files = (".codex/auth.json",)
     cred_env = ("OPENAI_API_KEY",)
@@ -813,10 +739,8 @@ class CodexDecompiler(_AgentDecompiler):
 
     def _agent_env(self) -> dict[str, str]:
         env = dict(os.environ)
-        # Run under an ISOLATED CODEX_HOME whose skills/ dir is empty, so the
-        # `decompiler` skill (which drives IDA/Ghidra/Binary Ninja via DecLib) is
-        # not available — the LLM cannot fall back to a real decompiler even if it
-        # wanted to. Auth (auth.json) + config.toml are synced from ~/.codex.
+        # Isolated CODEX_HOME with an empty skills/ dir enforces the decompiler
+        # ban; auth.json + config.toml are synced in from ~/.codex.
         env["CODEX_HOME"] = str(self._isolated_codex_home())
         return env
 
@@ -827,12 +751,11 @@ class CodexDecompiler(_AgentDecompiler):
         override = self._opt("codex_home", "DECBENCH_CODEX_HOME", "")
         home = Path(override) if override else Path.home() / ".cache" / "decbench" / "codex-home"
         home.mkdir(parents=True, exist_ok=True)
-        (home / "skills").mkdir(exist_ok=True)  # empty -> no `decompiler` skill
+        (home / "skills").mkdir(exist_ok=True)
         src = Path.home() / ".codex"
         for fn in ("auth.json", "config.toml"):
             s, d = src / fn, home / fn
-            # Sync from ~/.codex only when it is newer, so codex's own in-place
-            # token refresh (into the isolated auth.json) is not clobbered.
+            # Newer-only, so codex's in-place token refresh is not clobbered.
             if s.is_file() and (not d.exists() or s.stat().st_mtime > d.stat().st_mtime):
                 with contextlib.suppress(Exception):
                     shutil.copy2(s, d)
@@ -873,10 +796,8 @@ class ClaudeCodeDecompiler(_AgentDecompiler):
             prompt,
             "--output-format",
             "text",
-            # Let the agent run objdump and write the output file without prompts.
             "--dangerously-skip-permissions",
-            # Disable ALL skills so the `decompiler` skill (which drives real
-            # decompilers) is unavailable — enforces the decompiler ban.
+            # Disabling all skills enforces the decompiler ban.
             "--disable-slash-commands",
             "--add-dir",
             str(workdir),
@@ -887,25 +808,15 @@ class ClaudeCodeDecompiler(_AgentDecompiler):
 
     def _agent_env(self) -> dict[str, str]:
         env = super()._agent_env()
-        # If the benchmark is launched from *inside* a Claude Code session, the
-        # `CLAUDE_CODE_*` / bridge / session env vars leak into a nested `claude`
-        # subprocess, which then tries to reattach to the parent session's daemon
-        # and hangs indefinitely. Strip them so the nested CLI starts as an
-        # independent instance. (Auth via ANTHROPIC_API_KEY / ~/.claude is kept.)
+        # Inherited CLAUDE_CODE_* vars make a nested CLI reattach to the parent
+        # session's daemon and hang forever; strip them.
         for k in list(env):
             if k.startswith("CLAUDE_CODE_") or k in ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT"):
                 env.pop(k, None)
-        # Point the nested CLI at an ISOLATED config dir so it uses its own
-        # daemon/session state and can never contend with (or be blocked by) an
-        # interactive Claude Code session running as the same user. Override the
-        # location with DECBENCH_CLAUDE_CONFIG_DIR.
         cfg = self._isolated_config_dir()
         env["CLAUDE_CONFIG_DIR"] = str(cfg)
-        # Prefer the subscription OAuth login (the copied credentials) over
-        # ANTHROPIC_API_KEY: a set API key SHADOWS the OAuth login, and here that
-        # path was pathologically slow (a trivial `-p` call took >150s vs ~3s on
-        # OAuth). So drop the key when OAuth credentials are present. Force the
-        # API-key path instead with DECBENCH_CLAUDE_USE_API_KEY=1.
+        # A set API key shadows the OAuth login and is far slower here, so drop it
+        # when OAuth credentials exist (DECBENCH_CLAUDE_USE_API_KEY=1 forces it).
         if (cfg / ".credentials.json").is_file() and not os.environ.get(
             "DECBENCH_CLAUDE_USE_API_KEY"
         ):
@@ -933,7 +844,7 @@ class ClaudeCodeDecompiler(_AgentDecompiler):
             with contextlib.suppress(Exception):
                 tmp = dst.with_suffix(".json.tmp")
                 shutil.copy2(creds, tmp)
-                tmp.replace(dst)  # atomic — no torn read for a concurrent claude
+                tmp.replace(dst)
         return cfg
 
     def _copy_session_jsonl(self, workdir: Path, transcript: str, dest: Path) -> None:
@@ -960,15 +871,9 @@ class KimiCodeDecompiler(_AgentDecompiler):
     name = "kimi-code"
     display_name = "Kimi Code"
     cli = "kimi"
-    # ``kimi-code/k3`` is the Kimi K3 model alias a Kimi Code OAuth (membership)
-    # login exposes; such logins also carry ``kimi-code/kimi-for-coding``
-    # (-highspeed). Pin via spec/config, e.g. ``-d kimi-code@kimi-code/k3``.
     default_model = "kimi-code/k3"
-    # Kimi Code reads NO credential from the shell environment (an exported
-    # ``KIMI_API_KEY`` is ignored): auth is the OAuth store under
-    # ``$KIMI_CODE_HOME/credentials/`` or an ``api_key`` in ``config.toml``. The
-    # single env channel it honors is the ``KIMI_MODEL_*`` family (synthesized
-    # provider) — all three are handled in is_available().
+    # Kimi Code ignores ``KIMI_API_KEY``: auth is the OAuth store under
+    # ``$KIMI_CODE_HOME/credentials/``, config.toml, or ``KIMI_MODEL_*``.
     cred_files = ()
     cred_env = ()
 
@@ -985,11 +890,8 @@ class KimiCodeDecompiler(_AgentDecompiler):
         creds = home / "credentials"
         if creds.is_dir() and any(creds.glob("*.json")):
             return True
-        # The env-synthesized provider — the only credential channel read from env.
         if os.environ.get("KIMI_MODEL_NAME") and os.environ.get("KIMI_MODEL_API_KEY"):
             return True
-        # An API-key provider written into config.toml ([providers.*] api_key /
-        # [providers.*.env] KIMI_API_KEY). Presence check only; never logged.
         cfg = home / "config.toml"
         return cfg.is_file() and "api_key" in cfg.read_text(errors="replace")
 
@@ -1000,12 +902,8 @@ class KimiCodeDecompiler(_AgentDecompiler):
             prompt,
             "--output-format",
             "text",
-            # Point skill discovery at an EMPTY directory: --skills-dir replaces
-            # the auto-discovered user and project skill dirs for this launch,
-            # so a `decompiler` skill (which drives real decompilers) cannot
-            # load. ``-p`` already runs under the auto permission policy (no
-            # approval prompts) — the kimi equivalent of claude's
-            # --dangerously-skip-permissions.
+            # --skills-dir replaces the auto-discovered skill dirs, so pointing it at
+            # an empty directory enforces the decompiler ban.
             "--skills-dir",
             str(self._empty_skills_dir()),
         ]
@@ -1015,10 +913,6 @@ class KimiCodeDecompiler(_AgentDecompiler):
 
     def _agent_env(self) -> dict[str, str]:
         env = dict(os.environ)
-        # Run under an ISOLATED KIMI_CODE_HOME so benchmark calls never touch
-        # the user's live sessions/state; credentials + config.toml are synced
-        # from ~/.kimi-code, and its skills/ dir stays empty as
-        # defense-in-depth behind --skills-dir.
         env["KIMI_CODE_HOME"] = str(self._isolated_kimi_home())
         return env
 
@@ -1031,12 +925,9 @@ class KimiCodeDecompiler(_AgentDecompiler):
             Path(override) if override else Path.home() / ".cache" / "decbench" / "kimi-code-home"
         )
         home.mkdir(parents=True, exist_ok=True)
-        (home / "skills").mkdir(exist_ok=True)  # empty -> no Kimi-specific user skills
-        (home / "no-skills").mkdir(exist_ok=True)  # the --skills-dir target
+        (home / "skills").mkdir(exist_ok=True)
+        (home / "no-skills").mkdir(exist_ok=True)
         src = self._real_home()
-        # Sync config.toml (providers/models) and the OAuth credential store
-        # from ~/.kimi-code only when the host copy is newer, so kimi's own
-        # in-place token refresh (into the isolated copies) is not clobbered.
         s, d = src / "config.toml", home / "config.toml"
         if s.is_file() and (not d.exists() or s.stat().st_mtime > d.stat().st_mtime):
             with contextlib.suppress(Exception):

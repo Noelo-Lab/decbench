@@ -31,35 +31,27 @@ import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-# Force 'spawn' for ALL pools (including those created inside the decompile /
-# evaluate pipeline). 'fork' deadlocks here because the parent imports angr
-# (which starts threads) before forking workers — a forked child can wedge on a
-# mutex the parent held at fork time. spawn starts clean processes instead.
-# Must be set before any pool is created and before angr is imported below.
+# Must run before any pool is created and before angr is imported below: a
+# forked worker can wedge on a mutex the angr-importing parent held at fork.
 if multiprocessing.get_start_method(allow_none=True) != "spawn":
     multiprocessing.set_start_method("spawn", force=True)
 
-# Register backends + metrics
 import decbench.metrics  # noqa: F401,E402
-from decbench.models.decompilation import DecompilationResult, DecompilerMetadata
-from decbench.models.project import OptimizationLevel, Project
-from decbench.pipeline.evaluate import evaluate_project
-from decbench.pipeline.executor import PipelineConfig, PipelineExecutor
-
-# The project universe lives in decbench.results_store now (shared with the
-# canonical finalize); gather_tomls keeps its historical name here.
-from decbench.results_store import PROJECT_DIRS  # noqa: F401  (re-exported for callers)
+from decbench.models.decompilation import DecompilationResult, DecompilerMetadata  # noqa: E402
+from decbench.models.project import OptimizationLevel, Project  # noqa: E402
+from decbench.pipeline.evaluate import evaluate_project  # noqa: E402
+from decbench.pipeline.executor import PipelineConfig, PipelineExecutor  # noqa: E402
+from decbench.results_store import PROJECT_DIRS  # noqa: F401,E402
 from decbench.results_store import gather_project_tomls as gather_tomls
+from decbench.utils import binfmt  # noqa: E402
 from decbench.utils.cfg import extract_cfgs_from_source
+from decbench.utils.langs import build_stem_index, strip_source_ext  # noqa: E402
 
 OPT_LEVELS = [
     OptimizationLevel.O0,
     OptimizationLevel.O2,
     OptimizationLevel.O2_NOINLINE,
 ]
-# Scoped-run knobs. DECBENCH_OPT_LEVELS narrows which opt levels are discovered/
-# run (e.g. "O0" for the historical Ghidra pass); DECBENCH_METRICS narrows which
-# metrics evaluate (e.g. "ged"). Defaults: all three levels, all metrics.
 if os.environ.get("DECBENCH_OPT_LEVELS"):
     OPT_LEVELS = [
         OptimizationLevel(v.strip())
@@ -71,33 +63,12 @@ METRICS = [
 ] or None
 DECOMPILERS = (os.environ.get("DECBENCH_DECOMPILERS") or "angr,ghidra").split(",")
 WORKERS = int(os.environ.get("DECBENCH_WORKERS") or "40")
-# Hard per-(binary, decompiler) wall-clock budget. angr's decompiler can spin at
-# 100% CPU for many minutes on a single binary; without this a few binaries would
-# dominate the whole run. Binaries that exceed it are recorded as decompiler
-# timeouts (no functions credited) — an honest data point about decompiler speed.
+# Hard per-(binary, decompiler) budget; an overrun is recorded as a decompiler
+# timeout (no functions credited) rather than silently dropped.
 DECOMPILE_TIMEOUT = int(os.environ.get("DECBENCH_DECOMPILE_TIMEOUT") or "300")
-# Per-decompiler wall-clock budget (seconds). FAIRNESS PRINCIPLE: every backend
-# gets a budget large enough to finish the largest source-function set, so a
-# slow-but-working backend is not truncated (and counted as thousands of
-# failures) while a faster one finishes. Small binaries finish in seconds, so the
-# large defaults only bite the ~10 big binaries (bash, openssh, coreutils, big
-# ARM firmware).
-#   - angr: the angr engine runs ~15-20s/function; a big binary legit needs up
-#     to ~1h. angr previously got 3600s only via a one-off scoped rerun.
-#   - ghidra/binja: fast per function but a few large binaries still overrun 300s.
-#   - kuna: a Ghidra port that emits its JSON only at the very end (a kill yields
-#     ZERO functions), so it needs a budget above its slowest binary (~450s on
-#     bash) — 900s. Its per-FUNCTION hang guard is now --max-fn-seconds (passed by
-#     the backend), so a pathological function can't hang the batch; the
-#     process-group SIGKILL stays as a belt-and-suspenders leak guard.
-#   - dewolf: Binary Ninja frontend + a z3/sympy logic-simplification pipeline
-#     that can blow up on complex control flow (the paper's main timeout source);
-#     runs out-of-process in its own venv. A single stuck function can otherwise
-#     burn the whole budget with little recovered, so it is capped at 1200s —
-#     lower than angr because dewolf's blowups are per-function hangs the
-#     cap exists to bound, not a slow-but-progressing whole-binary decompile.
-#   - r2dec: radare2 `aaa` analysis then per-function pseudo-C; `aaa` on a big
-#     binary can run minutes, so budget like ghidra/binja.
+# Per-decompiler budgets (seconds). Every backend gets enough time to finish the
+# largest source-function set, so a slow-but-working one is not truncated into
+# thousands of spurious failures. Rationale per backend: docs/benchmarking.md.
 DECOMPILER_TIMEOUT = {
     "kuna": int(os.environ.get("DECBENCH_KUNA_TIMEOUT") or "900"),
     "angr": int(os.environ.get("DECBENCH_ANGR_TIMEOUT") or "3600"),
@@ -105,10 +76,6 @@ DECOMPILER_TIMEOUT = {
     "binja": int(os.environ.get("DECBENCH_BINJA_TIMEOUT") or "1800"),
     "dewolf": int(os.environ.get("DECBENCH_DEWOLF_TIMEOUT") or "1200"),
     "r2dec": int(os.environ.get("DECBENCH_R2DEC_TIMEOUT") or "1800"),
-    # LLM / coding-agent backends: one agentic CLI call per function is slow
-    # (~minutes). The sample-set takes at most a few functions per binary, and
-    # the backend checkpoints after each function, so a large per-binary budget
-    # bounds a stuck call while still crediting finished functions.
     "codex": int(os.environ.get("DECBENCH_CODEX_TIMEOUT") or "3600"),
     "claude-code": int(os.environ.get("DECBENCH_CLAUDE_CODE_TIMEOUT") or "3600"),
     "kimi-code": int(os.environ.get("DECBENCH_KIMI_CODE_TIMEOUT") or "3600"),
@@ -137,8 +104,6 @@ def _load_sampleset_manifest() -> dict[tuple[str, str, str], set[str]] | None:
     gate: dict[tuple[str, str, str], set[str]] = {}
     for e in data.get("functions", []):
         gate.setdefault((e["project"], e["opt"], e["binary"]), set()).add(e["function"])
-    # Only the main process announces the gate; spawn workers re-import this
-    # module and would otherwise spam the log once per worker.
     if multiprocessing.current_process().name == "MainProcess":
         print(
             f"[sampleset] gate ACTIVE: {len(data.get('functions', []))} functions "
@@ -188,7 +153,12 @@ def project_source_functions(
     Reads the binary's DWARF and keeps DW_TAG_subprogram entries that have a
     low_pc (i.e. are defined in this binary) AND whose decl_file basename stem
     is one of ``source_stems`` (the project's compiled translation units, e.g.
-    grep's ``src/*.c``). This excludes bundled gnulib/system-header functions —
+    grep's ``src/*.c``). Name and decl_file are read through
+    ``DW_AT_specification``/``DW_AT_abstract_origin`` so C++ out-of-line member
+    definitions — which carry neither on the defining DIE — are found; stems are
+    compared with the source extension stripped from both sides, because a C
+    unit's preprocessed stem is ``foo`` (``foo.i``) while a C++ one is ``foo.cc``
+    (``foo.cc.ii``). This excludes bundled gnulib/system-header functions —
     matching SAILR's "evaluate the project's own code" intent — and shrinks the
     decompile/evaluate workload by ~1-2 orders of magnitude on gnulib-heavy
     binaries. The address (DWARF low_pc, in ELF-file space) is the key so the
@@ -198,59 +168,39 @@ def project_source_functions(
     """
     if not source_stems:
         return {}
-    # binfmt.dwarf_info reads DWARF from ELF *or* PE (the MinGW malware targets),
-    # so this filter works for x86/ARM ELF and PE alike.
     try:
-        from decbench.utils import binfmt
-
         dw = binfmt.dwarf_info(binary_path)
     except Exception:  # noqa: BLE001
         return {}
     if dw is None:
         return {}
     addr2name: dict[int, str] = {}
+    file_tables: dict[int, list] = {}
+    stem_index = build_stem_index(source_stems)
     try:
         for cu in dw.iter_CUs():
-            lp = dw.line_program_for_CU(cu)
-            # DW_AT_decl_file indexing is 1-based pre-DWARF5 (entry 0 unused) and
-            # 0-based in DWARF5 (entry 0 = primary source); prepend a placeholder
-            # only for pre-v5 so the index lines up either way.
-            version = 4
-            if lp is not None:
-                version = lp.header.get("version", cu.header.get("version", 4))
-            files: list = [] if version >= 5 else [None]
-            if lp is not None:
-                for fe in lp["file_entry"]:
-                    nm = fe.name
-                    files.append(nm.decode() if isinstance(nm, bytes) else nm)
             for die in cu.iter_DIEs():
-                if die.tag != "DW_TAG_subprogram":
+                if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
                     continue
-                attrs = die.attributes
-                if "DW_AT_low_pc" not in attrs or "DW_AT_name" not in attrs:
+                name = binfmt.die_str_attr(die, "DW_AT_name")
+                if name is None:
                     continue
-                fi = attrs.get("DW_AT_decl_file")
-                if fi is None or not (0 <= fi.value < len(files)) or files[fi.value] is None:
+                fi, owner = binfmt.die_attr_owner(die, "DW_AT_decl_file")
+                if fi is None:
                     continue
-                base = os.path.basename(files[fi.value])
-                stem = base[:-2] if base.endswith(".c") else base
-                # Match the decl-file stem to a compiled source unit. Exact match
-                # for sailr/cps (basename.i <-> basename.c); also accept the
-                # object-prefixed naming some targets use (e.g. malware's
-                # `mydoom-main.i` <-> decl `main.c`), where the source stem is a
-                # `<prefix>-<decl>` / `<prefix>_<decl>` suffix.
-                matched: str | None = None
-                if stem in source_stems:
-                    matched = stem
-                else:
-                    for s in source_stems:
-                        if s.endswith("-" + stem) or s.endswith("_" + stem):
-                            matched = s
+                files = binfmt.cu_file_table(dw, owner.cu, file_tables)
+                if not (0 <= fi.value < len(files)) or files[fi.value] is None:
+                    continue
+                stem = strip_source_ext(os.path.basename(files[fi.value]))
+                matched = stem_index.get(stem)
+                if matched is None:
+                    for norm, original in stem_index.items():
+                        if norm.endswith("-" + stem) or norm.endswith("_" + stem):
+                            matched = original
                             break
                 if matched is not None:
-                    nm = attrs["DW_AT_name"].value
-                    lp_addr = int(attrs["DW_AT_low_pc"].value)
-                    addr2name[lp_addr] = nm.decode() if isinstance(nm, bytes) else nm
+                    lp_addr = int(die.attributes["DW_AT_low_pc"].value)
+                    addr2name[lp_addr] = name
                     if stem_out is not None:
                         stem_out[lp_addr] = matched
     except Exception:  # noqa: BLE001
@@ -340,18 +290,11 @@ def _relabel_to_dwarf(
     """
     from decbench.decompilers.raw import common
 
-    # PE: pre-fix decompiles stored function addresses as bare RVAs (0x1110)
-    # because elf_min_vaddr returned 0 for PE; DWARF low_pc is the linked VA
-    # (ImageBase + RVA). Adding the ImageBase recovers the DWARF key. For ELF the
-    # base is the min PT_LOAD vaddr, which is already folded into fd.address, so
-    # ``addr + base`` is just a harmless non-matching candidate.
+    # Pre-fix PE decompiles stored bare RVAs; adding the ImageBase recovers the
+    # DWARF key. Harmless for ELF, where the base is already folded into fd.address.
     base = common.elf_min_vaddr(unstripped)
     new_funcs: dict[str, object] = {}
     for fd in list(result.functions.values()):
-        # Resolve the DWARF name, tolerating two address-space mismatches:
-        #  - ARM/Thumb: angr reports a Thumb entry with the LSB set (odd),
-        #    while DWARF low_pc is even (0x8008001 vs 0x8008000).
-        #  - PE ImageBase: an RVA-based address needs + base to reach the VA.
         addr = int(fd.address)
         dn = (
             addr2name.get(addr)
@@ -362,8 +305,6 @@ def _relabel_to_dwarf(
         if dn and dn != fd.name:
             fd.decompiled_code = re.sub(r"\b" + re.escape(fd.name) + r"\b", dn, fd.decompiled_code)
             fd.name = dn
-        # Keep the larger body if two addresses collapse to one DWARF name
-        # (duplicate low_pc), so a real body is not clobbered by a trivial stub.
         prev = new_funcs.get(fd.name)
         if prev is None or len(fd.decompiled_code or "") >= len(
             getattr(prev, "decompiled_code", "") or ""
@@ -392,7 +333,6 @@ def _timed_decompile(
         str(pkl),
         names_file,
     ]
-    # Versioned specs (e.g. "ghidra@11.4") share their base tool's budget.
     timeout_s = DECOMPILER_TIMEOUT.get(
         dec_name, DECOMPILER_TIMEOUT.get(dec_name.split("@", 1)[0], DECOMPILE_TIMEOUT)
     )
@@ -400,8 +340,8 @@ def _timed_decompile(
     timed_out = False
     proc = None
     try:
-        # start_new_session so the worker leads its own process group and we can
-        # kill the WHOLE group (worker + kuna/JVM/IDA/... it spawned) on timeout.
+        # The worker leads its own process group so a timeout can kill the WHOLE group
+        # (worker plus the kuna/JVM/IDA process it spawned).
         proc = subprocess.Popen(
             cmd,
             start_new_session=True,
@@ -413,7 +353,7 @@ def _timed_decompile(
         except subprocess.TimeoutExpired:
             failure = f"timeout>{timeout_s}s"
             timed_out = True
-            _kill_process_group(proc)  # reap the worker AND the tool it spawned
+            _kill_process_group(proc)
             rc = None
         if not timed_out:
             if rc == 0 and pkl.exists():
@@ -428,14 +368,9 @@ def _timed_decompile(
     except Exception as e:  # noqa: BLE001
         failure = f"{type(e).__name__}: {e}"
     finally:
-        # Belt-and-suspenders: never leave a tool subprocess (esp. a hung kuna)
-        # orphaned and spinning, whatever path we exited on.
         if proc is not None and proc.poll() is None:
             _kill_process_group(proc)
 
-    # On timeout/error, try to recover whatever the worker checkpointed: a
-    # partial decompilation (e.g. angr got 12/40 functions before the kill) is
-    # far more useful than nothing.
     partial = None
     if pkl.exists():
         try:
@@ -494,8 +429,6 @@ def decompile_project_timed(
     if not tasks:
         return results, stats
 
-    # Per binary: a stripped copy for the decompiler + a JSON of the target
-    # ADDRESSES (the decompiler sees no names, so we filter/match by address).
     names_dir = Path(tempfile.mkdtemp(prefix="decaddrs_"))
     addr_files: dict[str, str] = {}
     stripped: dict[str, Path] = {}
@@ -522,8 +455,6 @@ def decompile_project_timed(
             for fut in as_completed(futs):
                 stem, dec_name = futs[fut]
                 res = fut.result()
-                # Re-symbolize from the stripped decompile + point eval at the
-                # unstripped (DWARF) binary; rewrite the .c artifact to match.
                 orig = by_stem.get(stem)
                 amap = source_fn_map.get(stem) or {}
                 if orig is not None:
@@ -585,15 +516,12 @@ def main() -> int:
             "     DECBENCH_KUNA_MAX_FN_SECONDS, DECBENCH_DECOMPILE_ONLY, GHIDRA_INSTALL_DIR,\n"
             "     DECBENCH_SAMPLESET_MANIFEST (gate the run to the frozen sample-set slice;\n"
             "       required for the LLM backends codex/claude-code/kimi-code — see\n"
-            "       docs/LLM_DECOMPILERS.md)."
+            "       docs/decompilers.md)."
         )
         return 0
     out_dir = Path(args[0]) if args else Path("results/sailr_full")
     only = set(args[2:]) if len(args) > 2 and args[1] == "--" else set()
 
-    # Incremental runs: re-run ONLY decompilers missing from a checkpoint, plus
-    # any listed in DECBENCH_REDO_DECOMPILERS (force-redo even if present, e.g.
-    # after fixing a backend). Existing decompilers' results are kept & merged.
     redo = {d for d in (os.environ.get("DECBENCH_REDO_DECOMPILERS") or "").split(",") if d}
 
     ckpt_dir = out_dir / "checkpoints"
@@ -610,7 +538,6 @@ def main() -> int:
         flush=True,
     )
 
-    # Accumulated results across all projects (for final aggregation).
     all_decompile: dict = {}
     all_evaluate: dict = {}
 
@@ -626,8 +553,6 @@ def main() -> int:
                 existing = None
 
         present = _present_decompilers(existing["decompile"]) if existing else set()
-        # Decompilers to (re)run for this project: those requested but absent,
-        # plus any force-redo. If the checkpoint already has everything, resume.
         to_run = [d for d in DECOMPILERS if d not in present or d in redo]
         if existing is not None and not to_run:
             all_decompile[name] = existing["decompile"]
@@ -646,8 +571,6 @@ def main() -> int:
             continue
 
         t0 = time.time()
-        # Start from existing results so prior decompilers are preserved; the
-        # per-opt merge below adds/overwrites only the `to_run` decompilers.
         proj_dec: dict = dict(existing["decompile"]) if existing else {}
         proj_eval: dict = dict(existing["evaluate"]) if existing else {}
         print(f"[{name}] running decompilers={to_run} (have={sorted(present)})", flush=True)
@@ -656,25 +579,16 @@ def main() -> int:
                 proj_dec[opt] = {}
                 proj_eval[opt] = {}
                 continue
-            # 1) Compute the per-binary decompile filter from DWARF FIRST (cheap
-            #    DWARF read) — the project's OWN src functions, not the .i universe.
-            #    SKIP binaries whose filter is empty: those have no usable debug
-            #    info (e.g. some LTO'd cps firmware), so the only alternative is
-            #    decompiling ALL ~10k+ library/RTOS functions, which times out
-            #    every decompiler and produces noisy, un-typed results. Skipping
-            #    keeps the benchmark to functions we can actually attribute, and
-            #    avoids the (very slow) source-CFG extraction for skipped projects.
+            # Binaries with an empty DWARF filter have no usable debug info; decompiling
+            # their ~10k+ library functions instead would time out every backend.
             ts = time.time()
             source_stems = set(project.preprocessed_sources.get(opt, {}).keys())
             src_fn_names: dict[str, dict[int, str]] = {}
             kept_binaries = []
-            needed_stems: set[str] = set()  # source .i stems holding target functions
+            needed_stems: set[str] = set()
             for b in project.compiled_binaries[opt]:
                 addr_stem: dict[int, str] = {}
                 fns = project_source_functions(b, source_stems, stem_out=addr_stem)
-                # sample-set gate: keep only the frozen slice's function names for
-                # this (project, opt, binary), and skip binaries with none — so
-                # the expensive LLM backends never touch off-slice functions.
                 if SAMPLESET_GATE is not None:
                     allowed = SAMPLESET_GATE.get((name, opt.value, b.stem))
                     fns = {a: nm for a, nm in fns.items() if allowed and nm in allowed}
@@ -696,12 +610,6 @@ def main() -> int:
             project.compiled_binaries[opt] = kept_binaries
             n = len(kept_binaries)
 
-            # 2) Extract source CFGs (for GED) — for a gated (sample-set) run, only
-            #    for the .i files that actually hold the target functions, so Joern
-            #    doesn't parse a whole firmware source tree to score a few functions.
-            #    DECOMPILE_ONLY skips evaluate, so the source CFGs are never used —
-            #    skip the (often multi-minute) Joern parse entirely then. A
-            #    downstream reeval_ged pass rebuilds them from its own cache anyway.
             if os.environ.get("DECBENCH_DECOMPILE_ONLY") == "1":
                 src_cfgs = {}
             else:
@@ -716,8 +624,6 @@ def main() -> int:
                 flush=True,
             )
 
-            # 2) Decompile, restricted to source functions where known. Only the
-            #    `to_run` decompilers (incremental); merge into any existing.
             td = time.time()
             print(
                 f"[{name}/{opt.value}] decompiling {n} binaries x {to_run} "
@@ -743,10 +649,6 @@ def main() -> int:
                 flush=True,
             )
 
-            # 3) Evaluate, reusing the source CFGs (no re-extraction).
-            # DECBENCH_DECOMPILE_ONLY: skip the Joern GED eval here (a downstream
-            # reeval_ged pass re-scores every decompiler from the fresh .c anyway, so
-            # evaluating here is redundant double-Joern — the load hog). Decompile-only.
             te = time.time()
             if os.environ.get("DECBENCH_DECOMPILE_ONLY") == "1":
                 print(f"[{name}/{opt.value}] evaluating... SKIPPED (DECOMPILE_ONLY)", flush=True)
@@ -790,17 +692,11 @@ def main() -> int:
             flush=True,
         )
 
-    # ---- Finalize: the CANONICAL rebuild (decbench.results_store) ----
-    # Always regenerates the derived files from EVERY checkpoint in the tree —
-    # a scoped `-- project` resume can no longer shrink function_results.json to
-    # this run's projects (the historical silent-drop path). Overlays are applied
-    # slice-scoped, the sample-set pins to the frozen manifest, and the coverage
-    # guard refuses any unexplained shrink (DECBENCH_ALLOW_DROPS=1 overrides).
+    # The canonical rebuild: regenerates derived files from EVERY checkpoint in the
+    # tree, so a scoped resume can no longer silently shrink function_results.json.
     print("\nFinalizing (canonical rebuild from ALL checkpoints)...", flush=True)
     from decbench.results_store import CoverageRegressionError, finalize_tree
 
-    # finalize_tree re-loads every checkpoint from disk; free the in-memory
-    # accumulators first so the two copies don't both sit in RAM at peak.
     all_decompile.clear()
     all_evaluate.clear()
     try:

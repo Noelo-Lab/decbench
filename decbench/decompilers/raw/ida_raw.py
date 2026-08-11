@@ -8,7 +8,8 @@ decompiler API directly:
 * decompile each with ``ida_hexrays.decompile(ea)`` -> ``cfunc``
 * C text from ``str(cfunc)``
 * variables from ``cfunc.lvars`` (args carry ``is_arg_var``; stack lvars carry
-  a frame location)
+  a frame location), with argument POSITIONS taken from ``cfunc.argidx`` —
+  ``get_lvars()`` enumerates in allocation order, not declared order
 
 Availability is detected at runtime and requires a working IDA 9+ ``idalib``.
 The module never imports IDA at import time.
@@ -34,8 +35,8 @@ from decbench.models.decompilation import (
 
 _l = logging.getLogger(__name__)
 
-# IDA-specific C dialect -> standard C (order matters: __int64 before __int).
-# Matches declib_dec.IDADeclibDecompiler so byte_match can recompile the output.
+# Order matters (__int64 before __int). Mirrors declib_dec.IDADeclibDecompiler
+# so byte_match can recompile the output.
 _CODE_REPLACEMENTS = (
     ("unsigned __int64", "unsigned long long"),
     ("__int64", "long long"),
@@ -69,10 +70,6 @@ class RawIDADecompiler(Decompiler):
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
 
-    #
-    # Decompiler interface
-    #
-
     def is_available(self) -> bool:
         """Whether a real, working IDA 9+ idalib is importable.
 
@@ -105,23 +102,6 @@ class RawIDADecompiler(Decompiler):
             return str(idaapi.IDA_SDK_VERSION)
         except Exception:  # noqa: BLE001
             return "unknown"
-
-    def discover_functions(self, binary_path: Path) -> list[tuple[str, int]]:
-        if not self.is_available():
-            return []
-        elf_base = common.elf_min_vaddr(binary_path)
-        text_range = common.elf_text_range(binary_path)
-        try:
-            import idapro
-
-            idapro.open_database(str(binary_path), run_auto_analysis=True)
-            try:
-                return self._enumerate(elf_base, text_range)
-            finally:
-                idapro.close_database(save=False)
-        except Exception as e:  # noqa: BLE001
-            _l.error("ida-raw: failed to discover functions in %s: %s", binary_path, e)
-            return []
 
     def decompile_binary(
         self,
@@ -226,10 +206,6 @@ class RawIDADecompiler(Decompiler):
 
         return result
 
-    #
-    # IDA helpers
-    #
-
     @staticmethod
     def _ida_image_base() -> int:
         """The address IDA loaded the binary at (its image base)."""
@@ -262,7 +238,6 @@ class RawIDADecompiler(Decompiler):
             f = ida_funcs.get_func(ea)
             if f is None:
                 continue
-            # Skip thunks (IDA flags them as FUNC_THUNK).
             if f.flags & ida_funcs.FUNC_THUNK:
                 continue
             name = ida_name.get_ea_name(ea) or ""
@@ -281,7 +256,6 @@ class RawIDADecompiler(Decompiler):
         """Decompile one function with Hex-Rays -> FunctionDecompilation."""
         import ida_hexrays
 
-        # ELF-space -> IDA EA.
         ida_ea = (file_addr - elf_base) + self._ida_image_base()
         cfunc = ida_hexrays.decompile(ida_ea)
         if cfunc is None:
@@ -325,6 +299,25 @@ class RawIDADecompiler(Decompiler):
         return code
 
     @staticmethod
+    def _arg_positions(cfunc: Any, lvars: Any) -> dict[int, int]:
+        """``lvar index -> ABI argument position`` from ``cfunc.argidx``.
+
+        ``get_lvars()`` enumerates in Hex-Rays' internal allocation order, which
+        is NOT the declared argument order — on leveldb 53.8% of IDA's multi-arg
+        functions came out permuted (``ClipToRange`` yields ``a3, a1, a2``).
+        Since type_match matches arguments by ABI position, that silently
+        mis-scored IDA. ``cfunc_t::argidx`` is the canonical argument order; we
+        fall back to the enumeration order only if it is unavailable.
+        """
+        try:
+            order = [int(i) for i in cfunc.argidx]
+        except Exception:  # noqa: BLE001
+            order = []
+        if not order:
+            order = [i for i, lv in enumerate(lvars) if bool(getattr(lv, "is_arg_var", False))]
+        return {lvar_index: pos for pos, lvar_index in enumerate(order)}
+
+    @staticmethod
     def _extract_variables(cfunc: Any) -> list[VariableInfo]:
         variables, _local_indices = RawIDADecompiler._extract_variables_with_indices(cfunc)
         return variables
@@ -338,7 +331,8 @@ class RawIDADecompiler(Decompiler):
         Hex-Rays ``lvar_t`` objects expose ``is_arg_var``, ``name``, ``width``
         (size in bytes), ``type()`` (a ``tinfo_t`` whose ``_print()``/``dstr()``
         gives a C type), and ``location`` for stack vars (``is_stk_off()`` /
-        ``stkoff()``).
+        ``stkoff()``). Argument POSITIONS come from ``cfunc.argidx``, not from
+        the enumeration order (see :meth:`_arg_positions`).
         """
         variables: list[VariableInfo] = []
         local_indices: dict[int, int] = {}
@@ -347,11 +341,13 @@ class RawIDADecompiler(Decompiler):
         except Exception:  # noqa: BLE001
             return variables, local_indices
 
-        arg_positions = {
-            int(local_index): position for position, local_index in enumerate(cfunc.argidx)
-        }
-        stack_delta = int(cfunc.get_stkoff_delta())
-        for index, lvar in enumerate(lvars):
+        arg_positions = RawIDADecompiler._arg_positions(cfunc, lvars)
+        fallback_position = len(arg_positions)
+        try:
+            stack_delta = int(cfunc.get_stkoff_delta())
+        except Exception:  # noqa: BLE001
+            stack_delta = 0
+        for lvar_index, lvar in enumerate(lvars):
             try:
                 name = str(getattr(lvar, "name", "") or "")
                 tinfo = lvar.type() if hasattr(lvar, "type") else None
@@ -365,12 +361,16 @@ class RawIDADecompiler(Decompiler):
                         except Exception:  # noqa: BLE001
                             type_str = ""
                 size = int(lvar.width) if getattr(lvar, "width", None) else None
-                is_arg = index in arg_positions
+                is_arg = bool(getattr(lvar, "is_arg_var", False))
             except Exception:  # noqa: BLE001
                 continue
 
             if is_arg:
-                local_indices[index] = len(variables)
+                position = arg_positions.get(lvar_index)
+                if position is None:
+                    position = fallback_position
+                    fallback_position += 1
+                local_indices[lvar_index] = len(variables)
                 variables.append(
                     VariableInfo(
                         name=name,
@@ -378,7 +378,7 @@ class RawIDADecompiler(Decompiler):
                         stack_offset=None,
                         size=size,
                         kind="arg",
-                        arg_index=arg_positions[index],
+                        arg_index=position,
                     )
                 )
             else:
@@ -389,7 +389,7 @@ class RawIDADecompiler(Decompiler):
                         stack_offset = int(loc.stkoff()) - stack_delta
                 except Exception:  # noqa: BLE001
                     stack_offset = None
-                local_indices[index] = len(variables)
+                local_indices[lvar_index] = len(variables)
                 variables.append(
                     VariableInfo(
                         name=name,

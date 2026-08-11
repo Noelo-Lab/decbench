@@ -13,39 +13,54 @@ from decbench.pipeline.compile import compile_projects
 from decbench.pipeline.decompile import decompile_projects
 from decbench.pipeline.evaluate import evaluate_projects
 from decbench.scoring.scoreboard import build_scoreboard_from_function_data
+from decbench.utils.langs import preprocessed_by_stem, strip_source_ext
 
 if TYPE_CHECKING:
     from decbench.models.scoreboard import Scoreboard
 
 
+def keep_sources_of_retained_binaries(project: Project, opt: OptimizationLevel) -> None:
+    """Drop preprocessed sources whose binary was cut by ``--binary-limit``/``--binary-sample``.
+
+    The two key shapes differ between C and C++: a C unit's preprocessed stem is
+    ``foo`` (from ``foo.i``) but CMake makes a C++ one ``db_impl.cc`` (from
+    ``db_impl.cc.ii``), which can never equal a binary stem. Comparing raw stems
+    therefore emptied the dict for every C++ project, and the run scored zero
+    functions with no error at all.
+    """
+    if opt not in project.preprocessed_sources:
+        return
+    keep = {b.stem for b in project.compiled_binaries.get(opt, [])}
+    project.preprocessed_sources[opt] = {
+        name: path
+        for name, path in project.preprocessed_sources[opt].items()
+        if strip_source_ext(name) in keep
+    }
+
+
 class PipelineConfig(BaseModel):
     """Configuration for the benchmark pipeline."""
 
-    # Output configuration
     output_dir: Path = Field(
         default=Path("results"),
         description="Directory for all output files",
     )
 
-    # Compilation settings
     optimization_levels: list[OptimizationLevel] = Field(
         default=[OptimizationLevel.O2],
         description="Optimization levels to compile at",
     )
 
-    # Decompiler settings
     decompilers: list[str] | None = Field(
         default=None,
         description="Decompilers to use (None for all available)",
     )
 
-    # Metric settings
     metrics: list[str] | None = Field(
         default=None,
         description="Metrics to compute (None for all)",
     )
 
-    # Parallelism
     parallel: bool = Field(
         default=True,
         description="Whether to run in parallel",
@@ -55,7 +70,6 @@ class PipelineConfig(BaseModel):
         description="Number of worker processes (None for CPU count)",
     )
 
-    # Pipeline steps
     skip_compile: bool = Field(
         default=False,
         description="Skip compilation step",
@@ -69,7 +83,6 @@ class PipelineConfig(BaseModel):
         description="Skip evaluation step",
     )
 
-    # Testing mode
     binary_limit: int | None = Field(
         default=None,
         description="Limit number of binaries to process (None for all)",
@@ -79,7 +92,6 @@ class PipelineConfig(BaseModel):
         description="Deterministically sample N binaries to process (None for all)",
     )
 
-    # Materialized-tree support (see decbench.pipeline.materialized)
     source_cfgs_root: Path | None = Field(
         default=None,
         description="Tree root holding published <opt>/<project>/source_cfgs/"
@@ -91,15 +103,12 @@ class PipelineConfig(BaseModel):
 class PipelineResults:
     """Results from a pipeline run."""
 
-    # Per-phase results
     compile_results: dict = field(default_factory=dict)
     decompile_results: dict = field(default_factory=dict)
     evaluate_results: dict = field(default_factory=dict)
 
-    # Final scoreboard
     scoreboard: Scoreboard | None = None
 
-    # Statistics
     total_binaries: int = 0
     total_functions: int = 0
     total_time_seconds: float = 0.0
@@ -139,7 +148,6 @@ class PipelineExecutor:
         output_dir = self.config.output_dir
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Step 1: Compile
         if not self.config.skip_compile:
             print(f"Compiling {len(projects)} projects...")
             results.compile_results = compile_projects(
@@ -153,7 +161,6 @@ class PipelineExecutor:
             print("Skipping compilation, discovering existing binaries...")
             self._discover_existing_binaries(projects, output_dir)
 
-        # Apply binary limit if set
         if self.config.binary_limit is not None:
             for project in projects:
                 for opt in self.config.optimization_levels:
@@ -165,16 +172,8 @@ class PipelineExecutor:
                                 f"Limited to {self.config.binary_limit} binaries "
                                 f"for {project.name}/{opt.value}"
                             )
-                    if opt in project.preprocessed_sources:
-                        # Keep only sources matching the limited binaries
-                        limited_names = {b.stem for b in project.compiled_binaries.get(opt, [])}
-                        project.preprocessed_sources[opt] = {
-                            name: path
-                            for name, path in project.preprocessed_sources[opt].items()
-                            if name in limited_names
-                        }
+                    keep_sources_of_retained_binaries(project, opt)
 
-        # Apply binary sampling if set (deterministic random selection)
         if self.config.binary_sample is not None:
             import random
 
@@ -191,15 +190,8 @@ class PipelineExecutor:
                                 f"Sampled {self.config.binary_sample} binaries "
                                 f"for {project.name}/{opt.value}: {names}"
                             )
-                    if opt in project.preprocessed_sources:
-                        sampled_names = {b.stem for b in project.compiled_binaries.get(opt, [])}
-                        project.preprocessed_sources[opt] = {
-                            name: path
-                            for name, path in project.preprocessed_sources[opt].items()
-                            if name in sampled_names
-                        }
+                    keep_sources_of_retained_binaries(project, opt)
 
-        # Step 2: Decompile
         if not self.config.skip_decompile:
             print(f"Decompiling with {self.config.decompilers or 'all'} decompilers...")
             results.decompile_results = decompile_projects(
@@ -211,10 +203,6 @@ class PipelineExecutor:
                 self.config.workers,
             )
         else:
-            # A skipped decompile still needs DecompilationResult objects for
-            # the evaluate stage and the function-data universe — load them
-            # back from the stored <dec>_<stem>.c artifacts (materialized
-            # dataset trees and prior runs both keep them there).
             print("Skipping decompilation, loading stored decompiled artifacts...")
             from decbench.pipeline.materialized import discover_decompilations
 
@@ -232,7 +220,6 @@ class PipelineExecutor:
             )
             print(f"Loaded {n_loaded} stored decompilation artifact(s)")
 
-        # Step 3: Evaluate
         if not self.config.skip_evaluate:
             print(f"Evaluating with {self.config.metrics or 'all'} metrics...")
             results.evaluate_results = evaluate_projects(
@@ -246,11 +233,9 @@ class PipelineExecutor:
                 source_cfgs_root=self.config.source_cfgs_root,
             )
 
-        # Build per-function data FIRST — it carries the true function universe
-        # (every function any decompiler produced + explicit failures) and the
-        # measurability of each metric, which the scoreboard denominators derive
-        # from. Building it before the scoreboard makes scoreboard.toml and the
-        # HTML report share ONE source of truth (identical denominators).
+        # Built before the scoreboard: it carries the true function universe and each
+        # metric's measurability, which the scoreboard denominators derive from, so
+        # scoreboard.toml and the HTML report share one source of truth.
         from decbench.scoring.function_data_builder import build_function_data
 
         function_data = build_function_data(
@@ -259,15 +244,9 @@ class PipelineExecutor:
             results.decompile_results,
         )
 
-        # Step 4: Build scoreboard from the per-function universe (shared per-metric
-        # denominators; a decompile/metric failure is a not-perfect miss, not an
-        # exclusion). See scoring/scoreboard.py::build_scoreboard_from_function_data.
         print("Building scoreboard...")
         results.scoreboard = build_scoreboard_from_function_data(function_data)
 
-        # Attach the "hardest functions" table and any historical samples for
-        # the interactive report. Best-effort: never let report extras break a
-        # completed run.
         try:
             from decbench.scoring.report_extras import attach_extras
 
@@ -285,7 +264,6 @@ class PipelineExecutor:
         results.scoreboard.raw_data_path = function_data_path
         print(f"Function data saved to {function_data_path}")
 
-        # Compute statistics
         results.total_time_seconds = time.time() - start_time
 
         for project_results in results.decompile_results.values():
@@ -295,7 +273,6 @@ class PipelineExecutor:
                     for dec_result in binary_results.values():
                         results.total_functions += dec_result.function_count
 
-        # Save scoreboard
         scoreboard_path = output_dir / "scoreboard.toml"
         results.scoreboard.to_toml(scoreboard_path)
         print(f"Scoreboard saved to {scoreboard_path}")
@@ -332,9 +309,8 @@ class PipelineExecutor:
                     print(f"Warning: compiled directory not found: {compiled_dir}")
                     continue
 
-                # Discover ELF executables AND PE binaries (the malware targets
-                # are MinGW PE .exe/.dll; without the PE check they'd never be
-                # decompiled). cps ARM firmware is ELF, so it's covered already.
+                # The malware targets are MinGW PE, so the PE check is what gets them
+                # decompiled at all; cps ARM firmware is ELF and already covered.
                 from decbench.utils import binfmt
 
                 binaries: list[Path] = []
@@ -354,8 +330,7 @@ class PipelineExecutor:
                 else:
                     print(f"Warning: no ELF binaries found in {compiled_dir}")
 
-                # Discover preprocessed .i sources
-                i_files = {f.stem: f for f in sorted(compiled_dir.glob("*.i"))}
+                i_files = preprocessed_by_stem(compiled_dir)
                 if i_files:
                     project.preprocessed_sources[opt] = i_files
                     print(
@@ -384,15 +359,12 @@ class PipelineExecutor:
 
         results = PipelineResults()
 
-        # Get source CFGs if source provided
         source_cfgs = None
         if source_path:
             source_cfgs = extract_cfgs_from_source(source_path)
 
-        # Get decompilers
         decompilers = self.config.decompilers or DecompilerRegistry.list_available()
 
-        # Decompile with each decompiler
         output_dir = self.config.output_dir / "single_binary"
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -409,7 +381,6 @@ class PipelineExecutor:
                 )
                 results.decompile_results[binary_name][dec_name] = dec_result
 
-                # Evaluate
                 eval_result = evaluate_decompilation(
                     dec_result,
                     source_cfgs,

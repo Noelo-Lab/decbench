@@ -81,9 +81,6 @@ def _build(function_data: FunctionData) -> dict:
     return build_aggregates(function_data, Scoreboard())
 
 
-# -- the shared-denominator rule -------------------------------------------
-
-
 def test_metric_unmeasurable_for_everyone_leaves_every_denominator() -> None:
     """A metric no decompiler could be scored on is our failure, not theirs.
 
@@ -107,8 +104,6 @@ def test_metric_unmeasurable_for_everyone_leaves_every_denominator() -> None:
         assert combo["per_metric"][dec]["byte_match"] == [0, 1], "abstained function must drop out"
         assert combo["per_metric"][dec]["ged"] == [0, 2]
         assert combo["per_metric"][dec]["type_match"] == [2, 2]
-    # `overall` is the Union column: a function counts once ANY metric is measurable,
-    # and both functions are type_match-perfect, so both land in the numerator.
     assert combo["overall"]["alpha"] == [2, 2]
 
 
@@ -128,8 +123,6 @@ def test_source_parse_failure_drops_ged_for_everyone() -> None:
     for dec in DECS:
         assert combo["per_metric"][dec]["ged"] == [0, 0], "GED denominator must be empty"
         assert combo["per_metric"][dec]["byte_match"] == [1, 1]
-        # Union: byte_match/type_match are still measurable (and perfect), so the
-        # function stays in and scores despite GED being unmeasurable for everyone.
         assert combo["overall"][dec] == [1, 1]
 
 
@@ -144,7 +137,7 @@ def test_joern_failing_on_one_decompilers_output_is_that_decompilers_miss() -> N
         "half",
         values={
             "alpha": {"byte_match": 1.0, "ged": 0.0, "type_match": 1.0},
-            "beta": {"byte_match": 1.0, "type_match": 1.0},  # Joern choked on beta's C
+            "beta": {"byte_match": 1.0, "type_match": 1.0},
         },
         perfects={
             "alpha": {"byte_match": True, "ged": True, "type_match": True},
@@ -157,10 +150,8 @@ def test_joern_failing_on_one_decompilers_output_is_that_decompilers_miss() -> N
     assert combo["per_metric"]["alpha"]["ged"] == [1, 1]
     assert combo["per_metric"]["beta"]["ged"] == [0, 1], "same denominator, counted as a miss"
     assert combo["overall"]["alpha"] == [1, 1]
-    # Union: beta misses GED but is byte_match/type_match-perfect, so it scores.
     assert combo["overall"]["beta"] == [1, 1]
 
-    # ...and it is reported as a tooling stat on the Dataset page.
     dataset = build_dataset_page(_data([func]))
     assert dataset["joern"]["source"] == {"lost": 0, "total": 1}
     assert dataset["joern"]["output"] == {"alpha": [0, 1], "beta": [1, 1]}
@@ -199,9 +190,6 @@ def test_errors_scope_counts_only_attempts() -> None:
     combo = _build(_data([func]))["combos"][combo_key("full", False)]
     assert combo["errors"]["alpha"] == [0, 1]
     assert combo["errors"]["beta"] == [0, 0], "not attempted => not in scope"
-
-
-# -- normalize -------------------------------------------------------------
 
 
 def test_normalize_restricts_to_functions_every_decompiler_decompiled() -> None:
@@ -286,7 +274,6 @@ def test_sample_set_only_decompiler_does_not_gate_normalize_off_its_preset() -> 
     assert normalized["functions"] == 1, "codex's cost-gate skip must not gate normalize"
     assert normalized["per_metric"]["alpha"]["ged"] == [1, 1]
 
-    # A conventional decompiler failing still gates: like-with-like is preserved.
     func_beta_failed = _func(
         "beta_failed",
         values={"alpha": {"byte_match": 1.0, "ged": 0.0, "type_match": 1.0}},
@@ -318,9 +305,6 @@ def test_sample_set_only_decompiler_still_gates_the_sample_set_preset() -> None:
     assert aggregates["combos"][combo_key("sample-set", False)]["functions"] == 2
     normalized = aggregates["combos"][combo_key("sample-set", True)]
     assert normalized["functions"] == 1, "codex's real failure gates where its row renders"
-
-
-# -- presets ---------------------------------------------------------------
 
 
 def test_presets_are_non_exclusive_membership_tags() -> None:
@@ -364,10 +348,7 @@ def test_dataset_projects_omit_a_preset_no_function_carries() -> None:
     dataset = build_dataset_page(_data([only_full]))
 
     row = next(p for p in dataset["projects"] if p["name"] == "proj")
-    assert row["presets"] == ["full"]  # "tiny" is registered but unused here
-
-
-# -- the no-presets fallback -----------------------------------------------
+    assert row["presets"] == ["full"]
 
 
 def _presetless(functions: list[FunctionRecord]) -> FunctionData:
@@ -395,8 +376,6 @@ def test_no_presets_still_aggregates_every_function() -> None:
     client rendered everything here (`isActive()` opened `if (!state.dataset) return
     true;`), so this is a fallback, not a new feature.
     """
-    # Values on every metric, so `overall` (Union: perfect on >=1 metric) is a real
-    # count over both functions.
     everywhere = dict.fromkeys(METRICS, 1.0)
     funcs = [
         _func(
@@ -421,8 +400,6 @@ def test_no_presets_still_aggregates_every_function() -> None:
     assert set(aggregates["combos"]) == {combo_key(ALL_PRESET, False), combo_key(ALL_PRESET, True)}
 
     combo = aggregates["combos"][combo_key(ALL_PRESET, False)]
-    # The leaderboard's real counts: every function present, [perfect, total] pairs
-    # populated — not an empty table and not zeros.
     assert combo["functions"] == 2, "every function is active under the fallback"
     assert combo["binaries"] == 1
     assert combo["per_metric"]["alpha"]["ged"] == [1, 2]
@@ -452,9 +429,6 @@ def test_client_fallback_preset_matches_the_builder() -> None:
     match = re.search(r'const FALLBACK_PRESET = "([^"]+)"', js)
     assert match, "app.js must define FALLBACK_PRESET"
     assert match.group(1) == ALL_PRESET
-
-
-# -- distance --------------------------------------------------------------
 
 
 def test_median_is_the_upper_middle_element_not_a_true_median() -> None:
@@ -490,7 +464,6 @@ def test_distance_has_no_shared_denominator_and_at0_is_independent() -> None:
     func = _func(
         "f",
         values={d: {"ged": 0.0} for d in DECS},
-        # alpha is flagged perfect but carries a non-zero distance: two sources of truth.
         perfects={"alpha": {"ged": True}, "beta": {"ged": False}},
         distances={"alpha": {"ged": 2.0}},
     )
@@ -590,9 +563,6 @@ def test_non_finite_ged_is_unmeasurable_not_a_miss() -> None:
         assert combo["per_metric"][dec]["ged"] == [0, 0]
 
 
-# -- decompiledBy back-compat ----------------------------------------------
-
-
 def test_decompiled_by_falls_back_to_perfects_presence() -> None:
     """Datasets predating `FunctionRecord.decompiled` infer attempts from `perfects`.
 
@@ -606,11 +576,10 @@ def test_decompiled_by_falls_back_to_perfects_presence() -> None:
         "legacy",
         values={d: {"byte_match": 1.0, "ged": 0.0, "type_match": 1.0} for d in DECS},
         perfects={"alpha": {"byte_match": True, "ged": True, "type_match": True}, "beta": {}},
-        decompiled={},  # legacy record: no decompiled map at all
+        decompiled={},
     )
     aggregates = _build(_data([func]))
 
-    # An EMPTY perfects map still means "beta decompiled it", so normalize keeps it.
     assert aggregates["combos"][combo_key("full", True)]["functions"] == 1
     assert build_dataset_page(_data([func]))["joern"]["output"]["beta"] == [0, 1]
 
@@ -626,9 +595,6 @@ def test_decompiled_by_fallback_excludes_a_decompiler_with_no_perfects_entry() -
     aggregates = _build(_data([func]))
     assert aggregates["combos"][combo_key("full", False)]["functions"] == 1
     assert aggregates["combos"][combo_key("full", True)]["functions"] == 0
-
-
-# -- decompiler registry ---------------------------------------------------
 
 
 def _registry_data(decompilers: list[str], versions: dict[str, str] | None = None) -> FunctionData:
@@ -673,7 +639,6 @@ def test_registry_carries_names_links_and_prettified_versions() -> None:
     }
     assert registry["ida"]["display_name"] == "Hex-Rays"
     assert registry["ida"]["version"] == "9.2", "raw '920' prettified server-side"
-    # The raw versions map is kept untouched for back-compat.
     assert _build(data)["decompiler_versions"]["ida"] == "920"
 
 
@@ -689,7 +654,6 @@ def test_registry_carries_license_and_logo_flags() -> None:
     assert registry["angr"]["logo"] is True
     assert registry["ida"]["license"] == "closed-source"
     assert registry["ida"]["logo"] is True
-    # RetDec ships no logo asset, so the flag is omitted rather than False.
     assert registry["retdec"]["license"] == "open-source"
     assert "logo" not in registry["retdec"]
 
@@ -714,9 +678,6 @@ def test_registry_resolves_versioned_ids_by_base_name() -> None:
     assert registry["ghidra@12.1"]["display_name"] == "Ghidra"
     assert registry["ghidra@12.1"]["url"] == "https://ghidra-sre.org"
     assert registry["ghidra@12.1"]["version"] == "12.1"
-
-
-# -- dataset page ----------------------------------------------------------
 
 
 def test_dataset_page_is_selector_independent() -> None:
@@ -770,9 +731,6 @@ def test_dataset_joern_source_loss_is_scoped_to_decompiled_functions() -> None:
     assert dataset["joern"]["source"] == {"lost": 1, "total": 1}
 
 
-# -- the cost block (global, not per-combo) ---------------------------------
-
-
 def _priced_content(models: dict[str, dict]):
     """A Content whose pricing registry is replaced with the given price cards."""
     from dataclasses import replace
@@ -815,7 +773,6 @@ def test_cost_block_batch_time_passthrough_and_no_dollars() -> None:
                 "per_fn_median_s": 0.4,
                 "basis": "batch",
             },
-            # Not in function_data.decompilers => never shipped (hidden backends).
             "ghost": {
                 "total_s": 1.0,
                 "functions": 1,
@@ -873,9 +830,8 @@ def test_cost_block_claude_dollar_formula() -> None:
     info = {"decompile_time": {}, "llm": {"alpha": _llm_entry("model-c", tokens)}}
     cost = _cost_block(content, _cost_data(info))
     dollars = cost["alpha"]["dollars"]
-    # 10 + 2 + 0.4*12.5 + 0.1*40 = 21.0
     assert dollars["total"] == pytest.approx(21.0)
-    assert dollars["per_function"] == pytest.approx(2.1)  # / 10 functions
+    assert dollars["per_function"] == pytest.approx(2.1)
     assert dollars["model"] == "model-c"
     assert dollars["estimated"] is True
     assert cost["alpha"]["time"] == {
@@ -896,7 +852,7 @@ def test_cost_block_codex_dollar_formula() -> None:
             "model-x": dict(
                 input_per_mtok=2.0,
                 cached_input_per_mtok=0.5,
-                cache_write_per_mtok=99.0,  # must not matter: cache_write is 0
+                cache_write_per_mtok=99.0,
                 output_per_mtok=8.0,
             )
         }
@@ -910,7 +866,6 @@ def test_cost_block_codex_dollar_formula() -> None:
     }
     info = {"decompile_time": {}, "llm": {"alpha": _llm_entry("model-x", tokens)}}
     dollars = _cost_block(content, _cost_data(info))["alpha"]["dollars"]
-    # 0.5*2 + 4*0.5 + 0.25*8 = 5.0
     assert dollars["total"] == pytest.approx(5.0)
     assert dollars["per_function"] == pytest.approx(0.5)
 
@@ -920,7 +875,7 @@ def test_cost_block_unpriced_or_unknown_model_has_null_dollars() -> None:
     block must emit null, never a bogus $0.00."""
     from decbench.rendering.aggregate import _cost_block
 
-    content = _priced_content({"placeholder": {}})  # all-zero => not is_priced
+    content = _priced_content({"placeholder": {}})
     tokens = {"input": 1, "cached_input": 1, "cache_write": 1, "output": 1, "sessions": 1}
     info = {
         "decompile_time": {},
@@ -932,7 +887,6 @@ def test_cost_block_unpriced_or_unknown_model_has_null_dollars() -> None:
     cost = _cost_block(content, _cost_data(info))
     assert cost["alpha"]["dollars"] is None
     assert cost["beta"]["dollars"] is None
-    # No token data at all is also null (time still ships).
     info = {"decompile_time": {}, "llm": {"alpha": _llm_entry("placeholder", None)}}
     assert _cost_block(content, _cost_data(info))["alpha"]["dollars"] is None
 

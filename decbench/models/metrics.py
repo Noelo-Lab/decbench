@@ -50,12 +50,6 @@ class FunctionMetrics(BaseModel):
         description="Metric name to value mapping",
     )
 
-    def get_metric(self, name: str) -> MetricValue | None:
-        return self.metrics.get(name)
-
-    def set_metric(self, name: str, value: float, **metadata: Any) -> None:
-        self.metrics[name] = MetricValue(value=value, metadata=metadata)
-
 
 class MetricResult(BaseModel):
     """Results of a metric computation for one decompiler on one binary."""

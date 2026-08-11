@@ -24,7 +24,6 @@ from decbench.dataset import (
     save_dataset,
 )
 from decbench.metrics.byte_match import ByteMatchMetric
-from decbench.utils.binfmt import function_bytes as _extract_function_bytes
 from decbench.metrics.ged import GEDMetric
 from decbench.metrics.type_match import TypeMatchMetric
 from decbench.models.decompilation import FunctionDecompilation, VariableInfo
@@ -36,6 +35,7 @@ from decbench.scoring.subset import (
     filter_function_data,
     size_distribution,
 )
+from decbench.utils.binfmt import function_bytes as _extract_function_bytes
 
 
 @pytest.fixture
@@ -47,11 +47,6 @@ def cache_dir(tmp_path, monkeypatch):
     caching._CACHES.clear()
     yield d
     caching._CACHES.clear()
-
-
-# --------------------------------------------------------------------------- #
-# Metric caching
-# --------------------------------------------------------------------------- #
 
 
 def test_metric_value_json_round_trip():
@@ -98,7 +93,7 @@ def test_ged_cache_hit_across_fresh_instance(cache_dir):
 
     GEDMetric().compute_for_function(fd, source_cfg=g1, decompiled_cfg=g2)
 
-    caching._CACHES.clear()  # drop in-memory layer; force on-disk lookup
+    caching._CACHES.clear()
     metric2 = GEDMetric()
     calls = {"n": 0}
     orig = metric2._compute_uncached
@@ -107,6 +102,30 @@ def test_ged_cache_hit_across_fresh_instance(cache_dir):
     )
     metric2.compute_for_function(fd, source_cfg=g1, decompiled_cfg=g2)
     assert calls["n"] == 0, "value should come from the on-disk cache"
+
+
+def test_ged_cache_distinguishes_same_string_node_topologies(cache_dir):
+    class CFGNode:
+        is_entrypoint = False
+        is_exitpoint = False
+
+        def __str__(self) -> str:
+            return "same"
+
+    def graph(edges: list[tuple[int, int]]) -> nx.DiGraph:
+        nodes = [CFGNode() for _ in range(4)]
+        cfg = nx.DiGraph()
+        cfg.add_edges_from((nodes[src], nodes[dst]) for src, dst in edges)
+        return cfg
+
+    source = graph([(0, 1), (1, 2), (2, 3)])
+    same_path = graph([(0, 1), (1, 2), (2, 3)])
+    out_star = graph([(0, 1), (0, 2), (0, 3)])
+    fd = FunctionDecompilation(name="f", address=0x10, decompiled_code="", line_count=0)
+    metric = GEDMetric()
+
+    assert metric.compute_for_function(fd, source_cfg=source, decompiled_cfg=same_path).value == 0
+    assert metric.compute_for_function(fd, source_cfg=source, decompiled_cfg=out_star).value > 0
 
 
 def test_no_cache_disables_caching(cache_dir, monkeypatch):
@@ -201,11 +220,6 @@ def test_byte_match_caches_with_real_binary(cache_dir, tmp_path):
     assert calls["n"] == 1
 
 
-# --------------------------------------------------------------------------- #
-# Binary dataset store
-# --------------------------------------------------------------------------- #
-
-
 def _fake_elf(path: Path, body: bytes) -> None:
     """Write a minimal ELF header (ET_EXEC) plus a payload body."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -282,11 +296,6 @@ def test_load_missing_dataset_raises(tmp_path):
         load_dataset("nope", store_root=tmp_path / "store")
 
 
-# --------------------------------------------------------------------------- #
-# Large-function subset
-# --------------------------------------------------------------------------- #
-
-
 def _make_function_data() -> FunctionData:
     sizes = {"a": 5, "b": 7, "c": 6, "d": 8, "e": 4, "big1": 200, "big2": 150}
     group = BinaryGroup(
@@ -316,7 +325,7 @@ def _make_function_data() -> FunctionData:
 def test_size_distribution_ignores_none():
     fd = _make_function_data()
     dist = size_distribution(fd)
-    assert dist["count"] == 8  # the None-size record is excluded
+    assert dist["count"] == 8
     assert dist["min"] == 4
     assert dist["max"] == 200
     assert dist["p90"] >= dist["p50"]
@@ -358,9 +367,7 @@ def test_filter_function_data_shrinks_and_drops_empty():
 
     remaining = [(g.binary, r.function) for g in filtered.groups for r in g.functions]
     assert all(name in {"big1", "big2"} for _, name in remaining)
-    # bin2 had no large functions -> its group is dropped.
     assert all(g.binary == "bin" for g in filtered.groups)
-    # Top-level metadata is preserved.
     assert filtered.decompilers == ["angr"]
     assert filtered.perfect_values == {"ged": 0.0}
 

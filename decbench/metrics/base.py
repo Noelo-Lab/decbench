@@ -50,9 +50,8 @@ class Metric(ABC):
     requires_source_cfg: bool = False
     requires_decompiled_cfg: bool = False
 
-    # Bump when a metric's computation semantics change so stale cache entries
-    # from an older code version are never reused. Override per-metric when its
-    # specific inputs/formula change.
+    # Bump this whenever a metric's computation semantics change, or the
+    # content-addressed cache will serve values from the older formula.
     cache_version: str = "1"
 
     def __init__(self, config: MetricConfig | None = None):
@@ -81,7 +80,6 @@ class Metric(ABC):
             try:
                 return MetricValue(**hit)
             except Exception:
-                # Corrupt/incompatible cache entry: fall through and recompute.
                 pass
 
         value = compute()
@@ -131,10 +129,8 @@ class Metric(ABC):
                     decompiled_cfg=decompiled_cfg,
                     **kwargs,
                 )
-                # A non-finite value means "unmeasurable for everyone" (e.g. GED
-                # with an empty-prototype/degenerate source CFG). ABSTAIN — don't
-                # record it — so it's excluded from this metric's denominator
-                # uniformly for all decompilers, rather than counted as a failure.
+                # A non-finite value means "unmeasurable for everyone". Abstain so it leaves
+                # this metric's denominator uniformly instead of counting as a failure.
                 if not math.isfinite(value.value):
                     continue
                 function_results[func_name] = value

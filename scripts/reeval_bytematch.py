@@ -24,6 +24,10 @@ from pathlib import Path
 from decbench.utils.results_tree import OPT_LEVELS, resolve_binary, split_functions
 
 DECOMPILERS = ("angr", "ghidra", "ida", "binja", "kuna", "r2dec", "dewolf")
+if os.environ.get("DECBENCH_REEVAL_DECOMPILERS"):
+    DECOMPILERS = tuple(
+        d.strip() for d in os.environ["DECBENCH_REEVAL_DECOMPILERS"].split(",") if d.strip()
+    )
 
 
 def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
@@ -41,8 +45,6 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
     binary = Path(binary_path)
     out: dict[str, dict] = {}
     funcs = split_functions(Path(c_path))
-    # The decompiler's OWN sibling signatures: gives internal calls real
-    # prototypes during the fixup compile (matches compute_for_binary's path).
     context = derive_context_decls({n: c for n, (_a, c) in funcs.items()})
     for name, (addr, code) in funcs.items():
         fd = FunctionDecompilation(
@@ -57,20 +59,15 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
             out[name] = {"value": 0.0, "compilable": False, "error": str(e)[:120]}
             continue
         md = mv.metadata or {}
-        # ABSTAIN, don't score 0: when byte_match can't be measured for this
-        # binary (no matching recompile toolchain — ARM/PE on an x86 host), the
-        # per-function call still returns 0/skipped. Emitting it would make the
-        # rebuild count it as a non-compiling failure and tank the (x86) compile
-        # rate + perfect %. Omit it entirely so rebuild_function_data DROPS
-        # byte_match for that function (per-metric denominators already differ;
-        # GED + type_match carry ARM/PE) — matching compute_for_binary's
-        # binary-level abstain.
+        # Abstain rather than score 0: the per-function call still returns 0 when no
+        # matching toolchain exists, and emitting it would tank the x86 compile rate.
+        # Omitting it makes rebuild_function_data drop byte_match for the function.
         if md.get("skipped"):
             continue
         out[name] = {
             "value": float(mv.value),
             "compilable": bool(md.get("compilable", False)),
-            "dist": md.get("changed_lines"),  # changed asm lines (distance view)
+            "dist": md.get("changed_lines"),
         }
     key = f"{opt}::{project}::{stem}::{dec}"
     return key, out
@@ -92,7 +89,7 @@ def build_tasks(
                 continue
             for dec in DECOMPILERS:
                 for cf in sorted(dec_dir.glob(f"{dec}_*.c")):
-                    stem = cf.name[len(dec) + 1 : -2]  # strip "dec_" and ".c"
+                    stem = cf.name[len(dec) + 1 : -2]
                     binary = resolve_binary(comp, stem)
                     if binary is not None:
                         tasks.append((opt, proj.name, stem, dec, str(binary), str(cf)))
@@ -102,11 +99,7 @@ def build_tasks(
 def main() -> None:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else "results/sailr_full")
     workers = int(sys.argv[2]) if len(sys.argv) > 2 else 16
-    # Optional trailing project stems restrict the reeval (e.g. only the ARM/PE
-    # projects when recomputing byte_match in the cross-toolchain container).
     only = {a for a in sys.argv[3:] if not a.lstrip("-").isdigit()} or None
-    # Overridable so a re-scored pass (e.g. after a metric cache_version bump)
-    # can run side-by-side without touching the published checkpoints/overlay.
     ckpt_dir = Path(os.environ.get("DECBENCH_REEVAL_CKPT_DIR", root / "reeval_bm"))
     ckpt_dir.mkdir(exist_ok=True)
 
@@ -129,7 +122,6 @@ def main() -> None:
             if done % 25 == 0 or done == len(pending):
                 print(f"[reeval] {done}/{len(pending)} binaries done", flush=True)
 
-    # Merge all checkpoints into one map.
     merged: dict[str, dict] = {}
     for cp in ckpt_dir.glob("*.json"):
         key = cp.stem.replace("__", "::")

@@ -1,9 +1,7 @@
 """Tests for render-time decompiler hiding (:mod:`decbench.rendering.visibility`).
 
-Nothing is hidden in the shipped config right now, so these exercise the
-mechanism with a synthetic decompiler name ("hiddendec"): the filter must strip
-a hidden decompiler from every list / map / payload while leaving the visible
-ones — and the inputs — untouched.
+The filter must strip a hidden decompiler from every list, map, and payload
+while leaving the visible decompilers and input models untouched.
 """
 
 from __future__ import annotations
@@ -90,7 +88,7 @@ def _content_hiding(*hidden: str):
 
 def test_is_hidden_matches_id_and_base_name() -> None:
     assert is_hidden("hiddendec", {"hiddendec"})
-    assert is_hidden("hiddendec@9.2", {"hiddendec"})  # base-name match
+    assert is_hidden("hiddendec@9.2", {"hiddendec"})
     assert not is_hidden("ghidra@12.1", {"hiddendec"})
     assert not is_hidden("angr", {"hiddendec"})
 
@@ -110,37 +108,30 @@ def test_hidden_decompiler_stripped_everywhere() -> None:
         assert "hiddendec" not in m and "angr" in m
     s = out_fd.samples[0]
     assert set(s.decompiled) == {"angr", "ghidra"}
-    assert [h.decompiler for h in out_fd.history] == ["ghidra@12.1"]  # base-name hide
+    assert [h.decompiler for h in out_fd.history] == ["ghidra@12.1"]
 
 
 def test_filter_is_a_copy_inputs_untouched() -> None:
     fd, sb = _fd(), _sb()
     apply_hidden_decompilers(sb, fd, _content_hiding("hiddendec"))
-    assert "hiddendec" in fd.decompilers  # original untouched
+    assert "hiddendec" in fd.decompilers
     assert "hiddendec" in sb.decompilers
 
 
 def test_no_hidden_is_a_noop() -> None:
     fd, sb = _fd(), _sb()
     out_sb, out_fd = apply_hidden_decompilers(sb, fd, _content_hiding())
-    assert out_sb is sb and out_fd is fd  # same objects, no copy
+    assert out_sb is sb and out_fd is fd
 
 
-def test_shipped_config_hides_nothing() -> None:
-    """The shipped hidden list is exactly empty — any future hide is deliberate.
-
-    The last hidden decompiler was fully removed 2026-07-23; the hide mechanism
-    stays, but nothing should be silently hidden by default.
-    """
-    assert load_content().site.hidden_decompilers == ()
+def test_shipped_config_hides_phoenix() -> None:
+    assert load_content().site.hidden_decompilers == ("phoenix",)
 
 
 def test_build_site_omits_hidden_decompiler(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """End-to-end: a hidden decompiler must not appear in any shipped payload."""
-    # build_site consults the shipped content for hiding; point it at a content
-    # that hides the synthetic decompiler (the shipped list is empty).
     monkeypatch.setattr(
         "decbench.rendering.visibility.load_content", lambda: _content_hiding("hiddendec")
     )
@@ -149,8 +140,6 @@ def test_build_site_omits_hidden_decompiler(
     agg = json.loads((out / "data" / "aggregates.json").read_text())
     assert "hiddendec" not in agg["decompilers"]
     assert set(agg["decompilers"]) == {"angr", "ghidra"}
-    # The decompiler registry is gated on the (already-filtered) decompiler list,
-    # so a hidden backend can never re-enter through it.
     assert set(agg["decompiler_registry"]) == {"angr", "ghidra"}
     blob = "".join(
         (out / "data" / f"{name}.json").read_text() for name in ("aggregates", "samples")

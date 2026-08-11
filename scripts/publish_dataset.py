@@ -53,6 +53,15 @@ def _stems_by_project_opt(result: layout.LayoutResult) -> dict[str, dict[str, li
     return out
 
 
+def _cfg_functions(result: layout.LayoutResult) -> dict[tuple[str, str, str], set[str]]:
+    """``(opt, project, stem) -> functions`` to keep in that binary's source-CFG JSON.
+
+    A binary is only ever scored on its own functions, so storing the whole
+    project-wide name set in every JSON multiplies the export ~11x for nothing.
+    """
+    return {(g.opt, g.project, g.binary): set(g.all_functions) for g in result.groups}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results_dir", type=Path, help="results tree (e.g. results/full_run)")
@@ -146,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
             dest,
             _stems_by_project_opt(result),
             workers=args.cfg_workers,
+            functions=_cfg_functions(result),
             log=log,
         )
         log(f"[cfg] wrote/verified {len(cfg_paths)} CFG JSON(s)")

@@ -77,11 +77,9 @@ def decompile_project(
     Returns:
         Results keyed by binary name and decompiler name
     """
-    # Convert optimization level
     if isinstance(optimization, str):
         optimization = OptimizationLevel(optimization)
 
-    # Get compiled binaries
     if optimization not in project.compiled_binaries:
         raise ValueError(
             f"Project '{project.name}' not compiled at {optimization.value}"
@@ -89,14 +87,12 @@ def decompile_project(
 
     binaries = project.compiled_binaries[optimization]
 
-    # Get available decompilers
     if decompilers is None:
         decompilers = DecompilerRegistry.list_available()
 
     if not decompilers:
         raise ValueError("No decompilers available")
 
-    # Create output directory
     dec_output_dir = output_dir / optimization.value / project.name / "decompiled"
     dec_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -111,7 +107,7 @@ def decompile_project(
             executor_ctx = ProcessPoolExecutor(
                 max_workers=workers, max_tasks_per_child=1
             )
-        except TypeError:  # Python 3.10
+        except TypeError:
             executor_ctx = ProcessPoolExecutor(max_workers=workers)
 
         with executor_ctx as executor:
@@ -124,7 +120,7 @@ def decompile_project(
                         binary_path,
                         dec_name,
                         dec_output_dir,
-                        None,  # All functions
+                        None,
                         config,
                     )
                     futures[future] = (binary_path.stem, dec_name)
@@ -137,7 +133,6 @@ def decompile_project(
                         results[binary_name] = {}
                     results[binary_name][dec_name] = result
                 except Exception as e:
-                    # Create error result
                     from decbench.models.decompilation import (
                         DecompilationResult,
                         DecompilerMetadata,
@@ -146,7 +141,7 @@ def decompile_project(
                     if binary_name not in results:
                         results[binary_name] = {}
                     results[binary_name][dec_name] = DecompilationResult(
-                        binary_path=binaries[0],  # Approximate
+                        binary_path=binaries[0],
                         binary_name=binary_name,
                         decompiler=DecompilerMetadata(
                             decompiler_name=dec_name,
@@ -223,7 +218,6 @@ def decompile_projects(
                     workers=workers,
                 )
             except ValueError:
-                # Project not compiled at this level
                 results[project.name][opt] = {}
 
     return results

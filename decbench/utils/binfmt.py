@@ -18,6 +18,11 @@ What's here:
   * :func:`function_bytes` / :func:`object_text_bytes` — original function bytes
     from a final ELF/PE, and the `.text` of a single-function recompiled object
     (ELF or COFF), for byte_match.
+  * :func:`die_attr` / :func:`die_str_attr` / :func:`die_attr_owner` — read a DIE
+    attribute through ``DW_AT_specification`` (and, in a C++ unit only,
+    ``DW_AT_abstract_origin``), which is where C++ out-of-line definitions keep
+    their name and decl file; :func:`cu_file_table` resolves the
+    ``DW_AT_decl_file`` index and :func:`cu_is_cxx` reports the unit's language.
 """
 
 from __future__ import annotations
@@ -30,16 +35,15 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-# ELF e_machine / PE COFF machine -> short arch name.
 _ELF_MACHINES = {0x28: "arm", 0xB7: "aarch64", 0x3E: "x86-64", 0x03: "x86", 0xF3: "riscv"}
 _PE_MACHINES = {0x14C: "x86", 0x8664: "x86-64", 0xAA64: "aarch64", 0x1C0: "arm"}
 
 
 @dataclass
 class BinInfo:
-    fmt: str  # "elf" | "pe"
-    arch: str  # "x86" | "x86-64" | "arm" | "aarch64" | ...
-    bits: int  # 32 | 64
+    fmt: str
+    arch: str
+    bits: int
 
 
 def detect(path: Path) -> BinInfo | None:
@@ -47,7 +51,7 @@ def detect(path: Path) -> BinInfo | None:
     try:
         with open(path, "rb") as f:
             head = f.read(2)
-            if head == b"\x7fE":  # ELF
+            if head == b"\x7fE":
                 f.seek(0)
                 if f.read(4) != b"\x7fELF":
                     return None
@@ -55,7 +59,7 @@ def detect(path: Path) -> BinInfo | None:
                 arch = _ELF_MACHINES.get(struct.unpack("<H", f.read(2))[0], "other")
                 bits = 64 if arch in ("x86-64", "aarch64") else 32
                 return BinInfo("elf", arch, bits)
-            if head == b"MZ":  # PE
+            if head == b"MZ":
                 f.seek(0x3C)
                 pe_off = struct.unpack("<I", f.read(4))[0]
                 f.seek(pe_off)
@@ -94,13 +98,9 @@ def tool_available(name: str) -> bool:
     return shutil.which(name) is not None
 
 
-# Codegen-relevant flags to carry over from the original build (NOT -g; we add
-# it). Besides -m*/-O*, a whitelist of -f flags that change emitted code:
-# dropping them made byte_match unwinnable for whole projects (openssh's
-# -fzero-call-used-regs=all pads every epilogue with zeroing, its -ftrapv turns
-# arithmetic into __addv* calls; sysvinit's -fomit-frame-pointer switches every
-# stack access from rbp- to rsp-relative). Header-independent, codegen-only
-# flags only — nothing here affects parsing or needs libc headers.
+# Codegen-relevant flags carried over from the original build (never -g). Only
+# codegen-only, header-independent flags: dropping them made byte_match
+# unwinnable for whole projects (e.g. -fzero-call-used-regs, -fomit-frame-pointer).
 _FLAG_RE = re.compile(
     r"(?:^|\s)(-m(?:arch|tune|cpu|thumb|float-abi|fpu|abi)?=?\S*|-O[0-3sgz]?"
     r"|-f(?:no-)?(?:omit-frame-pointer|zero-call-used-regs=\S+|trapv|wrapv"
@@ -129,7 +129,6 @@ def producer_flags(path: Path) -> list[str]:
                 continue
             text = prod.value.decode() if isinstance(prod.value, bytes) else str(prod.value)
             flags = [m.group(1).strip() for m in _FLAG_RE.finditer(text)]
-            # -masm=att is asm-syntax only (no codegen effect); drop it.
             return [f for f in flags if f and not f.startswith("-masm")]
     except Exception:
         pass
@@ -149,8 +148,6 @@ def capstone_arch_mode(info: BinInfo, thumb: bool = False):
         return capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM
     return None
 
-
-# --- DWARF (ELF or PE) -------------------------------------------------------
 
 _DWARF_SECS = (
     ".debug_info",
@@ -242,7 +239,6 @@ def dwarf_info(path: Path):
         return None
     if info.fmt == "pe":
         return pe_dwarf_info(path)
-    # ELF: read the debug sections into memory, build a self-contained DWARFInfo.
     try:
         from elftools.elf.elffile import ELFFile
 
@@ -266,7 +262,101 @@ def dwarf_info(path: Path):
         return None
 
 
-# --- function bytes ----------------------------------------------------------
+_DIE_REF_MAX_HOPS = 4
+
+# DW_LANG_C_plus_plus and its dated successors (03/11/14/17/20/23).
+_CXX_LANGS = frozenset({0x04, 0x19, 0x1A, 0x21, 0x2A, 0x2B, 0x33})
+
+_SPEC_ONLY = ("DW_AT_specification",)
+_SPEC_AND_ORIGIN = ("DW_AT_specification", "DW_AT_abstract_origin")
+
+
+def cu_is_cxx(cu) -> bool:
+    """True when the compilation unit's ``DW_AT_language`` is a C++ dialect."""
+    try:
+        attr = cu.get_top_DIE().attributes.get("DW_AT_language")
+    except Exception:
+        return False
+    return attr is not None and attr.value in _CXX_LANGS
+
+
+def die_attr_owner(die, name: str):
+    """``(attribute, owning DIE)`` for ``name``, following DIE reference chains.
+
+    gcc splits an out-of-line C++ member definition in two: the defining DIE
+    carries ``DW_AT_low_pc`` but NO ``DW_AT_name``/``DW_AT_decl_file``, which
+    live on the in-class declaration it points at via ``DW_AT_specification``
+    (and that declaration may itself forward once more, e.g. a template
+    instantiation). Following the chain is what makes a C++ binary's functions
+    visible at all.
+
+    ``DW_AT_specification`` is a C++-only construct, so following it can never
+    change a C result. ``DW_AT_abstract_origin`` is NOT — in C, gcc uses it for
+    the out-of-line copy it keeps of a function it also inlined, and following
+    it would newly surface ~10-20% more functions in the existing C corpus
+    (measured: grep at O2 goes 262 -> 314). That hop is therefore taken only in
+    a C++ compilation unit, which leaves every C binary bit-identical.
+
+    The owning DIE is returned because a CU-relative attribute value such as
+    ``DW_AT_decl_file`` must be read against ITS CU's line program, not the
+    starting DIE's.
+    """
+    cur = die
+    refs = _SPEC_AND_ORIGIN if cu_is_cxx(die.cu) else _SPEC_ONLY
+    for _ in range(_DIE_REF_MAX_HOPS + 1):
+        attr = cur.attributes.get(name)
+        if attr is not None:
+            return attr, cur
+        nxt = None
+        for ref in refs:
+            if ref in cur.attributes:
+                try:
+                    nxt = cur.get_DIE_from_attribute(ref)
+                except Exception:
+                    nxt = None
+                break
+        if nxt is None:
+            return None, None
+        cur = nxt
+    return None, None
+
+
+def die_attr(die, name: str):
+    """The attribute ``name``, following DIE reference chains (:func:`die_attr_owner`)."""
+    return die_attr_owner(die, name)[0]
+
+
+def die_str_attr(die, name: str) -> str | None:
+    """:func:`die_attr` decoded to ``str``, or None when absent."""
+    attr = die_attr(die, name)
+    if attr is None:
+        return None
+    val = attr.value
+    return val.decode("utf-8", "replace") if isinstance(val, bytes) else str(val)
+
+
+def cu_file_table(dwarfinfo, cu, cache: dict[int, list] | None = None) -> list:
+    """A CU's ``DW_AT_decl_file`` index table, optionally memoized by CU offset.
+
+    DW_AT_decl_file is 1-based pre-DWARF5 and 0-based in DWARF5; the leading
+    placeholder entry makes the index line up either way.
+    """
+    if cache is not None:
+        cached = cache.get(cu.cu_offset)
+        if cached is not None:
+            return cached
+    lp = dwarfinfo.line_program_for_CU(cu)
+    version = 4
+    if lp is not None:
+        version = lp.header.get("version", cu.header.get("version", 4))
+    files: list = [] if version >= 5 else [None]
+    if lp is not None:
+        for fe in lp["file_entry"]:
+            nm = fe.name
+            files.append(nm.decode("utf-8", "replace") if isinstance(nm, bytes) else nm)
+    if cache is not None:
+        cache[cu.cu_offset] = files
+    return files
 
 
 def _dwarf_function_range(path: Path, func_name: str) -> tuple[int, int] | None:
@@ -300,7 +390,6 @@ def function_bytes(path: Path, func_name: str, address: int) -> bytes | None:
         b = _elf_function_bytes(path, func_name, address)
         if b is not None:
             return b
-    # DWARF-range + content-at-VA (works for PE, and ELF as a fallback).
     rng = _dwarf_function_range(path, func_name)
     if rng is None:
         return None
@@ -345,13 +434,11 @@ def object_text_bytes(obj_path: Path, func_name: str) -> bytes | None:
     byte_match compiles one function, so the object's ``.text`` is essentially
     that function (alignment padding is dropped by the disassembler's nop skip).
     """
-    # ELF object: precise symtab extraction (existing behaviour).
     info = detect(obj_path)
     if info is not None and info.fmt == "elf":
         b = _elf_object_function(obj_path, func_name)
         if b is not None:
             return b
-    # COFF (MinGW) object, or ELF fallback: take the .text section via LIEF.
     try:
         import lief
 

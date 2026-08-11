@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from decbench.utils.langs import CXX_PREPROC_EXTS, PREPROC_EXTS
 
 logger = logging.getLogger(__name__)
 
@@ -18,24 +22,64 @@ if TYPE_CHECKING:
 
 _LINE_MARKER = re.compile(r'^#\s+\d+\s+"([^"]*)"')
 
-# Aggregate/array return type: ``unsigned int [4] name(`` -> ``unsigned int name(``.
-# angr/ghidra render a by-value aggregate/array return as ``T [N] name(...)``
-# which is not valid C, so Joern parses NOTHING for such a function and it silently
-# drops out of GED's denominator. Anchored at line start (re.M) so it only ever
-# rewrites a top-level function SIGNATURE, never an in-body array declaration such as
-# ``char buf[16];`` (which is indented and/or not followed by an identifier + ``(``).
+# ``T [N] name(...)`` is not valid C, so Joern parses nothing for such a function
+# and it silently drops out of GED's denominator. Anchored at line start so it
+# only rewrites a signature, never an in-body ``char buf[16];``.
 _AGG_RETURN = re.compile(r"^([A-Za-z_][\w ]*?)\s*\[\d+\]\s+([A-Za-z_]\w*\s*\()", re.M)
 
-# Binary Ninja register annotations: ``char arg3 @ rax`` -> ``char arg3``. ``@`` is
-# not legal C, so its presence breaks Joern's parse for the whole function.
+# ``@`` is not legal C and breaks Joern's parse for the whole function.
 _REG_ANNOTATION = re.compile(r"\s*@\s*[a-z]\w+\b")
+_PREPROCESSOR_CONTROL = re.compile(
+    r"^\s*#\s*(?:define|undef|if|ifdef|ifndef|elif|else|endif)\b",
+    re.M,
+)
+_INCLUDE_DIRECTIVE = re.compile(r"^\s*#\s*include\b[^\n]*(?:\n|$)", re.M)
+_FUNCTION_MARKER = re.compile(
+    r"^// Function: ([A-Za-z_]\w*)(?: @ 0x[0-9a-fA-F]+)?\s*$",
+    re.M,
+)
+
+# Tab and newline are the emitted source's own layout, not literal payload.
+_KEEP_RAW_BYTES = frozenset({0x09, 0x0A})
+
+
+def escape_literal_control_bytes(text: str) -> str:
+    """Escape raw control bytes appearing inside string/char literals.
+
+    A decompiler that inlines ``.rodata`` verbatim emits e.g. an ANSI colour
+    sequence as a raw ``0x1B``. That is valid C, but it makes pyjoern's fast
+    parser emit non-JSON, which fails the whole invocation rather than the one
+    function. Only literal interiors are rewritten, and ``\\x1b`` is the same
+    bytes to the compiler, so control flow is untouched.
+    """
+    out: list[str] = []
+    in_string = in_char = pending_escape = False
+    for char in text:
+        code = ord(char)
+        if pending_escape:
+            out.append(char)
+            pending_escape = False
+            continue
+        if char == "\\" and (in_string or in_char):
+            out.append(char)
+            pending_escape = True
+            continue
+        if char == '"' and not in_char:
+            in_string = not in_string
+        elif char == "'" and not in_string:
+            in_char = not in_char
+        if (in_string or in_char) and code not in _KEEP_RAW_BYTES and (code < 0x20 or code == 0x7F):
+            out.append(f"\\x{code:02x}")
+        else:
+            out.append(char)
+    return "".join(out)
 
 
 def sanitize_decompiled_c(text: str) -> str:
     """Clean decompiler-specific C quirks that break Joern's parser.
 
     GED only cares about CFG *structure*, so these edits are purely to make the
-    body parseable — they never touch control flow. Three tool-specific quirks:
+    body parseable — they never touch control flow. Four tool-specific quirks:
 
     * **Aggregate/array return type** (angr/ghidra): ``T [N] name(...)``
       is rewritten to ``T name(...)``. Anchored to the start of a line so a real
@@ -44,11 +88,145 @@ def sanitize_decompiled_c(text: str) -> str:
       is not valid C.
     * **128-bit types** (ida): ``__int128`` is widened to ``long long`` (the exact
       width is irrelevant to the CFG).
+    * **Raw control bytes in literals**: escaped, so a verbatim ``.rodata`` string
+      cannot make pyjoern's fast parser emit non-JSON and void the invocation.
     """
     text = _AGG_RETURN.sub(r"\1 \2", text)
     text = _REG_ANNOTATION.sub("", text)
     text = text.replace("unsigned __int128", "unsigned long long").replace("__int128", "long long")
-    return text
+    return escape_literal_control_bytes(text)
+
+
+def needs_decompiled_preprocessing(text: str) -> bool:
+    """Whether decompiled C contains directives whose expansion can change its CFG."""
+    return _PREPROCESSOR_CONTROL.search(text) is not None
+
+
+def _mask_c_noncode(text: str) -> str:
+    masked = list(text)
+    state = "code"
+    index = 0
+    while index < len(text):
+        char = text[index]
+        next_char = text[index + 1] if index + 1 < len(text) else ""
+        if state == "code":
+            if char == "/" and next_char == "/":
+                masked[index] = masked[index + 1] = " "
+                state = "line_comment"
+                index += 2
+                continue
+            if char == "/" and next_char == "*":
+                masked[index] = masked[index + 1] = " "
+                state = "block_comment"
+                index += 2
+                continue
+            if char in {'"', "'"}:
+                masked[index] = " "
+                state = "string" if char == '"' else "character"
+        elif state == "line_comment":
+            if char == "\n":
+                state = "code"
+            else:
+                masked[index] = " "
+        elif state == "block_comment":
+            if char == "*" and next_char == "/":
+                masked[index] = masked[index + 1] = " "
+                state = "code"
+                index += 2
+                continue
+            if char != "\n":
+                masked[index] = " "
+        else:
+            if char == "\\" and next_char:
+                masked[index] = masked[index + 1] = " "
+                index += 2
+                continue
+            masked[index] = " " if char != "\n" else "\n"
+            if state == "string" and char == '"' or state == "character" and char == "'":
+                state = "code"
+        index += 1
+    return "".join(masked)
+
+
+def _definition_name_span(segment: str, name: str) -> tuple[int, int] | None:
+    code = _mask_c_noncode(segment)
+    for match in re.finditer(rf"\b{re.escape(name)}\s*\(", code):
+        line_start = code.rfind("\n", 0, match.start()) + 1
+        if code[line_start : match.start()].lstrip().startswith("#"):
+            continue
+        depth = 0
+        for index in range(code.find("(", match.start()), len(code)):
+            char = code[index]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    suffix = code[index + 1 :]
+                    brace = suffix.find("{")
+                    semicolon = suffix.find(";")
+                    if brace >= 0 and (semicolon < 0 or brace < semicolon):
+                        return match.start(), match.start() + len(name)
+                    break
+    return None
+
+
+def _protect_macro_colliding_definitions(text: str) -> tuple[str, dict[str, str]]:
+    markers = list(_FUNCTION_MARKER.finditer(text))
+    replacements: list[tuple[int, int, str]] = []
+    restore: dict[str, str] = {}
+    for index, marker in enumerate(markers):
+        name = marker.group(1)
+        segment_start = marker.end()
+        segment_end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+        span = _definition_name_span(text[segment_start:segment_end], name)
+        if span is None:
+            continue
+        sentinel = f"__decbench_function_{index}_macro_guard"
+        if sentinel in text:
+            raise ValueError(f"reserved preprocessing sentinel already present: {sentinel}")
+        start, end = span
+        replacements.append((segment_start + start, segment_start + end, sentinel))
+        restore[sentinel] = name
+    for start, end, sentinel in reversed(replacements):
+        text = f"{text[:start]}{sentinel}{text[end:]}"
+    return text, restore
+
+
+def preprocess_decompiled_c(text: str) -> str:
+    """Expand locally defined macros before Joern parses decompiled C."""
+    if not needs_decompiled_preprocessing(text):
+        return text
+
+    compiler = shutil.which("gcc") or shutil.which("cc")
+    if compiler is None:
+        logger.warning("Cannot preprocess decompiled C: no host C preprocessor found")
+        return text
+
+    safe_text = _INCLUDE_DIRECTIVE.sub("\n", text)
+    safe_text, restore = _protect_macro_colliding_definitions(safe_text)
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".c") as source:
+            source.write(safe_text)
+            source.flush()
+            result = subprocess.run(
+                [compiler, "-E", "-x", "c", source.name],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        logger.warning("Cannot preprocess decompiled C: %s", e)
+        return text
+
+    if result.returncode != 0:
+        logger.warning("Cannot preprocess decompiled C: %s", result.stderr.strip())
+        return text
+    preprocessed = strip_system_headers(result.stdout)
+    for sentinel, name in restore.items():
+        preprocessed = preprocessed.replace(sentinel, name)
+    return preprocessed if preprocessed.strip() else text
 
 
 def _is_system_header(path: str) -> bool:
@@ -68,9 +246,9 @@ def _is_system_header(path: str) -> bool:
 
 
 def strip_system_headers(preprocessed: str) -> str:
-    """Drop inlined system-header code from a preprocessed (.i) translation unit.
+    """Drop inlined system-header code from a preprocessed (``.i``/``.ii``) unit.
 
-    A ``.i`` file is the project source with EVERY ``#include`` expanded inline,
+    A preprocessed file is the project source with EVERY ``#include`` expanded inline,
     so it is dominated (80-98%) by glibc/toolchain headers. Joern then either
     times out parsing megabytes of headers or drowns the project's own functions
     in thousands of header inlines — which is why GED "source-parse failures"
@@ -82,12 +260,12 @@ def strip_system_headers(preprocessed: str) -> str:
     code that was compiled (the right ifdef branches) — fair and small.
     """
     keep: list[str] = []
-    in_system = True  # before the first marker
+    in_system = True
     for line in preprocessed.splitlines():
         m = _LINE_MARKER.match(line)
         if m is not None:
             in_system = _is_system_header(m.group(1))
-            continue  # drop the marker line itself
+            continue
         if not in_system:
             keep.append(line)
     return "\n".join(keep) + "\n"
@@ -162,55 +340,78 @@ def resolved_source_for_binary(
     return resolved
 
 
+def temp_parse_suffix(source_path: Path) -> str:
+    """The temp-file suffix Joern must see for ``source_path``'s language.
+
+    Joern picks its frontend from the file extension, and its C frontend returns
+    ZERO functions for C++ input — so a ``.ii`` (preprocessed C++) translation
+    unit handed over as ``.c`` silently scores nothing. Preprocessed C++ becomes
+    ``.cpp``; everything else stays ``.c``.
+    """
+    return ".cpp" if source_path.suffix in CXX_PREPROC_EXTS else ".c"
+
+
 def extract_cfgs_from_source(
-    source_path: Path, sanitize_decompiled: bool = False
+    source_path: Path,
+    sanitize_decompiled: bool = False,
+    preprocess_decompiled: bool = True,
+    raise_on_error: bool = False,
 ) -> dict[str, DiGraph]:
-    """Extract CFGs from a C source file using pyjoern.
+    """Extract CFGs from a C or C++ source file using pyjoern.
 
     Args:
-        source_path: Path to C source file (.c or .i). For ``.i`` files the
-            inlined system headers are stripped first (see
-            :func:`strip_system_headers`) so Joern parses only the project's own
-            (already-preprocessed, correctly-ifdef'd) code — fast and complete.
+        source_path: Path to a source file (``.c``, or preprocessed ``.i``/``.ii``).
+            For preprocessed files the inlined system headers are stripped first
+            (see :func:`strip_system_headers`) so Joern parses only the project's
+            own (already-preprocessed, correctly-ifdef'd) code — fast and complete.
         sanitize_decompiled: When True and ``source_path`` is a *decompiled* ``.c``
-            (i.e. NOT a ``.i`` ground-truth source), run its text through
+            (i.e. NOT a preprocessed ground-truth source), run its text through
             :func:`sanitize_decompiled_c` before parsing so decompiler-specific
-            quirks don't drop the function from GED. Never applied to ``.i`` files
-            — sanitizing ground truth would be wrong.
+            quirks don't drop the function from GED. Never applied to preprocessed
+            files — sanitizing ground truth would be wrong.
+        preprocess_decompiled: Expand local preprocessing directives after
+            sanitization. Disable only to reproduce historical decompiled-side
+            CFG inputs for an audit.
+        raise_on_error: Propagate parser failures instead of treating them as an
+            empty parse. Batch reevaluation uses this to keep failed work pending.
 
     Returns:
         Dictionary mapping function names to CFG DiGraphs
     """
     try:
         from pyjoern import parse_source
-    except ImportError:
+    except ImportError as e:
         raise ImportError(
             "pyjoern is required for CFG extraction. " "Install with: pip install pyjoern"
-        )
+        ) from e
 
-    cfgs = {}
-    # Always parse via a UNIQUE temp .c: Joern names its workspace after the input
-    # file's basename, so parsing the same filename concurrently (e.g. the same
-    # function file across opt levels) would collide. A unique temp name avoids
-    # that. For .i we also strip the inlined system headers first.
-    temp_c_path = Path(tempfile.mktemp(suffix=".c"))
-    if source_path.suffix == ".i":
-        temp_c_path.write_text(strip_system_headers(source_path.read_text(errors="replace")))
-    else:
-        text = source_path.read_text(errors="replace")
-        if sanitize_decompiled:
-            text = sanitize_decompiled_c(text)
-        temp_c_path.write_text(text)
+    cfgs: dict[str, DiGraph] = {}
+    text = source_path.read_text(errors="replace")
+    if source_path.suffix in PREPROC_EXTS:
+        text = strip_system_headers(text)
+    elif sanitize_decompiled:
+        text = sanitize_decompiled_c(text)
+        if preprocess_decompiled:
+            text = preprocess_decompiled_c(text)
+
+    # Joern names its workspace after the input basename, so a unique temp name is
+    # what keeps concurrent parses of the same filename from colliding. The suffix
+    # is what selects Joern's frontend (see :func:`temp_parse_suffix`).
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=temp_parse_suffix(source_path), delete=False
+    ) as f:
+        f.write(text)
+        temp_c_path = Path(f.name)
     parse_path = temp_c_path
 
     try:
-        # parse_source returns dict[str, Function] or dict[tuple[str,str], Function]
         parsed = parse_source(parse_path)
 
         if parsed is None:
+            if raise_on_error:
+                raise RuntimeError(f"Joern returned no parse result for {source_path}")
             return cfgs
 
-        # Extract CFGs for each function
         for key, func in parsed.items():
             func_name = func.name if hasattr(func, "name") else str(key)
             cfg = func.cfg if hasattr(func, "cfg") else None
@@ -220,6 +421,8 @@ def extract_cfgs_from_source(
 
     except Exception as e:
         logger.warning("CFG extraction from source %s failed: %s", source_path, e)
+        if raise_on_error:
+            raise
     finally:
         if temp_c_path is not None:
             temp_c_path.unlink(missing_ok=True)
@@ -240,21 +443,19 @@ def extract_cfgs_from_decompilation(
     """
     try:
         from pyjoern import parse_source
-    except ImportError:
+    except ImportError as e:
         raise ImportError(
             "pyjoern is required for CFG extraction. " "Install with: pip install pyjoern"
-        )
+        ) from e
 
-    cfgs = {}
+    cfgs: dict[str, DiGraph] = {}
 
-    # Write decompiled code to temp file and parse
     with tempfile.NamedTemporaryFile(mode="w", suffix=".c", delete=False) as f:
-        # Write all functions, sanitizing decompiler-specific C quirks that would
-        # otherwise break Joern's parse and drop the function from GED coverage.
-        for func in decompilation.functions.values():
-            f.write(f"// Function: {func.name}\n")
-            f.write(sanitize_decompiled_c(func.decompiled_code))
-            f.write("\n\n")
+        marked_sources = [
+            (f"// Function: {func.name}\n" f"{sanitize_decompiled_c(func.decompiled_code)}")
+            for func in decompilation.functions.values()
+        ]
+        f.write(preprocess_decompiled_c("\n\n".join(marked_sources)))
 
         temp_path = Path(f.name)
 
@@ -275,66 +476,3 @@ def extract_cfgs_from_decompilation(
         temp_path.unlink(missing_ok=True)
 
     return cfgs
-
-
-def cfg_to_dict(cfg: DiGraph) -> dict:  # type: ignore
-    """Convert a CFG to a serializable dictionary.
-
-    Args:
-        cfg: NetworkX DiGraph
-
-    Returns:
-        Dictionary representation
-    """
-    return {
-        "nodes": list(cfg.nodes()),
-        "edges": list(cfg.edges()),
-        "node_count": cfg.number_of_nodes(),
-        "edge_count": cfg.number_of_edges(),
-    }
-
-
-def compute_cfg_stats(cfg: DiGraph) -> dict:  # type: ignore
-    """Compute statistics about a CFG.
-
-    Args:
-        cfg: NetworkX DiGraph
-
-    Returns:
-        Dictionary of statistics
-    """
-    import networkx as nx
-
-    nodes = cfg.number_of_nodes()
-    edges = cfg.number_of_edges()
-
-    stats = {
-        "nodes": nodes,
-        "edges": edges,
-        "size": nodes + edges,
-        "cyclomatic_complexity": edges - nodes + 2,
-    }
-
-    # Try to compute more stats
-    try:
-        if nodes > 0:
-            stats["density"] = nx.density(cfg)
-
-            # Find entry and exit nodes
-            in_degrees = dict(cfg.in_degree())
-            out_degrees = dict(cfg.out_degree())
-
-            entry_nodes = [n for n, d in in_degrees.items() if d == 0]
-            exit_nodes = [n for n, d in out_degrees.items() if d == 0]
-
-            stats["entry_nodes"] = len(entry_nodes)
-            stats["exit_nodes"] = len(exit_nodes)
-
-            # Average branching factor
-            if nodes > 0:
-                stats["avg_out_degree"] = sum(out_degrees.values()) / nodes
-
-    except Exception:
-        pass
-
-    return stats

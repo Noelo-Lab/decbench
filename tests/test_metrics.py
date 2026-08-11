@@ -39,7 +39,7 @@ class TestMetricRegistry:
         with pytest.raises(KeyError):
             MetricRegistry.get("nonexistent")
 
-    def test_get_all(self) -> None:
+    def test_list_registered(self) -> None:
         @register_metric("m1")
         class M1(Metric):
             name = "m1"
@@ -54,9 +54,9 @@ class TestMetricRegistry:
             def compute_for_function(self, decompiled, **kwargs):
                 return MetricValue(value=0.0)
 
-        all_metrics = MetricRegistry.get_all()
-        assert "m1" in all_metrics
-        assert "m2" in all_metrics
+        registered = MetricRegistry.list_registered()
+        assert "m1" in registered
+        assert "m2" in registered
 
 
 class TestGEDMetric:
@@ -97,12 +97,9 @@ class TestGEDMetric:
 
         from decbench.metrics.ged import GEDMetric
 
-        # What Joern produces when it only sees a declaration: one lone node.
         source = nx.DiGraph()
         source.add_node("decl_only")
 
-        # A truncated (prologue-only) decompilation stub: also one node. Under
-        # exact GED these "match" for 0 — the exact artifact being excluded.
         stub = nx.DiGraph()
         stub.add_node("stub_block")
 
@@ -118,14 +115,11 @@ class TestGEDMetric:
         assert "degenerate source CFG" in result.metadata["error"]
         assert result.metadata["source_nodes"] == 1
 
-        # A degenerate source must exclude the function no matter how big the
-        # decompiled CFG is (previously: bigger output = worse score).
         big = nx.DiGraph()
         big.add_edges_from((i, i + 1) for i in range(10))
         result_big = metric.compute_for_function(func, source_cfg=source, decompiled_cfg=big)
         assert result_big.value == float("inf")
 
-        # An empty source graph is degenerate too.
         empty = nx.DiGraph()
         result_empty = metric.compute_for_function(func, source_cfg=empty, decompiled_cfg=stub)
         assert result_empty.value == float("inf")
@@ -137,7 +131,6 @@ class TestGEDMetric:
 
         from decbench.metrics.ged import GEDMetric
 
-        # cfgutils expects nodes with is_entrypoint attribute
         class CFGNode:
             def __init__(self, addr: int, is_entry: bool = False, is_exit: bool = False):
                 self.addr = addr
@@ -166,6 +159,274 @@ class TestGEDMetric:
         metric = GEDMetric()
         result = metric.compute_for_function(func, source_cfg=g, decompiled_cfg=g)
         assert result.value == 0.0
+
+    def test_ged_large_isomorphic_cfgs_bypass_limit(self, monkeypatch) -> None:
+        """Graph isomorphism is checked before the VJ-GED size cutoff."""
+        import networkx as nx
+
+        import decbench.metrics.ged as ged_module
+        from decbench.metrics.ged import GEDMetric
+
+        class CFGNode:
+            def __init__(self, index: int, *, entry: bool = False, exit: bool = False):
+                self.index = index
+                self.is_entrypoint = entry
+                self.is_exitpoint = exit
+
+        def path_graph() -> nx.DiGraph:
+            nodes = [CFGNode(i, entry=i == 0, exit=i == 7) for i in range(8)]
+            graph = nx.DiGraph()
+            graph.add_edges_from(zip(nodes, nodes[1:], strict=False))
+            return graph
+
+        monkeypatch.setattr(ged_module, "GED_MAX_NODES", 3)
+        monkeypatch.setenv("DECBENCH_NO_CACHE", "1")
+        metric = GEDMetric()
+        metric._get_vj_ged = lambda: pytest.fail("VJ-GED must not run for isomorphic CFGs")
+        func = FunctionDecompilation(name="test", address=0x1000, decompiled_code="")
+
+        result = metric.compute_for_function(
+            func,
+            source_cfg=path_graph(),
+            decompiled_cfg=path_graph(),
+        )
+
+        assert result.value == 0.0
+        assert result.metadata["method"] == "isomorphism"
+        assert result.metadata["isomorphic"] is True
+
+    def test_refined_isomorphism_matches_role_aware_networkx(self) -> None:
+        """Joint refinement only prunes; it does not change isomorphism."""
+        import random
+
+        import networkx as nx
+
+        from decbench.metrics.ged import _is_isomorphic, _role_graph
+
+        class CFGNode:
+            def __init__(self, index: int, *, entry: bool = False, exit: bool = False):
+                self.index = index
+                self.is_entrypoint = entry
+                self.is_exitpoint = exit
+
+        rng = random.Random(20260728)
+        role_match = nx.algorithms.isomorphism.categorical_node_match(
+            "role",
+            (False, False),
+        )
+        for node_count in range(2, 18):
+            source_nodes = [
+                CFGNode(
+                    index,
+                    entry=index == 0,
+                    exit=index == node_count - 1,
+                )
+                for index in range(node_count)
+            ]
+            decompiled_nodes = [
+                CFGNode(
+                    index,
+                    entry=index == 0,
+                    exit=index == node_count - 1,
+                )
+                for index in range(node_count)
+            ]
+            source = nx.DiGraph()
+            source.add_nodes_from(source_nodes)
+            for left in source_nodes:
+                for right in source_nodes:
+                    if left is not right and rng.random() < 0.14:
+                        source.add_edge(left, right)
+
+            permutation = list(range(node_count))
+            rng.shuffle(permutation)
+            decompiled = nx.DiGraph()
+            decompiled.add_nodes_from(decompiled_nodes[index] for index in permutation)
+            decompiled.add_edges_from(
+                (
+                    decompiled_nodes[left.index],
+                    decompiled_nodes[right.index],
+                )
+                for left, right in source.edges()
+            )
+
+            assert _is_isomorphic(source, decompiled)
+            assert nx.is_isomorphic(
+                _role_graph(source),
+                _role_graph(decompiled),
+                node_match=role_match,
+            )
+
+            if source.number_of_edges() > 0:
+                left, right = next(iter(decompiled.edges()))
+                decompiled.remove_edge(left, right)
+                expected = nx.is_isomorphic(
+                    _role_graph(source),
+                    _role_graph(decompiled),
+                    node_match=role_match,
+                )
+                assert _is_isomorphic(source, decompiled) is expected
+
+    def test_ged_large_role_mismatch_cannot_approximate_to_zero(self, monkeypatch) -> None:
+        """Equal-sized non-isomorphic CFGs remain non-perfect above the cutoff."""
+        import networkx as nx
+
+        import decbench.metrics.ged as ged_module
+        from decbench.metrics.ged import GEDMetric
+
+        class CFGNode:
+            def __init__(self, index: int, *, entry: bool = False, exit: bool = False):
+                self.index = index
+                self.is_entrypoint = entry
+                self.is_exitpoint = exit
+
+        def path_graph(*, reverse_roles: bool) -> nx.DiGraph:
+            nodes = [
+                CFGNode(
+                    i,
+                    entry=i == (7 if reverse_roles else 0),
+                    exit=i == (0 if reverse_roles else 7),
+                )
+                for i in range(8)
+            ]
+            graph = nx.DiGraph()
+            graph.add_edges_from(zip(nodes, nodes[1:], strict=False))
+            return graph
+
+        monkeypatch.setattr(ged_module, "GED_MAX_NODES", 3)
+        monkeypatch.setenv("DECBENCH_NO_CACHE", "1")
+        metric = GEDMetric()
+        metric._get_vj_ged = lambda: pytest.fail("VJ-GED must not run above the cutoff")
+        func = FunctionDecompilation(name="test", address=0x1000, decompiled_code="")
+
+        result = metric.compute_for_function(
+            func,
+            source_cfg=path_graph(reverse_roles=False),
+            decompiled_cfg=path_graph(reverse_roles=True),
+        )
+
+        assert result.value == 1.0
+        assert result.metadata["method"] == "size_lower_bound"
+        assert result.metadata["isomorphic"] is False
+        assert result.metadata["approximated"] is True
+
+    def test_ged_nonisomorphic_vj_zero_cannot_be_perfect(self, monkeypatch) -> None:
+        """VJ-GED's degree-only zero is not a perfect structural match."""
+        pytest.importorskip("cfgutils")
+        import networkx as nx
+
+        from decbench.metrics.ged import GEDMetric
+
+        class CFGNode:
+            is_entrypoint = False
+            is_exitpoint = False
+
+        source_nodes = [CFGNode() for _ in range(6)]
+        source = nx.DiGraph()
+        source.add_edges_from(
+            (source_nodes[index], source_nodes[(index + 1) % 6]) for index in range(6)
+        )
+
+        decompiled_nodes = [CFGNode() for _ in range(6)]
+        decompiled = nx.DiGraph()
+        decompiled.add_edges_from(
+            [
+                (decompiled_nodes[0], decompiled_nodes[1]),
+                (decompiled_nodes[1], decompiled_nodes[2]),
+                (decompiled_nodes[2], decompiled_nodes[0]),
+                (decompiled_nodes[3], decompiled_nodes[4]),
+                (decompiled_nodes[4], decompiled_nodes[5]),
+                (decompiled_nodes[5], decompiled_nodes[3]),
+            ]
+        )
+
+        monkeypatch.setenv("DECBENCH_NO_CACHE", "1")
+        func = FunctionDecompilation(name="test", address=0x1000, decompiled_code="")
+        result = GEDMetric().compute_for_function(
+            func,
+            source_cfg=source,
+            decompiled_cfg=decompiled,
+        )
+
+        assert result.value == 1.0
+        assert result.raw_value == 0.0
+        assert result.metadata["vj_ged_raw"] == 0.0
+        assert result.metadata["isomorphic"] is False
+
+    def test_ged_vj_defaults_missing_node_roles_to_false(self, monkeypatch) -> None:
+        """Plain NetworkX nodes use the same default roles in exact and VJ paths."""
+        import math
+
+        import networkx as nx
+
+        from decbench.metrics.ged import GEDMetric
+
+        source = nx.DiGraph([(0, 1), (1, 2), (2, 3)])
+        decompiled = nx.DiGraph([(0, 1), (0, 2), (0, 3)])
+        monkeypatch.setenv("DECBENCH_NO_CACHE", "1")
+        func = FunctionDecompilation(name="test", address=0x1000, decompiled_code="")
+
+        result = GEDMetric().compute_for_function(
+            func,
+            source_cfg=source,
+            decompiled_cfg=decompiled,
+        )
+
+        assert math.isfinite(result.value)
+        assert result.value > 0.0
+        assert result.metadata["method"] == "vj_ged"
+
+    def test_accelerated_vj_ged_matches_cfgutils(self) -> None:
+        """The compiled assignment solver preserves cfgutils' VJ-GED values."""
+        import random
+
+        import networkx as nx
+        from cfgutils.similarity import vj_ged as cfgutils_vj_ged
+
+        from decbench.metrics.vj_ged import vj_ged
+
+        class CFGNode:
+            def __init__(self, index: int, *, entry: bool, exit: bool):
+                self.index = index
+                self.is_entrypoint = entry
+                self.is_exitpoint = exit
+
+        rng = random.Random(20260727)
+        for source_count in range(1, 9):
+            for decompiled_count in range(1, 9):
+                source_nodes = [
+                    CFGNode(
+                        index,
+                        entry=index == 0 and rng.random() < 0.8,
+                        exit=index == source_count - 1 and rng.random() < 0.8,
+                    )
+                    for index in range(source_count)
+                ]
+                decompiled_nodes = [
+                    CFGNode(
+                        index,
+                        entry=index == 0 and rng.random() < 0.8,
+                        exit=index == decompiled_count - 1 and rng.random() < 0.8,
+                    )
+                    for index in range(decompiled_count)
+                ]
+                source = nx.DiGraph()
+                source.add_nodes_from(source_nodes)
+                decompiled = nx.DiGraph()
+                decompiled.add_nodes_from(decompiled_nodes)
+                for left in source_nodes:
+                    for right in source_nodes:
+                        if left is not right and rng.random() < 0.2:
+                            source.add_edge(left, right)
+                for left in decompiled_nodes:
+                    for right in decompiled_nodes:
+                        if left is not right and rng.random() < 0.2:
+                            decompiled.add_edge(left, right)
+
+                assert vj_ged(source, decompiled) == cfgutils_vj_ged(
+                    source,
+                    decompiled,
+                )
 
 
 class TestTypeMatchMetric:
@@ -228,7 +489,6 @@ class TestTypeMatchMetric:
 
         metric = TypeMatchMetric()
         result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
-        # x matches, y doesn't
         assert result.value == pytest.approx(0.5)
 
     def test_type_match_no_ground_truth(self) -> None:
@@ -296,7 +556,6 @@ int main() {
                 VariableInfo(name="a1", type="char *", kind="arg", arg_index=1),
             ],
         )
-        # Register-resident args at -O2: names differ, no stack offsets.
         gt_vars = [
             {
                 "name": "count",
@@ -399,7 +658,6 @@ int main() {
         gt = extract_ground_truth_types(binary)
         assert "helper" in gt, f"helper missing from O2 ground truth: {sorted(gt)}"
         by_name = {v["name"]: v for v in gt["helper"]}
-        # Register-resident args kept, with positional indices
         assert by_name["first"]["is_arg"] is True
         assert by_name["first"]["arg_index"] == 0
         assert by_name["second"]["arg_index"] == 1
@@ -417,7 +675,6 @@ int main() {
                 VariableInfo(name="i", type="int", stack_offset=-8, kind="stack"),
             ],
         )
-        # Two shadowed locals named "i" at distinct offsets; only one recovered
         gt_vars = [
             {"name": "i", "type": ["int"], "rbp_offset": [-8], "size": 4},
             {"name": "i", "type": ["int"], "rbp_offset": [-16], "size": 4},
@@ -443,8 +700,6 @@ int main() {
         """All-single-var functions must not elect a spurious nonzero shift."""
         from decbench.metrics.type_match import _calibrate_shift_multi
 
-        # Three coincidental +4 alignments from unrelated single slots, and
-        # one function genuinely aligned at shift 0.
         pairs = [
             ([-8], [-12]),
             ([-12], [-16]),
@@ -463,7 +718,6 @@ int main() {
             decompiled_code="// no decls",
             variables=[
                 VariableInfo(name="x", type="int", stack_offset=-4, kind="stack"),
-                # argc was promoted to an argument: correct name+type, no offset
                 VariableInfo(name="argc", type="int", stack_offset=None, kind="arg"),
             ],
         )
@@ -563,8 +817,6 @@ int main() {
 
         metric = TypeMatchMetric()
         result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
-        # The local declaration is now parsed into a structured variable and
-        # matched by name via the structured matcher (value unchanged at 1.0).
         assert result.metadata["matched_by"] == "structured"
         assert result.value == 1.0
 
@@ -580,8 +832,6 @@ int main() {
             decompiled_code='void wcomment(FILE *fp, int c)\n{\n    fputs("x", fp);\n}\n',
             variables=[],
         )
-        # DWARF ground truth: two arguments; the decompiler renamed the 2nd
-        # (``c`` vs ``i``), so only ABI position — not name — can match it.
         gt_vars = [
             {"name": "fp", "type": ["FILE*"], "is_arg": True, "arg_index": 0, "rbp_offset": [-8]},
             {"name": "i", "type": ["int"], "is_arg": True, "arg_index": 1, "rbp_offset": [-12]},
@@ -615,6 +865,222 @@ int main() {
         assert result.metadata["matched_by"] == "structured"
         assert result.metadata["tp"] == 1
 
+    def test_type_map_reaches_committed_pointer_spellings(self) -> None:
+        """``int4 *`` must normalize like ``int4`` does, one indirection out."""
+        from decbench.metrics.type_match import normalize_type
+
+        assert "int*" in normalize_type("int4 *")
+        assert "int*" in normalize_type("int4*")
+        assert "long long*" in normalize_type("size_t *")
+        assert "char**" in normalize_type("uint8_t **")
+        # An unmapped pointee is left exactly as it was.
+        assert normalize_type("Slice *") == {"Slice *", "Slice*"}
+
+    def test_pointer_normalization_does_not_cross_widths(self) -> None:
+        """``int4 *`` is not ``long long*``, and a scalar never becomes a pointer."""
+        from decbench.metrics.type_match import normalize_type
+
+        assert "long long*" not in normalize_type("int4 *")
+        assert not any("*" in f for f in normalize_type("int4"))
+
+    def test_placeholder_pointees_are_never_mapped(self) -> None:
+        """A pointer to N UNKNOWN bytes is not a recovery of a committed type.
+
+        ``undefinedN`` (Ghidra/kuna TYPE_UNKNOWN) and ``_BYTE``/``_WORD``/
+        ``_DWORD``/``_QWORD`` (Hex-Rays unknown-width slots) are the only
+        TYPE_MAP rows excluded from the pointee mapping; every other row names a
+        committed C type and is mapped.
+        """
+        from decbench.metrics.type_match import _POINTEE_MAP, TYPE_MAP, normalize_type
+
+        assert set(TYPE_MAP) - set(_POINTEE_MAP) == {
+            "undefined",
+            "undefined1",
+            "undefined2",
+            "undefined4",
+            "undefined8",
+            "_BYTE",
+            "_WORD",
+            "_DWORD",
+            "_QWORD",
+        }
+        for form in ("undefined8 *", "_QWORD *", "_BYTE *", "undefined *", "undefined1 **"):
+            assert normalize_type(form) == {form, form.replace(" ", "")}
+        # The scalar rows are untouched -- only the POINTER spelling is excluded.
+        assert "long long" in normalize_type("undefined8")
+        assert "int" in normalize_type("_DWORD")
+
+    def test_uncommitted_pointer_is_a_miss_against_ground_truth(self) -> None:
+        """End to end: ``undefined8 *`` must not score as a recovery of ``size_t *``."""
+        from decbench.metrics.type_match import TypeMatchMetric, normalize_type
+
+        # The DWARF payload is normalized at extraction time, so normalize here too.
+        gt_vars = [
+            {
+                "name": "n",
+                "type": sorted(normalize_type("size_t*")),
+                "is_arg": True,
+                "arg_index": 0,
+            }
+        ]
+
+        def score(decompiled_type: str) -> float:
+            func = FunctionDecompilation(
+                name="f",
+                address=0x1000,
+                decompiled_code="// no decls",
+                variables=[VariableInfo(name="a1", type=decompiled_type, kind="arg", arg_index=0)],
+            )
+            return TypeMatchMetric().compute_for_function(func, ground_truth_vars=gt_vars).value
+
+        assert score("undefined8 *") == 0.0
+        assert score("_QWORD *") == 0.0
+        # ... while a committed spelling of the same type still matches.
+        assert score("size_t *") == 1.0
+        assert score("unsigned long long *") == 1.0
+
+    def test_ground_truth_payload_is_hash_seed_independent(self, tmp_path) -> None:
+        """The DWARF payload feeds the metric cache key through ``stable_hash``,
+        which sorts dict keys but NOT list elements. Unsorted lists made the key
+        depend on ``PYTHONHASHSEED``, so the disk cache mostly missed across
+        processes."""
+        import os
+        import shutil
+        import subprocess
+        import sys
+
+        cc = shutil.which("cc") or shutil.which("gcc")
+        if cc is None:
+            pytest.skip("no C compiler available")
+
+        src = tmp_path / "t.c"
+        src.write_text(
+            "#include <stddef.h>\n"
+            "int helper(int first, char *second, size_t third) {\n"
+            "    long fourth = first * 2;\n"
+            "    unsigned char fifth = (unsigned char)third;\n"
+            "    return fourth + (second != 0) + fifth;\n"
+            "}\n"
+            "int main(int argc, char **argv) { return helper(argc, argv[0], 1); }\n"
+        )
+        binary = tmp_path / "t"
+        subprocess.run([cc, "-g", "-O0", "-o", str(binary), str(src)], check=True)
+
+        prog = (
+            "import json,sys;"
+            "from decbench.caching import stable_hash;"
+            "from decbench.metrics.type_match import extract_ground_truth_types;"
+            "print(stable_hash(extract_ground_truth_types(sys.argv[1])))"
+        )
+        digests = set()
+        for seed in ("0", "1", "12345"):
+            env = {**os.environ, "PYTHONHASHSEED": seed}
+            out = subprocess.run(
+                [sys.executable, "-c", prog, str(binary)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            digests.add(out.stdout.strip())
+        assert len(digests) == 1, f"ground-truth hash varies with PYTHONHASHSEED: {digests}"
+
+    def test_namespace_qualifier_is_stripped(self) -> None:
+        """DWARF's ``DW_AT_name`` is unqualified, so IDA's ``leveldb::X *``
+        needs the qualifier dropped to reach ground truth."""
+        from decbench.metrics.type_match import normalize_type
+
+        assert "TableBuilder*" in normalize_type("leveldb::TableBuilder *")
+        assert "Mutex*" in normalize_type("leveldb::port::Mutex *")
+        assert "string" in normalize_type("std::string")
+
+    def test_namespace_strip_leaves_c_types_alone(self) -> None:
+        """No C spelling gains a form from the qualifier strip — including a
+        Ghidra symbol-version prefix, whose token starts with a digit."""
+        from decbench.metrics.type_match import normalize_type
+
+        assert normalize_type("unsigned int") == {"unsigned int", "int"}
+        assert normalize_type("char *") == {"char *", "char*"}
+        assert normalize_type("GLIBC_2.2.5::stderr") == {"GLIBC_2.2.5::stderr"}
+
+    def test_namespaced_pointer_matches_unqualified_ground_truth(self) -> None:
+        """End to end: IDA's C++ spelling scores against the DWARF name."""
+        from decbench.metrics.type_match import TypeMatchMetric
+
+        func = FunctionDecompilation(
+            name="Add",
+            address=0x1000,
+            decompiled_code="// no decls",
+            variables=[
+                VariableInfo(name="a1", type="leveldb::TableBuilder *", kind="arg", arg_index=0),
+            ],
+        )
+        gt_vars = [
+            {"name": "this", "type": ["TableBuilder*"], "is_arg": True, "arg_index": 0},
+        ]
+
+        result = TypeMatchMetric().compute_for_function(func, ground_truth_vars=gt_vars)
+        assert result.value == 1.0
+
+    def test_reference_ground_truth_is_a_pointer(self, tmp_path) -> None:
+        """A C++ reference parameter must land as a pointer type, not ``void``.
+
+        Every decompiler renders a reference as a pointer, so ``void`` made those
+        ground-truth variables unmatchable for all of them.
+        """
+        import shutil
+        import subprocess
+
+        if shutil.which("g++") is None:
+            pytest.skip("needs g++")
+
+        from decbench.metrics.type_match import extract_ground_truth_types
+
+        src = tmp_path / "r.cc"
+        src.write_text(
+            "struct Blob { int a; int b; };\n"
+            "int Take(const Blob& in, Blob&& moved) { return in.a + moved.b; }\n"
+            "int main() { Blob b{1, 2}; return Take(b, Blob{3, 4}); }\n"
+        )
+        binary = tmp_path / "r.bin"
+        subprocess.run(
+            ["g++", "-g", "-O0", str(src), "-o", str(binary)], check=True, capture_output=True
+        )
+
+        take = extract_ground_truth_types(binary).get("Take")
+        assert take is not None
+        by_name = {v["name"]: v for v in take}
+        assert "Blob*" in by_name["in"]["type"]
+        assert "Blob*" in by_name["moved"]["type"]
+        assert by_name["in"]["type"] != ["void"]
+
+    def test_c_ground_truth_has_no_reference_types(self, tmp_path) -> None:
+        """The reference arm cannot move a C result: C has no reference DIEs."""
+        import shutil
+        import subprocess
+
+        if shutil.which("gcc") is None:
+            pytest.skip("needs gcc")
+
+        from decbench.utils import binfmt
+
+        src = tmp_path / "c.c"
+        src.write_text(
+            "struct Blob { int a; };\n"
+            "int take(const struct Blob *in, int n) { return in->a + n; }\n"
+            "int main(void) { struct Blob b = {1}; return take(&b, 2); }\n"
+        )
+        binary = tmp_path / "c.bin"
+        subprocess.run(
+            ["gcc", "-g", "-O0", str(src), "-o", str(binary)], check=True, capture_output=True
+        )
+
+        dw = binfmt.dwarf_info(binary)
+        assert dw is not None
+        tags = {die.tag for cu in dw.iter_CUs() for die in cu.iter_DIEs()}
+        assert "DW_TAG_reference_type" not in tags
+        assert "DW_TAG_rvalue_reference_type" not in tags
+
 
 class TestByteMatchMetric:
     """Tests for the byte match metric."""
@@ -645,20 +1111,17 @@ class TestByteMatchMetric:
     def test_jaccard_similarity(self) -> None:
         from decbench.metrics.byte_match import _compute_jaccard_similarity
 
-        # Returns (similarity, changed_lines). Identical -> perfect, 0 changes.
         lines = ["mov rax, rbx", "add rax, 1", "ret"]
         sim, changed = _compute_jaccard_similarity(lines, lines)
         assert sim == 1.0
         assert changed == 0
 
-        # Completely different -> 0 similarity, every line changed on both sides.
         lines_a = ["mov rax, rbx", "ret"]
         lines_b = ["push rbp", "pop rbp"]
         sim, changed = _compute_jaccard_similarity(lines_a, lines_b)
         assert sim == 0.0
         assert changed == len(lines_a) + len(lines_b)
 
-        # Empty
         sim, changed = _compute_jaccard_similarity([], [])
         assert sim == 1.0
         assert changed == 0

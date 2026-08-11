@@ -1,11 +1,11 @@
 #!/usr/bin/env python
-"""Compile every sailr project at every opt level into a persistent dir.
+"""Compile every corpus project at every opt level into a persistent dir.
 
 Build-verification driver: runs the real ``compile_project`` code path for
 each (project, opt) pair in parallel, persisting binaries under
 ``<out>/<opt>/<project>/compiled/`` so a later ``--skip-compile`` decompile
-+ evaluate run can reuse them. Prints a per-target binary/.i count table and
-writes ``compile_report.json`` for the orchestrator.
++ evaluate run can reuse them. Prints a per-target binary/preprocessed count
+table and writes ``compile_report.json`` for the orchestrator.
 
 Set ``DECBENCH_OPT_LEVELS`` to a comma-separated list (for example ``O2``)
 when an experiment must build only selected optimization levels.
@@ -24,18 +24,18 @@ from pathlib import Path
 
 from decbench.models.project import OptimizationLevel, Project
 from decbench.pipeline.compile import compile_project
+from decbench.utils.langs import PREPROC_EXTS, SOURCE_EXTS
 
-# Use 'spawn': fresh worker processes with no inherited lock state. The default
 # 'fork' deadlocks when a worker is forked while the parent's pool-management
-# thread holds an internal mutex (observed: late workers wedged on futex_wait
-# with downloads done but never extracted).
+# thread holds an internal mutex.
 _MP = multiprocessing.get_context("spawn")
 
-# All benchmark project dirs (top-level *.toml only; cps/disabled/ is excluded
-# since glob is non-recursive). sailr is x86 (host-compilable); cps (ARM) and
-# malware (ARM/PE) need the cross/mingw toolchains, so those are compiled inside
-# the decbench-cps-toolchain Docker image. Restrict with the trailing `only` args.
-PROJECT_DIRS = [Path("projects/sailr"), Path("projects/cps"), Path("projects/malware")]
+PROJECT_DIRS = [
+    Path("projects/sailr"),
+    Path("projects/cps"),
+    Path("projects/malware"),
+    Path("projects/cpp"),
+]
 
 
 def gather_tomls() -> list[Path]:
@@ -59,17 +59,18 @@ if os.environ.get("DECBENCH_OPT_LEVELS"):
 
 
 def _count_outputs(out_dir: Path, opt: str, name: str) -> tuple[int, int]:
-    """Return (elf_binary_count, i_file_count) in the compiled dir."""
+    """Return (elf_binary_count, preprocessed_file_count) in the compiled dir."""
     import struct
 
     compiled = out_dir / opt / name / "compiled"
     if not compiled.is_dir():
         return (0, 0)
+    skip = (".o", ".a", ".s", ".h", *PREPROC_EXTS, *SOURCE_EXTS)
     elfs = 0
     for entry in compiled.iterdir():
         if not entry.is_file() or entry.is_symlink():
             continue
-        if entry.suffix in (".i", ".o", ".a", ".s", ".c", ".h"):
+        if entry.suffix in skip:
             continue
         try:
             with open(entry, "rb") as f:
@@ -80,7 +81,7 @@ def _count_outputs(out_dir: Path, opt: str, name: str) -> tuple[int, int]:
                     elfs += 1
         except (OSError, struct.error):
             continue
-    i_files = len(list(compiled.glob("*.i")))
+    i_files = sum(len(list(compiled.glob(f"*{ext}"))) for ext in PREPROC_EXTS)
     return (elfs, i_files)
 
 
@@ -127,7 +128,7 @@ def _build_one(toml_path: str, opt_value: str, out_dir: str) -> dict:
 def main() -> int:
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("results/sailr_full")
     workers = int(sys.argv[2]) if len(sys.argv) > 2 else 78
-    only = set(sys.argv[3:])  # optional: restrict to these project stems
+    only = set(sys.argv[3:])
 
     out_dir.mkdir(parents=True, exist_ok=True)
     tomls = gather_tomls()
@@ -158,7 +159,6 @@ def main() -> int:
                 flush=True,
             )
 
-    # Per-project summary across opt levels
     by_proj: dict[str, dict[str, int]] = {}
     for r in reports:
         by_proj.setdefault(r["project"], {})[r["opt"]] = r["elf_binaries"]

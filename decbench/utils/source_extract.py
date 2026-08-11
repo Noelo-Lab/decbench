@@ -7,17 +7,19 @@ parser, so this is heuristic but conservative:
 
 1. Read the function's ``decl_file`` / ``decl_line`` from the binary's DWARF
    (when present) to know *which* source file and roughly *where*.
-2. Find the matching original ``.c`` next to the binary (the compile stage keeps
-   per-binary sources in ``compiled/``), then locate the function *definition*
-   (not a call/prototype) and brace-match its body. K&R-style definitions are
-   accepted too (bare-identifier param list guarded against prototypes).
-3. Fall back to the preprocessed ``.i`` next to the binary when no ``.c`` carries
-   the definition (nested-tree projects keep only ``.i`` in ``compiled/``). The
-   ``.i`` text is macro-expanded, so it is only used when a real ``.c`` is absent.
+2. Find the matching original ``.c``/``.cc``/``.cpp`` next to the binary (the
+   compile stage keeps per-binary sources in ``compiled/``), then locate the
+   function *definition* (not a call/prototype) and brace-match its body.
+   K&R-style definitions are accepted too (bare-identifier param list guarded
+   against prototypes).
+3. Fall back to the preprocessed ``.i``/``.ii`` next to the binary when no
+   original source carries the definition (nested-tree projects keep only the
+   preprocessed unit in ``compiled/``). That text is macro-expanded, so it is
+   only used when a real source file is absent.
 
 :func:`function_source_ex` returns ``(code, status)`` where an empty ``status``
-means the code came from a ``.c``, ``"preprocessed"`` means it came from a ``.i``,
-and the miss codes (``binary_not_found`` / ``no_source_files`` /
+means the code came from an original source, ``"preprocessed"`` means it came
+from a ``.i``/``.ii``, and the miss codes (``binary_not_found`` / ``no_source_files`` /
 ``func_not_in_sources`` / ``extract_failed``) say why ``code`` is ``None``.
 Returns ``None`` whenever anything is uncertain rather than guessing wrong.
 """
@@ -28,9 +30,16 @@ import os
 import re
 from pathlib import Path
 
+from decbench.utils import binfmt
+from decbench.utils.langs import PREPROC_EXTS, SOURCE_EXTS, strip_source_ext
+
 
 def _dwarf_decl(binary_path: Path) -> dict[str, tuple[str, int]]:
     """Map function name -> (decl_file basename, decl_line) from DWARF.
+
+    Attributes are read through ``DW_AT_specification``/``DW_AT_abstract_origin``
+    so a C++ out-of-line member definition, which carries none of them itself,
+    still resolves to its declaring file and line.
 
     Empty dict when DWARF is missing/unreadable (callers then search all
     sibling sources without a line hint).
@@ -46,33 +55,21 @@ def _dwarf_decl(binary_path: Path) -> dict[str, tuple[str, int]]:
             if not elf.has_dwarf_info():
                 return out
             dw = elf.get_dwarf_info()
+            file_tables: dict[int, list] = {}
             for cu in dw.iter_CUs():
-                lp = dw.line_program_for_CU(cu)
-                # DW_AT_decl_file indexing differs by DWARF version: pre-v5 is
-                # 1-based (entry 0 is unused), v5 is 0-based (entry 0 is the
-                # primary source). Prepend a placeholder only for pre-v5 so the
-                # index lines up either way.
-                version = 4
-                if lp is not None:
-                    version = lp.header.get("version", cu.header.get("version", 4))
-                files: list = [] if version >= 5 else [None]
-                if lp is not None:
-                    for fe in lp["file_entry"]:
-                        nm = fe.name
-                        files.append(nm.decode() if isinstance(nm, bytes) else nm)
                 for die in cu.iter_DIEs():
-                    if die.tag != "DW_TAG_subprogram":
+                    if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
                         continue
-                    attrs = die.attributes
-                    if "DW_AT_name" not in attrs or "DW_AT_low_pc" not in attrs:
+                    name = binfmt.die_str_attr(die, "DW_AT_name")
+                    if name is None:
                         continue
-                    nm = attrs["DW_AT_name"].value
-                    name = nm.decode() if isinstance(nm, bytes) else nm
-                    fi = attrs.get("DW_AT_decl_file")
-                    ln = attrs.get("DW_AT_decl_line")
+                    fi, fi_owner = binfmt.die_attr_owner(die, "DW_AT_decl_file")
+                    ln = binfmt.die_attr(die, "DW_AT_decl_line")
                     fname = None
-                    if fi is not None and 0 <= fi.value < len(files):
-                        fname = files[fi.value]
+                    if fi is not None:
+                        files = binfmt.cu_file_table(dw, fi_owner.cu, file_tables)
+                        if 0 <= fi.value < len(files):
+                            fname = files[fi.value]
                     line = int(ln.value) if ln is not None else 0
                     out[name] = (os.path.basename(fname) if fname else "", line)
     except Exception:  # noqa: BLE001
@@ -175,33 +172,28 @@ def extract_from_text(text: str, func_name: str, decl_line: int = 0) -> str | No
     """
     pat = re.compile(r"(^|[^\w])" + re.escape(func_name) + r"\s*\(")
     lines = text.splitlines(keepends=True)
-    # Precompute byte offset of each line start for decl_line proximity.
     offsets = []
     acc = 0
     for ln in lines:
         offsets.append(acc)
         acc += len(ln)
 
-    # (proximity, signature_start_offset, body_end_offset)
     candidates: list[tuple[int, int, int]] = []
     for m in pat.finditer(text):
         paren = text.index("(", m.start())
         close = _match_paren(text, paren)
         if close is None:
             continue
-        # The next non-space char after ')' decides definition vs prototype.
         j = close + 1
         while j < len(text) and text[j] in " \t\r\n":
             j += 1
         if j >= len(text):
             continue
         if text[j] == ";":
-            continue  # prototype / forward declaration, never a definition
+            continue
         if text[j] != "{":
-            # Possible K&R definition. The ';' guard above is essential: an
-            # empty/bare-param prototype would otherwise let the loose scan below
-            # stitch across to an unrelated later '{'. Accept only a bare-
-            # identifier param list, then a run of ';'-terminated declarations.
+            # The ';' guard above is essential: an empty/bare-param prototype would let the
+            # loose scan below stitch across to an unrelated later '{'.
             params = text[paren + 1 : close]
             if not re.fullmatch(r"[\s\w,]*", params):
                 continue
@@ -209,14 +201,8 @@ def extract_from_text(text: str, func_name: str, decl_line: int = 0) -> str | No
             if body is None:
                 continue
             j = body
-        # Reject if this looks like a call inside another body: require the
-        # token before the name (ignoring the return type) to start a logical
-        # line — i.e. the line's first non-space isn't itself a statement.
-        line_no = text.count("\n", 0, m.start())  # 0-based
-        # Find start of the signature: walk back to the line that begins the
-        # return type (previous blank line or '}' / ';').
+        line_no = text.count("\n", 0, m.start())
         sig_start = text.rfind("\n", 0, m.start())
-        # extend upward over the return-type line(s)
         k = line_no
         while k > 0:
             prev = lines[k - 1].strip()
@@ -242,23 +228,19 @@ def function_source_ex(binary_path: Path | None, func_name: str) -> tuple[str | 
     """Best-effort source text for ``func_name`` plus a provenance/miss status.
 
     Searches the sources kept next to the binary (the compile stage writes them
-    into ``compiled/``), guided by DWARF when available: ``.c`` first (readable
-    original), then the preprocessed ``.i`` (macro-expanded fallback for nested-
-    tree projects that keep only ``.i``). Within each extension the DWARF-named
-    file is tried first.
+    into ``compiled/``), guided by DWARF when available: the original ``.c``/
+    ``.cc``/``.cpp`` first (readable), then the preprocessed ``.i``/``.ii``
+    (macro-expanded fallback for nested-tree projects that keep only those).
+    Within each extension the DWARF-named file is tried first.
 
     Returns ``(code, status)`` where ``status`` is ``""`` when ``code`` came from
-    a ``.c``, ``"preprocessed"`` when from a ``.i``, and one of
-    ``"binary_not_found"`` / ``"no_source_files"`` / ``"func_not_in_sources"`` /
-    ``"extract_failed"`` when ``code`` is ``None``.
+    an original source, ``"preprocessed"`` when from a preprocessed unit, and one
+    of ``"binary_not_found"`` / ``"no_source_files"`` / ``"func_not_in_sources"``
+    / ``"extract_failed"`` when ``code`` is ``None``.
     """
     if binary_path is None:
         return None, "binary_not_found"
     binary_path = Path(binary_path)
-    # A missing binary only loses the DWARF *hint* (_dwarf_decl swallows the open
-    # failure); the sibling sources may still hold the function — e.g. a partial
-    # results snapshot whose artifacts were pruned but whose .c/.i were kept. Only
-    # a missing directory means there is nothing to search at all.
     if not binary_path.parent.is_dir():
         return None, "binary_not_found"
 
@@ -269,16 +251,15 @@ def function_source_ex(binary_path: Path | None, func_name: str) -> tuple[str | 
 
     any_sources = False
     found_name = False
-    for ext in (".c", ".i"):
+    for ext in (*SOURCE_EXTS, *PREPROC_EXTS):
         sources = sorted(p for p in search_dir.glob(f"*{ext}") if p.is_file())
         if not sources:
             continue
         any_sources = True
-        # Prefer the DWARF-named file (matched on stem, since decl_file is foo.c
-        # but the preprocessed file is foo.i), then any file containing the name.
+        original = ext in SOURCE_EXTS
         ordered: list[Path] = []
         if decl_stem:
-            ordered = [p for p in sources if p.stem == decl_stem]
+            ordered = [p for p in sources if strip_source_ext(p.stem) == decl_stem]
         ordered += [p for p in sources if p not in ordered]
 
         for p in ordered:
@@ -289,12 +270,11 @@ def function_source_ex(binary_path: Path | None, func_name: str) -> tuple[str | 
             if func_name not in text:
                 continue
             found_name = True
-            # decl_line indexes the original .c; it does not correspond to the
-            # preprocessed .i line numbers, so only use it as a hint for .c.
-            line_hint = decl_line if (ext == ".c" and p.stem == decl_stem) else 0
-            snippet = extract_from_text(text, func_name, line_hint)
+            # decl_line indexes the original source, not the preprocessed line numbers.
+            hit = original and strip_source_ext(p.stem) == decl_stem
+            snippet = extract_from_text(text, func_name, decl_line if hit else 0)
             if snippet:
-                return snippet, ("" if ext == ".c" else "preprocessed")
+                return snippet, ("" if original else "preprocessed")
 
     if not any_sources:
         return None, "no_source_files"

@@ -38,16 +38,6 @@ class MetricRegistry:
         return list(cls._metrics.keys())
 
     @classmethod
-    def get_all(
-        cls,
-        names: list[str] | None = None,
-        config: MetricConfig | None = None,
-    ) -> dict[str, Metric]:
-        if names is None:
-            names = cls.list_registered()
-        return {name: cls.get(name, config) for name in names if name in cls._metrics}
-
-    @classmethod
     def clear(cls) -> None:
         cls._metrics.clear()
 

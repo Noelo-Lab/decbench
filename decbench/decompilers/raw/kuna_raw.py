@@ -69,20 +69,12 @@ class RawKunaDecompiler(Decompiler):
         super().__init__(config)
         self._payload_cache: dict[str, Any] = {}
 
-    #
-    # Locating the binary (mirrors ghidra_raw's GHIDRA_INSTALL_DIR / docker's which)
-    #
-
     @staticmethod
     def _kuna_bin() -> str | None:
         env = os.environ.get("KUNA_BIN")
         if env and Path(env).is_file():
             return env
         return shutil.which("kuna")
-
-    #
-    # Decompiler interface
-    #
 
     def is_available(self) -> bool:
         return self._kuna_bin() is not None
@@ -96,29 +88,14 @@ class RawKunaDecompiler(Decompiler):
                 [kuna, "--version"], capture_output=True, text=True, timeout=30
             )
             out = (p.stdout or p.stderr or "").strip()
-            m = re.search(r"(\d+\.\d+\.\d+\S*)", out)
+            # Release builds stamp a MAJOR.MINOR version ("kuna 1.121"); dev builds
+            # fall back to the three-part Cargo version ("kuna 0.1.0").
+            m = re.search(r"(\d+\.\d+(?:\.\d+)?\S*)", out)
             if m:
                 return m.group(1)
             return out.splitlines()[0] if out else "unknown"
         except Exception:  # noqa: BLE001
             return "unknown"
-
-    def discover_functions(self, binary_path: Path) -> list[tuple[str, int]]:
-        """Enumerate (name, ELF-file-space addr) for the benchmarkable functions."""
-        if not self.is_available():
-            return []
-        try:
-            payload = self._run_decompile_all(binary_path)
-        except Exception as e:  # noqa: BLE001
-            _l.error("kuna-raw: discover failed on %s: %s", binary_path, e)
-            return []
-        text_range = common.elf_text_range(binary_path)
-        out = [
-            (str(r.get("name") or ""), int(r.get("address") or 0))
-            for r in self._records(payload)
-        ]
-        out = [(n, a) for (n, a) in out if not common.should_skip_function(n, a, text_range)]
-        return sorted(out, key=lambda x: x[1])
 
     def decompile_binary(
         self,
@@ -168,7 +145,6 @@ class RawKunaDecompiler(Decompiler):
                 ),
             )
 
-        # 1. One CLI invocation for the whole binary (load + analyze once).
         try:
             payload = self._run_decompile_all(binary_path)
         except subprocess.TimeoutExpired as e:
@@ -179,8 +155,6 @@ class RawKunaDecompiler(Decompiler):
             _l.error("kuna-raw failed on %s: %s", binary_path, e)
             return self._error_result(binary_path, start, str(e))
 
-        # 2. Index by name, filter to the benchmarkable + source-narrowed set
-        #    (skip-set -> functions allowlist -> narrow_to_source), assemble.
         records = {str(r.get("name") or ""): r for r in self._records(payload)}
         enumerated = sorted(
             (
@@ -222,32 +196,19 @@ class RawKunaDecompiler(Decompiler):
             result.to_toml(output_dir / f"{self.name}_{binary_path.stem}.toml")
         return result
 
-    #
-    # kuna CLI plumbing
-    #
-
     def _build_command(self, binary_path: Path) -> list[str]:
         kuna = self._kuna_bin()
         assert kuna is not None
         cmd = [kuna, "decompile-all", str(binary_path), "--json"]
-        # Per-FUNCTION watchdog: kuna decompile-all is load-once/decompile-many
-        # and emits its JSON only at the very end, so a single hanging function
-        # would otherwise stall the whole binary until the per-binary wall-clock
-        # SIGKILLs the process (losing EVERY function). --max-fn-seconds caps one
-        # function's decompile; an over-budget function becomes its own error
-        # record and the batch continues, so the per-binary budget can be generous
-        # (see DECOMPILER_TIMEOUT in run_benchmark.py). Default matches kuna's own
-        # default (120s); DECBENCH_KUNA_MAX_FN_SECONDS overrides ('0' disables).
+        # Per-function watchdog. kuna emits its JSON only at the very end, so without a
+        # per-function cap one hanging function stalls the binary until the wall-clock
+        # SIGKILL loses EVERY function. '0' disables.
         max_fn = os.environ.get("DECBENCH_KUNA_MAX_FN_SECONDS", "120")
         if max_fn:
             cmd += ["--max-fn-seconds", str(int(max_fn))]
-        # Optional decompiler mode (reliable|aggressive). Default (reliable) is the
-        # honest baseline; expose aggressive only as an explicit opt-in so kuna is
-        # not benchmarked with speculative passes the other backends don't get.
         mode = os.environ.get("DECBENCH_KUNA_MODE")
         if mode:
             cmd += ["--mode", mode]
-        # Any kuna stage-model `--option NAME VALUE` flags passed through config.
         for key, value in (self.config.extra_options or {}).items():
             cmd += ["--option", str(key), str(value)]
         return cmd
@@ -294,10 +255,8 @@ class RawKunaDecompiler(Decompiler):
             return self._payload_cache[key]
         cmd = self._build_command(binary_path)
         _l.debug("kuna run: %s", " ".join(cmd))
-        # start_new_session=True makes kuna lead its own process group so a
-        # timeout (or any other failure) can SIGKILL the WHOLE tree. It also
-        # means an outer harness killpg can no longer reach it — this backend
-        # must own the kill on every exit path.
+        # kuna leads its own process group, so an outer harness killpg can no longer
+        # reach it — this backend must own the kill on every exit path.
         p = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -308,8 +267,6 @@ class RawKunaDecompiler(Decompiler):
         try:
             stdout, stderr = p.communicate(timeout=self._timeout_seconds())
         finally:
-            # TimeoutExpired or ANY other exception: reap the group, then let
-            # the exception propagate unchanged so callers behave identically.
             if p.poll() is None:
                 self._kill_group(p)
         if p.returncode != 0 and not (stdout or "").strip():
@@ -329,14 +286,14 @@ class RawKunaDecompiler(Decompiler):
         self, rec: dict[str, Any], name: str, file_addr: int
     ) -> FunctionDecompilation | None:
         code = rec.get("code")
-        if not code:  # null (a per-function error) or empty -> failed
+        if not code:
             return None
         return FunctionDecompilation(
             name=name,
             address=file_addr,
             decompiled_code=str(code),
             line_count=str(code).count("\n") + 1,
-            line_mappings=[],  # no metric consumes these; kuna omits them
+            line_mappings=[],
             variables=self._variables(rec),
             metadata=common.extract_metrics(str(code)),
         )

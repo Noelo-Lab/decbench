@@ -220,13 +220,14 @@ Counts come from the actual walk (do not hardcode). Config descriptions mirror
 
 ## 5. Source-CFG serialization — `pipeline_data/source_cfgs/<opt>/<project>/<stem>.json`
 
-**GED is almost purely structural** — `cfgutils.similarity.vj_ged` (the
-metric's engine) scores from graph topology (per-node parent/child counts via a
-positional `GraphCache`) **plus** each node's `is_entrypoint` / `is_exitpoint`
-flags (an entry/exit mismatch penalty); it never reads labels or any other
-attribute. So a lossless serialization is the topology plus the entry/exit node
-ids, and nothing else. Store, per binary, the `function → CFG` map the pipeline
-used:
+**GED is almost purely structural** — the metric first performs directed
+NetworkX isomorphism over graph topology plus each node's `is_entrypoint` /
+`is_exitpoint` roles. Non-isomorphic graphs within the configured size limit
+then use DecBench's compiled linear-assignment implementation of cfgutils's
+VJ-GED cost model, whose node costs use parent/child counts plus those same
+entry/exit roles; labels and other attributes are never read.
+So a lossless serialization is the topology plus the entry/exit node ids, and
+nothing else. Store, per binary, the `function → CFG` map the pipeline used:
 
 ```jsonc
 {
@@ -237,6 +238,7 @@ used:
       "nodes": [0, 1, 2],                  // ints 0..n-1
       "edges": [[0,1],[1,2]],
       "entry": [0], "exit": [2],           // node ids carrying the entry/exit flags GED reads
+      "degenerate": false,                 // was this an empty prototype? (see below)
       "labels": {"0": "<Block: None.0, 4 statements>"}   // optional, human-readable; not used by GED
     }
   }
@@ -244,22 +246,54 @@ used:
 ```
 
 `decbench/publish/cfg_export.py` builds it by reusing
-`decbench.utils.cfg.extract_cfgs_from_source` on the binary's project `.i` files
-at that opt level and merging into a per-opt union (last-writer-wins on name
-collisions). Each DiGraph's nodes are relabeled to `0..n-1` (stable order) with
-the entry/exit node ids recorded; Joern parses are **deduplicated by
-stripped-content hash** so each unique translation unit is parsed once (Joern
-spawns a JVM per parse — the dominant cost; see the module docstring), and an
-existing `<stem>.json` is skipped. Note the pipeline itself no longer scores
-against such a union: `pipeline/evaluate.py` matches TU-aware (a binary's OWN
-translation unit first, cross-TU best-by-name only as fallback), so on a
-cross-TU name collision the exported union may hold a different same-named body
-than the one the stored GED was computed against.
+`decbench.utils.cfg.extract_cfgs_from_source` on the project's `.i` files at that
+opt level, **keeping them keyed per translation unit**, and then resolving each
+binary's map through the very same
+`best_source_by_name` / `resolved_source_for_binary` pair that
+`pipeline/evaluate.py` scores with: the binary's OWN translation unit wins, the
+cross-TU best-by-name is the fallback, and an empty prototype never displaces a
+real body. Delegating to that pair is what keeps the export from drifting from
+the scoring path (`tests/test_cfg_export.py` asserts the two agree). Each
+DiGraph's nodes are relabeled to `0..n-1` (stable order); Joern parses are
+**deduplicated by stripped-content hash** so each unique translation unit is
+parsed once (Joern spawns a JVM per parse — the dominant cost; see the module
+docstring), and an existing `<stem>.json` is skipped unless `--overwrite`.
 
-A round-trip check (`cfg_export.rebuild_cfg` on a serialized function, run
-`vj_ged` against a decompiled CFG, compare to the stored score in
-`function_results.json`) matches for spot-checked functions, modulo the
-name-collision caveat above.
+Each JSON holds only the functions **that binary** is scored on
+(`publish_dataset.py::_cfg_functions` passes `group.all_functions` as the
+`functions` filter). The filter is applied AFTER resolution, so it never changes
+which body a surviving name maps to — the cross-TU fallback still sees every TU.
+Storing the project-wide name set in every binary instead multiplies the export
+~11x (1.02M function entries vs 94k, ≈5.1 GB vs ≈0.5 GB) for names that binary
+can never be scored on. Calling `export_all_cfgs` without `functions` keeps the
+full map.
+
+`degenerate` records `is_degenerate_source_cfg` at export time. It has to be
+stored because the predicate distinguishes a real one-block body from an empty
+prototype by looking for a non-`Nop` statement, and statements are exactly what
+this serialization drops — without the flag every rebuilt one-block function
+would read as an unscorable prototype. `rebuild_cfg` restores it. JSONs written
+before the field existed simply keep the old (assume-degenerate) reading.
+
+> **Do not export a project-wide, name-keyed union.** That was the pre-fix
+> behaviour and it silently broke offline scoring (decbench#50): a
+> declaration-only view of a function — Joern emits a single `Nop` block for it —
+> overwrote the defining TU's real body whenever it sorted later, and every
+> binary of a project ended up with a byte-identical map, so per-program
+> functions (`main`, `usage`, static helpers) were scored against some other
+> binary's body. Roughly 44–67% of the exported CFGs were single-node stubs,
+> capping offline GED coverage near 39% against a published ~90%.
+
+A round-trip check matches exactly: for `diffutils/O2`, the CFGs a consumer
+rebuilds from these JSONs are structurally identical to the ones
+`pipeline/evaluate.py` resolves from `.i` for all 306 functions of all four
+binaries, and every one of the 97 scored functions has a scorable source CFG
+(the published union managed 76).
+
+For score reproduction, pass the rebuilt graph and the decompiled CFG through
+`GEDMetric.compute_for_function`; do not call `cfgutils.similarity.vj_ged`
+directly. `GEDMetric` owns the isomorphism-first fast path, the VJ-GED size
+limit, and the non-isomorphic large-graph fallback used for stored scores.
 
 ## 6. `.gitattributes` (LFS)
 

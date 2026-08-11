@@ -161,11 +161,9 @@ def main() -> None:
     if total == 0:
         print("[repair] nothing to change; not rewriting")
         return
-    # Round-trip sanity: the untouched heavyweight fields must survive the write.
     assert fd.samples is not None and fd.hardest is not None, "samples/hardest lost in round-trip"
-    # Guarded write (decbench.results_store). Flag flips only ever ADD coverage;
-    # the LLM off-slice prune legitimately REMOVES phantom rows, which the guard
-    # will report — --allow-drops is the explicit sign-off for that.
+    # Flag flips only ever ADD coverage, but the LLM off-slice prune legitimately
+    # REMOVES phantom rows — --allow-drops is the explicit sign-off for that.
     from decbench.results_store import write_function_data_guarded
 
     write_function_data_guarded(fd, root, allow_drops="--allow-drops" in sys.argv[1:])
