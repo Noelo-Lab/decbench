@@ -36,6 +36,7 @@ from decbench.experimental.local_variable_semantic_audit import (
     DecompiledAuditEvidence,
     _alias_for_identity_group,
     _replace_c_local_identifiers,
+    _require_same_non_name_evidence,
     _validate_evidence_case_coverage,
     _validate_scorer_backend,
     apply_reviewer_decisions,
@@ -79,6 +80,44 @@ def _dwarf_low_pc(binary: Path, name: str) -> int:
                 if actual == name:
                     return int(low_pc.value)
     raise AssertionError(f"no DWARF function {name}")
+
+
+def test_evidence_reconstruction_versions_usage_feature_fields() -> None:
+    legacy = {
+        "code": "",
+        "variables": [{"identity": "source:0", "name": "opaque"}],
+    }
+    reconstructed = {
+        "code": "int f(void) { return 0; }",
+        "variables": [
+            {
+                "identity": "source:0",
+                "name": "original",
+                "usage_features": {"control:return:value": 1},
+                "inferred_from_code": False,
+            }
+        ],
+    }
+
+    _require_same_non_name_evidence(
+        legacy,
+        reconstructed,
+        "legacy scorer",
+        include_usage_features=False,
+    )
+    with pytest.raises(ValueError, match="evidence differs"):
+        _require_same_non_name_evidence(
+            legacy,
+            reconstructed,
+            "v2 scorer",
+            include_usage_features=True,
+        )
+    _require_same_non_name_evidence(
+        reconstructed,
+        reconstructed,
+        "v2 scorer",
+        include_usage_features=True,
+    )
 
 
 def _decompilation(

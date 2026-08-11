@@ -1,5 +1,9 @@
 # Local-variable matching: remote coreutils handoff
 
+> Historical handoff, now superseded by
+> [`COREUTILS_O2_RESULTS.md`](COREUTILS_O2_RESULTS.md) and
+> [`USAGE_MATCHING.md`](USAGE_MATCHING.md).
+
 ## Goal
 
 Measure the correspondence algorithm's accuracy on GNU coreutils, separately

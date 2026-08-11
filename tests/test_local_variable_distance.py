@@ -349,6 +349,7 @@ def test_saved_decompiler_evidence_uses_native_variable_addresses() -> None:
     assert len(evidence.variables) == 2
     assert evidence.variables[0].identity == "ghidra@12.1:0"
     assert evidence.variables[0].addresses == frozenset({0x1004})
+    assert evidence.variables[0].usage_features
     assert evidence.variables[1].addresses == frozenset()
 
     calibration_evidence = extract_decompiler_evidence(

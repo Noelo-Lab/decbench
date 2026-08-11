@@ -14,6 +14,7 @@ from decbench.experimental.local_variable_checkpoint import (
     FunctionKey,
     ScoreConfig,
     SourceLineCache,
+    _record_source_observable_count,
     _select_preprocessed_unit,
     deterministic_sample,
     file_sha256,
@@ -57,6 +58,29 @@ def test_source_line_cache_parses_a_translation_unit_once(tmp_path: Path) -> Non
     }
 
 
+def test_source_line_cache_prefers_preprocessed_function_code(tmp_path: Path) -> None:
+    source = tmp_path / "unit.c"
+    preprocessed = tmp_path / "unit.i"
+    source.write_text("int target(int value) { return MACRO(value); }\n")
+    preprocessed.write_text('# 1 "unit.c"\nint target(int value) { return value + 7; }\n')
+    cache = SourceLineCache()
+
+    first = cache.function_code(source, preprocessed, "target")
+    second = cache.function_code(source, preprocessed, "target")
+
+    assert first == "int target(int value) { return value + 7; }"
+    assert second == first
+
+
+def test_source_line_cache_explicitly_abstains_on_cxx_usage_features(tmp_path: Path) -> None:
+    source = tmp_path / "unit.cc"
+    preprocessed = tmp_path / "unit.cc.ii"
+    source.write_text("int target(int value) { return value; }\n")
+    preprocessed.write_text('# 1 "unit.cc"\nint target(int value) { return value; }\n')
+
+    assert SourceLineCache().function_code(source, preprocessed, "target") == ""
+
+
 def test_stable_hash_sample_is_independent_of_input_order() -> None:
     rows = [
         CheckpointFunction(FunctionKey("O0", "tool", 0x1000 + index, f"fn_{index}"))
@@ -70,6 +94,47 @@ def test_stable_hash_sample_is_independent_of_input_order() -> None:
 
     assert [row.key for row in baseline] == [row.key for row in repeated]
     assert len(baseline) == 7
+
+
+def test_score_config_validates_usage_matcher_parameters() -> None:
+    config = ScoreConfig(
+        matcher_mode="usage",
+        min_usage_similarity=0.2,
+        usage_ambiguity_margin=0.05,
+    )
+
+    assert config.matcher_mode == "usage"
+    with pytest.raises(ValueError, match="address_weight"):
+        ScoreConfig(address_weight=1.1)
+
+
+def test_aggregate_source_eligibility_tracks_matcher_mode() -> None:
+    record = {
+        "source_status": "ok",
+        "source_evidence": {
+            "variables": [
+                {
+                    "identity": "address",
+                    "addresses": ["0x10"],
+                    "usage_features": {},
+                },
+                {
+                    "identity": "usage",
+                    "addresses": [],
+                    "usage_features": {"call:named:consume:arg:0": 1},
+                },
+                {
+                    "identity": "generic",
+                    "addresses": [],
+                    "usage_features": {"use:read": 1},
+                },
+            ]
+        },
+    }
+
+    assert _record_source_observable_count(record, "address") == 1
+    assert _record_source_observable_count(record, "usage") == 1
+    assert _record_source_observable_count(record, "address+usage") == 2
 
 
 def test_cu_path_resolution_rejects_wrong_hash_and_dirname_units(

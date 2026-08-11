@@ -39,7 +39,6 @@ from decbench.experimental.local_variable_distance import (
     VariableEvidence,
     extract_decompiler_evidence,
     extract_source_evidence,
-    load_source_lines,
 )
 from decbench.models.decompilation import DecompilationResult, FunctionDecompilation
 from decbench.utils.source_extract import extract_from_text
@@ -363,13 +362,22 @@ def load_scorer_records(
 
     records = read_jsonl(scorer_path)
     seen: set[str] = set()
+    schema_versions: set[int] = set()
     for row_number, row in enumerate(records, start=1):
+        schema_version = row.get("schema_version", 1)
+        if not isinstance(schema_version, int) or schema_version not in {1, 2}:
+            raise ValueError(
+                f"{scorer_path}:{row_number}: unsupported scorer schema {schema_version!r}"
+            )
+        schema_versions.add(schema_version)
         sample_id = row.get("sample_id")
         if not isinstance(sample_id, str) or not sample_id:
             raise ValueError(f"{scorer_path}:{row_number}: missing sample_id")
         if sample_id in seen:
             raise ValueError(f"{scorer_path}:{row_number}: duplicate sample_id {sample_id}")
         seen.add(sample_id)
+    if len(schema_versions) > 1:
+        raise ValueError(f"{scorer_path}: mixed scorer schema versions are unsupported")
     aggregate = _read_json(aggregate_path)
     # This is the scorer-owned canonical validator.  It verifies the checkpoint
     # digest, config, strict universe, selected sample, exact decompiler list,
@@ -492,7 +500,12 @@ def _observable(variable: Mapping[str, Any]) -> bool:
     )
 
 
-def _non_name_evidence(value: Mapping[str, Any], where: str) -> dict[str, Any]:
+def _non_name_evidence(
+    value: Mapping[str, Any],
+    where: str,
+    *,
+    include_usage_features: bool,
+) -> dict[str, Any]:
     """Normalize only the fields intentionally blinded by the scorer."""
 
     normalized = json.loads(json.dumps(dict(value)))
@@ -502,6 +515,9 @@ def _non_name_evidence(value: Mapping[str, Any], where: str) -> dict[str, Any]:
     normalized["code"] = ""
     for variable in variables:
         variable["name"] = "<blinded>"
+        if not include_usage_features:
+            variable.pop("usage_features", None)
+            variable.pop("inferred_from_code", None)
     normalized["variables"] = sorted(variables, key=lambda row: str(row.get("identity", "")))
     return normalized
 
@@ -510,8 +526,18 @@ def _require_same_non_name_evidence(
     scorer: Mapping[str, Any],
     reconstructed: Mapping[str, Any],
     where: str,
+    *,
+    include_usage_features: bool = True,
 ) -> None:
-    if _non_name_evidence(scorer, where) != _non_name_evidence(reconstructed, where):
+    if _non_name_evidence(
+        scorer,
+        where,
+        include_usage_features=include_usage_features,
+    ) != _non_name_evidence(
+        reconstructed,
+        where,
+        include_usage_features=include_usage_features,
+    ):
         raise ValueError(
             f"{where}: scorer evidence differs from current artifact reconstruction "
             "outside intentionally blinded names/code"
@@ -822,12 +848,14 @@ def _decompiled_audit_evidence(
     instruction_addresses: frozenset[int],
     context_lines: int,
     scorer_status: str,
+    infer_code_variables: bool = True,
 ) -> DecompiledAuditEvidence:
     evidence = extract_decompiler_evidence(
         function,
         backend=backend_id,
         function_name=function_name,
         function_end=function_end,
+        infer_code_variables=infer_code_variables,
     )
     from decbench.experimental.local_variable_checkpoint import (
         _filter_to_function_instructions,
@@ -1608,6 +1636,7 @@ def _validate_scorer_backend(
     checkpoint_entry: CheckpointEntry | None,
     observable_source_ids: set[str],
     decompiled: DecompiledAuditEvidence | None,
+    scorer_schema_version: int = 1,
 ) -> list[dict[str, Any]]:
     status = scorer_entry.get("status")
     if status not in BACKEND_STATUSES:
@@ -1653,6 +1682,7 @@ def _validate_scorer_backend(
         evidence,
         decompiled.structured_evidence,
         f"sample {sample_id}/{backend_id}: decompiler",
+        include_usage_features=scorer_schema_version >= 2,
     )
     address_filter = scorer_entry.get("address_filter")
     if not isinstance(address_filter, dict):
@@ -1786,8 +1816,6 @@ def build_audit_package(
         checkpoint_path,
     )
     selected_backends = _selected_backends(records, aggregate, backends)
-    alias_secret, alias_secret_path = _load_or_create_alias_secret(output_dir)
-    checkpoint = CheckpointIndex(checkpoint_path)
     aggregate_provenance = aggregate.get("provenance")
     score_config = (
         aggregate_provenance.get("score_config") if isinstance(aggregate_provenance, dict) else None
@@ -1796,7 +1824,18 @@ def build_audit_package(
         score_config.get("include_inlined"), bool
     ):
         raise ValueError("aggregate score config has no boolean include_inlined")
+    if score_config.get("matcher_mode", "address") != "address":
+        raise ValueError(
+            "semantic-audit construction requires an address-mode scorer; "
+            "compare usage modes against a completed address audit with "
+            "scripts/evaluate_local_variable_matchers.py"
+        )
     include_inlined = bool(score_config["include_inlined"])
+    alias_secret, alias_secret_path = _load_or_create_alias_secret(output_dir)
+    checkpoint = CheckpointIndex(checkpoint_path)
+    from decbench.experimental.local_variable_checkpoint import SourceLineCache
+
+    source_cache = SourceLineCache()
 
     evidence_rows: list[dict[str, Any]] = []
     provisional_cases: list[dict[str, Any]] = []
@@ -1816,6 +1855,7 @@ def build_audit_package(
     artifact_digests: list[dict[str, str]] = []
 
     for record in records:
+        scorer_schema_version = int(record.get("schema_version", 1))
         sample_id = str(record["sample_id"])
         partition = str(record.get("partition", ""))
         function_blob = record.get("function")
@@ -1899,7 +1939,7 @@ def build_audit_package(
                 "stripped_input_sha256": _file_sha256(stripped_path),
             }
         )
-        source_lines = load_source_lines(source_path, preprocessed_path)
+        source_lines = source_cache.lines(source_path, preprocessed_path)
         source = extract_source_evidence(
             binary_path,
             source_path,
@@ -1908,6 +1948,11 @@ def build_audit_package(
             include_inlined=include_inlined,
             function_address=address,
             source_lines=source_lines,
+            feature_code=source_cache.function_code(
+                source_path,
+                preprocessed_path,
+                function_name,
+            ),
         )
         source_by_id = {variable.identity: variable for variable in source.variables}
         if len(source_by_id) != len(source.variables):
@@ -1920,6 +1965,7 @@ def build_audit_package(
             source_blob,
             source.to_dict(),
             f"sample {sample_id}: source",
+            include_usage_features=scorer_schema_version >= 2,
         )
         from decbench.experimental.local_variable_checkpoint import (
             _function_instruction_set,
@@ -2005,6 +2051,7 @@ def build_audit_package(
                     instruction_addresses=instruction_addresses,
                     context_lines=context_lines,
                     scorer_status=status,
+                    infer_code_variables=scorer_schema_version >= 2,
                 )
             accepted = _validate_scorer_backend(
                 sample_id=sample_id,
@@ -2013,6 +2060,7 @@ def build_audit_package(
                 checkpoint_entry=checkpoint_entry,
                 observable_source_ids=observable_source_ids,
                 decompiled=decompiled,
+                scorer_schema_version=scorer_schema_version,
             )
             if decompiled is None:
                 decompiled = _missing_decompiled_evidence(backend_id, status)
@@ -2462,21 +2510,34 @@ def _validate_manifest(package_dir: Path) -> dict[str, Any]:
     score_config = provenance.get("score_config")
     if not isinstance(score_config, dict):
         raise ValueError("package score-config provenance is invalid")
+    score_config_fields = {
+        "version",
+        "project",
+        "optimizations",
+        "decompiler_bases",
+        "sample_size",
+        "sample_seed",
+        "tuning_fraction",
+        "include_inlined",
+        "min_overlap",
+        "ambiguity_margin",
+        "bootstrap_iterations",
+    }
+    if score_config.get("version") == "lved-score-config-v2":
+        score_config_fields.update(
+            {
+                "matcher_mode",
+                "min_usage_similarity",
+                "usage_ambiguity_margin",
+                "min_combined_similarity",
+                "address_weight",
+            }
+        )
+    elif score_config.get("version") != "lved-score-config-v1":
+        raise ValueError("package score-config provenance version is unsupported")
     _require_exact_keys(
         score_config,
-        {
-            "version",
-            "project",
-            "optimizations",
-            "decompiler_bases",
-            "sample_size",
-            "sample_seed",
-            "tuning_fraction",
-            "include_inlined",
-            "min_overlap",
-            "ambiguity_margin",
-            "bootstrap_iterations",
-        },
+        score_config_fields,
         "package score-config provenance",
     )
     if provenance.get("decompilers") != manifest.get("selected_backends"):
@@ -3107,6 +3168,35 @@ def _load_package(
     )
     ordered_private = [private_by_id[str(case["case_id"])] for case in cases]
     return manifest, evidence_rows, cases, ordered_private, labels
+
+
+def load_completed_audit_package(
+    package_dir: Path,
+    *,
+    labels_path: Path | None = None,
+    merge_provenance_path: Path | None = None,
+) -> tuple[
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    dict[str, dict[str, Any]],
+]:
+    """Validate and load a complete audit package for derived evaluations."""
+
+    loaded = _load_package(
+        package_dir,
+        labels_path,
+        require_complete=True,
+    )
+    manifest = loaded[0]
+    _validate_merge_provenance(
+        package_dir,
+        manifest,
+        labels_path or package_dir / LABEL_FILENAME,
+        merge_provenance_path,
+    )
+    return loaded
 
 
 def validate_audit_package(

@@ -22,22 +22,26 @@ from typing import Any
 
 from decbench.caching import stable_hash
 from decbench.experimental.local_variable_distance import (
+    MATCHER_MODES,
     DistanceResult,
     FunctionEvidence,
+    MatcherMode,
     VariableEvidence,
     extract_decompiler_evidence,
     extract_source_evidence,
+    has_usage_context,
     instruction_addresses,
     preprocessed_line_marker_lines,
     source_file_lines,
 )
 from decbench.models.decompilation import DecompilationResult, FunctionDecompilation
+from decbench.utils.langs import PREPROC_EXTS, SOURCE_EXTS, is_cxx_preprocessed
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SAMPLE_ALGORITHM = "sha256-rank-v1"
 DEFAULT_SAMPLE_SEED = "coreutils-lved-v1"
 STRICT_UNIVERSE_VERSION = "lved-strict-dwarf-cu-universe-v1"
-SCORE_CONFIG_VERSION = "lved-score-config-v1"
+SCORE_CONFIG_VERSION = "lved-score-config-v2"
 RUN_BINDING_VERSION = "lved-run-binding-v1"
 SCORER_JSONL_SERIALIZATION = "utf8-json-sort-keys-ensure-ascii-lf-v1"
 VERDICTS = {"correct", "incorrect", "unknown"}
@@ -141,6 +145,11 @@ class ScoreConfig:
     tuning_fraction: float = 0.25
     min_overlap: float = 0.1
     ambiguity_margin: float = 0.03
+    matcher_mode: MatcherMode = "address"
+    min_usage_similarity: float = 0.1
+    usage_ambiguity_margin: float = 0.03
+    min_combined_similarity: float = 0.1
+    address_weight: float = 0.5
     include_inlined: bool = False
     bootstrap_iterations: int = 2000
 
@@ -153,6 +162,18 @@ class ScoreConfig:
             raise ValueError("min_overlap must be non-negative")
         if self.ambiguity_margin < 0:
             raise ValueError("ambiguity_margin must be non-negative")
+        if self.matcher_mode not in MATCHER_MODES:
+            raise ValueError(
+                f"unknown matcher mode {self.matcher_mode!r}; expected one of {MATCHER_MODES}"
+            )
+        if self.min_usage_similarity < 0:
+            raise ValueError("min_usage_similarity must be non-negative")
+        if self.usage_ambiguity_margin < 0:
+            raise ValueError("usage_ambiguity_margin must be non-negative")
+        if self.min_combined_similarity < 0:
+            raise ValueError("min_combined_similarity must be non-negative")
+        if not 0 <= self.address_weight <= 1:
+            raise ValueError("address_weight must be between 0 and 1")
         if self.bootstrap_iterations < 0:
             raise ValueError("bootstrap_iterations must be non-negative")
 
@@ -170,6 +191,11 @@ def score_config_payload(config: ScoreConfig) -> dict[str, Any]:
         "tuning_fraction": config.tuning_fraction,
         "min_overlap": config.min_overlap,
         "ambiguity_margin": config.ambiguity_margin,
+        "matcher_mode": config.matcher_mode,
+        "min_usage_similarity": config.min_usage_similarity,
+        "usage_ambiguity_margin": config.usage_ambiguity_margin,
+        "min_combined_similarity": config.min_combined_similarity,
+        "address_weight": config.address_weight,
         "include_inlined": config.include_inlined,
         "bootstrap_iterations": config.bootstrap_iterations,
     }
@@ -180,8 +206,10 @@ class SourceLineCache:
 
     def __init__(self) -> None:
         self._sources: dict[Path, dict[tuple[str, int], str]] = {}
+        self._source_text: dict[Path, str] = {}
         self._preprocessed: dict[Path, dict[tuple[str, int], str]] = {}
         self._preprocessed_text: dict[Path, str] = {}
+        self._function_definitions: dict[Path, dict[str, tuple[str, ...]]] = {}
         self._primary_markers: dict[Path, str | None] = {}
         self._merged: dict[tuple[Path, Path], dict[tuple[str, int], str]] = {}
         self.requests = 0
@@ -211,6 +239,42 @@ class SourceLineCache:
             text = key.read_text(errors="replace")
             self._preprocessed_text[key] = text
         return re.search(r"\b" + re.escape(identifier) + r"\b", text) is not None
+
+    def _text(self, path: Path, *, preprocessed: bool) -> str:
+        key = self._key(path)
+        cache = self._preprocessed_text if preprocessed else self._source_text
+        text = cache.get(key)
+        if text is None:
+            text = key.read_text(errors="replace")
+            cache[key] = text
+        return text
+
+    def function_code(
+        self,
+        source_path: Path,
+        preprocessed_path: Path,
+        function_name: str,
+    ) -> str | None:
+        """Find one function definition, preferring macro-expanded C."""
+
+        if is_cxx_preprocessed(preprocessed_path):
+            return ""
+
+        from decbench.experimental.local_variable_features import index_c_functions
+
+        for path, preprocessed in (
+            (preprocessed_path, True),
+            (source_path, False),
+        ):
+            key = self._key(path)
+            definitions = self._function_definitions.get(key)
+            if definitions is None:
+                definitions = index_c_functions(self._text(key, preprocessed=preprocessed))
+                self._function_definitions[key] = definitions
+            exact = definitions.get(function_name, ())
+            if len(exact) == 1:
+                return exact[0]
+        return None
 
     def primary_marker(self, path: Path) -> str | None:
         """Return the first real source path named by a preprocessor line marker."""
@@ -532,8 +596,11 @@ def _source_path_for_unit(binary_path: Path, cu_path: str, unit: Path) -> Path:
     original = binary_path.parent / PurePosixPath(cu_path).name
     if original.is_file():
         return original
-    unit_source = unit.with_suffix(".c")
-    return unit_source if unit_source.is_file() else unit
+    without_preprocessed_suffix = unit.with_suffix("")
+    if without_preprocessed_suffix.suffix in SOURCE_EXTS and without_preprocessed_suffix.is_file():
+        return without_preprocessed_suffix
+    c_source = unit.with_suffix(".c")
+    return c_source if c_source.is_file() else unit
 
 
 def resolve_source_unit(
@@ -557,7 +624,9 @@ def resolve_source_unit(
         _die_ranges,
     )
 
-    units = sorted(binary_path.parent.glob("*.i"))
+    units = sorted(
+        unit for extension in PREPROC_EXTS for unit in binary_path.parent.glob(f"*{extension}")
+    )
     with binary_path.open("rb") as stream:
         dwarfinfo = ELFFile(stream).get_dwarf_info()
         for cu in dwarfinfo.iter_CUs():
@@ -597,7 +666,18 @@ def resolve_source_unit(
 
 
 def _discover_compiled_binaries(compiled_dir: Path) -> list[Path]:
-    skipped_suffixes = {".c", ".h", ".i", ".o", ".s", ".a", ".json", ".toml"}
+    skipped_suffixes = {
+        ".h",
+        ".hh",
+        ".hpp",
+        ".o",
+        ".s",
+        ".a",
+        ".json",
+        ".toml",
+        *PREPROC_EXTS,
+        *SOURCE_EXTS,
+    }
     return [
         path
         for path in sorted(compiled_dir.iterdir())
@@ -640,7 +720,9 @@ def discover_dwarf_function_universe(
         compiled_dir = results_root / optimization / config.project / "compiled"
         if not compiled_dir.is_dir():
             continue
-        units = sorted(compiled_dir.glob("*.i"))
+        units = sorted(
+            unit for extension in PREPROC_EXTS for unit in compiled_dir.glob(f"*{extension}")
+        )
         units_by_opt[optimization] = units
         binaries = _discover_compiled_binaries(compiled_dir)
         diagnostics["compiled_binaries"] += len(binaries)
@@ -820,8 +902,8 @@ def _blind_evidence(evidence: FunctionEvidence, prefix: str) -> FunctionEvidence
         variables=[
             replace(variable, name=aliases[variable.identity]) for variable in evidence.variables
         ],
-        # Decompiler C contains its raw local names.  It is intentionally absent
-        # from the blinded scorer output; line/address evidence is sufficient.
+        # Decompiler C contains raw local names. Usage vectors are extracted
+        # before blinding, so neither matcher mode needs the text afterward.
         code="",
     )
 
@@ -850,9 +932,14 @@ def _matching_dict(result: DistanceResult, config: ScoreConfig) -> dict[str, Any
         row["confidence"] = _match_confidence(match)
         matches.append(row)
     return {
+        "mode": config.matcher_mode,
         "thresholds": {
             "min_overlap": config.min_overlap,
             "ambiguity_margin": config.ambiguity_margin,
+            "min_usage_similarity": config.min_usage_similarity,
+            "usage_ambiguity_margin": config.usage_ambiguity_margin,
+            "min_combined_similarity": config.min_combined_similarity,
+            "address_weight": config.address_weight,
         },
         "source_observable_count": result.source_count,
         "decompiled_count": result.decompiled_count,
@@ -944,6 +1031,26 @@ def _filter_to_function_instructions(
     )
 
 
+def _match_with_config(
+    source: list[VariableEvidence],
+    decompiled: list[VariableEvidence],
+    config: ScoreConfig,
+) -> DistanceResult:
+    from decbench.experimental.local_variable_distance import match_variables
+
+    return match_variables(
+        source,
+        decompiled,
+        mode=config.matcher_mode,
+        min_overlap=config.min_overlap,
+        ambiguity_margin=config.ambiguity_margin,
+        min_usage_similarity=config.min_usage_similarity,
+        usage_ambiguity_margin=config.usage_ambiguity_margin,
+        min_combined_similarity=config.min_combined_similarity,
+        address_weight=config.address_weight,
+    )
+
+
 def _controls(
     source: FunctionEvidence,
     decompiled: FunctionEvidence,
@@ -961,19 +1068,15 @@ def _controls(
         replace(variable, name=f"renamed_decompiled_{index}")
         for index, variable in enumerate(reversed(decompiled.variables))
     ]
-    from decbench.experimental.local_variable_distance import match_variables
-
-    renamed = match_variables(
+    renamed = _match_with_config(
         renamed_source,
         renamed_decompiled,
-        min_overlap=config.min_overlap,
-        ambiguity_margin=config.ambiguity_margin,
+        config,
     )
-    repeated = match_variables(
+    repeated = _match_with_config(
         source.variables,
         decompiled.variables,
-        min_overlap=config.min_overlap,
-        ambiguity_margin=config.ambiguity_margin,
+        config,
     )
     address_only_source = [
         replace(variable, stack_offsets=(), arg_index=None) for variable in source.variables
@@ -985,24 +1088,23 @@ def _controls(
             addresses=frozenset(address + address_shift for address in variable.addresses),
             stack_offsets=(),
             arg_index=None,
+            usage_features=(),
         )
         for variable in decompiled.variables
     ]
-    disjoint = match_variables(
+    disjoint = _match_with_config(
         address_only_source,
         disjoint_decompiled,
-        min_overlap=config.min_overlap,
-        ambiguity_margin=config.ambiguity_margin,
+        config,
     )
     fake = VariableEvidence(
         identity="control:fake-local",
         name="control_fake",
     )
-    with_fake = match_variables(
+    with_fake = _match_with_config(
         source.variables,
         [*decompiled.variables, fake],
-        min_overlap=config.min_overlap,
-        ambiguity_margin=config.ambiguity_margin,
+        config,
     )
 
     evidence_addresses = {
@@ -1102,6 +1204,11 @@ def score_function(
             include_inlined=config.include_inlined,
             function_address=candidate.key.address,
             source_lines=cache.lines(source_path, preprocessed_path),
+            feature_code=cache.function_code(
+                source_path,
+                preprocessed_path,
+                candidate.key.name,
+            ),
         )
         source = _blind_evidence(source, "source")
         stripped_path = (
@@ -1160,8 +1267,13 @@ def score_function(
             result = match_variables(
                 source.variables,
                 decompiled.variables,
+                mode=config.matcher_mode,
                 min_overlap=config.min_overlap,
                 ambiguity_margin=config.ambiguity_margin,
+                min_usage_similarity=config.min_usage_similarity,
+                usage_ambiguity_margin=config.usage_ambiguity_margin,
+                min_combined_similarity=config.min_combined_similarity,
+                address_weight=config.address_weight,
             )
             record["decompilers"][decompiler] = {
                 "status": "ok",
@@ -1473,15 +1585,23 @@ def _calibration_output(
     }
 
 
-def _record_source_observable_count(record: dict[str, Any]) -> int:
+def _record_source_observable_count(record: dict[str, Any], mode: MatcherMode) -> int:
     if record.get("source_status") != "ok":
         return 0
-    return sum(
-        bool(variable["addresses"])
-        or bool(variable["stack_offsets"])
-        or variable["arg_index"] is not None
-        for variable in record["source_evidence"]["variables"]
-    )
+    count = 0
+    for raw in record["source_evidence"]["variables"]:
+        variable = VariableEvidence.from_dict(raw)
+        address_observable = bool(
+            variable.addresses or variable.stack_offsets or variable.arg_index is not None
+        )
+        usage_observable = has_usage_context(variable)
+        if (
+            (mode == "address" and address_observable)
+            or (mode == "usage" and usage_observable)
+            or (mode == "address+usage" and (address_observable or usage_observable))
+        ):
+            count += 1
+    return count
 
 
 def _aggregate_row(
@@ -1515,13 +1635,18 @@ def _aggregate_row(
     controls: dict[str, dict[str, int]] = defaultdict(
         lambda: {"passed": 0, "failed": 0, "unchecked": 0}
     )
+    gap_margin = (
+        config.ambiguity_margin
+        if config.matcher_mode == "address"
+        else config.usage_ambiguity_margin
+    )
     for record in rows:
         entry = record["decompilers"].get(decompiler, {"status": "missing"})
         status = str(entry.get("status", "error"))
         statuses[status] += 1
         if record.get("source_status") != "ok":
             continue
-        source_count = _record_source_observable_count(record)
+        source_count = _record_source_observable_count(record, config.matcher_mode)
         source_total += source_count
         if status != "ok":
             unmatched_source += source_count
@@ -1560,7 +1685,7 @@ def _aggregate_row(
             bucket = verdict if verdict in VERDICTS else "unlabeled"
             score_bins[_histogram(float(match["score"]), (0.25, 0.5, 0.75))][bucket] += 1
             gap = match["confidence"]["minimum_runner_up_gap"]
-            gap_bins[_histogram(gap, (config.ambiguity_margin, 0.1, 0.25))][bucket] += 1
+            gap_bins[_histogram(gap, (gap_margin, 0.1, 0.25))][bucket] += 1
         for name, control in entry["controls"].items():
             passed = control.get("passed")
             bucket = "passed" if passed is True else "failed" if passed is False else "unchecked"
@@ -1804,8 +1929,13 @@ def aggregate_report(
             ],
         },
         "frozen_thresholds": {
+            "matcher_mode": config.matcher_mode,
             "min_overlap": config.min_overlap,
             "ambiguity_margin": config.ambiguity_margin,
+            "min_usage_similarity": config.min_usage_similarity,
+            "usage_ambiguity_margin": config.usage_ambiguity_margin,
+            "min_combined_similarity": config.min_combined_similarity,
+            "address_weight": config.address_weight,
             "warning": "Tune only on the tuning partition; report held_out unchanged.",
         },
         "source_line_cache": cache.stats(),

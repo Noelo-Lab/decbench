@@ -1,5 +1,9 @@
 # Prompt for the remote Codex session
 
+> Historical handoff, now superseded by
+> [`COREUTILS_O2_RESULTS.md`](COREUTILS_O2_RESULTS.md) and
+> [`USAGE_MATCHING.md`](USAGE_MATCHING.md).
+
 Continue the local-variable edit-distance experiment on branch
 `experiment/local-variable-edit-distance`.
 

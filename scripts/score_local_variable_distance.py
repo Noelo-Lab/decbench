@@ -32,6 +32,7 @@ from decbench.experimental.local_variable_checkpoint import (
     write_json,
     write_jsonl,
 )
+from decbench.experimental.local_variable_distance import MATCHER_MODES
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -77,6 +78,21 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--min-overlap", type=float, default=0.1)
     parser.add_argument("--ambiguity-margin", type=float, default=0.03)
+    parser.add_argument(
+        "--matcher-mode",
+        choices=MATCHER_MODES,
+        default="address",
+        help="correspondence evidence to use (default preserves the legacy matcher)",
+    )
+    parser.add_argument("--min-usage-similarity", type=float, default=0.1)
+    parser.add_argument("--usage-ambiguity-margin", type=float, default=0.03)
+    parser.add_argument("--min-combined-similarity", type=float, default=0.1)
+    parser.add_argument(
+        "--address-weight",
+        type=float,
+        default=0.5,
+        help="address contribution when both channels exist in address+usage mode",
+    )
     parser.add_argument("--include-inlined", action="store_true")
     parser.add_argument(
         "--bootstrap-iterations",
@@ -137,6 +153,11 @@ def main(argv: list[str] | None = None) -> int:
             tuning_fraction=args.tuning_fraction,
             min_overlap=args.min_overlap,
             ambiguity_margin=args.ambiguity_margin,
+            matcher_mode=args.matcher_mode,
+            min_usage_similarity=args.min_usage_similarity,
+            usage_ambiguity_margin=args.usage_ambiguity_margin,
+            min_combined_similarity=args.min_combined_similarity,
+            address_weight=args.address_weight,
             include_inlined=args.include_inlined,
             bootstrap_iterations=args.bootstrap_iterations,
         )

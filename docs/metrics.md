@@ -135,6 +135,14 @@ submissions: the C signature is parsed into ABI-positioned args + locals). At
 `-O2`, register locals that decompilers fold into expressions count as misses
 for everyone uniformly.
 
+PR #48 also contains an experimental, type-blind local-variable
+correspondence layer with separate `address`, strict `usage`, and fused
+`address+usage` modes. It can infer conservative candidates from C-like output
+when a backend has no structured variable/address map. It is not wired into
+the published metric yet; its signals, leakage constraints, evaluation, and
+reproduction commands are documented in
+[`experiments/local_variable_distance/USAGE_MATCHING.md`](experiments/local_variable_distance/USAGE_MATCHING.md).
+
 A subprogram's name is read through `binfmt.die_attr` rather than straight off
 the DIE, because gcc keeps a C++ out-of-line member definition's `DW_AT_name`
 on the in-class declaration it references. Without that chase, leveldb's

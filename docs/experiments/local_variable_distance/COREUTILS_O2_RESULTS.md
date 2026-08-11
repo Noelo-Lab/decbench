@@ -220,6 +220,33 @@ scorer rows; this is strong evidence against drift but cannot prove that
 reviewer-visible source text is byte-identical to the earlier scorer-time
 text.
 
+## Usage-feature extension (2026-08-11)
+
+The same frozen sample and semantic audit were reused for a type-blind,
+address-free usage matcher and a stacked `address+usage` matcher. Parameters
+were selected only on the 26-function tuning partition. The comparison filters
+source candidates to the old audited universe before matching and reproduces
+the 754 address-baseline edges exactly.
+
+| Development held-out mode | Accepted | TP | FP | FN | Precision | Edge recall | Edge F1 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `address` | 537 | 465 | 71 | 271 | 86.75% | 63.18% | 73.11% |
+| `usage` | 334 | 243 | 91 | 493 | 72.75% | 33.02% | 45.42% |
+| `address+usage` | 562 | 496 | 65 | 240 | 88.41% | 67.39% | 76.48% |
+
+Relative to `address`, stacking improves held-out edge F1 by 3.37 percentage
+points (paired function-cluster bootstrap 95% CI +1.72 to +5.37) and edge
+recall by 4.21 points (+1.88 to +6.79). Precision changes by +1.66 points
+(-0.63 to +4.29). Strict usage alone demonstrates an address-free signal but
+is too low-recall to replace native mappings.
+
+This is a development comparison, not a new pristine confirmatory audit: the
+old labels existed while the new matcher was developed, and IDA/Ghidra already
+provided structured candidates. Full methodology, overall results, tuned
+parameters, feature coverage, artifact hashes, and map-less-backend caveats
+are in
+[`USAGE_MATCHING.md`](USAGE_MATCHING.md#coreutils-o2-development-evaluation).
+
 ## Controls and reproducibility
 
 All scorer and calibration result sets passed:
@@ -251,6 +278,6 @@ The completed semantic-audit artifacts are:
 - semantic report:
   `416810495abdd1476612f58f327b2f48884a6dbdc452236f87b8de9f4e05de38`
 
-The audit package and completed merge validate with 896/896 cases. The focused
-scorer, calibration, and semantic-audit suite passes 42 tests with one
-environment-dependent skip; Ruff, Black, and `git diff --check` are clean.
+The audit package and completed merge validate with 896/896 cases. The current
+focused matcher, scorer, calibration, audit, backend/model, and C++
+compatibility suite passes 113 tests with one environment-dependent skip.
