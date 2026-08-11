@@ -2,6 +2,12 @@
 
 Significant changes to DecBench that introduce or update results, which can be viewable on the website.
 
+### 2026-08-08
+
+- Update `Kuna` to version `v1.121`, which has changed its rank.
+- Minor fix to GED correctness in [PR #57](https://github.com/Noelo-Lab/decbench/pull/57). Changes the scores of all decompilers on structure, but has largely maintained the same order.
+
+
 ### 2026-07-27
 
 - Added a warning about LLM based results having bias, based on [Issue #43](https://github.com/Noelo-Lab/decbench/issues/43#issuecomment-5093320127) discussion and analysis.
