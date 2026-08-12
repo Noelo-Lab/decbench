@@ -265,8 +265,9 @@ class ByteMatchMetric(Metric):
         from decbench.utils import binfmt
 
         # Recompile the way the source was compiled (PE -> MinGW, ARM -> arm-none-eabi,
-        # x86 -> gcc, flags from the DWARF producer). Without that toolchain, return a
-        # non-scoring result rather than comparing against a wrong-arch recompile.
+        # host-native -> gcc, otherwise the cross triplet; flags from the DWARF producer).
+        # Without that toolchain, return a non-scoring result rather than comparing
+        # against a wrong-arch recompile.
         info = binfmt.detect(original_binary_path)
         if info is None:
             return MetricValue(value=0.0, metadata={"error": "Unrecognized binary format"})

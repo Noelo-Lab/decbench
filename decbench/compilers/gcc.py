@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import struct
@@ -11,6 +12,8 @@ from pathlib import Path
 from decbench.compilers.base import Compiler, CompileResult
 from decbench.models.project import opt_gcc_flags
 from decbench.utils.langs import PREPROC_EXTS, SOURCE_EXTS, preprocessed_ext
+
+_l = logging.getLogger(__name__)
 
 # Build by-products that are never a linked binary, so they are skipped before
 # the (more expensive) ELF/PE sniff.
@@ -290,8 +293,9 @@ class GCCCompiler(Compiler):
                         timeout=600,
                         check=True,
                     )
-                except subprocess.CalledProcessError as e:
-                    pass
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                    # Not fatal, but silence hides a ./configure that died on a missing dep.
+                    _l.warning("pre-make command failed, continuing: %s", e)
 
         if make_command:
             try:
@@ -346,7 +350,7 @@ class GCCCompiler(Compiler):
                         if not dest_i.exists():
                             shutil.copy2(i_file, dest_i)
 
-            except subprocess.CalledProcessError as e:
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                 results.append(CompileResult(
                     source_path=project_dir,
                     success=False,

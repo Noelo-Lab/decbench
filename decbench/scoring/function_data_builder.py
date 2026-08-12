@@ -12,6 +12,7 @@ from decbench.scoring.labels import (
     binary_labels_for,
     function_labels_for,
 )
+from decbench.utils import binfmt
 
 if TYPE_CHECKING:
     from decbench.models.decompilation import DecompilationResult
@@ -132,6 +133,15 @@ def _dec_results_for(
     if not binary_results:
         return {}
     return binary_results.get(binary_name) or {}
+
+
+def _binary_arch(dec_map: dict[str, DecompilationResult]) -> str | None:
+    """Detected machine architecture of the binary the decompilers ran on."""
+    for dr in dec_map.values():
+        info = binfmt.detect(dr.binary_path)
+        if info is not None and info.arch != "other":
+            return info.arch
+    return None
 
 
 def build_function_data(
@@ -262,6 +272,7 @@ def build_function_data(
                         opt_level=opt_value,
                         binary=binary_name,
                         labels=bin_labels,
+                        arch=_binary_arch(dec_map),
                         functions=[records[name] for name in func_order],
                     )
                 )
