@@ -30,6 +30,12 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
   otherwise in the `decbench/manifold` image (`docker/manifold.Dockerfile`,
   built by `decbench decompiler-build manifold`), so a host that only has
   Docker needs nothing else installed.
+- **Native or containerized Glaurung** (`raw/glaurung_raw.py`: `glaurung`):
+  invokes Glaurung's address-scoped JSON CLI natively when `GLAURUNG_BIN`, the
+  decompiler config, or `$PATH` resolves it. Otherwise it runs the immutable
+  revision recorded in `decbench/glaurung:latest`, built from source with
+  `decbench decompiler-build glaurung`. The raw container has networking
+  disabled at runtime and does not receive LLM credentials.
 - **declib** (`declib_dec.py`, registered as `angr-declib`/`ghidra-declib`/…):
   the original declib-driven backends, kept for comparison.
 - **Dockerized** (`dockerized.py`: `reko`/`retdec`/`r2dec`): run a tool in a
@@ -308,6 +314,26 @@ decbench decompiler-build retdec
 
 `is_available()` should return True only when Docker is present **and** the
 image exists locally (don't auto-build inside `is_available`).
+
+Glaurung follows the same explicit-build contract while retaining its raw
+address-scoped backend:
+
+```bash
+decbench decompiler-build glaurung
+decbench list-decompilers
+decbench run projects/sailr/bzip2.toml -O O0 -d glaurung
+```
+
+The backend prefers a native executable, then falls back to the image. Set
+`GLAURUNG_BIN` to an exact executable to force the native route;
+`GLAURUNG_IMAGE` retags the container; and `GLAURUNG_REPO` / `GLAURUNG_REF`
+select the source revision at build time. `decompiler-build` resolves a branch
+or tag to a commit SHA before invoking Docker, and the image records that SHA
+at `/opt/glaurung.rev`, so results report the code actually executed. An
+invalid explicit `GLAURUNG_BIN` is treated as a configuration error and never
+silently falls through to another executable. The default ref is the exact
+Glaurung revision used for the submitted sample-set evaluation; set
+`GLAURUNG_REF` explicitly to benchmark a different revision.
 
 ## 6. Testing your backend
 

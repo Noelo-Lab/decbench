@@ -88,6 +88,12 @@ license = "closed-source"
 logo = true
 
 [[decompiler]]
+id = "glaurung"
+display_name = "Glaurung"
+url = "https://github.com/mjbommar/glaurung"
+license = "open-source"
+
+[[decompiler]]
 id = "claude-code"
 display_name = "Claude Code"
 url = "https://claude.com/claude-code"

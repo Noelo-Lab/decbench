@@ -49,9 +49,9 @@ hidden = ["phoenix"]
 # only where the comparison is fair (all decompilers cover the same 250
 # functions). Their data still ships in the payload; it is just not rendered
 # outside the sample-set preset. Base-name match, same as `hidden`.
-# manifold is here for the same reason: its published v1 numbers came from an
-# external sample-set submission. Drop it once a full-corpus run covers it.
-sample_set_only = ["codex", "claude-code", "kimi-code", "manifold"]
+# manifold and glaurung are here for the same reason: their published numbers
+# came from external sample-set submissions. Drop either after a full-corpus run.
+sample_set_only = ["codex", "claude-code", "kimi-code", "manifold", "glaurung"]
 
 # GitHub Pages custom domain. `decbench site build` writes it into the tree's
 # CNAME file; the authoritative routing for workflow deploys is the repo's Pages
