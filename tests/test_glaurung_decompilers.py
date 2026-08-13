@@ -220,6 +220,16 @@ class TestDockerInstall:
         assert "--no-cache" not in build
         assert Path(build[-1]) == dockerfile.parent
 
+    def test_default_build_uses_evaluated_revision(
+        self, monkeypatch: pytest.MonkeyPatch, fake_docker: Path
+    ) -> None:
+        monkeypatch.delenv("GLAURUNG_REPO", raising=False)
+        monkeypatch.delenv("GLAURUNG_REF", raising=False)
+
+        assert RawGlaurungDecompiler.build_image() == 0
+        build = next(call for call in _docker_calls(fake_docker) if call[0] == "build")
+        assert "GLAURUNG_REF=fb4ee6ba5966e0e4a7fe001b523231fc5fcd43f4" in build
+
     def test_unresolved_revision_forces_uncached_build(
         self, monkeypatch: pytest.MonkeyPatch, fake_docker: Path
     ) -> None:

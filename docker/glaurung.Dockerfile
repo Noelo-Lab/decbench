@@ -31,7 +31,7 @@ RUN curl -fsSL https://sh.rustup.rs \
 COPY --from=ghcr.io/astral-sh/uv:0.11.1 /uv /uvx /usr/local/bin/
 
 ARG GLAURUNG_REPO=https://github.com/mjbommar/glaurung.git
-ARG GLAURUNG_REF=master
+ARG GLAURUNG_REF=fb4ee6ba5966e0e4a7fe001b523231fc5fcd43f4
 RUN git clone "${GLAURUNG_REPO}" /src/glaurung \
     && cd /src/glaurung \
     && git checkout --detach "${GLAURUNG_REF}" \

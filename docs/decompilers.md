@@ -331,7 +331,9 @@ select the source revision at build time. `decompiler-build` resolves a branch
 or tag to a commit SHA before invoking Docker, and the image records that SHA
 at `/opt/glaurung.rev`, so results report the code actually executed. An
 invalid explicit `GLAURUNG_BIN` is treated as a configuration error and never
-silently falls through to another executable.
+silently falls through to another executable. The default ref is the exact
+Glaurung revision used for the submitted sample-set evaluation; set
+`GLAURUNG_REF` explicitly to benchmark a different revision.
 
 ## 6. Testing your backend
 

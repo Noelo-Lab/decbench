@@ -94,7 +94,9 @@ prefers `GLAURUNG_BIN`, DecBench configuration, or `$PATH`, then falls back to
 the image. `decompiler-build` resolves `GLAURUNG_REF` to an immutable source
 commit, and the image records it at `/opt/glaurung.rev`. At runtime the backend
 mounts only the input binary, read-only, disables networking, and captures the
-same JSON the native CLI emits. The image contains no credentials.
+same JSON the native CLI emits. The checked-in default ref is the revision used
+for the submitted sample-set evaluation; `GLAURUNG_REF` can select another
+revision explicitly. The image contains no credentials.
 
 ## Other images (not decompiler backends)
 

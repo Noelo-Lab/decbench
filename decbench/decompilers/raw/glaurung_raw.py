@@ -77,7 +77,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DOCKER_DIR = _REPO_ROOT / "docker"
 _IMAGE_REV_FILE = "/opt/glaurung.rev"
 _DEFAULT_REPO = "https://github.com/mjbommar/glaurung.git"
-_DEFAULT_REF = "master"
+_DEFAULT_REF = "fb4ee6ba5966e0e4a7fe001b523231fc5fcd43f4"
 _SHA = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 
