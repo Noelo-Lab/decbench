@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import struct
 import sys
 import time
 import traceback
@@ -41,38 +42,53 @@ def gather_tomls() -> list[Path]:
     return sorted(out, key=lambda p: p.stem)
 
 
-OPT_LEVELS = [
-    OptimizationLevel.O0,
-    OptimizationLevel.O2,
-    OptimizationLevel.O2_NOINLINE,
-]
+def _is_linked_image(path: Path) -> bool:
+    """Return whether ``path`` is a linked ELF or PE executable image."""
+    try:
+        with path.open("rb") as image:
+            magic = image.read(4)
+            if magic == b"\x7fELF":
+                image.seek(16)
+                return struct.unpack("<H", image.read(2))[0] in (2, 3)
+            if not magic.startswith(b"MZ"):
+                return False
+            image.seek(0x3C)
+            pe_offset = struct.unpack("<I", image.read(4))[0]
+            image.seek(pe_offset)
+            if image.read(4) != b"PE\0\0":
+                return False
+            image.seek(pe_offset + 22)
+            characteristics = struct.unpack("<H", image.read(2))[0]
+            return bool(characteristics & 0x0002)  # IMAGE_FILE_EXECUTABLE_IMAGE
+    except (OSError, struct.error):
+        return False
 
 
 def _count_outputs(out_dir: Path, opt: str, name: str) -> tuple[int, int]:
-    """Return (elf_binary_count, preprocessed_file_count) in the compiled dir."""
-    import struct
+    """Return (linked_binary_count, preprocessed_file_count)."""
 
     compiled = out_dir / opt / name / "compiled"
     if not compiled.is_dir():
         return (0, 0)
     skip = (".o", ".a", ".s", ".h", *PREPROC_EXTS, *SOURCE_EXTS)
-    elfs = 0
+    binaries = 0
     for entry in compiled.iterdir():
         if not entry.is_file() or entry.is_symlink():
             continue
         if entry.suffix in skip:
             continue
-        try:
-            with open(entry, "rb") as f:
-                if f.read(4) != b"\x7fELF":
-                    continue
-                f.seek(16)
-                if struct.unpack("<H", f.read(2))[0] in (2, 3):
-                    elfs += 1
-        except (OSError, struct.error):
-            continue
+        binaries += int(_is_linked_image(entry))
     i_files = sum(len(list(compiled.glob(f"*{ext}"))) for ext in PREPROC_EXTS)
-    return (elfs, i_files)
+    return (binaries, i_files)
+
+
+def build_tasks(tomls: list[Path], out_dir: Path) -> list[tuple[str, str, str]]:
+    """Build only the optimization levels declared by each project."""
+    return [
+        (str(toml), opt.value, str(out_dir))
+        for toml in tomls
+        for opt in Project.from_toml(toml).compilation.optimization_levels
+    ]
 
 
 def _build_one(toml_path: str, opt_value: str, out_dir: str) -> dict:
@@ -84,7 +100,7 @@ def _build_one(toml_path: str, opt_value: str, out_dir: str) -> dict:
         opt = OptimizationLevel(opt_value)
         results = compile_project(project, Path(out_dir), opt, clean=True)
         successes = sum(1 for r in results if getattr(r, "success", False))
-        elfs, i_files = _count_outputs(Path(out_dir), opt_value, name)
+        binaries, i_files = _count_outputs(Path(out_dir), opt_value, name)
         errs = [
             (r.error_message or "")[:300]
             for r in results
@@ -93,19 +109,19 @@ def _build_one(toml_path: str, opt_value: str, out_dir: str) -> dict:
         return {
             "project": name,
             "opt": opt_value,
-            "elf_binaries": elfs,
+            "linked_binaries": binaries,
             "i_files": i_files,
             "compile_results": len(results),
             "successes": successes,
             "errors": errs[:3],
             "seconds": round(time.time() - start, 1),
-            "ok": elfs > 0,
+            "ok": binaries > 0,
         }
     except Exception as e:  # noqa: BLE001 - report, never crash the pool
         return {
             "project": name,
             "opt": opt_value,
-            "elf_binaries": 0,
+            "linked_binaries": 0,
             "i_files": 0,
             "compile_results": 0,
             "successes": 0,
@@ -125,10 +141,10 @@ def main() -> int:
     if only:
         tomls = [t for t in tomls if t.stem in only]
 
-    tasks = [(str(t), opt.value, str(out_dir)) for t in tomls for opt in OPT_LEVELS]
+    tasks = build_tasks(tomls, out_dir)
     print(
-        f"Compiling {len(tomls)} projects x {len(OPT_LEVELS)} opts "
-        f"= {len(tasks)} builds, {workers} workers -> {out_dir}",
+        f"Compiling {len(tasks)} declared project/optimization builds, "
+        f"{workers} workers -> {out_dir}",
         flush=True,
     )
 
@@ -143,7 +159,7 @@ def main() -> int:
             flag = "OK " if r["ok"] else "FAIL"
             print(
                 f"[{done}/{len(tasks)}] {flag} {r['project']:18s} {r['opt']:11s} "
-                f"elf={r['elf_binaries']:<4d} i={r['i_files']:<4d} "
+                f"bin={r['linked_binaries']:<4d} i={r['i_files']:<4d} "
                 f"{r['seconds']:.0f}s"
                 + (f"  ERR: {r['errors'][0][:120]}" if not r["ok"] and r["errors"] else ""),
                 flush=True,
@@ -151,9 +167,9 @@ def main() -> int:
 
     by_proj: dict[str, dict[str, int]] = {}
     for r in reports:
-        by_proj.setdefault(r["project"], {})[r["opt"]] = r["elf_binaries"]
+        by_proj.setdefault(r["project"], {})[r["opt"]] = r["linked_binaries"]
 
-    print("\n==== PER-PROJECT ELF BINARY COUNTS ====", flush=True)
+    print("\n==== PER-PROJECT LINKED BINARY COUNTS ====", flush=True)
     print(f"{'project':20s} {'O0':>6s} {'O2':>6s} {'O2-noinline':>12s}", flush=True)
     fully_ok, partial, broken = [], [], []
     for proj in sorted(by_proj):

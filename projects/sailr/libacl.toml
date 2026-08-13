@@ -10,7 +10,7 @@ name = "libacl"
 version = "2.3.1"
 
 # Source configuration - release tarball ships a pre-generated ./configure
-source_remote = "https://download.savannah.nongnu.org/releases/acl/acl-2.3.1.tar.xz"
+source_remote = "https://download-mirror.savannah.gnu.org/releases/acl/acl-2.3.1.tar.xz"
 remote_type = "tar"
 
 # Build directories

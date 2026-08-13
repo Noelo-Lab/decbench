@@ -19,7 +19,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python-is-python3 \
     autoconf automake libtool gettext autopoint rsync bison texinfo gperf \
     help2man pkg-config meson ninja-build cmake flex file device-tree-compiler \
-    libtool-bin libssl-dev uuid-dev libgnutls28-dev \
+    libtool-bin libssl-dev uuid-dev libgnutls28-dev zlib1g-dev \
+    libattr1-dev libmd-dev libncurses-dev libestr-dev libfastjson-dev \
+    libcurl4-gnutls-dev \
     gcc g++ \
     gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi \
     libstdc++-arm-none-eabi-newlib \
