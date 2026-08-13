@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from decbench.rendering.content import Content, load_content
+from decbench.rendering.content import Content, DecompilerSpec, load_content
 
 BENCHMARK_METRICS = ["ged", "type_match", "byte_match"]
 
@@ -296,10 +296,16 @@ def test_decompiler_lookup_returns_none_for_unknown_id(content: Content) -> None
     assert content.decompiler("angr-declib") is None
 
 
-def test_decompiler_url_is_optional(content: Content) -> None:
-    """Kuna has no homepage yet, so it renders unlinked."""
+def test_decompiler_url_is_optional() -> None:
+    """A spec without a homepage renders unlinked; every shipped entry has one."""
+    assert DecompilerSpec(id="x", display_name="X").url == ""
+
+
+def test_kuna_links_to_its_homepage(content: Content) -> None:
     kuna = content.decompiler("kuna")
-    assert kuna is not None and kuna.url == ""
+    assert kuna is not None
+    assert kuna.url == "https://kuna.noelo.org"
+    assert kuna.pretty_version("1.121") == "v1.121"
 
 
 def test_categories_carry_labels_in_display_order(content: Content) -> None:
