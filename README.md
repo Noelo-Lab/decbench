@@ -28,7 +28,7 @@ DecBench evaluates decompilers using three core metrics:
 |--------|-----------------|--------------|
 | **Structural Correctness (GED)** | Control flow recovery | Graph Edit Distance between source and decompiled CFGs using [cfgutils](https://github.com/angr/cfgutils) |
 | **Type Correctness** | Variable type recovery | Compares decompiled variable types against DWARF debug info |
-| **Recompilation Bytematch** | Recompilable, semantically-equivalent code | Recompiles each decompiled function with the **original toolchain** (matching its format/arch/opt flags) after a compilability **fixup** pass, then diffs the assembly via Jaccard similarity with linker-dependent operands normalized away |
+| **Recompilation Bytematch** | Recompilable, semantically-equivalent code | Recompiles each decompiled function with the **original toolchain** (matching its format/arch/opt flags) using the returned C with its SDK-provided declarations, without guessed repairs, then diffs the assembly via Jaccard similarity with linker-dependent operands normalized away |
 
 A **Union** score tracks the percentage of functions where a decompiler achieves a perfect match on *one of three* metrics, i.e. the source was "perfect" by one direction.
 

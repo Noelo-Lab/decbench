@@ -539,7 +539,7 @@ inline values — and `function_results.json` is only ever written through
 `results/<tree>/{ged,type_match,byte_match}_new.json` (from
 `scripts/reeval_{ged,typematch}.py` / `reeval_bytematch.py`) carry the
 corrected values (sanitized decompiled parses, DWARF-owned per-TU source
-matching, non-finite dropped, compilability fixup). Older checkpoints may also
+matching, non-finite dropped, returned-C compilation). Older checkpoints may also
 hold original inline values; decompile-only checkpoints rely entirely on these
 overlays, including for the scoreboard's metric list.
 

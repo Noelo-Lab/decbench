@@ -289,31 +289,17 @@ otherwise; flags read from the DWARF producer), via `decbench/utils/binfmt.py`.
 Returns a non-scoring result (an **abstention**, not a 0) if that toolchain
 isn't installed — don't fake a wrong-arch recompile. Works on ELF and PE.
 
-### The two fairness passes (`cache_version="7"`)
+### Compilation and operand normalization (`cache_version="8"`)
 
-Raw decompiler output rarely recompiles as-is (pseudo-types like
-`undefined4`, illegal tokens like `GLIBC_2.2.5::stderr`), so naive
-recompilation scores almost everything 0. To measure *logic* recovery fairly,
-byte_match applies the same two passes to every decompiler. Investigate
-before changing them, and bump `cache_version` if you do:
-
-1. **Compilability fixup** (`decbench/metrics/fixup.py` — full details in its
-   docstrings) so decompiler output actually builds instead of auto-scoring 0:
-   token sanitization plus a **deterministic, gcc-diagnostic-driven
-   self-repair loop** that
-   injects ONLY what the compiler reports missing (pseudo-type typedefs,
-   IDA/Ghidra helper macros, libc + the decompiler's OWN sibling prototypes
-   via `derive_context_decls`, synthesized structs, width-typed globals,
-   positional edits) and never redefines what the decompiler declared. This
-   *maximizes compilation* uniformly (sailr O0 compile rate ~20-79% raw →
-   ~83-95% fixed, per decompiler). If the flags passed to
-   `compile_with_fixup` contain no explicit language mode, the fixup uses
-   `-std=gnu17`; explicit `-ansi`/`--ansi` and `-std`/`--std` modes remain
-   unchanged.
-   The loop keeps implicit-function-declaration diagnostics visible so it can
-   inject prototypes, while trailing
-   `-Wno-error=incompatible-pointer-types` and `-Wno-error=int-conversion`
-   flags prevent type-recovery mistakes from blocking this byte-level metric.
+1. **Unchanged-C compilation** (`decbench/metrics/fixup.py`, retaining the
+   `FixupResult` / `compile_with_fixup` API): compile the existing per-function C
+   once, with SDK-provided declarations and helpers already inside that C.
+   No token sanitization, guessed declarations, or diagnostic-driven body
+   repairs are applied. Failure scores 0. If caller flags contain no explicit
+   language mode, compilation uses `-std=gnu17`; explicit `-ansi`/`--ansi` and
+   `-std`/`--std` modes remain unchanged. Caller flags are not mutated.
+   The baseline warning policy remains, including trailing
+   `-Wno-error=incompatible-pointer-types` and `-Wno-error=int-conversion`.
    A terminal failure retains a deterministic summary of compiler error
    messages and warning-class tags in the per-function metadata, bounded to
    400 characters and stripped of paths, source excerpts, carets, and notes.
@@ -326,7 +312,7 @@ before changing them, and bump `cache_version` if you do:
 producer — dropping them made whole projects unwinnable. The metric still
 records `compilable` per function (the report's per-decompiler **Compiles
 rate**, rendered on the data page). Type recovery is measured separately by
-type_match, so fixing types to compile is fair.
+type_match.
 
 Known accepted limit: a normalized bare `[rip]` does not compare symbol
 identity, so reads of *different* globals can both reach 1.0.
