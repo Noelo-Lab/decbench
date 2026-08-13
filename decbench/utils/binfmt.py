@@ -34,6 +34,7 @@ import struct
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 _ELF_MACHINES = {0x28: "arm", 0xB7: "aarch64", 0x3E: "x86-64", 0x03: "x86", 0xF3: "riscv"}
 _PE_MACHINES = {0x14C: "x86", 0x8664: "x86-64", 0xAA64: "aarch64", 0x1C0: "arm"}
@@ -147,6 +148,40 @@ def capstone_arch_mode(info: BinInfo, thumb: bool = False):
     if info.arch == "aarch64":
         return capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM
     return None
+
+
+def elf_function_is_thumb(path: Path, func_name: str, address: int) -> bool:
+    """Return whether an ARM ELF function symbol selects Thumb encoding.
+
+    ARM ``STT_FUNC`` symbol values carry the Thumb-state marker in bit zero.
+    Capstone accepts the same bytes in A32 mode without necessarily failing, so
+    the symbol table is the authoritative mode source rather than a decoding
+    heuristic.
+    """
+    try:
+        from elftools.elf.elffile import ELFFile
+
+        with path.open("rb") as stream:
+            elf = ELFFile(stream)
+            if elf.header["e_machine"] != "EM_ARM":
+                return False
+            symtab = elf.get_section_by_name(".symtab")
+            if symtab is None:
+                return False
+            symbol_table = cast(Any, symtab)
+            for symbol in symbol_table.iter_symbols():
+                if symbol["st_info"]["type"] != "STT_FUNC" or symbol["st_size"] <= 0:
+                    continue
+                raw_address = symbol["st_value"]
+                if (
+                    symbol.name == func_name
+                    or (raw_address & ~1) == address
+                    or raw_address == address
+                ):
+                    return bool(raw_address & 1)
+    except Exception:
+        pass
+    return False
 
 
 _DWARF_SECS = (
@@ -416,9 +451,16 @@ def _elf_function_bytes(path: Path, func_name: str, address: int) -> bytes | Non
             symtab = elf.get_section_by_name(".symtab")
             if symtab is None:
                 return None
+            is_arm = elf.header["e_machine"] == "EM_ARM"
             for sym in symtab.iter_symbols():
-                if (sym.name == func_name or sym["st_value"] == address) and sym["st_size"] > 0:
-                    addr, size = sym["st_value"], sym["st_size"]
+                raw_address = sym["st_value"]
+                symbol_address = raw_address & ~1 if is_arm else raw_address
+                if (
+                    sym.name == func_name
+                    or symbol_address == address
+                    or raw_address == address
+                ) and sym["st_size"] > 0:
+                    addr, size = symbol_address, sym["st_size"]
                     for section in elf.iter_sections():
                         sa, ss = section["sh_addr"], section["sh_size"]
                         if sa <= addr < sa + ss:
@@ -463,9 +505,12 @@ def _elf_object_function(obj_path: Path, func_name: str) -> bytes | None:
             symtab = elf.get_section_by_name(".symtab")
             if text is None or symtab is None:
                 return None
+            is_arm = elf.header["e_machine"] == "EM_ARM"
             for sym in symtab.iter_symbols():
                 if sym.name == func_name and sym["st_size"] > 0:
                     off = sym["st_value"]
+                    if is_arm:
+                        off &= ~1
                     return text.data()[off : off + sym["st_size"]]
     except Exception:
         pass
