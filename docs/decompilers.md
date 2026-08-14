@@ -35,7 +35,10 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
   decompiler config, or `$PATH` resolves it. Otherwise it runs the immutable
   revision recorded in `decbench/glaurung:latest`, built from source with
   `decbench decompiler-build glaurung`. The raw container has networking
-  disabled at runtime and does not receive LLM credentials.
+  disabled at runtime and does not receive LLM credentials. The *published*
+  `glaurung` column does not come from this backend: it is an external
+  sample-set submission (Part III) at `git-fb4ee6b`, flagged
+  `external_submission` in its metadata.
 - **declib** (`declib_dec.py`, registered as `angr-declib`/`ghidra-declib`/…):
   the original declib-driven backends, kept for comparison.
 - **Dockerized** (`dockerized.py`: `reko`/`retdec`/`r2dec`): run a tool in a
