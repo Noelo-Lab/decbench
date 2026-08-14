@@ -92,6 +92,7 @@ id = "glaurung"
 display_name = "Glaurung"
 url = "https://github.com/mjbommar/glaurung"
 license = "open-source"
+logo = true
 
 [[decompiler]]
 id = "claude-code"
