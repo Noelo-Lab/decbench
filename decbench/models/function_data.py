@@ -184,6 +184,10 @@ class BinaryGroup(BaseModel):
         default_factory=list,
         description="Labels applied to this binary",
     )
+    arch: str | None = Field(
+        default=None,
+        description="Detected machine architecture (e.g. 'x86-64'); None if not recorded",
+    )
     functions: list[FunctionRecord] = Field(
         default_factory=list,
         description="Per-function records for this binary",

@@ -90,10 +90,13 @@ _O2_NOINLINE = "O2-noinline"
 _O0 = "O0"
 
 _ARM_LABELS = frozenset({"cps", "arm", "armv7", "aarch64", "arm64", "bare-metal", "embedded-linux"})
+_ARM_ARCHES = frozenset({"arm", "aarch64"})
 
 
 def _is_arm(group: BinaryGroup) -> bool:
-    """Whether a binary group was cross-compiled for a non-x86 (ARM) target."""
+    """Whether a binary group is an ARM target; labels are the pre-``arch`` fallback."""
+    if group.arch:
+        return group.arch in _ARM_ARCHES
     labels = group.labels or []
     return any(label in _ARM_LABELS or label.startswith("cortex-") for label in labels)
 

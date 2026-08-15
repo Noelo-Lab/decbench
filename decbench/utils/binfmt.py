@@ -28,6 +28,7 @@ What's here:
 from __future__ import annotations
 
 import io
+import platform
 import re
 import shutil
 import struct
@@ -36,7 +37,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-_ELF_MACHINES = {0x28: "arm", 0xB7: "aarch64", 0x3E: "x86-64", 0x03: "x86", 0xF3: "riscv"}
+_ELF_MACHINES = {
+    0x28: "arm",
+    0xB7: "aarch64",
+    0x3E: "x86-64",
+    0x03: "x86",
+    0xF3: "riscv",
+    0x08: "mips",
+    0x14: "ppc",
+    0x15: "ppc64",
+}
 _PE_MACHINES = {0x14C: "x86", 0x8664: "x86-64", 0xAA64: "aarch64", 0x1C0: "arm"}
 
 
@@ -58,7 +68,7 @@ def detect(path: Path) -> BinInfo | None:
                     return None
                 f.seek(18)
                 arch = _ELF_MACHINES.get(struct.unpack("<H", f.read(2))[0], "other")
-                bits = 64 if arch in ("x86-64", "aarch64") else 32
+                bits = 64 if arch in ("x86-64", "aarch64", "ppc64") else 32
                 return BinInfo("elf", arch, bits)
             if head == b"MZ":
                 f.seek(0x3C)
@@ -69,9 +79,28 @@ def detect(path: Path) -> BinInfo | None:
                 arch = _PE_MACHINES.get(struct.unpack("<H", f.read(2))[0], "other")
                 bits = 64 if arch in ("x86-64", "aarch64") else 32
                 return BinInfo("pe", arch, bits)
-    except OSError:
+    except (OSError, struct.error):
         return None
     return None
+
+
+_HOST_NATIVE_ARCHES = {
+    "x86_64": ("x86-64", "x86"),
+    "amd64": ("x86-64", "x86"),
+    "i386": ("x86",),
+    "i486": ("x86",),
+    "i586": ("x86",),
+    "i686": ("x86",),
+    "aarch64": ("aarch64",),
+    "arm64": ("aarch64",),
+}
+
+_CROSS_ELF_GCC = {
+    "x86-64": "x86_64-linux-gnu-gcc",
+    "x86": "i686-linux-gnu-gcc",
+    "arm": "arm-none-eabi-gcc",
+    "aarch64": "aarch64-linux-gnu-gcc",
+}
 
 
 def recompiler_for(info: BinInfo) -> str | None:
@@ -79,14 +108,16 @@ def recompiler_for(info: BinInfo) -> str | None:
 
     Returns the compiler executable name, or None for arch/format we can't
     recompile to. Callers should also check :func:`tool_available`.
+
+    Bare ``gcc`` is the answer only where the host builds that architecture
+    natively. Elsewhere it is the cross triplet, so a corpus built for a
+    different architecture than the host abstains (no toolchain) instead of
+    recompiling every function with the host's own ``-march``.
     """
     if info.fmt == "elf":
-        return {
-            "x86-64": "gcc",
-            "x86": "gcc",
-            "arm": "arm-none-eabi-gcc",
-            "aarch64": "aarch64-linux-gnu-gcc",
-        }.get(info.arch)
+        if info.arch in _HOST_NATIVE_ARCHES.get(platform.machine().lower(), ()):
+            return "gcc"
+        return _CROSS_ELF_GCC.get(info.arch)
     if info.fmt == "pe":
         return {
             "x86": "i686-w64-mingw32-gcc",
