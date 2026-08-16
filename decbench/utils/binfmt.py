@@ -28,14 +28,25 @@ What's here:
 from __future__ import annotations
 
 import io
+import platform
 import re
 import shutil
 import struct
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
-_ELF_MACHINES = {0x28: "arm", 0xB7: "aarch64", 0x3E: "x86-64", 0x03: "x86", 0xF3: "riscv"}
+_ELF_MACHINES = {
+    0x28: "arm",
+    0xB7: "aarch64",
+    0x3E: "x86-64",
+    0x03: "x86",
+    0xF3: "riscv",
+    0x08: "mips",
+    0x14: "ppc",
+    0x15: "ppc64",
+}
 _PE_MACHINES = {0x14C: "x86", 0x8664: "x86-64", 0xAA64: "aarch64", 0x1C0: "arm"}
 
 
@@ -57,7 +68,7 @@ def detect(path: Path) -> BinInfo | None:
                     return None
                 f.seek(18)
                 arch = _ELF_MACHINES.get(struct.unpack("<H", f.read(2))[0], "other")
-                bits = 64 if arch in ("x86-64", "aarch64") else 32
+                bits = 64 if arch in ("x86-64", "aarch64", "ppc64") else 32
                 return BinInfo("elf", arch, bits)
             if head == b"MZ":
                 f.seek(0x3C)
@@ -68,9 +79,28 @@ def detect(path: Path) -> BinInfo | None:
                 arch = _PE_MACHINES.get(struct.unpack("<H", f.read(2))[0], "other")
                 bits = 64 if arch in ("x86-64", "aarch64") else 32
                 return BinInfo("pe", arch, bits)
-    except OSError:
+    except (OSError, struct.error):
         return None
     return None
+
+
+_HOST_NATIVE_ARCHES = {
+    "x86_64": ("x86-64", "x86"),
+    "amd64": ("x86-64", "x86"),
+    "i386": ("x86",),
+    "i486": ("x86",),
+    "i586": ("x86",),
+    "i686": ("x86",),
+    "aarch64": ("aarch64",),
+    "arm64": ("aarch64",),
+}
+
+_CROSS_ELF_GCC = {
+    "x86-64": "x86_64-linux-gnu-gcc",
+    "x86": "i686-linux-gnu-gcc",
+    "arm": "arm-none-eabi-gcc",
+    "aarch64": "aarch64-linux-gnu-gcc",
+}
 
 
 def recompiler_for(info: BinInfo) -> str | None:
@@ -78,14 +108,16 @@ def recompiler_for(info: BinInfo) -> str | None:
 
     Returns the compiler executable name, or None for arch/format we can't
     recompile to. Callers should also check :func:`tool_available`.
+
+    Bare ``gcc`` is the answer only where the host builds that architecture
+    natively. Elsewhere it is the cross triplet, so a corpus built for a
+    different architecture than the host abstains (no toolchain) instead of
+    recompiling every function with the host's own ``-march``.
     """
     if info.fmt == "elf":
-        return {
-            "x86-64": "gcc",
-            "x86": "gcc",
-            "arm": "arm-none-eabi-gcc",
-            "aarch64": "aarch64-linux-gnu-gcc",
-        }.get(info.arch)
+        if info.arch in _HOST_NATIVE_ARCHES.get(platform.machine().lower(), ()):
+            return "gcc"
+        return _CROSS_ELF_GCC.get(info.arch)
     if info.fmt == "pe":
         return {
             "x86": "i686-w64-mingw32-gcc",
@@ -147,6 +179,40 @@ def capstone_arch_mode(info: BinInfo, thumb: bool = False):
     if info.arch == "aarch64":
         return capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM
     return None
+
+
+def elf_function_is_thumb(path: Path, func_name: str, address: int) -> bool:
+    """Return whether an ARM ELF function symbol selects Thumb encoding.
+
+    ARM ``STT_FUNC`` symbol values carry the Thumb-state marker in bit zero.
+    Capstone accepts the same bytes in A32 mode without necessarily failing, so
+    the symbol table is the authoritative mode source rather than a decoding
+    heuristic.
+    """
+    try:
+        from elftools.elf.elffile import ELFFile
+
+        with path.open("rb") as stream:
+            elf = ELFFile(stream)
+            if elf.header["e_machine"] != "EM_ARM":
+                return False
+            symtab = elf.get_section_by_name(".symtab")
+            if symtab is None:
+                return False
+            symbol_table = cast(Any, symtab)
+            for symbol in symbol_table.iter_symbols():
+                if symbol["st_info"]["type"] != "STT_FUNC" or symbol["st_size"] <= 0:
+                    continue
+                raw_address = symbol["st_value"]
+                if (
+                    symbol.name == func_name
+                    or (raw_address & ~1) == address
+                    or raw_address == address
+                ):
+                    return bool(raw_address & 1)
+    except Exception:
+        pass
+    return False
 
 
 _DWARF_SECS = (
@@ -416,9 +482,16 @@ def _elf_function_bytes(path: Path, func_name: str, address: int) -> bytes | Non
             symtab = elf.get_section_by_name(".symtab")
             if symtab is None:
                 return None
+            is_arm = elf.header["e_machine"] == "EM_ARM"
             for sym in symtab.iter_symbols():
-                if (sym.name == func_name or sym["st_value"] == address) and sym["st_size"] > 0:
-                    addr, size = sym["st_value"], sym["st_size"]
+                raw_address = sym["st_value"]
+                symbol_address = raw_address & ~1 if is_arm else raw_address
+                if (
+                    sym.name == func_name
+                    or symbol_address == address
+                    or raw_address == address
+                ) and sym["st_size"] > 0:
+                    addr, size = symbol_address, sym["st_size"]
                     for section in elf.iter_sections():
                         sa, ss = section["sh_addr"], section["sh_size"]
                         if sa <= addr < sa + ss:
@@ -463,9 +536,12 @@ def _elf_object_function(obj_path: Path, func_name: str) -> bytes | None:
             symtab = elf.get_section_by_name(".symtab")
             if text is None or symtab is None:
                 return None
+            is_arm = elf.header["e_machine"] == "EM_ARM"
             for sym in symtab.iter_symbols():
                 if sym.name == func_name and sym["st_size"] > 0:
                     off = sym["st_value"]
+                    if is_arm:
+                        off &= ~1
                     return text.data()[off : off + sym["st_size"]]
     except Exception:
         pass

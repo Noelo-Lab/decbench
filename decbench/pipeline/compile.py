@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -14,6 +15,25 @@ from decbench.utils.langs import SOURCE_EXTS
 
 if TYPE_CHECKING:
     from decbench.compilers.base import CompileResult
+    from decbench.models.project import CompilationConfig
+
+
+_HOST_CC = "gcc"
+
+
+def corpus_target(compilation: CompilationConfig) -> tuple[str, str | None]:
+    """Resolve the (compiler, target_arch) pair: environment first, project TOML second.
+
+    Only projects that declare the host compiler are retargeted. Anything naming
+    its own cross toolchain (CPS, the MinGW malware targets) is left alone;
+    ``mirai`` declares plain ``gcc`` and follows sailr.
+    """
+    if compilation.c_compiler != _HOST_CC:
+        return compilation.c_compiler, compilation.target_arch
+    return (
+        os.environ.get("DECBENCH_CC") or compilation.c_compiler,
+        os.environ.get("DECBENCH_TARGET_ARCH") or compilation.target_arch,
+    )
 
 
 def download_source(project: Project, target_dir: Path) -> Path:
@@ -147,10 +167,11 @@ def compile_project(
                     check=False,
                 )
 
+        gcc_path, target_arch = corpus_target(compilation)
         compiler = GCCCompiler(
-            gcc_path=compilation.c_compiler,
+            gcc_path=gcc_path,
             base_flags=compilation.base_flags + compilation.extra_flags,
-            target_arch=compilation.target_arch,
+            target_arch=target_arch,
         )
 
         results = compiler.compile_project(

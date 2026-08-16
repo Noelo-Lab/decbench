@@ -236,10 +236,11 @@ declaration. The two reference attributes are NOT equivalent:
 
 Assembly similarity after recompiling the decompiled C **the same way the
 source was compiled** — the toolchain and `-m*/-O*` flags matching the
-original binary's own format+arch (PE→MinGW, ARM→arm-none-eabi, x86→gcc;
-flags read from the DWARF producer), via `decbench/utils/binfmt.py`. Returns a
-non-scoring result (an **abstention**, not a 0) if that toolchain isn't
-installed — don't fake a wrong-arch recompile. Works on ELF and PE.
+original binary's own format+arch (PE→MinGW, ARM→arm-none-eabi, and bare `gcc`
+only for an architecture the host builds natively — the cross triplet
+otherwise; flags read from the DWARF producer), via `decbench/utils/binfmt.py`.
+Returns a non-scoring result (an **abstention**, not a 0) if that toolchain
+isn't installed — don't fake a wrong-arch recompile. Works on ELF and PE.
 
 ### The two fairness passes (v5, `cache_version="5"`)
 

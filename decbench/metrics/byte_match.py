@@ -230,7 +230,7 @@ class ByteMatchMetric(Metric):
     requires_source_cfg = False
     requires_decompiled_cfg = False
 
-    cache_version = "5"
+    cache_version = "6"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
@@ -265,8 +265,9 @@ class ByteMatchMetric(Metric):
         from decbench.utils import binfmt
 
         # Recompile the way the source was compiled (PE -> MinGW, ARM -> arm-none-eabi,
-        # x86 -> gcc, flags from the DWARF producer). Without that toolchain, return a
-        # non-scoring result rather than comparing against a wrong-arch recompile.
+        # host-native -> gcc, otherwise the cross triplet; flags from the DWARF producer).
+        # Without that toolchain, return a non-scoring result rather than comparing
+        # against a wrong-arch recompile.
         info = binfmt.detect(original_binary_path)
         if info is None:
             return MetricValue(value=0.0, metadata={"error": "Unrecognized binary format"})
@@ -280,7 +281,10 @@ class ByteMatchMetric(Metric):
                 },
             )
         flags = binfmt.producer_flags(original_binary_path) + ["-c", "-fno-builtin", "-w"]
-        arch_mode = binfmt.capstone_arch_mode(info)
+        thumb = binfmt.elf_function_is_thumb(
+            original_binary_path, decompiled.name, decompiled.address
+        )
+        arch_mode = binfmt.capstone_arch_mode(info, thumb=thumb)
 
         original_bytes = binfmt.function_bytes(
             original_binary_path, decompiled.name, decompiled.address

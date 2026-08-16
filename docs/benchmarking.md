@@ -47,6 +47,10 @@ structurer was fully retired 2026-07-23; see CHANGELOG.md.)
 - **RetDec / Reko** — Dockerized (`docker/`); their images are NOT currently
   built on this machine (`list-decompilers` shows N) — build one with
   `decbench decompiler-build <name>` first.
+- **Glaurung** — native address-scoped CLI or the
+  `decbench/glaurung:latest` image built by
+  `decbench decompiler-build glaurung`. The image is a reproducible raw-only
+  install and requires no API credentials.
 - **codex / claude-code / kimi-code** — LLM coding-agent backends,
   sample-set-only; see [decompilers.md](decompilers.md). codex and
   claude-code are logged in and available; kimi-code shows N until a Kimi
@@ -125,6 +129,63 @@ default full run is C-only.
   `projects/cpp/*.toml` glob. The support code is always active; only the
   target list is gated. See `projects/cpp/disabled/README.md` to enable one,
   and read [C++ targets](#c-targets) before using any C++ number.
+
+### Corpus architecture (retargeting on a non-x86 host)
+
+`compilation.c_compiler` is `gcc` in all 26 sailr TOMLs (and the one Linux
+malware target), so those are built for whatever the **host** is; `target_arch`
+only filters which built ELFs are collected, it does not select a compiler. Two env vars retarget
+them without editing every TOML (`pipeline/compile.py:corpus_target`). Unset,
+each project compiles exactly as its TOML declares:
+
+```bash
+export DECBENCH_CC=x86_64-linux-gnu-gcc     # overrides compilation.c_compiler
+export DECBENCH_TARGET_ARCH=x86-64          # overrides compilation.target_arch
+export QEMU_LD_PREFIX=/usr/x86_64-linux-gnu # see below
+```
+
+`DECBENCH_TARGET_ARCH` is matched against the short machine names
+`GCCCompiler._binary_machine` reports — `x86-64`, `x86`, `aarch64`, `arm`,
+`riscv`, `mips`, `ppc`, `ppc64` — not a GNU triplet. A value that matches
+nothing collects nothing. Set both vars together: the sailr TOMLs leave
+`target_arch` unset, so `DECBENCH_CC` alone retargets the compiler with the
+collection filter off, and the host-arch helper tools an autotools build emits
+(`CC_FOR_BUILD`) are collected next to the retargeted binaries.
+
+A project that names its own cross-compiler is left alone by both vars, so the
+CPS (`arm-none-eabi-gcc`, `arm-linux-gnueabihf-gcc`) and MinGW malware
+(`i686-w64-mingw32-gcc`) targets still build and still keep their own
+`target_arch` filter during a full run. `mirai` declares plain `gcc`, so it is
+retargeted like sailr.
+
+`DECBENCH_CC` reaches `pre_make_cmds` and `make_cmd` alike, so `./configure` and
+`make` agree without per-project changes. It resolves the **C** compiler only:
+`cpp_compiler` is untouched, so the (disabled) C++ targets are not retargeted.
+
+The full-run recipe below forwards both vars into the compile container
+(`-e DECBENCH_CC -e DECBENCH_TARGET_ARCH`, a no-op while they are unset). Keep
+them there: without them the targets built inside (`mirai` uses `$CC`) come out
+native while the host-built ones do not, leaving one tree with two
+architectures. The image must then provide `$DECBENCH_CC`, or `mirai` fails to
+build — visibly, in `compile_report.json` — rather than silently switching arch.
+
+**`QEMU_LD_PREFIX` is not optional on an emulated target.** With only `CC` set,
+autoconf decides it is not cross compiling and runs its `AC_TRY_RUN` probes,
+which are foreign binaries; qemu then looks for the loader in the wrong place,
+every run-test fails, and configure silently guesses.
+
+**The architecture is recorded, not inferred.** `BinaryGroup.arch` carries the
+detected machine of each benchmarked binary and `scoring/datasets.py:_is_arm`
+prefers it; labels remain the fallback, so datasets built before the field
+existed keep their membership. The label heuristic alone only recognised
+TOML-declared cross-builds, so a corpus built natively on a non-x86 host was
+filed as the x86 baseline.
+
+**Mind the sysroot.** A cross toolchain typically ships glibc only, so
+dependency-heavy targets (`-lz`, `-lselinux`, …) will not link. A `./configure`
+that dies or hangs that way is now logged rather than swallowed, and a `make`
+that times out is recorded as a failed result, but compare per-project binary
+counts against a known-good run before trusting a scoreboard.
 
 ### C++ targets
 
@@ -368,7 +429,8 @@ docker build -f docker/compile.Dockerfile -t decbench-compile .
 # 3) docker-compile cps+malware INTO the same tree (run as host user;
 #    /.dockerenv satisfies the is_malware guard):
 docker run --rm -v "$PWD":/workspace -w /workspace -e PYTHONPATH=/workspace \
-  -e HOME=/tmp --user "$(id -u):$(id -g)" decbench-compile \
+  -e HOME=/tmp -e DECBENCH_CC -e DECBENCH_TARGET_ARCH \
+  --user "$(id -u):$(id -g)" decbench-compile \
   python3 scripts/compile_all.py results/full_run 8 <cps+malware stems...>
 # 4) one decompile+evaluate+report pass over everything (resumes per-project):
 DECBENCH_WORKERS=40 \

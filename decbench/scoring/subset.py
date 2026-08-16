@@ -188,15 +188,7 @@ def filter_function_data(
         ]
         if not kept:
             continue
-        new_groups.append(
-            BinaryGroup(
-                project=group.project,
-                opt_level=group.opt_level,
-                binary=group.binary,
-                labels=list(group.labels),
-                functions=kept,
-            )
-        )
+        new_groups.append(group.model_copy(update={"functions": kept}))
 
     return FunctionData(
         schema_version=function_data.schema_version,
