@@ -171,6 +171,15 @@ For checkpoint A/B runs, `scripts/reeval_typematch.py --mode address|usage|addre
 prints old/new comparisons. Non-canonical overlays require an explicit
 `--output`; only `--emit` with `auto` may write `type_match_new.json`.
 
+The reporting path accepts
+`MetricValue.metadata["variable_match_evidence"]` as `native`, `mixed`, or
+`fallback_only`, based on the evidence actually used for that function rather than
+the backend's name. When the production metric emits it, this provenance is carried
+through `FunctionRecord.metric_evidence` and the site's `metric_evidence` aggregate. A
+mixed/fallback-only Type percentage receives an explanatory asterisk because
+conservative heuristic abstention may undercount recovery. The provenance never
+changes a metric value, perfect flag, shared denominator, Union, or sort order.
+
 A subprogram's name is read through `binfmt.die_attr` rather than straight off
 the DIE, because gcc keeps a C++ out-of-line member definition's `DW_AT_name`
 on the in-class declaration it references. Without that chase, leveldb's

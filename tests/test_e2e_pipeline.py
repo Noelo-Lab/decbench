@@ -425,8 +425,14 @@ class TestFunctionData:
                                 decompiler_name="angr",
                                 binary_name="binary1",
                                 function_results={
-                                    "func1": MetricValue(value=1.0),
-                                    "func2": MetricValue(value=0.5),
+                                    "func1": MetricValue(
+                                        value=1.0,
+                                        metadata={"variable_match_evidence": "native"},
+                                    ),
+                                    "func2": MetricValue(
+                                        value=0.5,
+                                        metadata={"variable_match_evidence": "fallback_only"},
+                                    ),
                                 },
                             ),
                         },
@@ -462,11 +468,13 @@ class TestFunctionData:
         f1 = funcs["func1"]
         assert f1.values == {"angr": {"ged": 0.0, "type_match": 1.0}}
         assert f1.perfects == {"angr": {"ged": True, "type_match": True}}
+        assert f1.metric_evidence == {"angr": {"type_match": "native"}}
         assert f1.labels == ["O2", "optimized", "firmware"]
 
         f2 = funcs["func2"]
         assert f2.values == {"angr": {"ged": 2.0, "type_match": 0.5}}
         assert f2.perfects == {"angr": {"ged": False, "type_match": False}}
+        assert f2.metric_evidence == {"angr": {"type_match": "fallback_only"}}
 
     def test_function_data_json_round_trip(self, tmp_path) -> None:
         from decbench.models.function_data import FunctionData
@@ -487,6 +495,9 @@ class TestFunctionData:
         assert loaded.perfect_values == fd.perfect_values
         assert len(loaded.groups) == len(fd.groups)
         assert loaded.groups[0].functions[0].perfects == (fd.groups[0].functions[0].perfects)
+        assert loaded.groups[0].functions[0].metric_evidence == (
+            fd.groups[0].functions[0].metric_evidence
+        )
 
 
 @pytest.mark.skipif(

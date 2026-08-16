@@ -369,6 +369,12 @@ button (`#theme-toggle`) flips and persists it at runtime.
       "overall": {"angr": [111, 222]},   // Union column: decompiler -> [perfect, total]
       "errors":  {"angr": [5, 1000]},    // decompiler -> [errored, scope]
       "compile": {"angr": [890, 1000]},  // Compiles rate (data page): decompiler -> [compiled, byte_match-measured]
+      "metric_evidence": {                // sparse measurement provenance; counts only
+        "angr": {                         // finite values produced by this decompiler
+          "type_match": {"native": 80, "mixed": 8,
+                         "fallback_only": 2, "measured": 93}
+        }
+      },
       "distance": {                      // decompiler -> metric -> stats | null
         "angr": {"ged": {"mean": 3.25, "median": 2, "n": 5000, "at0": 1200}}
       }
@@ -381,6 +387,20 @@ button (`#theme-toggle`) flips and persists it at runtime.
 `per_metric`, `overall`, `errors` and `compile` are `[numerator, denominator]` pairs,
 not percentages: the UI renders `count/total` next to the bar, and computing the
 percentage client-side keeps the JSON small and lossless.
+
+`metric_evidence` is additive and sparse. For `type_match`, `native` means native
+line/address provenance and deterministic anchors were sufficient; `mixed` means
+native and heuristic usage/name evidence both contributed; and `fallback_only`
+means local-variable correspondence had no native line/address evidence. `measured`
+counts this decompiler's finite values in the active combo. It is deliberately not
+the shared `per_metric` denominator, which can also include a decompiler's missing
+value as a miss. Older `function_results.json` files carry no evidence metadata, so
+the three categories may sum to less than `measured`; the client never guesses a
+category from a decompiler's name.
+
+The leaderboard adds an asterisk to a Type percentage when its active combo has at
+least one `mixed` or `fallback_only` measurement. The marker is explanatory only:
+sorting, percentages, denominators, and Union still read the existing count pairs.
 
 `distance[dec][metric]` is `null` when no function under the combo had a finite
 distance for that metric.

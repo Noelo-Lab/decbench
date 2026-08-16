@@ -26,6 +26,7 @@ from typing import TypedDict
 import decbench.decompilers  # noqa: F401 (register backends so pickles load)
 from decbench.metrics.base import MetricConfig
 from decbench.metrics.type_match import TypeMatchMetric
+from decbench.models.function_data import VARIABLE_MATCH_EVIDENCE
 from decbench.results_store import merge_typematch_overlay
 from decbench.utils.langs import preprocessed_by_stem
 
@@ -91,7 +92,7 @@ def main() -> None:
     aggregate: defaultdict[str, AggregateRow] = defaultdict(
         lambda: {"o": 0.0, "n": 0.0, "c": 0, "imp": 0, "wor": 0}
     )
-    new_scores: dict[str, dict[str, dict[str, float | int]]] = {}
+    new_scores: dict[str, dict[str, dict[str, float | int | str]]] = {}
 
     for project in projects:
         checkpoint_path = checkpoint_dir / f"{project}.pkl"
@@ -125,10 +126,14 @@ def main() -> None:
                             metadata = value.metadata or {}
                             distance = int(metadata.get("fp", 0)) + int(metadata.get("fn", 0))
                             score_key = f"{project}::{opt_name}::{binary_name}::{function_name}"
-                            new_scores.setdefault(decompiler_name, {})[score_key] = {
+                            entry: dict[str, float | int | str] = {
                                 "value": value.value,
                                 "dist": distance,
                             }
+                            evidence = metadata.get("variable_match_evidence")
+                            if evidence in VARIABLE_MATCH_EVIDENCE:
+                                entry["variable_match_evidence"] = evidence
+                            new_scores.setdefault(decompiler_name, {})[score_key] = entry
                         if key not in old:
                             continue
                         previous = old[key]

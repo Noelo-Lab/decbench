@@ -61,6 +61,7 @@ def _filter_function_data(function_data: FunctionData, hidden: set[str]) -> Func
         for record in group.functions:
             record.values = {d: v for d, v in record.values.items() if d in keep}
             record.perfects = {d: v for d, v in record.perfects.items() if d in keep}
+            record.metric_evidence = {d: v for d, v in record.metric_evidence.items() if d in keep}
             record.distances = {d: v for d, v in record.distances.items() if d in keep}
             record.decompiled = {d: v for d, v in record.decompiled.items() if d in keep}
 

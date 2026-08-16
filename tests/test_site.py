@@ -64,6 +64,7 @@ def function_data() -> FunctionData:
                         function="f1",
                         values={"angr": {"ged": 0.0, "type_match": 1.0}},
                         perfects={"angr": {"ged": True, "type_match": True}},
+                        metric_evidence={"angr": {"type_match": "native"}},
                         decompiled={"angr": True},
                         datasets=["unoptimized"],
                     ),
@@ -71,6 +72,7 @@ def function_data() -> FunctionData:
                         function="f2",
                         values={"angr": {"ged": 2.0, "type_match": 0.5}},
                         perfects={"angr": {"ged": False, "type_match": False}},
+                        metric_evidence={"angr": {"type_match": "fallback_only"}},
                         decompiled={"angr": True},
                         datasets=["unoptimized", "sample-set"],
                     ),
@@ -159,6 +161,31 @@ def test_aggregates_carry_the_registry_and_the_default_view(
         "sample-set|0",
         "sample-set|1",
     }
+
+
+def test_type_measurement_evidence_and_dynamic_note_ship(
+    tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
+) -> None:
+    out = tmp_path / "site"
+    build_site(scoreboard, function_data, out)
+
+    agg = json.loads((out / "data" / "aggregates.json").read_text())
+    evidence = agg["combos"]["unoptimized|0"]["metric_evidence"]["angr"]["type_match"]
+    assert evidence == {
+        "native": 1,
+        "mixed": 0,
+        "fallback_only": 1,
+        "measured": 2,
+    }
+
+    index = (out / "index.html").read_text()
+    app = (out / "app.js").read_text()
+    css = (out / "app.css").read_text()
+    assert 'id="type-evidence-note"' in index
+    assert "may be conservative" in index
+    assert "evidenceUsesHeuristic" in app
+    assert 'class="evidence-mark"' in app
+    assert ".evidence-mark" in css
 
 
 def test_preset_text_comes_from_the_content_registry(

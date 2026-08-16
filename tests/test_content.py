@@ -118,6 +118,16 @@ def test_prose_renders_markdown_constructs(content: Content) -> None:
     assert "<li>run <code>foo()</code> and <strong>bar</strong>.</li>" in body
 
 
+def test_type_evidence_note_and_limitation_are_explained(content: Content) -> None:
+    leaderboard = content.view("leaderboard").body_html
+    assert 'id="type-evidence-note"' in leaderboard
+    assert "may be conservative" in leaderboard
+
+    about = content.view("about").outro_html
+    assert "mixed or fallback-only evidence" in about
+    assert "scores or denominators" in about
+
+
 def test_convention_comments_are_stripped(content: Content) -> None:
     for spec in content.view_specs:
         view = content.view(spec.id)

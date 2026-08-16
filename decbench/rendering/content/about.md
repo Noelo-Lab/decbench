@@ -389,8 +389,14 @@ There is also ways the `.i` files, which we parse, can have false information le
 When we sampled this process, we found it was small.
 
 ### Type Edit Distance
-The fundamental flaw here is being unable to match a variable across a decompiler sample if the offset is not reported in the text.
-We attempt to get around this by using heuristics, but, it is a known problem.
+Type recovery first has to determine which decompiled variable corresponds to which
+source variable. When a backend provides native pseudocode-to-instruction provenance,
+we use the variable's instruction addresses. If that evidence is incomplete or absent,
+we can also compare type-blind usage patterns such as reads, writes, operations, and
+call-site roles. The heuristic deliberately leaves ambiguous candidates unmatched, so
+results that use mixed or fallback-only evidence may conservatively undercount recovery.
+The leaderboard marks those Type percentages with an asterisk without changing their
+scores or denominators.
 
 ### Recompilation Byte Edit Distance
 The flaw here is that each function is evaluated alone.

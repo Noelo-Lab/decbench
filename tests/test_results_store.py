@@ -28,6 +28,7 @@ from decbench.results_store import (
     read_ged_overlay,
     update_byte_match,
     update_ged,
+    update_type_match,
     write_function_data_guarded,
 )
 
@@ -152,12 +153,50 @@ def test_read_ged_overlay_sidecar_excludes_stale_checkpoints(tmp_path: Path) -> 
 
 def test_merge_typematch_overlay() -> None:
     existing = {"kuna": {"a::O0::b::f": {"value": 0.5}}, "angr": {"a::O0::b::f": {"value": 0.2}}}
-    fresh = {"kuna": {"a::O0::b::f": {"value": 0.9}, "a::O0::b::g": {"value": 0.1}}}
+    fresh = {
+        "kuna": {
+            "a::O0::b::f": {
+                "value": 0.9,
+                "variable_match_evidence": "mixed",
+            },
+            "a::O0::b::g": {"value": 0.1},
+        }
+    }
     merged = merge_typematch_overlay(existing, fresh)
-    assert merged["kuna"]["a::O0::b::f"] == {"value": 0.9}
+    assert merged["kuna"]["a::O0::b::f"] == {
+        "value": 0.9,
+        "variable_match_evidence": "mixed",
+    }
     assert merged["kuna"]["a::O0::b::g"] == {"value": 0.1}
     assert merged["angr"]["a::O0::b::f"] == {"value": 0.2}
     assert existing["kuna"]["a::O0::b::f"] == {"value": 0.5}
+
+
+def test_update_typematch_replaces_and_clears_metric_evidence() -> None:
+    fd = _fd_two_slices()
+    record = fd.groups[0].functions[0]
+    record.metric_evidence = {"kuna": {"type_match": "mixed"}}
+    key = "projA::O0::binA::f1"
+
+    updated = update_type_match(
+        fd,
+        {
+            "kuna": {
+                key: {
+                    "value": 0.75,
+                    "dist": 1,
+                    "variable_match_evidence": "fallback_only",
+                }
+            }
+        },
+    )
+
+    assert updated == 1
+    assert record.values["kuna"]["type_match"] == 0.75
+    assert record.metric_evidence == {"kuna": {"type_match": "fallback_only"}}
+
+    update_type_match(fd, {"kuna": {key: {"value": 1.0, "dist": 0}}})
+    assert "kuna" not in record.metric_evidence
 
 
 def test_coverage_guard_catches_column_drop() -> None:

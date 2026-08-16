@@ -43,6 +43,7 @@ def _func(
     perfects: dict[str, dict[str, bool]],
     decompiled: dict[str, bool] | None = None,
     distances: dict[str, dict[str, float]] | None = None,
+    metric_evidence: dict[str, dict[str, str]] | None = None,
     datasets: list[str] | None = None,
 ) -> FunctionRecord:
     """One synthetic function; ``decompiled`` defaults to 'both succeeded'."""
@@ -52,6 +53,7 @@ def _func(
         perfects=perfects,
         decompiled=decompiled if decompiled is not None else dict.fromkeys(DECS, True),
         distances=distances or {},
+        metric_evidence=metric_evidence or {},
         datasets=datasets if datasets is not None else ["full"],
     )
 
@@ -105,6 +107,60 @@ def test_metric_unmeasurable_for_everyone_leaves_every_denominator() -> None:
         assert combo["per_metric"][dec]["ged"] == [0, 2]
         assert combo["per_metric"][dec]["type_match"] == [2, 2]
     assert combo["overall"]["alpha"] == [2, 2]
+
+
+def test_metric_evidence_is_scoped_but_does_not_change_scores() -> None:
+    both_presets = _func(
+        "native",
+        values={d: {"type_match": 1.0} for d in DECS},
+        perfects={d: {"type_match": True} for d in DECS},
+        metric_evidence={
+            "alpha": {"type_match": "native"},
+            "beta": {"type_match": "fallback_only"},
+        },
+        datasets=["full", "tiny"],
+    )
+    full_only = _func(
+        "mixed",
+        values={d: {"type_match": 0.5} for d in DECS},
+        perfects={d: {"type_match": False} for d in DECS},
+        metric_evidence={"alpha": {"type_match": "mixed"}},
+        datasets=["full"],
+    )
+    with_evidence = _data([both_presets, full_only])
+    without_evidence = with_evidence.model_copy(deep=True)
+    for group in without_evidence.groups:
+        for function in group.functions:
+            function.metric_evidence = {}
+
+    qualified = _build(with_evidence)
+    baseline = _build(without_evidence)
+    for combo_name, qualified_combo in qualified["combos"].items():
+        baseline_combo = baseline["combos"][combo_name]
+        for key, value in qualified_combo.items():
+            if key != "metric_evidence":
+                assert value == baseline_combo[key]
+
+    full = qualified["combos"]["full|0"]["metric_evidence"]
+    assert full["alpha"]["type_match"] == {
+        "native": 1,
+        "mixed": 1,
+        "fallback_only": 0,
+        "measured": 2,
+    }
+    assert full["beta"]["type_match"] == {
+        "native": 0,
+        "mixed": 0,
+        "fallback_only": 1,
+        "measured": 2,
+    }
+    assert qualified["combos"]["full|1"]["metric_evidence"] == full
+
+    tiny = qualified["combos"]["tiny|0"]["metric_evidence"]
+    assert tiny["alpha"]["type_match"]["native"] == 1
+    assert tiny["alpha"]["type_match"]["measured"] == 1
+    assert tiny["beta"]["type_match"]["fallback_only"] == 1
+    assert tiny["beta"]["type_match"]["measured"] == 1
 
 
 def test_source_parse_failure_drops_ged_for_everyone() -> None:

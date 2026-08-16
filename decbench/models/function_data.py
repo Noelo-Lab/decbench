@@ -12,6 +12,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+VARIABLE_MATCH_EVIDENCE = frozenset({"native", "mixed", "fallback_only"})
+
 
 class FunctionRecord(BaseModel):
     """Per-function metric values and perfect flags across decompilers."""
@@ -24,6 +26,11 @@ class FunctionRecord(BaseModel):
     perfects: dict[str, dict[str, bool]] = Field(
         default_factory=dict,
         description="decompiler -> metric -> whether the value is perfect",
+    )
+    metric_evidence: dict[str, dict[str, str]] = Field(
+        default_factory=dict,
+        description="decompiler -> metric -> measurement-evidence category; absent "
+        "when older results did not record provenance",
     )
     distances: dict[str, dict[str, float]] = Field(
         default_factory=dict,

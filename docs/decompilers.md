@@ -159,13 +159,17 @@ def decompile_binary(
 | `decompiled_code` (C string) | GED, byte_match | **Yes** — without it nothing scores |
 | `address` (ELF-space) | type_match, byte_match | **Yes** |
 | `variables: list[VariableInfo]` | type_match | Recommended (else parsed out of the C) |
-| `line_mappings: list[LineMapping]` | (CFG line attribution) | Optional / best-effort |
+| `line_mappings: list[LineMapping]` | type_match variable correspondence | Recommended; usage/name fallback when absent |
 | `metadata` (e.g. goto/bool counts) | report extras | Optional |
 
 A backend that only fills `decompiled_code` + correct `address` already scores
 on GED and byte_match, and type_match parses its C (signature → ABI-positioned
 args + locals; name-based regex only as a last resort). Variables and line maps
-improve fidelity but are not required.
+improve fidelity but are not required. When line maps are missing or incomplete,
+type_match can use type-blind variable-usage evidence instead. Each function records
+whether its correspondence evidence was `native`, `mixed`, or `fallback_only`; the
+site marks mixed/fallback-only Type percentages because conservative heuristic
+abstention may undercount recovery.
 
 ## 2. Minimal working example
 
