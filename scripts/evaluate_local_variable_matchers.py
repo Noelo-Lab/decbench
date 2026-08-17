@@ -967,9 +967,9 @@ def main(argv: list[str] | None = None) -> int:
             joined_by_mode[mode] = joined
 
         import decbench.experimental.local_variable_checkpoint as scorer_module
-        import decbench.experimental.local_variable_distance as matcher_module
-        import decbench.experimental.local_variable_features as feature_module
         import decbench.experimental.local_variable_semantic_audit as audit_module
+        import decbench.metrics.variable_features as feature_module
+        import decbench.metrics.variable_match as matcher_module
 
         labels_path = args.labels or args.audit_package / "audit_labels.jsonl"
         merge_provenance_path = (

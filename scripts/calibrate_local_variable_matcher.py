@@ -414,7 +414,8 @@ def calibration_implementation_hashes() -> dict[str, str]:
     repository = Path(__file__).resolve().parents[1]
     paths = (
         Path(__file__).resolve(),
-        repository / "decbench/experimental/local_variable_distance.py",
+        repository / "decbench/metrics/variable_match.py",
+        repository / "decbench/metrics/variable_features.py",
         repository / "decbench/experimental/local_variable_checkpoint.py",
         repository / "decbench/decompilers/raw/ida_raw.py",
         repository / "decbench/decompilers/raw/ghidra_raw.py",
