@@ -19,6 +19,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import pickle
@@ -42,6 +43,7 @@ from decbench.results_store import (
 from decbench.utils.langs import preprocessed_by_stem
 
 MODES = ("auto", "address", "usage", "address+usage")
+SampleKey = tuple[str, str, str, str]
 
 
 class AggregateRow(TypedDict):
@@ -70,6 +72,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("results_dir", type=Path)
     parser.add_argument("projects", nargs="*")
     parser.add_argument("--mode", choices=MODES, default="auto")
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        help="limit an A/B run to functions in a sample-set manifest",
+    )
     outputs = parser.add_mutually_exclusive_group()
     outputs.add_argument(
         "--emit",
@@ -84,6 +91,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.emit and args.mode != "auto":
         parser.error("--emit is reserved for the canonical auto mode; use --output for A/B modes")
+    if args.emit and args.manifest is not None:
+        parser.error("--manifest is for partial A/B runs and cannot be combined with --emit")
     if args.output is not None:
         canonical = args.results_dir / "type_match_new.json"
         protected = (canonical, typematch_overlay_manifest_path(canonical))
@@ -94,6 +103,39 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                 "use --emit for canonical promotion"
             )
     return args
+
+
+def _sample_keys(path: Path) -> set[SampleKey]:
+    try:
+        payload = json.loads(path.read_text())
+        functions = payload["functions"]
+        keys = {
+            (
+                str(row["project"]),
+                str(row["opt"]),
+                str(row["binary"]),
+                str(row["function"]),
+            )
+            for row in functions
+        }
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise ValueError(f"invalid sample-set manifest {path}: {exc}") from exc
+    if not isinstance(functions, list) or not keys:
+        raise ValueError(f"sample-set manifest has no functions: {path}")
+    return keys
+
+
+def _limit_decompilation(decompilation: object, functions: set[str]) -> object:
+    available = getattr(decompilation, "functions", None)
+    model_copy = getattr(decompilation, "model_copy", None)
+    if not isinstance(available, dict) or not callable(model_copy):
+        return decompilation
+    selected = {
+        key: function
+        for key, function in available.items()
+        if key in functions or getattr(function, "name", None) in functions
+    }
+    return model_copy(update={"functions": selected})
 
 
 def _old_scores(root: Path) -> dict[tuple[str, str, str, str, str], float]:
@@ -167,8 +209,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     root: Path = args.results_dir
     old = _old_scores(root)
     checkpoint_dir = root / "checkpoints"
+    sample_keys = _sample_keys(args.manifest) if args.manifest is not None else None
+    manifest_projects = sorted({key[0] for key in sample_keys}) if sample_keys is not None else []
     projects = list(
-        dict.fromkeys(args.projects or sorted(path.stem for path in checkpoint_dir.glob("*.pkl")))
+        dict.fromkeys(
+            args.projects
+            or manifest_projects
+            or sorted(path.stem for path in checkpoint_dir.glob("*.pkl"))
+        )
     )
     metric = TypeMatchMetric(MetricConfig(extra_options={"variable_match_mode": args.mode}))
     provenance = _promotion_provenance(metric, args.mode)
@@ -193,10 +241,27 @@ def main(argv: Sequence[str] | None = None) -> None:
             compiled = root / opt_name / project / "compiled"
             sources = list(preprocessed_by_stem(compiled).values())
             for binary_name, decompilers in binaries.items():
+                selected_functions = (
+                    {
+                        function
+                        for sample_project, sample_opt, sample_binary, function in sample_keys
+                        if sample_project == project
+                        and sample_opt == opt_name
+                        and sample_binary == binary_name
+                    }
+                    if sample_keys is not None
+                    else None
+                )
+                if selected_functions is not None and not selected_functions:
+                    continue
                 for decompiler_name, decompilation in decompilers.items():
                     try:
                         result = metric.compute_for_binary(
-                            decompilation,
+                            (
+                                _limit_decompilation(decompilation, selected_functions)
+                                if selected_functions is not None
+                                else decompilation
+                            ),
                             preprocessed_sources=sources,
                         )
                     except Exception as exc:  # noqa: BLE001
@@ -248,6 +313,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                             row["wor"] += 1
 
     print(f"\nmode: {args.mode}")
+    if args.manifest is not None:
+        digest = hashlib.sha256(args.manifest.read_bytes()).hexdigest()
+        print(f"manifest: {args.manifest} ({len(sample_keys or ())} functions, sha256={digest})")
     print(f"{'dec':9} {'n':>7} {'OLD mean':>9} {'NEW mean':>9} {'improved':>9} {'worse':>7}")
     for decompiler in sorted(aggregate):
         row = aggregate[decompiler]

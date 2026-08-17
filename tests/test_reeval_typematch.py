@@ -9,6 +9,11 @@ from typing import Literal
 
 import pytest
 
+from decbench.models.decompilation import (
+    DecompilationResult,
+    DecompilerMetadata,
+    FunctionDecompilation,
+)
 from decbench.models.metrics import MetricResult, MetricValue
 from decbench.results_store import (
     TypeMatchOverlayError,
@@ -222,3 +227,61 @@ def test_scoped_ab_merge_rejects_incompatible_mode_and_preserves_output(
 
     assert output.read_bytes() == before
     assert manifest.read_bytes() == manifest_before
+
+
+def test_sample_manifest_filters_before_metric_evaluation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_results_tree(tmp_path)
+    decompilation = DecompilationResult(
+        binary_path=tmp_path / "O0" / "proj" / "compiled" / "bin",
+        binary_name="bin",
+        decompiler=DecompilerMetadata(decompiler_name="angr"),
+        functions={
+            name: FunctionDecompilation(name=name, address=index, decompiled_code="")
+            for index, name in enumerate(("f", "g"), start=1)
+        },
+    )
+    with open(tmp_path / "checkpoints" / "proj.pkl", "wb") as file:
+        pickle.dump({"decompile": {"O0": {"bin": {"angr": decompilation}}}}, file)
+    manifest = tmp_path / "sample.json"
+    manifest.write_text(
+        json.dumps(
+            {"functions": [{"project": "proj", "opt": "O0", "binary": "bin", "function": "f"}]}
+        )
+    )
+    seen: list[set[str]] = []
+
+    class StubMetric:
+        cache_version = "stub-cache-v1"
+        variable_match_policy = {"min_overlap": 0.1, "address_weight": 0.5}
+
+        def __init__(self, _config: object) -> None:
+            pass
+
+        def compute_for_binary(
+            self, selected: DecompilationResult, **_kwargs: object
+        ) -> MetricResult:
+            seen.append(set(selected.functions))
+            return _result()
+
+    monkeypatch.setattr(reeval_typematch, "TypeMatchMetric", StubMetric)
+    output = tmp_path / "sample-ab.json"
+
+    reeval_typematch.main(
+        [str(tmp_path), "--mode", "usage", "--manifest", str(manifest), "--output", str(output)]
+    )
+
+    assert seen == [{"f"}]
+    payload, provenance = read_typematch_overlay(output)
+    assert set(payload["angr"]) == {"proj::O0::bin::f"}
+    assert provenance is not None and provenance["mode"] == "usage"
+
+
+def test_sample_manifest_cannot_promote_canonical_overlay(tmp_path: Path) -> None:
+    manifest = tmp_path / "sample.json"
+    manifest.write_text('{"functions": []}')
+
+    with pytest.raises(SystemExit):
+        reeval_typematch.parse_args([str(tmp_path), "--manifest", str(manifest), "--emit"])
