@@ -5,9 +5,9 @@ Covers the three legs against a synthetic gcc -g -O0 mini-tree:
   anon-name determinism, strict vs allow_unresolved behavior, zip layout;
 - package.py: run as a REAL subprocess inside a kit — happy path plus every
   validation-error class;
-- ingest (evaluate=False everywhere — pyjoern is never touched): checkpoint +
-  artifact contents, DWARF relabeling, slice_scoped extras, failed_functions,
-  extra-address drops, force semantics, raw-json rejection;
+- ingest: checkpoint + artifact contents, DWARF relabeling, slice_scoped extras,
+  failed_functions, extra-address drops, force semantics, raw-json rejection,
+  and TypeMatch-only preprocessed-source forwarding without source-CFG work;
 - AddrLookup tolerance rules and CliRunner smoke tests for export + ingest.
 """
 
@@ -21,6 +21,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
@@ -515,6 +516,57 @@ def test_ingest_packaged_zip_happy_path(packaged_zip: Path, tree_copy: Path) -> 
 
     for needle in ("mydec", "finalize_results.py", "DECBENCH_REEVAL_DECOMPILERS"):
         assert needle in summary.next_steps
+
+
+def test_ingest_type_match_forwards_preprocessed_sources_without_source_cfgs(
+    packaged_zip: Path,
+    tree_copy: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decbench.metrics.type_match import TypeMatchMetric
+    from decbench.models.metrics import MetricResult
+    from decbench.utils import cfg as cfg_module
+
+    proj2_i = tree_copy / "O0" / "proj2" / "compiled" / "prog2.i"
+    proj2_ii = proj2_i.with_suffix(".ii")
+    proj2_i.rename(proj2_ii)
+
+    captured: dict[str, dict[str, Any]] = {}
+
+    def capture(
+        self: TypeMatchMetric,
+        decompilation: Any,
+        **kwargs: Any,
+    ) -> MetricResult:
+        captured[decompilation.binary_name] = kwargs
+        return MetricResult(
+            metric_name=self.name,
+            decompiler_name=decompilation.decompiler.decompiler_name,
+            binary_name=decompilation.binary_name,
+        )
+
+    def reject_cfg_extraction(_path: Path) -> None:
+        pytest.fail("TypeMatch-only ingest must not extract source CFGs")
+
+    monkeypatch.setattr(TypeMatchMetric, "compute_for_binary", capture)
+    monkeypatch.setattr(cfg_module, "extract_cfgs_from_source", reject_cfg_extraction)
+
+    summary = ingest_submission(
+        packaged_zip,
+        tree_copy,
+        "typetest",
+        evaluate=True,
+        metrics=["type_match"],
+    )
+
+    assert summary.n_binaries == 2
+    assert set(captured) == {"prog1", "prog2"}
+    assert captured["prog1"]["source_cfgs"] is None
+    assert captured["prog2"]["source_cfgs"] is None
+    assert captured["prog1"]["preprocessed_sources"] == [
+        tree_copy / "O0" / "proj1" / "compiled" / "prog1.i"
+    ]
+    assert captured["prog2"]["preprocessed_sources"] == [proj2_ii]
 
 
 def test_ingest_partial_submission_failed_functions(tree_copy: Path, tmp_path: Path) -> None:

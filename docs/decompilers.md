@@ -718,7 +718,10 @@ function whose address is not on the manifest for that slice** (counted +
 warned), writes `decompiled/<id>_<stem>.c` (+ `.toml`) artifacts, merges the
 checkpoints additively (`--force` to overwrite an existing id), and — with
 `--evaluate`, the default — computes ged/type_match/byte_match inline through
-the same evaluation path the benchmark uses. The column is marked
+the same evaluation path the benchmark uses. Ingest discovers both `.i` and
+`.ii` units for TypeMatch source address/usage evidence even in a TypeMatch-only
+evaluation; it only pays the source-CFG extraction cost when a requested metric
+(currently GED) requires CFGs. The column is marked
 `slice_scoped` in its `DecompilerMetadata.extra`, so `finalize_results.py
 --audit` expects only manifest-slice coverage from it.
 
@@ -765,10 +768,11 @@ decbench site build results/full_run -o site/
 - **byte_match abstains for ARM/PE** on hosts without the cross/MinGW
   toolchains (a non-scoring result, not a 0) — GED + type_match carry those
   slices, same as for every in-house backend.
-- **type_match uses the code-only parser** (signature → ABI-positioned args +
-  locals): submissions carry no `VariableInfo`, so they are scored on the same
-  footing as the LLM backends — fair, but structured variable data from a raw
-  backend can score slightly differently.
+- **type_match parses the submitted code** for its decompiler-side variables
+  and type-blind usage context (submissions carry no `VariableInfo`), while the
+  source side receives the tree's preprocessed `.i`/`.ii` units. This matches
+  the LLM-backend path; structured variable data from a raw backend can still
+  score slightly differently.
 - **Sample-set only.** The column renders only on the `sample-set` preset;
   on every other preset its near-zero coverage would be misleading (that is
   exactly what `sample_set_only` gates).
