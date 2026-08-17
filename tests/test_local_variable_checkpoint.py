@@ -104,8 +104,9 @@ def test_score_config_validates_usage_matcher_parameters() -> None:
     )
 
     assert config.matcher_mode == "usage"
-    with pytest.raises(ValueError, match="address_weight"):
-        ScoreConfig(address_weight=1.1)
+    for weight in (0.0, 1.0, 1.1):
+        with pytest.raises(ValueError, match="address_weight"):
+            ScoreConfig(address_weight=weight)
 
 
 def test_aggregate_source_eligibility_tracks_matcher_mode() -> None:

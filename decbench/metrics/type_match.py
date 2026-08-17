@@ -876,7 +876,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "7"
+    cache_version = "8"
 
     weight = 1.0
     lower_is_better = False
@@ -908,8 +908,8 @@ class TypeMatchMetric(Metric):
             key: float(raw_policy.get(key, default))
             for key, default in _VARIABLE_MATCH_DEFAULTS.items()
         }
-        if not 0 <= self.variable_match_policy["address_weight"] <= 1:
-            raise ValueError("variable-match address_weight must be between 0 and 1")
+        if not 0 < self.variable_match_policy["address_weight"] < 1:
+            raise ValueError("variable-match address_weight must be strictly between 0 and 1")
         if any(value < 0 for value in self.variable_match_policy.values()):
             raise ValueError("variable-match thresholds and margins must be non-negative")
 
@@ -1108,7 +1108,9 @@ class TypeMatchMetric(Metric):
         used_fallback = bool(fallback_stages & stage_counts.keys()) or bool(
             stage_counts.get("fused")
         )
-        if used_native and used_fallback:
+        if not stage_counts:
+            evidence_kind = None
+        elif used_native and used_fallback:
             evidence_kind = "mixed"
         elif used_native:
             evidence_kind = "native"
@@ -1126,7 +1128,7 @@ class TypeMatchMetric(Metric):
             gt_stack_vars,
             decomp_stack_vars,
             extra_metadata={
-                "variable_match_evidence": evidence_kind,
+                **({"variable_match_evidence": evidence_kind} if evidence_kind is not None else {}),
                 "variable_match_mode_requested": self.variable_match_mode,
                 "variable_match_mode": resolved_mode,
                 "match_stage_counts": dict(sorted(stage_counts.items())),

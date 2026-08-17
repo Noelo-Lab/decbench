@@ -353,8 +353,8 @@ def match_variables(
 ) -> DistanceResult:
     if mode not in MATCHER_MODES:
         raise ValueError(f"unknown matcher mode {mode!r}; expected one of {MATCHER_MODES}")
-    if not 0 <= address_weight <= 1:
-        raise ValueError("address_weight must be between 0 and 1")
+    if not 0 < address_weight < 1:
+        raise ValueError("address_weight must be strictly between 0 and 1")
     fused_margin = (
         usage_ambiguity_margin if combined_ambiguity_margin is None else combined_ambiguity_margin
     )
@@ -371,10 +371,23 @@ def match_variables(
     ):
         raise ValueError("matcher thresholds and ambiguity margins must be non-negative")
     source_all = sorted(source, key=lambda var: var.identity)
-    if mode == "address":
-        decompiled_candidates = [var for var in decompiled if not var.inferred_from_code]
-    else:
-        decompiled_candidates = list(decompiled)
+    decompiled_candidates: list[VariableEvidence] = []
+    for variable in decompiled:
+        if not variable.inferred_from_code:
+            decompiled_candidates.append(variable)
+            continue
+        if mode == "usage":
+            decompiled_candidates.append(variable)
+            continue
+        sanitized = replace(
+            variable,
+            addresses=frozenset(),
+            lines=(),
+            live_ranges=(),
+            usage_features=() if mode == "address" else variable.usage_features,
+        )
+        if mode != "address" or sanitized.arg_index is not None or sanitized.stack_offsets:
+            decompiled_candidates.append(sanitized)
     decompiled_all = sorted(decompiled_candidates, key=lambda var: var.identity)
     if mode == "address":
         observable = [

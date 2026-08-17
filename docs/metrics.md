@@ -107,7 +107,7 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="7"`, bumped for type-blind variable correspondence.
+Current `cache_version="8"`, bumped for the production correspondence invariants.
 The per-function key covers the requested/resolved mode, matcher policy,
 redacted address/usage/anchor evidence, the stack shift, decompiled types used
 for grading, and DWARF ground truth. It does NOT cover `normalize_type`, so a
@@ -163,9 +163,10 @@ provenance as `variable_match_evidence = native|mixed|fallback_only`, plus mode,
 stage counts, observable counts, and line-map presence. `native` means only
 address/argument/stack stages were accepted, `mixed` means accepted matching
 used both native and usage evidence, and `fallback_only` means no accepted
-native stage. These values support the report's measurement caveat without
-publishing variable names, features, addresses, stable identities, types, or
-absolute source paths.
+native stage. The field is absent when correspondence accepted no pair, because
+no evidence channel was actually used. These values support the report's
+measurement caveat without publishing variable names, features, addresses,
+stable identities, types, or absolute source paths.
 
 For checkpoint A/B runs, `scripts/reeval_typematch.py --mode address|usage|address+usage|auto`
 prints old/new comparisons. Non-canonical overlays require an explicit

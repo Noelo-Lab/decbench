@@ -172,8 +172,8 @@ class ScoreConfig:
             raise ValueError("usage_ambiguity_margin must be non-negative")
         if self.min_combined_similarity < 0:
             raise ValueError("min_combined_similarity must be non-negative")
-        if not 0 <= self.address_weight <= 1:
-            raise ValueError("address_weight must be between 0 and 1")
+        if not 0 < self.address_weight < 1:
+            raise ValueError("address_weight must be strictly between 0 and 1")
         if self.bootstrap_iterations < 0:
             raise ValueError("bootstrap_iterations must be non-negative")
 

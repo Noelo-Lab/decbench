@@ -267,6 +267,60 @@ def test_available_but_unused_usage_does_not_mark_an_anchor_mixed() -> None:
     assert result.metadata["variable_match_evidence"] == "native"
 
 
+def test_address_mode_keeps_code_inferred_argument_positions() -> None:
+    decompiled = FunctionDecompilation(
+        name="target",
+        address=0x1000,
+        decompiled_code="int target(int renamed) { return renamed; }",
+        variables=[],
+    )
+    ground_truth = [
+        {
+            "identity": "source:0",
+            "name": "original",
+            "type": ["int"],
+            "is_arg": True,
+            "arg_index": 0,
+            "rbp_offset": [],
+        }
+    ]
+
+    result = _metric("address").compute_for_function(
+        decompiled,
+        ground_truth_vars=ground_truth,
+    )
+
+    assert result.value == 1.0
+    assert result.metadata["match_stage_counts"] == {"argument": 1}
+    assert result.metadata["variable_match_evidence"] == "native"
+
+
+def test_no_accepted_pair_has_no_evidence_category() -> None:
+    decompiled = FunctionDecompilation(
+        name="target",
+        address=0x1000,
+        decompiled_code="",
+        variables=[VariableInfo(name="same", type="int")],
+    )
+    ground_truth = [
+        {
+            "identity": "source:0",
+            "name": "same",
+            "type": ["int"],
+            "rbp_offset": [],
+        }
+    ]
+
+    result = _metric("auto").compute_for_function(
+        decompiled,
+        ground_truth_vars=ground_truth,
+    )
+
+    assert result.value == 0.0
+    assert result.metadata["match_stage_counts"] == {}
+    assert "variable_match_evidence" not in result.metadata
+
+
 def test_unobservable_source_variable_remains_in_denominator() -> None:
     decompiled, ground_truth = _address_and_usage_fixture()
     ground_truth.append(
@@ -287,6 +341,60 @@ def test_unobservable_source_variable_remains_in_denominator() -> None:
     assert result.metadata["tp"] == 1
     assert result.metadata["fn"] == 1
     assert result.metadata["unobservable_source_count"] == 1
+
+
+def test_all_modes_keep_the_exact_ground_truth_denominator() -> None:
+    decompiled = FunctionDecompilation(
+        name="target",
+        address=0x1000,
+        decompiled_code=(
+            "int target(int renamed_arg) { int renamed_local = 0; "
+            "consume(renamed_arg, renamed_local); return renamed_arg; }"
+        ),
+        variables=[
+            VariableInfo(name="renamed_arg", type="int", kind="arg", arg_index=0),
+            VariableInfo(name="renamed_local", type="char"),
+        ],
+    )
+    ground_truth = [
+        {
+            "identity": "source:arg",
+            "name": "original_arg",
+            "type": ["int"],
+            "is_arg": True,
+            "arg_index": 0,
+            "rbp_offset": [],
+            "usage_features": {"call:named:consume:arg:0": 1},
+        },
+        {
+            "identity": "source:local",
+            "name": "original_local",
+            "type": ["char"],
+            "rbp_offset": [],
+            "usage_features": {"call:named:consume:arg:1": 1},
+        },
+        {
+            "identity": "source:hidden",
+            "name": "hidden",
+            "type": ["long long"],
+            "rbp_offset": [],
+        },
+    ]
+
+    results = {
+        mode: _metric(mode).compute_for_function(decompiled, ground_truth_vars=ground_truth)
+        for mode in ("address", "usage", "address+usage", "auto")
+    }
+
+    assert results["address"].value == pytest.approx(1 / 3)
+    assert results["usage"].value == pytest.approx(2 / 3)
+    assert results["address+usage"].value == pytest.approx(2 / 3)
+    assert results["auto"].value == pytest.approx(2 / 3)
+    for result in results.values():
+        assert result.metadata["gt_vars"] == len(ground_truth)
+        assert result.metadata["tp"] + result.metadata["fp"] + result.metadata["fn"] == len(
+            ground_truth
+        )
 
 
 def test_source_context_supplies_usage_and_publishes_only_basename(tmp_path: Path) -> None:
@@ -400,4 +508,14 @@ def test_production_rejects_size_compatibility_policy() -> None:
     with pytest.raises(ValueError, match="cannot use variable sizes"):
         TypeMatchMetric(
             MetricConfig(extra_options={"variable_match_policy": {"use_size_compatibility": True}})
+        )
+
+
+@pytest.mark.parametrize("address_weight", [0.0, 1.0])
+def test_production_rejects_degenerate_address_weights(address_weight: float) -> None:
+    with pytest.raises(ValueError, match="strictly between 0 and 1"):
+        TypeMatchMetric(
+            MetricConfig(
+                extra_options={"variable_match_policy": {"address_weight": address_weight}}
+            )
         )

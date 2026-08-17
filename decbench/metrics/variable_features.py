@@ -20,6 +20,10 @@ _SYNTHETIC_CALLEE = re.compile(
 _PSEUDO_CALLEE_RULES = (
     (re.compile(r"^_*ror\d+_*$", re.IGNORECASE), "pseudo:rotate-right"),
     (re.compile(r"^_*rol\d+_*$", re.IGNORECASE), "pseudo:rotate-left"),
+    (re.compile(r"^_*zext\d+_*$", re.IGNORECASE), "pseudo:zero-extend"),
+    (re.compile(r"^_*sext\d+_*$", re.IGNORECASE), "pseudo:sign-extend"),
+    (re.compile(r"^_*s?pair\d+_*$", re.IGNORECASE), "pseudo:concatenate"),
+    (re.compile(r"^_*coerce(?:_[a-z0-9]+)*_*$", re.IGNORECASE), "pseudo:coerce"),
     (re.compile(r"^concat\d+$", re.IGNORECASE), "pseudo:concatenate"),
     (re.compile(r"^sub\d+$", re.IGNORECASE), "pseudo:subpiece"),
     (re.compile(r"^s?carry\d+$", re.IGNORECASE), "pseudo:carry"),

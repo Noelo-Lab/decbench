@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from decbench.experimental.local_variable_distance import (
     DistanceResult,
     FunctionEvidence,
@@ -135,6 +137,37 @@ def test_decompiler_width_helpers_are_normalized_without_size_tokens() -> None:
     assert "pseudo:concatenate" in serialized
 
 
+def test_extension_pair_and_coerce_helpers_are_width_and_type_invariant() -> None:
+    variants = (
+        (("ZEXT14(value)", "ZEXT816(value)"), "pseudo:zero-extend"),
+        (("SEXT14(value)", "SEXT816(value)"), "pseudo:sign-extend"),
+        (
+            (
+                "__PAIR16__(value, value)",
+                "__SPAIR64__(value, value)",
+                "CONCAT71(value, value)",
+            ),
+            "pseudo:concatenate",
+        ),
+        (
+            ("COERCE_FLOAT(value)", "COERCE_DOUBLE(value)", "COERCE_UNSIGNED_INT64(value)"),
+            "pseudo:coerce",
+        ),
+    )
+
+    for expressions, family in variants:
+        vectors = [
+            analyze_c_function(f"int f(int value) {{ return {expression}; }}", "f").features[
+                "value"
+            ]
+            for expression in expressions
+        ]
+        assert all(vector == vectors[0] for vector in vectors[1:])
+        assert any(feature.startswith(f"call:named:{family}:") for feature, _count in vectors[0])
+        serialized = repr(vectors)
+        assert not any(expression.split("(", 1)[0] in serialized for expression in expressions)
+
+
 def test_call_results_and_commutative_operands_are_normalized() -> None:
     first = analyze_c_function(
         "int f(int input) { int output = convert(input); return output; }",
@@ -206,7 +239,13 @@ def test_code_only_decompiler_variables_are_inferred() -> None:
     assert all(not variable.addresses for variable in evidence.variables)
     assert all(variable.inferred_from_code for variable in evidence.variables)
     assert legacy_evidence.variables == []
-    assert match_variables([], evidence.variables).decompiled_count == 0
+    address = match_variables(
+        [VariableEvidence("source:arg", "", arg_index=0)],
+        evidence.variables,
+        mode="address",
+    )
+    assert address.decompiled_count == 1
+    assert _pairs(address) == {("source:arg", "llm:inferred:0", "argument")}
     usage = match_variables(
         [
             replace(variable, identity=f"source:{index}", inferred_from_code=False)
@@ -217,6 +256,55 @@ def test_code_only_decompiler_variables_are_inferred() -> None:
     )
     assert usage.decompiled_count == 2
     assert len(usage.matches) == 2
+
+
+def test_inferred_address_mode_keeps_only_explicit_anchors() -> None:
+    feature = _features("call:named:stable:arg:0")
+    source = [
+        VariableEvidence("s_arg", "", addresses=frozenset({1}), arg_index=0),
+        VariableEvidence("s_stack", "", addresses=frozenset({2}), stack_offsets=(-8,)),
+        VariableEvidence("s_line", "", addresses=frozenset({3}), usage_features=feature),
+    ]
+    decompiled = [
+        VariableEvidence(
+            "d_arg",
+            "",
+            addresses=frozenset({99}),
+            arg_index=0,
+            usage_features=feature,
+            inferred_from_code=True,
+        ),
+        VariableEvidence(
+            "d_stack",
+            "",
+            addresses=frozenset({98}),
+            stack_offsets=(-8,),
+            usage_features=feature,
+            inferred_from_code=True,
+        ),
+        VariableEvidence(
+            "d_line",
+            "",
+            addresses=frozenset({3}),
+            usage_features=feature,
+            inferred_from_code=True,
+        ),
+    ]
+
+    address = match_variables(source, decompiled, mode="address", stack_shift_hint=0)
+    stacked = match_variables(
+        [source[2]],
+        [decompiled[2]],
+        mode="address+usage",
+    )
+
+    assert address.decompiled_count == 2
+    assert _pairs(address) == {
+        ("s_arg", "d_arg", "argument"),
+        ("s_stack", "d_stack", "stack"),
+    }
+    assert all(match.intersection == () for match in address.matches)
+    assert _pairs(stacked) == {("s_line", "d_line", "usage-fallback")}
 
 
 def test_shadowed_code_only_locals_remain_featureless_candidates() -> None:
@@ -386,6 +474,42 @@ def test_fused_mode_can_correct_crossed_address_evidence() -> None:
         ("s0", "d0", "fused"),
         ("s1", "d1", "fused"),
     }
+
+
+def test_address_mode_golden_pairs_and_stacked_address_parity() -> None:
+    source = [
+        VariableEvidence("s_arg", "", arg_index=0),
+        VariableEvidence("s_stack", "", stack_offsets=(-8,)),
+        VariableEvidence("s_address", "", addresses=frozenset({10, 11})),
+        VariableEvidence("s_unobservable", ""),
+    ]
+    decompiled = [
+        VariableEvidence("d_noise", "", addresses=frozenset({99})),
+        VariableEvidence("d_address", "", addresses=frozenset({10, 11})),
+        VariableEvidence("d_stack", "", stack_offsets=(-8,)),
+        VariableEvidence("d_arg", "", arg_index=0),
+    ]
+
+    address = match_variables(source, decompiled, mode="address", stack_shift_hint=0)
+    stacked = match_variables(source, decompiled, mode="address+usage", stack_shift_hint=0)
+
+    assert _pairs(address) == {
+        ("s_arg", "d_arg", "argument"),
+        ("s_stack", "d_stack", "stack"),
+        ("s_address", "d_address", "overlap"),
+    }
+    assert {(match.source_id, match.decompiled_id) for match in address.matches} == {
+        (match.source_id, match.decompiled_id) for match in stacked.matches
+    }
+    assert [match.score for match in address.matches] == [match.score for match in stacked.matches]
+    assert address.unmatched_decompiled == stacked.unmatched_decompiled == ["d_noise"]
+    assert address.unobservable_source == stacked.unobservable_source == ["s_unobservable"]
+
+
+@pytest.mark.parametrize("address_weight", [0.0, 1.0])
+def test_fused_mode_rejects_degenerate_address_weights(address_weight: float) -> None:
+    with pytest.raises(ValueError, match="strictly between 0 and 1"):
+        match_variables([], [], mode="address+usage", address_weight=address_weight)
 
 
 def test_combined_mode_labels_single_channel_matches() -> None:
