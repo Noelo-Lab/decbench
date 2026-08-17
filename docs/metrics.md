@@ -189,7 +189,9 @@ stable identities, types, or absolute source paths.
 For checkpoint A/B runs, `scripts/reeval_typematch.py --mode address|usage|address+usage|auto`
 prints old/new comparisons. Non-canonical overlays require an explicit
 `--output`; only `--emit` with `auto` may write `type_match_new.json`. `--output`
-cannot alias the canonical path. Written overlays retain the legacy raw score-map
+cannot alias the canonical path. `--manifest sample_set_manifest.json` filters
+decompilations before scoring for a fast, non-canonical sample-set replay and cannot
+be combined with `--emit`. Written overlays retain the legacy raw score-map
 shape and gain a digest-bound `.meta.json` companion containing the requested and
 resolved modes, complete policy values, policy/manifest schemas, and metric cache
 version. Scoped updates require compatible provenance and refuse legacy or mixed-policy
