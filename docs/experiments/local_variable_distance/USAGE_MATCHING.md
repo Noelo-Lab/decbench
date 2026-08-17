@@ -133,6 +133,57 @@ margin `0.03`, usage threshold `0.15`, usage ambiguity margin `0`, combined
 threshold `0.20`, combined ambiguity margin `0`, and address weight `0.50`.
 Variable-size compatibility is always false.
 
+## Frozen full-run sample-set replay (2026-08-17)
+
+The three production modes were replayed independently against the committed
+`sample_set_manifest.json`: 250 functions from 38 projects and 224 binaries.
+All modes produced the same 2,459 function/decompiler pairs. The table reports
+mean TypeMatch accuracy; the final column counts paired function scores where
+`auto` improved or worsened relative to `address`.
+
+| Decompiler | Pairs | `address` | `usage` | `auto` | Auto - address | Better / worse |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| angr | 209 | 31.03% | 23.69% | 34.63% | +3.60 pp | 31 / 4 |
+| Binary Ninja | 207 | 23.32% | 26.25% | 31.08% | +7.76 pp | 68 / 0 |
+| Claude Code | 234 | 22.57% | 30.86% | 37.42% | +14.85 pp | 111 / 0 |
+| Codex | 235 | 31.11% | 37.72% | 46.54% | +15.44 pp | 116 / 0 |
+| Dewolf | 164 | 0.00% | 8.13% | 8.13% | +8.13 pp | 48 / 0 |
+| Ghidra | 221 | 21.43% | 22.77% | 29.65% | +8.22 pp | 85 / 0 |
+| Glaurung | 235 | 18.95% | 16.34% | 26.03% | +7.08 pp | 70 / 0 |
+| IDA | 222 | 22.77% | 24.88% | 30.20% | +7.43 pp | 78 / 0 |
+| Kuna | 223 | 21.13% | 6.13% | 22.27% | +1.14 pp | 17 / 0 |
+| Manifold | 135 | 9.53% | 11.65% | 17.71% | +8.17 pp | 51 / 0 |
+| Phoenix | 184 | 33.04% | 23.78% | 35.80% | +2.76 pp | 25 / 4 |
+| r2dec | 190 | 6.11% | 0.00% | 6.11% | +0.00 pp | 0 / 0 |
+| **Weighted total** | **2,459** | **20.90%** | **20.14%** | **28.13%** | **+7.24 pp** | **700 / 8** |
+
+For the four canonical raw backends with native maps, `auto` improved the
+weighted mean over `address` by 6.78 points (262 better, four worse, 593
+unchanged). Across the text-oriented or not-guaranteed-native-map checkpoints
+for Claude Code, Codex, Dewolf, Glaurung, Manifold, Phoenix, and r2dec, the gain
+was 8.50 points (421 better, four worse, 952 unchanged). The default run's
+accepted-stage evidence was 1,104 native-only, 975 mixed, and 200 fallback-only
+measurements; 180 rows accepted no correspondence and therefore had no evidence
+category.
+
+These are score effects, not identity-oracle accuracy. The frozen semantic
+audit below measures correspondence quality, while the sample replay checks
+that the production metric behaves sensibly over broader projects,
+architectures, optimization levels, and backends. Its Kuna checkpoints predate
+the additive producer schema in [Kuna PR #310](https://github.com/Noelo-Lab/kuna/pull/310),
+so they do not evaluate that new native mapping path.
+
+Reproducibility anchors:
+
+- sample manifest SHA-256:
+  `2dc8fa830250be04eb49f632889d8667cec8cc7534aa62dc4780d6448883c9fd`
+- address overlay SHA-256:
+  `99418fc0d72d798c9852d135425abbd1427105b3853a940927d071686cdd0c51`
+- usage overlay SHA-256:
+  `02fc8e3854d793fe881c9b8ebbe5a3676f45e57c1be7f3ab47d19ee9f80371b8`
+- auto overlay SHA-256:
+  `0810d730280becc3b8b8f987da3e0b33df99e3a0fb55e87d597d72590afe7847`
+
 ## Reproducing the Coreutils comparison
 
 First regenerate serialized feature evidence from the existing checkpoint;
