@@ -26,7 +26,6 @@ from decbench.experimental.local_variable_distance import (
 )
 from decbench.metrics.type_match import parse_c_variables
 
-
 IDA_CANDIDATES = (
     Path("/Applications/IDA Professional 9.2.app/Contents/MacOS"),
     Path("/home/mahaloz/ctf/tools/idapro_9.2"),
@@ -65,9 +64,7 @@ def _provided_main(path: Path) -> str:
 
 def _provided_variable_names(code: str, function_name: str) -> set[str]:
     names = {
-        var.name
-        for var in parse_c_variables(code, function_name)
-        if var.kind == "arg" and var.name
+        var.name for var in parse_c_variables(code, function_name) if var.kind == "arg" and var.name
     }
     declaration = re.compile(
         r"^\s+.*?(?:\(\*(?P<function_pointer>[A-Za-z_]\w*)\)\s*\([^;]*\)|"
@@ -167,8 +164,7 @@ def _correspondence_checks(
             {0x5E1E, 0x5E29, 0x5E2E, 0x5E31, 0x5E35, 0x5E3F, 0x5E42, 0x5E4F},
         ),
         "IDA v59 overlap": (
-            decompiled_by_name["v59"].addresses
-            & source_by_name["num_operands"].addresses,
+            decompiled_by_name["v59"].addresses & source_by_name["num_operands"].addresses,
             {0x5DF6, 0x5E9B, 0x5E9D},
         ),
         "IDA v61 overlap": (
@@ -212,8 +208,7 @@ def _controls(
         replace(var, name=f"source_{index}") for index, var in enumerate(source.variables)
     ]
     renamed_decompiled = [
-        replace(var, name=f"decompiled_{index}")
-        for index, var in enumerate(decompiled.variables)
+        replace(var, name=f"decompiled_{index}") for index, var in enumerate(decompiled.variables)
     ]
     renamed = match_variables(renamed_source, renamed_decompiled)
     baseline_pairs = {(row.source_id, row.decompiled_id) for row in baseline.matches}
@@ -231,12 +226,8 @@ def _controls(
     with_fake = match_variables(source.variables, [*decompiled.variables, fake])
     return {
         "rename_invariant": baseline_pairs == renamed_pairs,
-        "baseline_overlap_matches": sum(
-            match.stage == "overlap" for match in baseline.matches
-        ),
-        "disjoint_overlap_matches": sum(
-            match.stage == "overlap" for match in disjoint.matches
-        ),
+        "baseline_overlap_matches": sum(match.stage == "overlap" for match in baseline.matches),
+        "disjoint_overlap_matches": sum(match.stage == "overlap" for match in disjoint.matches),
         "fake_local_distance_delta": with_fake.distance - baseline.distance,
     }
 
@@ -356,9 +347,7 @@ def _render_markdown(data: dict[str, Any]) -> str:
     )
     for row in data["stack_aliases"]:
         aliases = ", ".join(f"`{name}`" for name in row["variables"])
-        lines.append(
-            f"| {row['stack_offset']} | {row['sizes']} | {aliases} |"
-        )
+        lines.append(f"| {row['stack_offset']} | {row['sizes']} | {aliases} |")
 
     controls = data["controls"]
     lines.extend(
@@ -436,12 +425,9 @@ def main() -> None:
         from elftools.elf.elffile import ELFFile
 
         with stripped.open("rb") as stream:
-            section_names = {
-                section.name for section in ELFFile(stream).iter_sections()
-            }
+            section_names = {section.name for section in ELFFile(stream).iter_sections()}
         metadata_hidden = not any(
-            name.startswith(".debug") or name in {".symtab", ".strtab"}
-            for name in section_names
+            name.startswith(".debug") or name in {".symtab", ".strtab"} for name in section_names
         )
         idapro.open_database(str(stripped), run_auto_analysis=True)
         try:
@@ -474,22 +460,16 @@ def main() -> None:
             )
         )
     emitted_addresses = {
-        address
-        for var in [*source.variables, *decompiled.variables]
-        for address in var.addresses
+        address for var in [*source.variables, *decompiled.variables] for address in var.addresses
     }
     addresses_valid = all(
         source.start <= address < source.end and address in instructions
         for address in emitted_addresses
     )
     artifact_checks = {
-        "ida_text_similarity": SequenceMatcher(
-            None, provided, decompiled.code
-        ).ratio(),
+        "ida_text_similarity": SequenceMatcher(None, provided, decompiled.code).ratio(),
         "provided_name_coverage": (
-            len(provided_names & generated_names) / len(provided_names)
-            if provided_names
-            else 1.0
+            len(provided_names & generated_names) / len(provided_names) if provided_names else 1.0
         ),
         "provided_declared_names": len(provided_names),
         "generated_named_variables": len(generated_names),
