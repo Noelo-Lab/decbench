@@ -479,6 +479,15 @@ the CFG inputs seen by the historical 60-node evaluator and the corrected
 same-optimization/macro-expanded inputs, graph sizes and methods, and old/new
 score changes against the required frozen `DECBENCH_GED_BASELINE`.
 
+`reeval_typematch.py` keeps its JSON overlay in the legacy raw score-map shape and
+writes a digest-bound `.meta.json` companion with the requested/resolved matcher mode,
+policy schema and values, and metric cache version. A scoped refresh can merge only
+with an overlay carrying identical provenance. Canonical `--emit` promotion occurs
+only after every computation is exception/error-free and its exact
+function/decompiler coverage matches `function_results.json`; failures preserve the
+existing canonical bytes. Noncanonical `--output` paths cannot alias the canonical
+overlay, while explicitly named A/B outputs may remain intentionally partial.
+
 The canonical rebuild is `scripts/finalize_results.py <tree>` (also what
 `run_benchmark.py`'s finalize calls): ALL checkpoints (never scoped — a
 `-- project` resume finalizes the whole tree and writes a full

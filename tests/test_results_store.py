@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import decbench.results_store as results_store
 from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
@@ -20,16 +21,21 @@ from decbench.models.metrics import MetricResult, MetricValue
 from decbench.models.project import OptimizationLevel
 from decbench.results_store import (
     CoverageRegressionError,
+    TypeMatchOverlayError,
     audit_tree,
     coverage_counts,
     coverage_regressions,
     finalize_tree,
     merge_typematch_overlay,
     read_ged_overlay,
+    read_typematch_overlay,
+    typematch_overlay_manifest_path,
+    typematch_overlay_provenance,
     update_byte_match,
     update_ged,
     update_type_match,
     write_function_data_guarded,
+    write_typematch_overlay_atomic,
 )
 
 
@@ -170,6 +176,100 @@ def test_merge_typematch_overlay() -> None:
     assert merged["kuna"]["a::O0::b::g"] == {"value": 0.1}
     assert merged["angr"]["a::O0::b::f"] == {"value": 0.2}
     assert existing["kuna"]["a::O0::b::f"] == {"value": 0.5}
+
+
+def _typematch_provenance(**policy: float) -> dict[str, object]:
+    return typematch_overlay_provenance(
+        mode="auto",
+        resolved_mode="address+usage",
+        policy=policy or {"min_overlap": 0.1, "address_weight": 0.5},
+        metric_cache_version="7",
+    )
+
+
+def test_typematch_overlay_manifest_is_digest_bound_but_legacy_is_readable(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "type_match_new.json"
+    payload = {"angr": {"p::O0::b::f": {"value": 1.0}}}
+    path.write_text(json.dumps(payload))
+    assert read_typematch_overlay(path) == (payload, None)
+
+    write_typematch_overlay_atomic(path, payload, _typematch_provenance())
+    loaded, provenance = read_typematch_overlay(path)
+    assert loaded == payload
+    assert provenance is not None
+    assert provenance["entry_count"] == 1
+
+    path.write_text(json.dumps({"angr": {}}))
+    with pytest.raises(TypeMatchOverlayError, match="digest"):
+        read_typematch_overlay(path)
+
+
+def test_scoped_typematch_merge_rejects_mixed_policy() -> None:
+    existing = {"angr": {"p::O0::b::f": {"value": 1.0}}}
+    fresh = {"angr": {"p::O0::b::g": {"value": 0.5}}}
+    old_policy = _typematch_provenance(min_overlap=0.1)
+    new_policy = _typematch_provenance(min_overlap=0.2)
+
+    with pytest.raises(TypeMatchOverlayError, match="policy"):
+        merge_typematch_overlay(
+            existing,
+            fresh,
+            existing_provenance=old_policy,
+            fresh_provenance=new_policy,
+        )
+
+    assert existing == {"angr": {"p::O0::b::f": {"value": 1.0}}}
+
+
+def test_atomic_typematch_write_preserves_sentinels_before_serialization_failure(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "type_match_new.json"
+    manifest = typematch_overlay_manifest_path(path)
+    path.write_bytes(b"overlay sentinel\n")
+    manifest.write_bytes(b"manifest sentinel\n")
+
+    with pytest.raises(ValueError):
+        write_typematch_overlay_atomic(
+            path,
+            {"angr": {"p::O0::b::f": {"value": float("nan")}}},
+            _typematch_provenance(),
+        )
+
+    assert path.read_bytes() == b"overlay sentinel\n"
+    assert manifest.read_bytes() == b"manifest sentinel\n"
+
+
+def test_atomic_typematch_write_rolls_back_manifest_when_overlay_replace_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "type_match_new.json"
+    manifest = typematch_overlay_manifest_path(path)
+    path.write_bytes(b"overlay sentinel\n")
+    manifest.write_bytes(b"manifest sentinel\n")
+    real_replace = results_store._replace_bytes_atomic
+    calls = 0
+
+    def fail_overlay_replace(target: Path, payload: bytes) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected overlay replacement failure")
+        real_replace(target, payload)
+
+    monkeypatch.setattr(results_store, "_replace_bytes_atomic", fail_overlay_replace)
+    with pytest.raises(OSError, match="injected"):
+        write_typematch_overlay_atomic(
+            path,
+            {"angr": {"p::O0::b::f": {"value": 1.0}}},
+            _typematch_provenance(),
+        )
+
+    assert path.read_bytes() == b"overlay sentinel\n"
+    assert manifest.read_bytes() == b"manifest sentinel\n"
 
 
 def test_update_typematch_replaces_and_clears_metric_evidence() -> None:

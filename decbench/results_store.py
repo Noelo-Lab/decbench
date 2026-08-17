@@ -7,7 +7,9 @@ A published results tree is layered:
   decompiled}`` artifacts.
 * **Corrected metric overlays** — ``ged_new.json`` / ``type_match_new.json`` /
   ``byte_match_new.json`` written by the ``scripts/reeval_*.py`` passes; these carry the
-  published metric values. ``ged_new.slices.json`` is a sidecar listing every
+  published metric values. Type-match overlays may have a digest-bound ``.meta.json``
+  provenance companion; legacy overlays without one remain readable. ``ged_new.slices.json``
+  is a sidecar listing every
   ``(opt, project, binary, decompiler)`` slice the GED reeval actually evaluated
   (including empty ones), so the merge can tell "evaluated, found nothing" from
   "never evaluated".
@@ -28,12 +30,14 @@ coverage unless explicitly allowed.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 import pickle
 import shutil
-from collections.abc import Callable, Collection, Iterable
+import tempfile
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -64,6 +68,188 @@ GUARD_PRINT_CAP = 100
 
 class CoverageRegressionError(RuntimeError):
     """Raised when a guarded write would shrink published coverage."""
+
+
+class TypeMatchOverlayError(RuntimeError):
+    """Raised when a type-match overlay or its provenance is unsafe to consume."""
+
+
+TYPEMATCH_OVERLAY_MANIFEST_SCHEMA = 1
+TYPEMATCH_POLICY_SCHEMA = "type-match-variable-correspondence-v1"
+_TYPEMATCH_PROVENANCE_FIELDS = (
+    "schema_version",
+    "metric",
+    "mode",
+    "resolved_mode",
+    "policy_schema",
+    "policy",
+    "metric_cache_version",
+)
+
+
+def typematch_overlay_manifest_path(path: Path) -> Path:
+    """Return the non-colliding provenance companion for one overlay path."""
+
+    return path.with_name(f"{path.name}.meta.json")
+
+
+def typematch_overlay_provenance(
+    *,
+    mode: str,
+    resolved_mode: str,
+    policy: Mapping[str, float],
+    metric_cache_version: str,
+) -> dict[str, Any]:
+    """Build the stable compatibility identity recorded beside an overlay."""
+
+    return {
+        "schema_version": TYPEMATCH_OVERLAY_MANIFEST_SCHEMA,
+        "metric": "type_match",
+        "mode": mode,
+        "resolved_mode": resolved_mode,
+        "policy_schema": TYPEMATCH_POLICY_SCHEMA,
+        "policy": {str(key): float(value) for key, value in sorted(policy.items())},
+        "metric_cache_version": str(metric_cache_version),
+    }
+
+
+def _validated_typematch_provenance(provenance: Mapping[str, Any]) -> dict[str, Any]:
+    missing = [field for field in _TYPEMATCH_PROVENANCE_FIELDS if field not in provenance]
+    if missing:
+        raise TypeMatchOverlayError(
+            f"type-match overlay provenance is missing fields: {', '.join(missing)}"
+        )
+    if provenance["schema_version"] != TYPEMATCH_OVERLAY_MANIFEST_SCHEMA:
+        raise TypeMatchOverlayError(
+            "unsupported type-match overlay manifest schema " f"{provenance['schema_version']!r}"
+        )
+    if provenance["metric"] != "type_match":
+        raise TypeMatchOverlayError("type-match overlay provenance names the wrong metric")
+    if provenance["policy_schema"] != TYPEMATCH_POLICY_SCHEMA:
+        raise TypeMatchOverlayError(
+            f"unsupported type-match policy schema {provenance['policy_schema']!r}"
+        )
+    policy = provenance["policy"]
+    if not isinstance(policy, Mapping):
+        raise TypeMatchOverlayError("type-match overlay policy must be a mapping")
+    try:
+        normalized_policy = {str(key): float(value) for key, value in sorted(policy.items())}
+    except (TypeError, ValueError) as exc:
+        raise TypeMatchOverlayError("type-match overlay policy values must be numeric") from exc
+    return {
+        "schema_version": TYPEMATCH_OVERLAY_MANIFEST_SCHEMA,
+        "metric": "type_match",
+        "mode": str(provenance["mode"]),
+        "resolved_mode": str(provenance["resolved_mode"]),
+        "policy_schema": TYPEMATCH_POLICY_SCHEMA,
+        "policy": normalized_policy,
+        "metric_cache_version": str(provenance["metric_cache_version"]),
+    }
+
+
+def _typematch_entry_count(payload: Mapping[str, Any]) -> int:
+    if any(not isinstance(per_decompiler, Mapping) for per_decompiler in payload.values()):
+        raise TypeMatchOverlayError(
+            "type-match overlay must map decompilers to per-function mappings"
+        )
+    return sum(len(per_decompiler) for per_decompiler in payload.values())
+
+
+def read_typematch_overlay(
+    path: Path,
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any] | None]:
+    """Read an overlay and validate its optional provenance companion.
+
+    Legacy overlays without a companion remain readable. Once a companion exists,
+    its digest and entry count must match the exact overlay bytes, so an interrupted
+    two-file promotion fails closed instead of silently mixing generations.
+    """
+
+    overlay_bytes = path.read_bytes()
+    payload = json.loads(overlay_bytes)
+    if not isinstance(payload, dict) or any(
+        not isinstance(per_decompiler, dict) for per_decompiler in payload.values()
+    ):
+        raise TypeMatchOverlayError(
+            "type-match overlay must map decompilers to per-function mappings"
+        )
+    manifest_path = typematch_overlay_manifest_path(path)
+    if not manifest_path.exists():
+        return payload, None
+    if not manifest_path.is_file():
+        raise TypeMatchOverlayError("type-match overlay manifest is not a regular file")
+    manifest = json.loads(manifest_path.read_text())
+    if not isinstance(manifest, dict):
+        raise TypeMatchOverlayError("type-match overlay manifest must be a JSON object")
+    normalized = _validated_typematch_provenance(manifest)
+    expected_digest = manifest.get("overlay_sha256")
+    actual_digest = hashlib.sha256(overlay_bytes).hexdigest()
+    if expected_digest != actual_digest:
+        raise TypeMatchOverlayError(
+            "type-match overlay digest does not match its provenance manifest"
+        )
+    actual_count = _typematch_entry_count(payload)
+    if manifest.get("entry_count") != actual_count:
+        raise TypeMatchOverlayError(
+            "type-match overlay entry count does not match its provenance manifest"
+        )
+    return payload, {**normalized, "overlay_sha256": actual_digest, "entry_count": actual_count}
+
+
+def _replace_bytes_atomic(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as file:
+            file.write(payload)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_typematch_overlay_atomic(
+    path: Path,
+    payload: dict[str, dict[str, Any]],
+    provenance: Mapping[str, Any],
+) -> None:
+    """Atomically replace an overlay and its digest-bound provenance companion."""
+
+    normalized = _validated_typematch_provenance(provenance)
+    overlay_bytes = json.dumps(
+        payload,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    manifest = {
+        **normalized,
+        "overlay_sha256": hashlib.sha256(overlay_bytes).hexdigest(),
+        "entry_count": _typematch_entry_count(payload),
+    }
+    manifest_bytes = json.dumps(
+        manifest,
+        allow_nan=False,
+        indent=2,
+        sort_keys=True,
+    ).encode()
+    manifest_path = typematch_overlay_manifest_path(path)
+    old_manifest = manifest_path.read_bytes() if manifest_path.is_file() else None
+    _replace_bytes_atomic(manifest_path, manifest_bytes)
+    try:
+        _replace_bytes_atomic(path, overlay_bytes)
+    except Exception:
+        if old_manifest is None:
+            manifest_path.unlink(missing_ok=True)
+        else:
+            _replace_bytes_atomic(manifest_path, old_manifest)
+        raise
 
 
 def gather_project_tomls() -> list[Path]:
@@ -282,14 +468,36 @@ def update_type_match(fd: FunctionData, new: dict[str, dict[str, Any]]) -> int:
 
 
 def merge_typematch_overlay(
-    existing: dict[str, dict[str, Any]], fresh: dict[str, dict[str, Any]]
+    existing: dict[str, dict[str, Any]],
+    fresh: dict[str, dict[str, Any]],
+    *,
+    existing_provenance: Mapping[str, Any] | None = None,
+    fresh_provenance: Mapping[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Merge a (possibly project-scoped) type_match reeval into the full overlay.
 
     Per decompiler, fresh per-function entries overwrite existing ones and everything
     else is kept — so a scoped ``reeval_typematch.py --emit`` run can no longer shrink
-    ``type_match_new.json`` to just the projects it covered.
+    ``type_match_new.json`` to just the projects it covered. Provenance is optional for
+    legacy callers, but a provenance-aware merge requires both generations to have the
+    exact same mode, resolved policy, policy schema, and metric cache version.
     """
+    if existing_provenance is not None or fresh_provenance is not None:
+        if existing_provenance is None or fresh_provenance is None:
+            raise TypeMatchOverlayError(
+                "scoped type-match merges require provenance for both generations"
+            )
+        existing_identity = _validated_typematch_provenance(existing_provenance)
+        fresh_identity = _validated_typematch_provenance(fresh_provenance)
+        if existing_identity != fresh_identity:
+            changed = [
+                field
+                for field in _TYPEMATCH_PROVENANCE_FIELDS
+                if existing_identity[field] != fresh_identity[field]
+            ]
+            raise TypeMatchOverlayError(
+                "incompatible scoped type-match overlay provenance: " + ", ".join(changed)
+            )
     merged = {dec: dict(per) for dec, per in existing.items()}
     for dec, per in fresh.items():
         merged.setdefault(dec, {}).update(per)
@@ -326,7 +534,8 @@ def apply_overlays(
     if not tm_path.exists():
         _warn_missing("type_match_new.json")
     else:
-        counts["type_match"] = update_type_match(fd, json.loads(tm_path.read_text()))
+        type_match_payload, _provenance = read_typematch_overlay(tm_path)
+        counts["type_match"] = update_type_match(fd, type_match_payload)
 
     bm_path = root / "byte_match_new.json"
     if not bm_path.exists():
