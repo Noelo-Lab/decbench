@@ -191,21 +191,21 @@ be represented by the immutable private audit map.
 
 | Scope | Mode | Accepted | TP | FP | FN | Precision | Edge recall | Edge F1 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Overall | `address` | 684 | 612 | 71 | 362 | 89.60% | 62.83% | 73.87% |
+| Overall | `address` | 766 | 674 | 91 | 300 | 88.10% | 69.20% | 77.52% |
 | Overall | `usage` | 339 | 266 | 73 | 708 | 78.47% | 27.31% | 40.52% |
-| Overall | `address+usage` | 683 | 630 | 52 | 344 | 92.38% | 64.68% | 76.09% |
-| Development held out | `address` | 500 | 436 | 63 | 294 | 87.37% | 59.73% | 70.95% |
+| Overall | `address+usage` | 765 | 692 | 72 | 282 | 90.58% | 71.05% | 79.63% |
+| Development held out | `address` | 550 | 473 | 76 | 257 | 86.16% | 64.79% | 73.96% |
 | Development held out | `usage` | 242 | 180 | 62 | 550 | 74.38% | 24.66% | 37.04% |
-| Development held out | `address+usage` | 499 | 451 | 47 | 279 | 90.56% | 61.78% | 73.45% |
+| Development held out | `address+usage` | 549 | 488 | 60 | 242 | 89.05% | 66.85% | 76.37% |
 
-On the held-out conditional subset, stacking changed precision by +3.19
-percentage points (paired function-cluster bootstrap 95% CI +1.19 to +5.31),
-edge recall by +2.05 points (+0.22 to +4.35), and F1 by +2.50 points (+1.02 to
-+4.42), using 2,000 paired bootstrap iterations.
+On the held-out conditional subset, stacking changed precision by +2.89
+percentage points (paired function-cluster bootstrap 95% CI +1.07 to +4.94),
+edge recall by +2.05 points (+0.22 to +4.35), and F1 by +2.41 points (+0.99 to
++4.25), using 2,000 paired bootstrap iterations.
 
 The validity audit is the more important result. Production retains 1,420
-unique source variables in the sample: 438 have an address/ABI anchor, 237
-have usable usage context, five are usage-only, and 977 have neither channel
+unique source variables in the sample: 487 have an address/ABI anchor, 237
+have usable usage context, five are usage-only, and 928 have neither channel
 but remain in the TypeMatch denominator. Only 440 retained identities overlap
 the old audit, leaving 980 unique variables (1,957 source/backend cases)
 without labels. Sixteen old audit cases are not retained by production because
@@ -218,11 +218,11 @@ production-universe accuracy claim therefore requires an audit extension.
 Reproducibility anchors for this replay:
 
 - production-policy scorer JSONL SHA-256:
-  `2f78c7dc263f4542cd73d13e7509fc97eb494cf794cf7688d17b689026f453fe`
+  `708486d6a197909819f6bd0e98a5a6b5f8265e58bdecd66cb371865b05828938`
 - scorer aggregate SHA-256:
-  `fe0849ee2eca7b7de009f45d7d9b3336825f2ec9e6b072c84cb3e4e6c315fde4`
+  `9f56f8cba55230bf0a12ff20144b430b40b837e07ad978a7a28c95f830ccc81e`
 - exact-policy comparison SHA-256:
-  `26ba92cabee9b4330cfc025ad1b3ca940ee0d69e5f5c535749432b1b56a03204`
+  `808ae7e27ad326c8096d599d34b86582ad75bed6b8309b07474f67c8f46ab5a5`
 
 ## Historical common-universe evaluation (2026-08-11)
 
