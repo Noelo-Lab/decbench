@@ -14,6 +14,7 @@ from decbench.caching import stable_hash
 from decbench.experimental.local_variable_checkpoint import (
     ScoreConfig,
     score_checkpoint,
+    score_config_payload,
 )
 from decbench.experimental.local_variable_checkpoint import (
     write_json as write_scorer_json,
@@ -38,6 +39,7 @@ from decbench.experimental.local_variable_semantic_audit import (
     _replace_c_local_identifiers,
     _require_same_non_name_evidence,
     _validate_evidence_case_coverage,
+    _validate_score_config_provenance,
     _validate_scorer_backend,
     apply_reviewer_decisions,
     build_audit_package,
@@ -118,6 +120,38 @@ def test_evidence_reconstruction_versions_usage_feature_fields() -> None:
         "v2 scorer",
         include_usage_features=True,
     )
+
+
+def test_score_config_provenance_versions_are_exact_and_backward_compatible() -> None:
+    current = score_config_payload(ScoreConfig())
+    assert current["version"] == "lved-score-config-v3"
+    assert current["production_type_match_policy"] is False
+    _validate_score_config_provenance(current)
+
+    legacy_v2 = dict(current)
+    legacy_v2["version"] = "lved-score-config-v2"
+    legacy_v2.pop("production_type_match_policy")
+    _validate_score_config_provenance(legacy_v2)
+
+    legacy_v1 = {
+        key: value
+        for key, value in legacy_v2.items()
+        if key
+        not in {
+            "matcher_mode",
+            "min_usage_similarity",
+            "usage_ambiguity_margin",
+            "min_combined_similarity",
+            "address_weight",
+        }
+    }
+    legacy_v1["version"] = "lved-score-config-v1"
+    _validate_score_config_provenance(legacy_v1)
+
+    with pytest.raises(ValueError, match="extra=.*production_type_match_policy"):
+        _validate_score_config_provenance({**legacy_v2, "production_type_match_policy": False})
+    with pytest.raises(ValueError, match="must be boolean"):
+        _validate_score_config_provenance({**current, "production_type_match_policy": "false"})
 
 
 def _decompilation(

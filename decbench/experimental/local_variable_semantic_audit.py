@@ -258,6 +258,42 @@ def _require_exact_keys(
         )
 
 
+def _validate_score_config_provenance(score_config: Mapping[str, Any]) -> None:
+    fields = {
+        "version",
+        "project",
+        "optimizations",
+        "decompiler_bases",
+        "sample_size",
+        "sample_seed",
+        "tuning_fraction",
+        "include_inlined",
+        "min_overlap",
+        "ambiguity_margin",
+        "bootstrap_iterations",
+    }
+    version = score_config.get("version")
+    if version in {"lved-score-config-v2", "lved-score-config-v3"}:
+        fields.update(
+            {
+                "matcher_mode",
+                "min_usage_similarity",
+                "usage_ambiguity_margin",
+                "min_combined_similarity",
+                "address_weight",
+            }
+        )
+        if version == "lved-score-config-v3":
+            fields.add("production_type_match_policy")
+    elif version != "lved-score-config-v1":
+        raise ValueError("package score-config provenance version is unsupported")
+    _require_exact_keys(score_config, fields, "package score-config provenance")
+    if version == "lved-score-config-v3" and not isinstance(
+        score_config["production_type_match_policy"], bool
+    ):
+        raise ValueError("package score-config production_type_match_policy must be boolean")
+
+
 def _alias_secret_commitment(secret: bytes) -> str:
     return hashlib.sha256(secret).hexdigest()
 
@@ -2510,36 +2546,7 @@ def _validate_manifest(package_dir: Path) -> dict[str, Any]:
     score_config = provenance.get("score_config")
     if not isinstance(score_config, dict):
         raise ValueError("package score-config provenance is invalid")
-    score_config_fields = {
-        "version",
-        "project",
-        "optimizations",
-        "decompiler_bases",
-        "sample_size",
-        "sample_seed",
-        "tuning_fraction",
-        "include_inlined",
-        "min_overlap",
-        "ambiguity_margin",
-        "bootstrap_iterations",
-    }
-    if score_config.get("version") == "lved-score-config-v2":
-        score_config_fields.update(
-            {
-                "matcher_mode",
-                "min_usage_similarity",
-                "usage_ambiguity_margin",
-                "min_combined_similarity",
-                "address_weight",
-            }
-        )
-    elif score_config.get("version") != "lved-score-config-v1":
-        raise ValueError("package score-config provenance version is unsupported")
-    _require_exact_keys(
-        score_config,
-        score_config_fields,
-        "package score-config provenance",
-    )
+    _validate_score_config_provenance(score_config)
     if provenance.get("decompilers") != manifest.get("selected_backends"):
         # A package can intentionally select a subset, so require an ordered
         # subsequence rather than equality in that case.
