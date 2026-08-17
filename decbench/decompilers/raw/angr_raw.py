@@ -18,7 +18,9 @@ and produces the same :class:`DecompilationResult` shape as the declib-backed
 from __future__ import annotations
 
 import logging
+import re
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -219,12 +221,21 @@ class RawAngrDecompiler(Decompiler):
         """Decompile one function -> FunctionDecompilation (ELF-space addr)."""
         load_base = self._angr_load_base(proj)
         angr_addr = (file_addr - elf_base) + load_base
-        try:
-            func = proj.kb.functions.get_by_addr(angr_addr)
-        except KeyError:
+        func = None
+        lookup_addresses = [angr_addr]
+        if self._is_thumb_address(proj, angr_addr | 1):
+            lookup_addresses.append(angr_addr | 1)
+        for lookup_addr in lookup_addresses:
+            try:
+                func = proj.kb.functions.get_by_addr(lookup_addr)
+                break
+            except KeyError:
+                continue
+        if func is None:
             func = proj.kb.functions.function(name=func_name)
             if func is None:
                 return None
+        is_thumb = self._is_thumb_address(proj, int(func.addr))
 
         dec_kwargs: dict[str, Any] = {"cfg": cfg.model}
         dec = proj.analyses.Decompiler(func, **dec_kwargs)
@@ -233,8 +244,24 @@ class RawAngrDecompiler(Decompiler):
             return None
         code = codegen.text
 
-        variables = self._extract_variables(codegen, proj, func)
-        line_mappings = self._extract_line_mappings(codegen, code, elf_base, load_base)
+        variables, variable_aliases = self._extract_variables_with_aliases(codegen, proj, func)
+        expansion, valid_addresses = self._instruction_evidence(dec, proj, func)
+        line_mappings = self._extract_line_mappings(
+            codegen,
+            code,
+            elf_base,
+            load_base,
+            instruction_expansion=expansion,
+            valid_addresses=valid_addresses,
+            is_thumb=is_thumb,
+        )
+        self._add_variable_evidence(
+            variables,
+            variable_aliases,
+            codegen,
+            code,
+            line_mappings,
+        )
         metadata = common.extract_metrics(code)
 
         return FunctionDecompilation(
@@ -246,6 +273,14 @@ class RawAngrDecompiler(Decompiler):
             variables=variables,
             metadata=metadata,
         )
+
+    @staticmethod
+    def _is_thumb_address(proj: Any, address: int) -> bool:
+        predicate = getattr(getattr(proj, "arch", None), "is_thumb", None)
+        try:
+            return bool(predicate(address)) if callable(predicate) else bool(predicate)
+        except Exception:  # noqa: BLE001
+            return False
 
     @staticmethod
     def _type_str(simtype: Any) -> str:
@@ -265,6 +300,15 @@ class RawAngrDecompiler(Decompiler):
             return ""
 
     def _extract_variables(self, codegen: Any, proj: Any, func: Any) -> list[VariableInfo]:
+        variables, _variable_aliases = self._extract_variables_with_aliases(codegen, proj, func)
+        return variables
+
+    def _extract_variables_with_aliases(
+        self,
+        codegen: Any,
+        proj: Any,
+        func: Any,
+    ) -> tuple[list[VariableInfo], list[tuple[Any, int]]]:
         """Pull arguments (ABI order) and stack/local variables.
 
         Arguments come from ``cfunc.arg_list`` (preserving ABI order, so the
@@ -276,11 +320,13 @@ class RawAngrDecompiler(Decompiler):
         from angr.sim_variable import SimStackVariable
 
         variables: list[VariableInfo] = []
+        variable_aliases: list[tuple[Any, int]] = []
         cfunc = getattr(codegen, "cfunc", None)
         if cfunc is None:
-            return variables
+            return variables, variable_aliases
 
         arg_list = getattr(cfunc, "arg_list", None) or []
+        argument_aliases: list[Any] = []
         for position, cvar in enumerate(arg_list):
             simvar = getattr(cvar, "unified_variable", None) or getattr(cvar, "variable", None)
             name = (
@@ -292,6 +338,7 @@ class RawAngrDecompiler(Decompiler):
                 getattr(cvar, "variable_type", None) or getattr(cvar, "type", None)
             )
             size = getattr(simvar, "size", None) if simvar is not None else None
+            index = len(variables)
             variables.append(
                 VariableInfo(
                     name=name,
@@ -302,6 +349,14 @@ class RawAngrDecompiler(Decompiler):
                     arg_index=position,
                 )
             )
+            for alias in (
+                getattr(cvar, "unified_variable", None),
+                getattr(cvar, "variable", None),
+                simvar,
+            ):
+                if alias is not None:
+                    variable_aliases.append((alias, index))
+                    argument_aliases.append(alias)
 
         try:
             local_map = cfunc.get_unified_local_vars()
@@ -309,6 +364,8 @@ class RawAngrDecompiler(Decompiler):
             local_map = {}
 
         for simvar, cvar_types in (local_map or {}).items():
+            if any(simvar is alias or simvar == alias for alias in argument_aliases):
+                continue
             vtype = ""
             for _cvar, simtype in cvar_types:
                 vtype = self._type_str(simtype)
@@ -318,6 +375,7 @@ class RawAngrDecompiler(Decompiler):
             if isinstance(simvar, SimStackVariable):
                 stack_offset = int(simvar.offset) if simvar.offset is not None else None
             size = getattr(simvar, "size", None)
+            index = len(variables)
             variables.append(
                 VariableInfo(
                     name=getattr(simvar, "name", None) or "",
@@ -327,8 +385,189 @@ class RawAngrDecompiler(Decompiler):
                     kind="stack",
                 )
             )
+            variable_aliases.append((simvar, index))
+            for cvar, _simtype in cvar_types:
+                for alias in (
+                    getattr(cvar, "unified_variable", None),
+                    getattr(cvar, "variable", None),
+                ):
+                    if alias is not None:
+                        variable_aliases.append((alias, index))
 
-        return variables
+        return variables, variable_aliases
+
+    @staticmethod
+    def _instruction_evidence(
+        dec: Any,
+        proj: Any,
+        func: Any,
+    ) -> tuple[dict[int, set[int]], set[int]]:
+        """Expand AIL statement provenance to the machine instructions it represents."""
+        valid_addresses: set[int] = set()
+        try:
+            for block in func.blocks:
+                valid_addresses.update(int(address) for address in block.instruction_addrs)
+        except Exception:  # noqa: BLE001
+            pass
+
+        graph = getattr(dec, "unoptimized_ail_graph", None)
+        if graph is None:
+            graph = getattr(getattr(dec, "clinic", None), "cc_graph", None)
+        try:
+            nodes = list(graph.nodes)
+        except Exception:  # noqa: BLE001
+            return {}, valid_addresses
+
+        expansion: dict[int, set[int]] = defaultdict(set)
+        for ail_block in nodes:
+            try:
+                vex_block = proj.factory.block(int(ail_block.addr))
+                instruction_addrs = [int(address) for address in vex_block.instruction_addrs]
+                statements = [
+                    statement
+                    for statement in ail_block.statements
+                    if getattr(statement, "ins_addr", None) is not None
+                    and statement.__class__.__name__ != "Label"
+                ]
+            except Exception:  # noqa: BLE001
+                continue
+            if not statements:
+                continue
+            statement_index = 0
+            for instruction_addr in instruction_addrs:
+                statement_addr = int(statements[statement_index].ins_addr)
+                expansion[statement_addr].add(instruction_addr)
+                if instruction_addr == statement_addr:
+                    statement_index += 1
+                if statement_index >= len(statements):
+                    break
+        return dict(expansion), valid_addresses
+
+    @staticmethod
+    def _position_start(position: Any) -> int | None:
+        value = getattr(position, "start", position)
+        try:
+            return int(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    @staticmethod
+    def _add_variable_evidence(
+        variables: list[VariableInfo],
+        variable_aliases: list[tuple[Any, int]],
+        codegen: Any,
+        code: str,
+        line_mappings: list[LineMapping],
+    ) -> None:
+        starts = common.line_starts(code)
+        variable_lines: dict[int, set[int]] = defaultdict(set)
+        native_map = getattr(codegen, "map_ast_to_pos", None)
+        try:
+            native_items = list(native_map.items())
+        except Exception:  # noqa: BLE001
+            native_items = []
+        for ast_variable, positions in native_items:
+            indices: set[int] = set()
+            for alias, index in variable_aliases:
+                try:
+                    matches = ast_variable is alias or ast_variable == alias
+                except Exception:  # noqa: BLE001
+                    matches = ast_variable is alias
+                if matches:
+                    indices.add(index)
+            if not indices:
+                continue
+            if not isinstance(positions, (set, list, tuple)):
+                positions = (positions,)
+            for position in positions:
+                start = RawAngrDecompiler._position_start(position)
+                if start is None or start < 0 or start >= len(code):
+                    continue
+                line_no = common.pos_to_line(start, starts)
+                for index in indices:
+                    variable_lines[index].add(line_no)
+
+        name_counts: dict[str, int] = defaultdict(int)
+        for variable in variables:
+            if variable.name:
+                name_counts[variable.name] += 1
+        masked_code = RawAngrDecompiler._mask_nonidentifiers(code)
+        for index, variable in enumerate(variables):
+            if variable_lines.get(index) or not variable.name or name_counts[variable.name] != 1:
+                continue
+            pattern = rf"(?<![A-Za-z0-9_]){re.escape(variable.name)}(?![A-Za-z0-9_])"
+            for match in re.finditer(pattern, masked_code):
+                prefix = masked_code[max(0, match.start() - 2) : match.start()]
+                if prefix.endswith(".") or prefix.endswith("->"):
+                    continue
+                variable_lines[index].add(common.pos_to_line(match.start(), starts))
+
+        line_addresses = {mapping.line_number: set(mapping.addresses) for mapping in line_mappings}
+        for index, lines in variable_lines.items():
+            variables[index].line_numbers = sorted(lines)
+            variables[index].addresses = sorted(
+                {address for line in lines for address in line_addresses.get(line, set())}
+            )
+
+    @staticmethod
+    def _mask_nonidentifiers(code: str) -> str:
+        """Blank comments and literals while preserving character positions and newlines."""
+        chars = list(code)
+        index = 0
+        state: str | None = None
+        while index < len(chars):
+            current = chars[index]
+            following = chars[index + 1] if index + 1 < len(chars) else ""
+            if state is None:
+                if current == "/" and following == "/":
+                    chars[index] = chars[index + 1] = " "
+                    state = "line"
+                    index += 2
+                    continue
+                if current == "/" and following == "*":
+                    chars[index] = chars[index + 1] = " "
+                    state = "block"
+                    index += 2
+                    continue
+                if current in {'"', "'"}:
+                    chars[index] = " "
+                    state = current
+                    index += 1
+                    continue
+            elif state == "line":
+                if current == "\n":
+                    state = None
+                else:
+                    chars[index] = " "
+                index += 1
+                continue
+            elif state == "block":
+                if current == "*" and following == "/":
+                    chars[index] = chars[index + 1] = " "
+                    state = None
+                    index += 2
+                    continue
+                if current != "\n":
+                    chars[index] = " "
+                index += 1
+                continue
+            else:
+                quote = state
+                if current == "\\" and following:
+                    chars[index] = " "
+                    if following != "\n":
+                        chars[index + 1] = " "
+                    index += 2
+                    continue
+                if current == quote:
+                    chars[index] = " "
+                    state = None
+                elif current != "\n":
+                    chars[index] = " "
+                index += 1
+                continue
+            index += 1
+        return "".join(chars)
 
     @staticmethod
     def _extract_line_mappings(
@@ -336,6 +575,10 @@ class RawAngrDecompiler(Decompiler):
         code: str,
         elf_base: int,
         load_base: int,
+        *,
+        instruction_expansion: dict[int, set[int]] | None = None,
+        valid_addresses: set[int] | None = None,
+        is_thumb: bool = False,
     ) -> list[LineMapping]:
         """Best-effort line mappings from the codegen position map.
 
@@ -351,6 +594,11 @@ class RawAngrDecompiler(Decompiler):
 
         starts = common.line_starts(code)
         line_to_addrs: dict[int, set[int]] = {}
+        normalized_valid = (
+            {int(address) & ~1 if is_thumb else int(address) for address in valid_addresses}
+            if valid_addresses
+            else None
+        )
         try:
             items = list(posmap.items())
         except Exception:  # noqa: BLE001
@@ -364,11 +612,20 @@ class RawAngrDecompiler(Decompiler):
             ins_addr = tags.get("ins_addr")
             if ins_addr is None:
                 continue
-            try:
-                file_addr = (int(ins_addr) - load_base) + elf_base
-            except Exception:  # noqa: BLE001
-                continue
             line_no = common.pos_to_line(int(pos), starts)
-            line_to_addrs.setdefault(line_no, set()).add(file_addr)
+            tool_addresses = (instruction_expansion or {}).get(int(ins_addr), {int(ins_addr)})
+            if is_thumb and int(ins_addr) not in (instruction_expansion or {}):
+                tool_addresses = (instruction_expansion or {}).get(
+                    int(ins_addr) | 1, tool_addresses
+                )
+                tool_addresses = (instruction_expansion or {}).get(
+                    int(ins_addr) & ~1, tool_addresses
+                )
+            for tool_address in tool_addresses:
+                normalized = int(tool_address) & ~1 if is_thumb else int(tool_address)
+                if normalized_valid is not None and normalized not in normalized_valid:
+                    continue
+                file_addr = (normalized - load_base) + elf_base
+                line_to_addrs.setdefault(line_no, set()).add(file_addr)
 
         return common.merge_line_addresses(line_to_addrs)

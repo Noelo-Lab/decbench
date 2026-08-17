@@ -400,12 +400,18 @@ class RawGhidraDecompiler(Decompiler):
 
         high = res.getHighFunction()
         variables, symbol_indices = self._extract_variables_with_symbols(high)
+        try:
+            function_body = g_func.getBody()
+        except Exception:  # noqa: BLE001
+            function_body = None
         line_mappings, variable_lines = self._extract_markup_evidence(
             res,
             high,
             symbol_indices,
             elf_base,
             image_base,
+            code=code,
+            function_body=function_body,
         )
         line_addresses = {mapping.line_number: set(mapping.addresses) for mapping in line_mappings}
         for index, lines in variable_lines.items():
@@ -540,6 +546,9 @@ class RawGhidraDecompiler(Decompiler):
         symbol_indices: dict[int, int],
         elf_base: int,
         image_base: int,
+        *,
+        code: str | None = None,
+        function_body: Any = None,
     ) -> tuple[list[LineMapping], dict[int, set[int]]]:
         try:
             markup = res.getCCodeMarkup()
@@ -550,36 +559,55 @@ class RawGhidraDecompiler(Decompiler):
 
         line_to_addrs: dict[int, set[int]] = {}
         variable_lines: dict[int, set[int]] = {}
+        line_count = code.count("\n") + 1 if code is not None else None
 
         def _addr_to_file(addr: Any) -> int | None:
             try:
                 if addr is None:
                     return None
+                get_address_space = getattr(addr, "getAddressSpace", None)
+                if callable(get_address_space):
+                    address_space = get_address_space()
+                    if address_space is not None and not bool(address_space.isMemorySpace()):
+                        return None
+                if function_body is not None and not bool(function_body.contains(addr)):
+                    return None
                 off = int(addr.getOffset())
-                return (off - image_base) + elf_base
+                if off < image_base:
+                    return None
+                file_addr = (off - image_base) + elf_base
+                return file_addr if file_addr >= elf_base else None
             except Exception:  # noqa: BLE001
                 return None
 
         def _walk(node: Any) -> None:
             try:
                 child_count = int(node.numChildren())
-                if child_count:
-                    for i in range(child_count):
+            except Exception:  # noqa: BLE001
+                return
+            if child_count:
+                for i in range(child_count):
+                    try:
                         _walk(node.Child(i))
-                    return
+                    except Exception:  # noqa: BLE001
+                        continue
+                return
+            try:
                 line_parent = node.getLineParent()
                 if line_parent is None:
                     return
                 line_no = int(line_parent.getLineNumber())
-                fa = _addr_to_file(node.getMinAddress())
-                if fa is not None:
-                    line_to_addrs.setdefault(line_no, set()).add(fa)
+                if line_no <= 0 or (line_count is not None and line_no > line_count):
+                    return
+                for address_getter in ("getMinAddress", "getMaxAddress"):
+                    getter = getattr(node, address_getter, None)
+                    fa = _addr_to_file(getter()) if callable(getter) else None
+                    if fa is not None:
+                        line_to_addrs.setdefault(line_no, set()).add(fa)
                 if high is None or not bool(node.isVariableRef()):
                     return
                 symbol = node.getHighSymbol(high)
                 if symbol is None:
-                    return
-                if str(node.getText()) != str(symbol.getName()):
                     return
                 index = symbol_indices.get(int(symbol.getId()))
                 if index is not None:

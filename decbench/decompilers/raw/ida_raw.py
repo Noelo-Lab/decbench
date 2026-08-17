@@ -270,6 +270,10 @@ class RawIDADecompiler(Decompiler):
             elf_base,
             self._ida_image_base(),
         )
+        line_count = code.count("\n") + 1
+        line_mappings = [
+            mapping for mapping in line_mappings if 1 <= mapping.line_number <= line_count
+        ]
         line_addresses = {mapping.line_number: set(mapping.addresses) for mapping in line_mappings}
         for local_index, lines in self._extract_variable_lines(cfunc).items():
             index = local_indices.get(local_index)
@@ -409,24 +413,47 @@ class RawIDADecompiler(Decompiler):
     ) -> list[LineMapping]:
         """Map 1-based pseudocode lines to ELF-file-space instruction addresses."""
         try:
-            if not cfunc.get_pseudocode():
+            pseudocode = cfunc.get_pseudocode()
+            if not pseudocode:
                 return []
             eamap = cfunc.get_eamap()
         except Exception:  # noqa: BLE001
             return []
 
-        line_to_addrs: dict[int, set[int]] = {1: {(int(cfunc.entry_ea) - image_base) + elf_base}}
+        line_to_addrs: dict[int, set[int]] = {}
         try:
-            for ida_ea, items in eamap.items():
-                file_addr = (int(ida_ea) - image_base) + elf_base
-                for item in items:
-                    try:
-                        _x, zero_based_line = cfunc.find_item_coords(item)
-                    except Exception:  # noqa: BLE001
-                        continue
-                    line_to_addrs.setdefault(int(zero_based_line) + 1, set()).add(file_addr)
+            entry_ea = int(cfunc.entry_ea)
+            if entry_ea >= image_base:
+                line_to_addrs[1] = {(entry_ea - image_base) + elf_base}
         except Exception:  # noqa: BLE001
-            return []
+            pass
+        try:
+            import ida_idaapi
+
+            badaddr = int(ida_idaapi.BADADDR)
+        except Exception:  # noqa: BLE001
+            badaddr = (1 << 64) - 1
+
+        try:
+            entries = list(eamap.items())
+        except Exception:  # noqa: BLE001
+            entries = []
+        for ida_ea, items in entries:
+            try:
+                tool_addr = int(ida_ea)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if tool_addr == badaddr or tool_addr < image_base:
+                continue
+            file_addr = (tool_addr - image_base) + elf_base
+            for item in items:
+                try:
+                    _x, zero_based_line = cfunc.find_item_coords(item)
+                    line_no = int(zero_based_line) + 1
+                except Exception:  # noqa: BLE001
+                    continue
+                if line_no >= 1:
+                    line_to_addrs.setdefault(line_no, set()).add(file_addr)
 
         return common.merge_line_addresses(line_to_addrs)
 

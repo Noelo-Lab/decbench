@@ -55,7 +55,9 @@ Key conventions (all families):
   `0x400000`, Ghidra `0x100000`, IDA `0x0`) for PIE binaries.
 - Functions outside `.text` (PLT/thunks) and CRT helpers are skipped.
 - `FunctionDecompilation.variables` (`VariableInfo`) carries stack vars/args
-  for the type metric; line maps are best-effort (angr/Ghidra populate them).
+  for the type metric. The canonical angr, Binary Ninja, Ghidra, and IDA
+  adapters also attach native, 1-based per-function line/address evidence;
+  Kuna ingests the same additive evidence from its JSON when available.
   `VariableInfo.arg_index` must be the **ABI position**, not the order the tool
   happens to enumerate its locals in — type_match pairs arguments by that index
   (see [metrics.md](metrics.md#argument-positions-must-be-abi-positions)).
@@ -159,7 +161,7 @@ def decompile_binary(
 | `decompiled_code` (C string) | GED, byte_match | **Yes** — without it nothing scores |
 | `address` (ELF-space) | type_match, byte_match | **Yes** |
 | `variables: list[VariableInfo]` | type_match | Recommended (else parsed out of the C) |
-| `line_mappings: list[LineMapping]` | type_match variable correspondence | Recommended; type-blind usage evidence can supplement or replace it |
+| `line_mappings: list[LineMapping]` | type_match variable correspondence / CFG attribution | Recommended; type-blind usage evidence can supplement or replace it |
 | `metadata` (e.g. goto/bool counts) | report extras | Optional |
 
 A backend that only fills `decompiled_code` + correct `address` already scores
@@ -170,6 +172,41 @@ evidence either alone or jointly with native address/anchor evidence. Each funct
 records whether its correspondence evidence was `native`, `mixed`, or `fallback_only`;
 the site marks mixed/fallback-only Type percentages because conservative heuristic
 abstention may undercount recovery.
+
+#### Native line and variable provenance
+
+`LineMapping.line_number` is 1-based in the exact
+`FunctionDecompilation.decompiled_code` string stored beside it, not in the
+aggregate `.c` file written by `DecompilationResult.to_c_file` (that artifact
+adds function headers and preceding bodies). Structured evidence survives in
+checkpoint pickles; the standalone `.c` and TOML exports do not preserve it.
+Every mapped address is normalized to the binary's linked ELF/PE address space
+and should identify a machine instruction in that function. A backend must
+collect text and mappings from the same render pass; pairing a Pseudo-C render
+with independently enumerated IL rows produces invalid line numbers.
+
+The canonical raw adapters use these native sources:
+
+- angr joins `map_ast_to_pos` variable identities to the line-level
+  `map_pos_to_addr` evidence, expanding AIL statement addresses to their VEX
+  instruction starts. When the identity map is unavailable it uses exact,
+  unique C identifiers and abstains on duplicate names.
+- Binary Ninja renders token text and collects row/token expression addresses
+  in one Pseudo-C `LinearViewCursor` walk. Structural and warning rows are
+  excluded before assigning the global 1-based output line.
+- Ghidra walks the `ClangToken` tree belonging to the same decompile result as
+  `getC()`, using HighSymbol IDs for variable occurrences and both token range
+  endpoints.
+- IDA uses `cfunc_t.get_eamap()` and `find_item_coords()` from the same Hex-Rays
+  pseudocode object; one bad item or `BADADDR` is skipped without losing prior
+  evidence.
+- Kuna accepts additive `line_mappings` entries (`line_number`, `addresses`)
+  and variable `line_numbers`/`addresses` in `decompile-all --json`. Missing
+  fields remain empty for compatibility with older Kuna builds.
+
+Variable addresses are the union of native line addresses for the variable's
+occurrence lines. This deliberately supports local-variable matching without
+requiring source/decompiler variable names to agree.
 
 ## 2. Minimal working example
 
