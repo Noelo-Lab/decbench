@@ -1,96 +1,169 @@
-"""Re-evaluate type_match from run checkpoints (no re-decompile) and compare to
-the old stored scores. Checkpoints carry FunctionDecompilation.variables +
-binary_path, so type_match (which only needs those + DWARF) can be recomputed.
+"""Re-evaluate type_match from checkpoints without running decompilers.
 
-Usage: python reeval_typematch.py <results_dir> [proj1 proj2 ...]
-Prints per-decompiler OLD vs NEW aggregate over functions present in
-function_results.json, and writes type_match_new.json when --emit is passed.
+The default ``auto`` mode is the canonical stacked address+usage policy.
+Experimental modes can be compared in place, or written to an explicitly
+named output file for A/B analysis. Only ``--emit`` may write the canonical
+``type_match_new.json`` overlay, and only in ``auto`` mode.
+
+Usage::
+
+    python scripts/reeval_typematch.py results/full_run
+    python scripts/reeval_typematch.py results/full_run --mode usage
+    python scripts/reeval_typematch.py results/full_run --mode address \
+        --output results/full_run/type_match_address.json sample-set
+    python scripts/reeval_typematch.py results/full_run --emit
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import pickle
-import sys
 from collections import defaultdict
 from pathlib import Path
+from typing import TypedDict
 
 import decbench.decompilers  # noqa: F401 (register backends so pickles load)
+from decbench.metrics.base import MetricConfig
 from decbench.metrics.type_match import TypeMatchMetric
+from decbench.results_store import merge_typematch_overlay
+from decbench.utils.langs import preprocessed_by_stem
 
-root = Path(sys.argv[1])
-args = [a for a in sys.argv[2:] if not a.startswith("--")]
-emit = "--emit" in sys.argv
+MODES = ("auto", "address", "usage", "address+usage")
 
-with open(root / "function_results.json") as _fh:
-    fd = json.load(_fh)
-old = {}
-for g in fd["groups"]:
-    for f in g["functions"]:
-        for d, v in (f.get("values") or {}).items():
-            if v and v.get("type_match") is not None:
-                old[(g["project"], g["opt_level"], g["binary"], f["function"], d)] = v["type_match"]
 
-ckpt_dir = root / "checkpoints"
-projects = args or sorted(p.stem for p in ckpt_dir.glob("*.pkl"))
+class AggregateRow(TypedDict):
+    o: float
+    n: float
+    c: int
+    imp: int
+    wor: int
 
-metric = TypeMatchMetric()
-agg = defaultdict(lambda: {"o": 0.0, "n": 0.0, "c": 0, "imp": 0, "wor": 0})
-new_scores: dict = {}
 
-for proj in projects:
-    pk = ckpt_dir / f"{proj}.pkl"
-    if not pk.is_file():
-        continue
-    with open(pk, "rb") as _pf:
-        data = pickle.load(_pf)
-    dec_tree = data.get("decompile", {})
-    for opt, bins in dec_tree.items():
-        optn = getattr(opt, "value", str(opt))
-        for binn, decs in bins.items():
-            for dname, dr in decs.items():
-                try:
-                    mr = metric.compute_for_binary(dr)
-                except Exception as e:  # noqa: BLE001
-                    print(f"  ! {proj}/{optn}/{binn}/{dname}: {e}")
-                    continue
-                for fn, mv in mr.function_results.items():
-                    key = (proj, optn, binn, fn, dname)
-                    n = mv.value
-                    if emit:
-                        md = mv.metadata or {}
-                        dist = int(md.get("fp", 0)) + int(md.get("fn", 0))
-                        new_scores.setdefault(dname, {})[f"{proj}::{optn}::{binn}::{fn}"] = {
-                            "value": n,
-                            "dist": dist,
-                        }
-                    if key not in old:
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("results_dir", type=Path)
+    parser.add_argument("projects", nargs="*")
+    parser.add_argument("--mode", choices=MODES, default="auto")
+    outputs = parser.add_mutually_exclusive_group()
+    outputs.add_argument(
+        "--emit",
+        action="store_true",
+        help="write the canonical type_match_new.json overlay (auto mode only)",
+    )
+    outputs.add_argument(
+        "--output",
+        type=Path,
+        help="write an explicitly named A/B overlay without touching the canonical one",
+    )
+    args = parser.parse_args()
+    if args.emit and args.mode != "auto":
+        parser.error("--emit is reserved for the canonical auto mode; use --output for A/B modes")
+    return args
+
+
+def _old_scores(root: Path) -> dict[tuple[str, str, str, str, str], float]:
+    with open(root / "function_results.json") as file:
+        function_data = json.load(file)
+    old: dict[tuple[str, str, str, str, str], float] = {}
+    for group in function_data["groups"]:
+        for function in group["functions"]:
+            for decompiler, values in (function.get("values") or {}).items():
+                if values and values.get("type_match") is not None:
+                    key = (
+                        group["project"],
+                        group["opt_level"],
+                        group["binary"],
+                        function["function"],
+                        decompiler,
+                    )
+                    old[key] = float(values["type_match"])
+    return old
+
+
+def main() -> None:
+    args = parse_args()
+    root: Path = args.results_dir
+    old = _old_scores(root)
+    checkpoint_dir = root / "checkpoints"
+    projects = args.projects or sorted(path.stem for path in checkpoint_dir.glob("*.pkl"))
+    metric = TypeMatchMetric(MetricConfig(extra_options={"variable_match_mode": args.mode}))
+    aggregate: defaultdict[str, AggregateRow] = defaultdict(
+        lambda: {"o": 0.0, "n": 0.0, "c": 0, "imp": 0, "wor": 0}
+    )
+    new_scores: dict[str, dict[str, dict[str, float | int]]] = {}
+
+    for project in projects:
+        checkpoint_path = checkpoint_dir / f"{project}.pkl"
+        if not checkpoint_path.is_file():
+            continue
+        with open(checkpoint_path, "rb") as file:
+            data = pickle.load(file)
+        for optimization, binaries in data.get("decompile", {}).items():
+            opt_name = getattr(optimization, "value", str(optimization))
+            compiled = root / opt_name / project / "compiled"
+            sources = list(preprocessed_by_stem(compiled).values())
+            for binary_name, decompilers in binaries.items():
+                for decompiler_name, decompilation in decompilers.items():
+                    try:
+                        result = metric.compute_for_binary(
+                            decompilation,
+                            preprocessed_sources=sources,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"  ! {project}/{opt_name}/{binary_name}/{decompiler_name}: {exc}")
                         continue
-                    o = old[key]
-                    a = agg[dname]
-                    a["o"] += o
-                    a["n"] += n
-                    a["c"] += 1
-                    if n > o + 1e-9:
-                        a["imp"] += 1
-                    elif n < o - 1e-9:
-                        a["wor"] += 1
+                    for function_name, value in result.function_results.items():
+                        key = (
+                            project,
+                            opt_name,
+                            binary_name,
+                            function_name,
+                            decompiler_name,
+                        )
+                        if args.emit or args.output is not None:
+                            metadata = value.metadata or {}
+                            distance = int(metadata.get("fp", 0)) + int(metadata.get("fn", 0))
+                            score_key = f"{project}::{opt_name}::{binary_name}::{function_name}"
+                            new_scores.setdefault(decompiler_name, {})[score_key] = {
+                                "value": value.value,
+                                "dist": distance,
+                            }
+                        if key not in old:
+                            continue
+                        previous = old[key]
+                        row = aggregate[decompiler_name]
+                        row["o"] += previous
+                        row["n"] += value.value
+                        row["c"] += 1
+                        if value.value > previous + 1e-9:
+                            row["imp"] += 1
+                        elif value.value < previous - 1e-9:
+                            row["wor"] += 1
 
-print(f"\n{'dec':9} {'n':>7} {'OLD mean':>9} {'NEW mean':>9} {'improved':>9} {'worse':>7}")
-for d in sorted(agg):
-    a = agg[d]
-    c = a["c"] or 1
-    print(f"{d:9} {a['c']:>7} {a['o']/c:>9.3f} {a['n']/c:>9.3f} {a['imp']:>9} {a['wor']:>7}")
+    print(f"\nmode: {args.mode}")
+    print(f"{'dec':9} {'n':>7} {'OLD mean':>9} {'NEW mean':>9} {'improved':>9} {'worse':>7}")
+    for decompiler in sorted(aggregate):
+        row = aggregate[decompiler]
+        count = int(row["c"])
+        divisor = count or 1
+        print(
+            f"{decompiler:9} {count:>7} {float(row['o']) / divisor:>9.3f} "
+            f"{float(row['n']) / divisor:>9.3f} {int(row['imp']):>9} "
+            f"{int(row['wor']):>7}"
+        )
 
-if emit:
-    out_path = root / "type_match_new.json"
-    if args and out_path.is_file():
-        # Project-scoped runs MERGE into the existing overlay: overwriting used to
-        # silently shrink type_match_new.json to only the projects covered.
-        from decbench.results_store import merge_typematch_overlay
+    output_path = root / "type_match_new.json" if args.emit else args.output
+    if output_path is None:
+        return
+    if args.projects and output_path.is_file():
+        with open(output_path) as file:
+            new_scores = merge_typematch_overlay(json.load(file), new_scores)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w") as file:
+        json.dump(new_scores, file)
+    print(f"\nwrote {output_path}")
 
-        with open(out_path) as _if:
-            new_scores = merge_typematch_overlay(json.load(_if), new_scores)
-    with open(out_path, "w") as _of:
-        json.dump(new_scores, _of)
-    print("\nwrote", out_path)
+
+if __name__ == "__main__":
+    main()

@@ -6,7 +6,7 @@ import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from decbench.metrics.registry import MetricRegistry
 from decbench.models.metrics import MetricResult
@@ -26,6 +26,7 @@ def evaluate_decompilation(
     source_cfgs: dict[str, DiGraph] | None = None,
     metrics: list[str] | None = None,
     parallel: bool = False,
+    preprocessed_sources: list[Path] | None = None,
 ) -> dict[str, MetricResult]:
     """Evaluate a single decompilation result."""
     if metrics is None:
@@ -54,6 +55,7 @@ def evaluate_decompilation(
                 decompilation,
                 source_cfgs=source_cfgs,
                 decompiled_cfgs=decompiled_cfgs,
+                preprocessed_sources=preprocessed_sources,
             )
             results[metric_name] = result
 
@@ -143,15 +145,19 @@ def evaluate_project(
     from decbench.utils.cfg import best_source_by_name, resolved_source_for_binary
 
     best_by_name = best_source_by_name(source_cfgs_by_binary)
+    preprocessed_sources = list(project.preprocessed_sources.get(optimization, {}).values())
 
-    def _source_for(binary_name: str) -> dict:
-        return resolved_source_for_binary(binary_name, source_cfgs_by_binary, best_by_name)
+    def _source_for(binary_name: str) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            resolved_source_for_binary(binary_name, source_cfgs_by_binary, best_by_name),
+        )
 
     if parallel:
         workers = workers or cpu_count()
 
         with ProcessPoolExecutor(max_workers=workers) as executor:
-            futures = {}
+            eval_futures: dict[Any, tuple[str, str]] = {}
 
             for binary_name, dec_results in decompilations.items():
                 source_cfgs = _source_for(binary_name)
@@ -163,11 +169,12 @@ def evaluate_project(
                         source_cfgs,
                         metrics,
                         False,
+                        preprocessed_sources,
                     )
-                    futures[future] = (binary_name, dec_name)
+                    eval_futures[future] = (binary_name, dec_name)
 
-            for future in as_completed(futures):
-                binary_name, dec_name = futures[future]
+            for future in as_completed(eval_futures):
+                binary_name, dec_name = eval_futures[future]
                 try:
                     metric_results = future.result()
                     if binary_name not in results:
@@ -187,6 +194,7 @@ def evaluate_project(
                     decompilation,
                     source_cfgs,
                     metrics,
+                    preprocessed_sources=preprocessed_sources,
                 )
 
     _save_evaluation_results(results, eval_output_dir)
@@ -248,7 +256,10 @@ def evaluate_projects(
     if optimization_levels is None:
         optimization_levels = [OptimizationLevel.O2]
 
-    results = {}
+    results: dict[
+        str,
+        dict[OptimizationLevel, dict[str, dict[str, dict[str, MetricResult]]]],
+    ] = {}
 
     for project in projects:
         results[project.name] = {}

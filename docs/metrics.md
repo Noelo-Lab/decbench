@@ -69,9 +69,11 @@ dataset/publish family — `publish/cfg_export.py`, `publish/layout.py`,
 `dataset.py`, `scripts/compute_dataset_info.py` — which is why a C++ project is
 not publishable to the dataset yet (see benchmarking.md).
 
-byte_match/type_match don't use the preprocessed units
-(`requires_source_cfg = False`; gcc-recompile and DWARF respectively), and
-sample source extraction only *falls back* to them. So do NOT disable
+byte_match does not use the preprocessed units (`requires_source_cfg = False`;
+it recompiles the decompiled code). type_match still reads its denominator and
+types from DWARF, but now also uses C `.i` units to construct type-blind source
+address/usage evidence; without them it falls back to ABI argument and stack
+anchors. Sample source extraction only *falls back* to them. So do NOT disable
 `Project.emit_preprocessed` (default True, `models/project.py`) or
 `-save-temps=obj` in the default `base_flags` (`compilers/gcc.py`). The only
 preprocessed-free evaluation path is the published-dataset `--source-cfgs`
@@ -105,12 +107,12 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="6"`, bumped for the narrowed pointee rule below — the
-only one of the normalization rules that changes an existing C value. The
-per-function key covers the decompiled variables and the DWARF ground truth but
-NOT `normalize_type`, so only a normalization change can serve stale values;
-a change to what DWARF yields mints a new key on its own and must NOT bump
-(see [Metric caching](#metric-caching)).
+Current `cache_version="7"`, bumped for type-blind variable correspondence.
+The per-function key covers the requested/resolved mode, matcher policy,
+redacted address/usage/anchor evidence, the stack shift, decompiled types used
+for grading, and DWARF ground truth. It does NOT cover `normalize_type`, so a
+normalization-policy change still requires a version bump (see
+[Metric caching](#metric-caching)).
 
 **The ground-truth payload must be ORDER-STABLE.** `_parse_variable_die` returns
 `type` and `rbp_offset` as SORTED lists. They land in the cache key through
@@ -121,27 +123,53 @@ bzip2/ghidra, 108 functions: cold 5 hits / 103 misses, then a second process at
 the default random seed 25/83 and a third 51/57 — versus 108/0 with sorted
 lists). Any new list in that payload must be sorted too.
 
-Unified 3-pass matching against `FunctionDecompilation.variables`:
+Variable correspondence is selected **before** recovered types are graded.
+The matcher receives no variable names, types, or sizes. Its production modes
+are:
 
-1. **Arguments by ABI position** — DWARF formal-parameter order ↔
-   `VariableInfo.arg_index`; name-independent, so angr's `a0`/`a1` get fair
-   credit.
-2. **Stack vars by auto-calibrated offset shift.**
-3. **Rest by exact name.**
+1. **`address`** — unique ABI argument positions and calibrated stack slots are
+   accepted first, then variables are paired by ambiguity-checked weighted
+   overlap between source instruction addresses and decompiler line-map
+   addresses.
+2. **`usage`** — variables are paired only from strict, type/name/address-blind
+   C usage context. Named direct-call positions, distinctive operators,
+   literal roles, memory roles, and control roles carry evidence; generic
+   read/write counts alone cannot create a match.
+3. **`address+usage`** — anchors are accepted first; remaining pairs use fused
+   evidence when both channels exist and their channel-specific address-only or
+   usage-fallback thresholds otherwise.
+4. **`auto`** — the default and canonical published policy, currently resolving
+   to `address+usage` so native line maps are used when present and usage
+   evidence fills genuine gaps.
 
-Regex text parsing is the last-resort fallback (and the scoring path for
-backends that carry no `VariableInfo`, e.g. LLM agents and external
-submissions: the C signature is parsed into ABI-positioned args + locals). At
-`-O2`, register locals that decompilers fold into expressions count as misses
-for everyone uniformly.
+C source evidence is selected from the evaluation's preprocessed translation
+units and joined to DWARF variables by stable DIE identity. The decompiler side
+uses `VariableInfo.addresses` directly, or derives them from
+`VariableInfo.line_numbers` plus `FunctionDecompilation.line_mappings`.
+The current source-side instruction-address adapter supports x86 ELF binaries;
+PE and non-x86 inputs transparently continue with strict usage evidence and
+argument/stack anchors, and their accepted-stage evidence marker reflects that
+fallback. This limitation is in source evidence construction, not in a
+decompiler's ability to report its own line map.
+Backends and old checkpoints without those fields remain scorable: C-like text
+is parsed for strict usage evidence, with ABI argument positions and explicit
+stack offsets as the final anchors. Exact variable names are never a matching
+fallback. At `-O2`, a register local with no address, distinctive usage, or
+anchor remains a false negative.
 
-PR #48 also contains an experimental, type-blind local-variable
-correspondence layer with separate `address`, strict `usage`, and fused
-`address+usage` modes. It can infer conservative candidates from C-like output
-when a backend has no structured variable/address map. It is not wired into
-the published metric yet; its signals, leakage constraints, evaluation, and
-reproduction commands are documented in
-[`experiments/local_variable_distance/USAGE_MATCHING.md`](experiments/local_variable_distance/USAGE_MATCHING.md).
+The denominator is unchanged: every retained DWARF variable is graded, even if
+it has no observable correspondence evidence. Metadata records accepted-stage
+provenance as `variable_match_evidence = native|mixed|fallback_only`, plus mode,
+stage counts, observable counts, and line-map presence. `native` means only
+address/argument/stack stages were accepted, `mixed` means accepted matching
+used both native and usage evidence, and `fallback_only` means no accepted
+native stage. These values support the report's measurement caveat without
+publishing variable names, features, addresses, stable identities, types, or
+absolute source paths.
+
+For checkpoint A/B runs, `scripts/reeval_typematch.py --mode address|usage|address+usage|auto`
+prints old/new comparisons. Non-canonical overlays require an explicit
+`--output`; only `--emit` with `auto` may write `type_match_new.json`.
 
 A subprogram's name is read through `binfmt.die_attr` rather than straight off
 the DIE, because gcc keeps a C++ out-of-line member definition's `DW_AT_name`

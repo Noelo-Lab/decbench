@@ -11,15 +11,28 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
-from typing import TYPE_CHECKING, Any
+from collections import Counter
+from dataclasses import replace
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, cast
 
 from decbench.metrics.base import Metric, MetricConfig
 from decbench.metrics.registry import register_metric
+from decbench.metrics.type_evidence import (
+    PreprocessedSourceContext,
+    SourceEvidenceResult,
+    build_source_evidence,
+)
+from decbench.metrics.variable_match import (
+    MATCHER_MODES,
+    MatcherMode,
+    VariableEvidence,
+    extract_decompiler_evidence,
+    match_variables,
+)
 from decbench.models.metrics import AggregationType, MetricResult, MetricValue
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from networkx import DiGraph
 
     from decbench.models.decompilation import DecompilationResult, FunctionDecompilation
@@ -229,10 +242,6 @@ _SIZE_SCALARS: dict[int, set[str]] = {
     8: {"long long"},
 }
 
-# Ghidra/IDA encode a stack slot's frame offset in the NAME but sometimes leave
-# ``stack_offset`` unset. ``*Stack_*`` is excluded (mixed sign conventions).
-_NAME_OFFSET = re.compile(r"^(?:local|var)_([0-9a-fA-F]+)$")
-
 
 def _uncommitted_size(var: Any) -> int | None:
     """Byte width of an uncommitted (width-only) decompiler type, else ``None``.
@@ -249,14 +258,10 @@ def _uncommitted_size(var: Any) -> int | None:
 
 
 def _effective_offset(var: Any) -> int | None:
-    """Stack offset for a decompiled var, recovering it from ``local_``/``var_``
-    names when ``stack_offset`` is unset (Ghidra register-SSA vars stay ``None``)."""
-    if getattr(var, "stack_offset", None) is not None:
-        return var.stack_offset
-    m = _NAME_OFFSET.match(getattr(var, "name", "") or "")
-    if m:
-        return -int(m.group(1), 16)
-    return None
+    """Return only an explicit stack offset; variable names are not evidence."""
+
+    offset = getattr(var, "stack_offset", None)
+    return int(offset) if offset is not None else None
 
 
 def extract_ground_truth_types(binary_path: Path) -> dict[str, list[dict[str, Any]]]:
@@ -362,6 +367,7 @@ def _parse_variable_die(
     and decompilers are expected to recover them. Only variables without a
     location (fully optimized out) are dropped.
     """
+    identity = f"dwarf:0x{int(die.offset):x}"
     offsets, has_location = _get_location(die, dwarfinfo)
     if not has_location:
         return None
@@ -395,6 +401,7 @@ def _parse_variable_die(
     # A set's iteration order depends on PYTHONHASHSEED, so unsorted lists made
     # the key differ between processes and ~77% of the disk cache went unread.
     return {
+        "identity": identity,
         "name": name,
         "type": sorted(all_forms),
         "rbp_offset": sorted(set(offsets)),
@@ -822,6 +829,35 @@ def _calibrate_shift_multi(
     return best_k
 
 
+_VARIABLE_MATCH_DEFAULTS: dict[str, float] = {
+    "min_overlap": 0.1,
+    "ambiguity_margin": 0.03,
+    "min_usage_similarity": 0.15,
+    "usage_ambiguity_margin": 0.0,
+    "min_combined_similarity": 0.2,
+    "combined_ambiguity_margin": 0.0,
+    "address_weight": 0.5,
+}
+_VARIABLE_MATCH_MODES = (*MATCHER_MODES, "auto")
+
+
+def _matching_evidence_payload(variables: list[VariableEvidence]) -> list[dict[str, Any]]:
+    """Stable cache payload containing only correspondence evidence."""
+
+    return [
+        {
+            "identity": variable.identity,
+            "addresses": sorted(variable.addresses),
+            "stack_offsets": list(variable.stack_offsets),
+            "kind": variable.kind,
+            "arg_index": variable.arg_index,
+            "usage_features": list(variable.usage_features),
+            "inferred_from_code": variable.inferred_from_code,
+        }
+        for variable in sorted(variables, key=lambda item: item.identity)
+    ]
+
+
 @register_metric("type_match")
 class TypeMatchMetric(Metric):
     """Type correctness metric.
@@ -840,7 +876,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "6"
+    cache_version = "7"
 
     weight = 1.0
     lower_is_better = False
@@ -853,6 +889,29 @@ class TypeMatchMetric(Metric):
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
         self._ground_truth_cache: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        options = self.config.extra_options
+        mode = str(options.get("variable_match_mode", "auto"))
+        if mode not in _VARIABLE_MATCH_MODES:
+            raise ValueError(
+                f"unknown variable_match_mode {mode!r}; expected one of " f"{_VARIABLE_MATCH_MODES}"
+            )
+        raw_policy = options.get("variable_match_policy", {})
+        if not isinstance(raw_policy, dict):
+            raise ValueError("variable_match_policy must be a mapping")
+        unknown = set(raw_policy) - {*_VARIABLE_MATCH_DEFAULTS, "use_size_compatibility"}
+        if unknown:
+            raise ValueError(f"unknown variable-match policy options: {sorted(unknown)}")
+        if raw_policy.get("use_size_compatibility"):
+            raise ValueError("production variable matching cannot use variable sizes")
+        self.variable_match_mode = mode
+        self.variable_match_policy = {
+            key: float(raw_policy.get(key, default))
+            for key, default in _VARIABLE_MATCH_DEFAULTS.items()
+        }
+        if not 0 <= self.variable_match_policy["address_weight"] <= 1:
+            raise ValueError("variable-match address_weight must be between 0 and 1")
+        if any(value < 0 for value in self.variable_match_policy.values()):
+            raise ValueError("variable-match thresholds and margins must be non-negative")
 
     def compute_for_function(
         self,
@@ -861,85 +920,238 @@ class TypeMatchMetric(Metric):
         decompiled_cfg: DiGraph | None = None,
         ground_truth_vars: list[dict[str, Any]] | None = None,
         calibration_shift: int | None = None,
+        binary_path: Path | None = None,
+        source_context: PreprocessedSourceContext | None = None,
         **kwargs: Any,
     ) -> MetricValue:
-        """Compute type match accuracy for a single function.
-
-        When the decompiled function exposes structured variables, matching
-        proceeds in three passes (each decompiled variable credited at most
-        once):
-
-        1. Arguments by ABI position: DWARF formal parameters (in declaration
-           order) vs decompiled arguments (by index). Position is a reliable
-           identity even when names are synthetic (angr) and offsets are
-           absent (registers at -O2).
-        2. Stack variables by calibrated offset.
-        3. Everything else by exact name (covers register-resident locals
-           when the decompiler imported debug names, and stack slots promoted
-           to args/registers).
-
-        Without structured variables, falls back to regex parsing of the
-        decompiled text and name matching.
-
-        Args:
-            decompiled: The decompiled function.
-            ground_truth_vars: Ground truth variables from DWARF.
-            calibration_shift: Pre-computed offset shift (e.g. calibrated
-                across the whole binary). When ``None``, the shift is
-                calibrated from this function's offsets alone.
-        """
+        """Compute type accuracy after type-blind variable correspondence."""
         if not ground_truth_vars:
             return MetricValue(
                 value=0.0,
                 metadata={"error": "No ground truth types available"},
             )
 
+        raw_variables = list(getattr(decompiled, "variables", []) or [])
+        inferred_from_code = False
+        if not raw_variables and decompiled.decompiled_code:
+            raw_variables = parse_c_variables(decompiled.decompiled_code, decompiled.name)
+            inferred_from_code = bool(raw_variables)
+        working = decompiled.model_copy(update={"variables": raw_variables})
+
+        source_result = build_source_evidence(
+            binary_path,
+            decompiled.name,
+            int(decompiled.address),
+            ground_truth_vars,
+            source_context,
+        )
+        try:
+            extracted = extract_decompiler_evidence(
+                working,
+                backend="decompiler",
+                include_unnamed=True,
+                infer_code_variables=True,
+            )
+            decompiled_evidence = [
+                replace(
+                    variable,
+                    name="",
+                    size=None,
+                    inferred_from_code=(variable.inferred_from_code or inferred_from_code),
+                )
+                for variable in extracted.variables
+            ]
+            evidence_error = None
+        except Exception as exc:  # noqa: BLE001 - anchors remain a safe fallback
+            evidence_error = type(exc).__name__
+            decompiled_evidence = [
+                VariableEvidence(
+                    identity=f"decompiler:{index}",
+                    name="",
+                    stack_offsets=(
+                        (int(offset),)
+                        if (offset := getattr(variable, "stack_offset", None)) is not None
+                        else ()
+                    ),
+                    size=None,
+                    kind="arg" if getattr(variable, "kind", "") == "arg" else "local",
+                    arg_index=getattr(variable, "arg_index", None),
+                    inferred_from_code=inferred_from_code,
+                )
+                for index, variable in enumerate(raw_variables)
+            ]
+
+        source_types = {
+            str(variable.get("identity") or f"source:{index}"): tuple(variable.get("type", []))
+            for index, variable in enumerate(ground_truth_vars)
+        }
+        decompiled_by_id = {
+            f"decompiler:{index}": variable for index, variable in enumerate(raw_variables)
+        }
+        stack_shift_hint = calibration_shift
+        if stack_shift_hint is None:
+            ground_truth_offsets = [
+                int(offset)
+                for variable in ground_truth_vars
+                for offset in variable.get("rbp_offset", [])
+            ]
+            decompiled_offsets = [
+                int(offset)
+                for variable in raw_variables
+                if (offset := getattr(variable, "stack_offset", None)) is not None
+            ]
+            stack_shift_hint = _calibrate_shift(
+                ground_truth_offsets,
+                decompiled_offsets,
+            )
+        resolved_mode = cast(
+            MatcherMode,
+            "address+usage" if self.variable_match_mode == "auto" else self.variable_match_mode,
+        )
         key_inputs = [
+            {
+                "requested_mode": self.variable_match_mode,
+                "resolved_mode": resolved_mode,
+                "policy": self.variable_match_policy,
+            },
+            _matching_evidence_payload(list(source_result.variables)),
+            _matching_evidence_payload(decompiled_evidence),
+            sorted((identity, sorted(forms)) for identity, forms in source_types.items()),
             [
                 {
-                    "name": v.name,
-                    "type": v.type,
-                    "stack_offset": v.stack_offset,
-                    "size": v.size,
-                    "kind": getattr(v, "kind", None),
-                    "arg_index": v.arg_index,
+                    "identity": identity,
+                    "type": getattr(variable, "type", ""),
+                    "grading_size": getattr(variable, "size", None),
                 }
-                for v in decompiled.variables
+                for identity, variable in sorted(decompiled_by_id.items())
             ],
-            decompiled.decompiled_code if not decompiled.variables else "",
-            ground_truth_vars,
-            calibration_shift,
+            stack_shift_hint,
+            source_result.error,
+            evidence_error,
         ]
         return self._cached_value(
             key_inputs,
-            lambda: self._compute_uncached(decompiled, ground_truth_vars, calibration_shift),
+            lambda: self._compute_uncached(
+                ground_truth_vars,
+                list(source_result.variables),
+                source_types,
+                decompiled_evidence,
+                decompiled_by_id,
+                stack_shift_hint,
+                resolved_mode,
+                source_result,
+                evidence_error,
+                bool(
+                    any(
+                        getattr(mapping, "addresses", [])
+                        for mapping in (getattr(decompiled, "line_mappings", []) or [])
+                    )
+                ),
+            ),
         )
 
     def _compute_uncached(
         self,
-        decompiled: FunctionDecompilation,
         ground_truth_vars: list[dict[str, Any]],
+        source_evidence: list[VariableEvidence],
+        source_types: dict[str, tuple[str, ...]],
+        decompiled_evidence: list[VariableEvidence],
+        decompiled_by_id: dict[str, Any],
         calibration_shift: int | None,
+        resolved_mode: MatcherMode,
+        source_result: SourceEvidenceResult,
+        evidence_error: str | None,
+        linemap_present: bool,
     ) -> MetricValue:
         gt_stack_vars = sum(1 for gv in ground_truth_vars if gv.get("rbp_offset"))
+        decomp_stack_vars = sum(bool(variable.stack_offsets) for variable in decompiled_evidence)
+        result = match_variables(
+            source_evidence,
+            decompiled_evidence,
+            mode=resolved_mode,
+            stack_shift_hint=calibration_shift,
+            use_size_compatibility=False,
+            **self.variable_match_policy,
+        )
+        matches = {match.source_id: match.decompiled_id for match in result.matches}
 
-        if not decompiled.variables and decompiled.decompiled_code:
-            parsed = parse_c_variables(decompiled.decompiled_code, decompiled.name)
-            if parsed:
-                decompiled = decompiled.model_copy(update={"variables": parsed})
+        tp = 0
+        fp = 0
+        fn = 0
+        for source_id, ground_truth_types in source_types.items():
+            decompiled_id = matches.get(source_id)
+            variable = decompiled_by_id.get(decompiled_id) if decompiled_id is not None else None
+            if variable is None:
+                fn += 1
+                continue
+            normalized = normalize_type(getattr(variable, "type", ""))
+            expected = set(ground_truth_types)
+            uncommitted_size = _uncommitted_size(variable)
+            if expected & normalized or (
+                uncommitted_size is not None
+                and bool(_SIZE_SCALARS.get(uncommitted_size, set()) & expected)
+            ):
+                tp += 1
+            else:
+                fp += 1
 
-        decomp_stack_vars = sum(1 for v in decompiled.variables if _effective_offset(v) is not None)
+        stage_counts = Counter(match.stage for match in result.matches)
+        source_address_vars = sum(bool(variable.addresses) for variable in source_evidence)
+        decompiled_address_vars = sum(bool(variable.addresses) for variable in decompiled_evidence)
+        source_usage_vars = sum(bool(variable.usage_features) for variable in source_evidence)
+        decompiled_usage_vars = sum(
+            bool(variable.usage_features) for variable in decompiled_evidence
+        )
+        native_stages = {"argument", "stack", "overlap", "address-only"}
+        fallback_stages = {"usage", "usage-fallback"}
+        used_native = bool(native_stages & stage_counts.keys()) or bool(stage_counts.get("fused"))
+        used_fallback = bool(fallback_stages & stage_counts.keys()) or bool(
+            stage_counts.get("fused")
+        )
+        if used_native and used_fallback:
+            evidence_kind = "mixed"
+        elif used_native:
+            evidence_kind = "native"
+        else:
+            evidence_kind = "fallback_only"
 
-        if decompiled.variables:
-            return self._match_structured(
-                decompiled,
-                ground_truth_vars,
-                gt_stack_vars,
-                decomp_stack_vars,
-                calibration_shift,
-            )
-
-        return self._match_by_regex(decompiled, ground_truth_vars, gt_stack_vars, decomp_stack_vars)
+        return self._build_result(
+            tp,
+            fp,
+            fn,
+            ground_truth_vars,
+            len(decompiled_by_id),
+            "structured",
+            result.stack_shift,
+            gt_stack_vars,
+            decomp_stack_vars,
+            extra_metadata={
+                "variable_match_evidence": evidence_kind,
+                "variable_match_mode_requested": self.variable_match_mode,
+                "variable_match_mode": resolved_mode,
+                "match_stage_counts": dict(sorted(stage_counts.items())),
+                "matched_count": len(result.matches),
+                "unmatched_source_count": len(result.unmatched_source),
+                "unobservable_source_count": len(result.unobservable_source),
+                "unmatched_decompiled_count": len(result.unmatched_decompiled),
+                "linemap_present": linemap_present,
+                "source_address_variables": source_address_vars,
+                "decompiler_address_variables": decompiled_address_vars,
+                "source_usage_variables": source_usage_vars,
+                "decompiler_usage_variables": decompiled_usage_vars,
+                "source_evidence_error": source_result.error,
+                "decompiler_evidence_error": evidence_error,
+                "source_file": (
+                    source_result.source_path.name
+                    if source_result.source_path is not None
+                    else None
+                ),
+                "matched_by_arg": stage_counts.get("argument", 0),
+                "matched_by_offset": stage_counts.get("stack", 0),
+                "matched_by_name": 0,
+                "gt_arg_vars": sum(1 for variable in ground_truth_vars if variable.get("is_arg")),
+            },
+        )
 
     @staticmethod
     def _build_result(
@@ -1018,8 +1230,9 @@ class TypeMatchMetric(Metric):
         for i, v in enumerate(decompiled.variables):
             if v.arg_index is not None and v.arg_index not in by_arg_index:
                 by_arg_index[v.arg_index] = i
-            if var_offsets[i] is not None:
-                by_off.setdefault(var_offsets[i] + k, []).append(i)
+            offset = var_offsets[i]
+            if offset is not None:
+                by_off.setdefault(offset + k, []).append(i)
             if v.name:
                 by_name.setdefault(v.name, []).append(i)
 
@@ -1185,6 +1398,12 @@ class TypeMatchMetric(Metric):
         errors: list[str] = []
 
         binary_path = decompilation.binary_path
+        preprocessed_sources = [Path(path) for path in (kwargs.get("preprocessed_sources") or [])]
+        source_context = (
+            PreprocessedSourceContext(preprocessed_sources, decompilation.binary_name)
+            if preprocessed_sources
+            else None
+        )
         cache_key = str(binary_path)
 
         if cache_key in self._ground_truth_cache:
@@ -1211,6 +1430,8 @@ class TypeMatchMetric(Metric):
                     func_decomp,
                     ground_truth_vars=gt_vars,
                     calibration_shift=binary_shift,
+                    binary_path=binary_path,
+                    source_context=source_context,
                 )
                 function_results[func_name] = value
 
@@ -1229,8 +1450,8 @@ class TypeMatchMetric(Metric):
                 "(gt_funcs=%d, gt_vars=%d, gt_stack_vars=%d). Likely causes: "
                 "(a) the decompiler produced no structured variables "
                 "(arguments/stack vars) to align positionally or by offset; "
-                "(b) variable names/offsets/types did not align between DWARF "
-                "and the decompiler output.",
+                "(b) native address and usage evidence was absent or ambiguous; "
+                "(c) recovered types did not match DWARF after correspondence.",
                 binary_path,
                 len(gt_types),
                 total_gt_vars,
@@ -1269,7 +1490,9 @@ class TypeMatchMetric(Metric):
                 continue
             func_gt = [o for gv in gt_vars for o in gv.get("rbp_offset", [])]
             func_dec = [
-                o for o in (_effective_offset(v) for v in func_decomp.variables) if o is not None
+                int(offset)
+                for variable in (getattr(func_decomp, "variables", []) or [])
+                if (offset := getattr(variable, "stack_offset", None)) is not None
             ]
             if func_gt and func_dec:
                 pairs.append((func_gt, func_dec))
