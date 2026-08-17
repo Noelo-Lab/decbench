@@ -218,12 +218,13 @@ production-universe accuracy claim therefore requires an audit extension.
 
 Reproducibility anchors for this replay:
 
+- scorer configuration schema: `lved-score-config-v3`
 - production-policy scorer JSONL SHA-256:
-  `708486d6a197909819f6bd0e98a5a6b5f8265e58bdecd66cb371865b05828938`
+  `b16711a3ed309dbb4e3d549a764eb192afe54676e1aec37d29a03e99fc6b6be7`
 - scorer aggregate SHA-256:
-  `9f56f8cba55230bf0a12ff20144b430b40b837e07ad978a7a28c95f830ccc81e`
+  `77bba22dd01555843426006a3740759ff8f953dae0300477675710be4395c2ea`
 - exact-policy comparison SHA-256:
-  `808ae7e27ad326c8096d599d34b86582ad75bed6b8309b07474f67c8f46ab5a5`
+  `b904f5ea861d4b45c79e78be9537996bb4c02c8aca212f72b33afde209ae063e`
 
 ## Historical common-universe evaluation (2026-08-11)
 
