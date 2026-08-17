@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from decbench.metrics.base import MetricConfig
-from decbench.metrics.type_evidence import PreprocessedSourceContext
-from decbench.metrics.type_match import TypeMatchMetric
+from decbench.metrics.type_evidence import PreprocessedSourceContext, build_source_evidence
+from decbench.metrics.type_match import (
+    TypeMatchMetric,
+    _matching_evidence_payload,
+    extract_ground_truth_type_index,
+    extract_ground_truth_types,
+)
 from decbench.metrics.variable_match import VariableEvidence, match_variables
 from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    LineMapping,
     VariableInfo,
 )
 from decbench.models.metrics import MetricResult
@@ -428,6 +436,407 @@ def test_source_context_supplies_usage_and_publishes_only_basename(tmp_path: Pat
     assert result.value == 1.0
     assert result.metadata["source_file"] == "program.i"
     assert str(tmp_path) not in str(result.metadata)
+
+
+def test_source_context_requires_exact_names_and_indexes_each_tu_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import decbench.metrics.type_evidence as evidence_module
+
+    primary = tmp_path / "primary.i"
+    unrelated = tmp_path / "unrelated.i"
+    primary.write_text("int alpha(void) { return 1; }\n" "int beta(void) { return 2; }\n")
+    unrelated.write_text("int gamma(void) { return 3; }\n")
+    real_index = evidence_module.index_c_functions
+    index_calls = 0
+
+    def counting_index(code: str) -> dict[str, tuple[str, ...]]:
+        nonlocal index_calls
+        index_calls += 1
+        return real_index(code)
+
+    monkeypatch.setattr(evidence_module, "index_c_functions", counting_index)
+    context = PreprocessedSourceContext([primary, unrelated], "program")
+
+    alpha = context.select("alpha")
+    beta = context.select("beta")
+    missing = context.select("missing")
+
+    assert alpha.path == primary.resolve()
+    assert beta.path == primary.resolve()
+    assert missing.path is None
+    assert index_calls == 2
+    assert PreprocessedSourceContext([unrelated], "program").select("alpha").path is None
+
+
+def _dwarf_function_addresses_by_cu(binary: Path, function_name: str) -> dict[str, int]:
+    from elftools.elf.elffile import ELFFile
+
+    from decbench.metrics.variable_match import _die_ranges
+    from decbench.utils.binfmt import die_str_attr
+
+    addresses: dict[str, int] = {}
+    with binary.open("rb") as stream:
+        dwarfinfo = ELFFile(stream).get_dwarf_info()
+        for cu in dwarfinfo.iter_CUs():
+            cu_name = die_str_attr(cu.get_top_DIE(), "DW_AT_name")
+            if not cu_name:
+                continue
+            for die in cu.iter_DIEs():
+                if die.tag != "DW_TAG_subprogram":
+                    continue
+                if die_str_attr(die, "DW_AT_name") != function_name:
+                    continue
+                ranges = _die_ranges(die, dwarfinfo)
+                if ranges:
+                    addresses[Path(cu_name).name] = ranges[0][0]
+    return addresses
+
+
+@pytest.mark.skipif(shutil.which("gcc") is None, reason="gcc is required")
+def test_source_context_pins_duplicate_static_names_by_dwarf_cu(tmp_path: Path) -> None:
+    left = tmp_path / "left.c"
+    right = tmp_path / "right.c"
+    left_i = tmp_path / "left.i"
+    right_i = tmp_path / "right.i"
+    left_o = tmp_path / "left.o"
+    right_o = tmp_path / "right.o"
+    binary = tmp_path / "tool"
+    left.write_text(
+        "static int duplicate(int value) { int left_local = value + 11; return left_local; }\n"
+        "int right_call(int value);\n"
+        "int main(void) { return duplicate(1) + right_call(2); }\n"
+    )
+    right.write_text(
+        "static long duplicate(long value) { long right_local = value + 29; "
+        "return right_local; }\n"
+        "int right_call(int value) { return (int)duplicate(value); }\n"
+    )
+    for source, preprocessed, object_path in (
+        (left, left_i, left_o),
+        (right, right_i, right_o),
+    ):
+        subprocess.run(
+            ["gcc", "-E", str(source), "-o", str(preprocessed)],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["gcc", "-g", "-O0", "-fno-pie", "-c", str(source), "-o", str(object_path)],
+            check=True,
+            capture_output=True,
+        )
+    subprocess.run(
+        ["gcc", "-no-pie", str(left_o), str(right_o), "-o", str(binary)],
+        check=True,
+        capture_output=True,
+    )
+    addresses = _dwarf_function_addresses_by_cu(binary, "duplicate")
+    context = PreprocessedSourceContext([left_i, right_i], binary.name)
+
+    assert context.select("duplicate").path is None
+    selected_left = context.select(
+        "duplicate",
+        binary_path=binary,
+        function_address=addresses["left.c"],
+    )
+    selected_right = context.select(
+        "duplicate",
+        binary_path=binary,
+        function_address=addresses["right.c"],
+    )
+
+    assert selected_left.path == left_i.resolve()
+    assert selected_right.path == right_i.resolve()
+    assert "+ 11" in (selected_left.function_code or "")
+    assert "+ 29" in (selected_right.function_code or "")
+    ground_truth = extract_ground_truth_type_index(binary)
+    left_argument = next(
+        variable
+        for variable in ground_truth[addresses["left.c"]]["duplicate"]
+        if variable.get("is_arg")
+    )
+    right_argument = next(
+        variable
+        for variable in ground_truth[addresses["right.c"]]["duplicate"]
+        if variable.get("is_arg")
+    )
+    assert "int" in left_argument["type"]
+    assert "long long" in right_argument["type"]
+    assert "duplicate" not in extract_ground_truth_types(binary)
+
+
+@pytest.mark.skipif(shutil.which("g++") is None, reason="g++ is required")
+def test_cxx_source_retains_native_addresses_but_abstains_from_usage(tmp_path: Path) -> None:
+    source = tmp_path / "unit.cc"
+    preprocessed = tmp_path / "unit.ii"
+    binary = tmp_path / "program"
+    source.write_text(
+        "int target(int original) {\n"
+        "    int local = original + 1;\n"
+        "    return local;\n"
+        "}\n"
+        "int main(void) { return target(1); }\n"
+    )
+    subprocess.run(
+        ["g++", "-E", str(source), "-o", str(preprocessed)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["g++", "-g", "-O0", "-fno-pie", "-no-pie", str(source), "-o", str(binary)],
+        check=True,
+        capture_output=True,
+    )
+    address = _dwarf_function_addresses_by_cu(binary, "target")["unit.cc"]
+    ground_truth = extract_ground_truth_types(binary)["target"]
+
+    result = build_source_evidence(
+        binary,
+        "target",
+        address,
+        ground_truth,
+        PreprocessedSourceContext([preprocessed], binary.name),
+    )
+
+    assert result.source_path == preprocessed.resolve()
+    assert result.native_address_variables > 0
+    assert result.usage_variables == 0
+    assert all(not variable.usage_features for variable in result.variables)
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_error"),
+    [
+        ("selection", "source_select:RuntimeError"),
+        ("usage", "usage:RuntimeError"),
+    ],
+)
+def test_optional_source_failures_preserve_binary_denominator(
+    failure: str,
+    expected_error: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import decbench.metrics.type_evidence as evidence_module
+    import decbench.metrics.type_match as type_match_module
+
+    source = tmp_path / "program.i"
+    source.write_text("int target(int original) { return original + 1; }\n")
+    ground_truth = [
+        {
+            "identity": "source:0",
+            "name": "original",
+            "type": ["int"],
+            "is_arg": True,
+            "arg_index": 0,
+            "rbp_offset": [],
+        }
+    ]
+    if failure == "selection":
+
+        def fail_selection(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("selection failed")
+
+        monkeypatch.setattr(PreprocessedSourceContext, "select", fail_selection)
+    else:
+
+        def fail_usage(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("usage failed")
+
+        monkeypatch.setattr(evidence_module, "analyze_c_function", fail_usage)
+    monkeypatch.setattr(
+        type_match_module,
+        "extract_ground_truth_type_index",
+        lambda path: {0x1000: {"target": ground_truth}},
+    )
+    decompilation = DecompilationResult(
+        binary_path=tmp_path / "program",
+        binary_name="program",
+        decompiler=DecompilerMetadata(decompiler_name="ghidra@12.1"),
+        functions={
+            "target": FunctionDecompilation(
+                name="target",
+                address=0x1000,
+                decompiled_code="int target(int renamed) { return renamed + 1; }",
+                variables=[VariableInfo(name="renamed", type="int", kind="arg", arg_index=0)],
+            )
+        },
+    )
+
+    result = _metric("auto").compute_for_binary(
+        decompilation,
+        preprocessed_sources=[source],
+    )
+
+    assert result.errors == []
+    assert result.function_results["target"].value == 1.0
+    assert result.function_results["target"].metadata["gt_vars"] == 1
+    assert expected_error in result.function_results["target"].metadata["source_evidence_error"]
+
+
+def test_binary_backend_policy_prevents_ghidra_name_derived_addresses(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import decbench.metrics.type_match as type_match_module
+
+    ground_truth = [
+        {
+            "identity": "source:0",
+            "name": "original",
+            "type": ["int"],
+            "rbp_offset": [],
+            "addresses": [0x1004],
+        }
+    ]
+    monkeypatch.setattr(
+        type_match_module,
+        "extract_ground_truth_type_index",
+        lambda path: {0x1000: {"target": ground_truth}},
+    )
+    function = FunctionDecompilation(
+        name="target",
+        address=0x1000,
+        decompiled_code="int target(void) { int renamed = 1; return renamed; }",
+        line_mappings=[LineMapping(line_number=1, addresses=[0x1004])],
+        variables=[VariableInfo(name="renamed", type="int")],
+    )
+
+    def score(backend: str) -> Any:
+        decompilation = DecompilationResult(
+            binary_path=tmp_path / "program",
+            binary_name="program",
+            decompiler=DecompilerMetadata(decompiler_name=backend),
+            functions={"target": function},
+        )
+        return _metric("address").compute_for_binary(decompilation).function_results["target"]
+
+    ghidra = score("ghidra@12.1")
+    generic = score("other")
+
+    assert ghidra.value == 0.0
+    assert ghidra.metadata["match_stage_counts"] == {}
+    assert generic.value == 1.0
+    assert generic.metadata["match_stage_counts"] == {"overlap": 1}
+
+
+def test_binary_selects_ground_truth_by_function_address(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import decbench.metrics.type_match as type_match_module
+
+    def argument(identity: str, type_name: str) -> dict[str, Any]:
+        return {
+            "identity": identity,
+            "name": "original",
+            "type": [type_name],
+            "is_arg": True,
+            "arg_index": 0,
+            "rbp_offset": [],
+        }
+
+    monkeypatch.setattr(
+        type_match_module,
+        "extract_ground_truth_type_index",
+        lambda path: {
+            0x1000: {"target": [argument("source:int", "int")]},
+            0x2000: {"target": [argument("source:char", "char")]},
+        },
+    )
+    decompilation = DecompilationResult(
+        binary_path=tmp_path / "program",
+        binary_name="program",
+        decompiler=DecompilerMetadata(decompiler_name="ghidra@12.1"),
+        functions={
+            "target": FunctionDecompilation(
+                name="target",
+                address=0x1000,
+                decompiled_code="int target(int renamed) { return renamed; }",
+                variables=[VariableInfo(name="renamed", type="int", kind="arg", arg_index=0)],
+            )
+        },
+    )
+
+    result = _metric("address").compute_for_binary(decompilation)
+
+    assert result.errors == []
+    assert result.function_results["target"].value == 1.0
+    assert result.function_results["target"].metadata["gt_vars"] == 1
+
+
+def test_cache_key_covers_source_file_and_linemap_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from decbench import caching
+
+    monkeypatch.delenv("DECBENCH_NO_CACHE", raising=False)
+    monkeypatch.setenv("DECBENCH_CACHE_DIR", str(tmp_path / "cache"))
+    caching._CACHES.clear()
+    first_source = tmp_path / "first.i"
+    second_source = tmp_path / "second.i"
+    source_code = "int target(void) { int original = 1; return original; }\n"
+    first_source.write_text(source_code)
+    second_source.write_text(source_code)
+    ground_truth = [
+        {
+            "identity": "source:0",
+            "name": "original",
+            "type": ["int"],
+            "rbp_offset": [],
+            "addresses": [0x1004],
+        }
+    ]
+    without_linemap = FunctionDecompilation(
+        name="target",
+        address=0x1000,
+        decompiled_code="int target(void) { int renamed = 1; return renamed; }",
+        variables=[VariableInfo(name="renamed", type="int", addresses=[0x1004])],
+    )
+    with_linemap = without_linemap.model_copy(
+        update={"line_mappings": [LineMapping(line_number=99, addresses=[0xDEAD])]},
+    )
+    metric = _metric("address")
+    try:
+        first = metric.compute_for_function(
+            without_linemap,
+            ground_truth_vars=ground_truth,
+            source_context=PreprocessedSourceContext([first_source], "program"),
+        )
+        second = metric.compute_for_function(
+            with_linemap,
+            ground_truth_vars=ground_truth,
+            source_context=PreprocessedSourceContext([second_source], "program"),
+        )
+    finally:
+        caching._CACHES.clear()
+
+    assert first.metadata["source_file"] == "first.i"
+    assert first.metadata["linemap_present"] is False
+    assert second.metadata["source_file"] == "second.i"
+    assert second.metadata["linemap_present"] is True
+
+
+def test_matching_cache_payload_canonicalizes_evidence_order() -> None:
+    unordered = VariableEvidence(
+        "variable",
+        "",
+        addresses=frozenset({3, 1}),
+        stack_offsets=(8, -4),
+        usage_features=(("z", 1), ("a", 2)),
+    )
+    ordered = VariableEvidence(
+        "variable",
+        "",
+        addresses=frozenset({1, 3}),
+        stack_offsets=(-4, 8),
+        usage_features=(("a", 2), ("z", 1)),
+    )
+
+    assert _matching_evidence_payload([unordered]) == _matching_evidence_payload([ordered])
 
 
 def test_old_checkpoint_without_new_mapping_fields_uses_anchors() -> None:

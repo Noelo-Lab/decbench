@@ -710,11 +710,9 @@ def mask_elf_metadata(binary_path: Path, output_path: Path) -> None:
 
 
 def _die_name(die: Any) -> str:
-    attr = die.attributes.get("DW_AT_name")
-    if attr is None:
-        return ""
-    value = attr.value
-    return value.decode("utf-8", "replace") if isinstance(value, bytes) else str(value)
+    from decbench.utils.binfmt import die_str_attr
+
+    return die_str_attr(die, "DW_AT_name") or ""
 
 
 def _die_ranges(
@@ -1164,6 +1162,7 @@ def extract_decompiler_evidence(
     function: Any,
     *,
     backend: str,
+    identity_prefix: str | None = None,
     function_name: str | None = None,
     function_end: int | None = None,
     include_unnamed: bool = False,
@@ -1172,6 +1171,7 @@ def extract_decompiler_evidence(
     from decbench.metrics.variable_features import analyze_c_function
 
     base_backend = backend.split("@", 1)[0]
+    evidence_prefix = backend if identity_prefix is None else identity_prefix
     line_addresses = {
         int(mapping.line_number): frozenset(int(address) for address in mapping.addresses)
         for mapping in (getattr(function, "line_mappings", []) or [])
@@ -1206,7 +1206,7 @@ def extract_decompiler_evidence(
             )
             variables.append(
                 VariableEvidence(
-                    identity=f"{backend}:{index}",
+                    identity=f"{evidence_prefix}:{index}",
                     name=variable.name,
                     addresses=frozenset(addresses),
                     stack_offsets=stack_offsets,
@@ -1221,7 +1221,7 @@ def extract_decompiler_evidence(
         for index, variable in enumerate(analysis.variables):
             variables.append(
                 VariableEvidence(
-                    identity=f"{backend}:inferred:{index}",
+                    identity=f"{evidence_prefix}:inferred:{index}",
                     name=variable.name,
                     kind=variable.kind,
                     arg_index=variable.arg_index,

@@ -11,7 +11,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -27,6 +27,7 @@ from decbench.metrics.variable_match import (
     MATCHER_MODES,
     MatcherMode,
     VariableEvidence,
+    _die_ranges,
     extract_decompiler_evidence,
     match_variables,
 )
@@ -38,6 +39,8 @@ if TYPE_CHECKING:
     from decbench.models.decompilation import DecompilationResult, FunctionDecompilation
 
 logger = logging.getLogger(__name__)
+
+GroundTruthTypeIndex = dict[int, dict[str, list[dict[str, Any]]]]
 
 
 TYPE_MAP: dict[str, str] = {
@@ -264,8 +267,8 @@ def _effective_offset(var: Any) -> int | None:
     return int(offset) if offset is not None else None
 
 
-def extract_ground_truth_types(binary_path: Path) -> dict[str, list[dict[str, Any]]]:
-    """Extract ground truth variable types from DWARF debug info.
+def extract_ground_truth_type_index(binary_path: Path) -> GroundTruthTypeIndex:
+    """Extract DWARF variable types keyed by function address and name.
 
     Works for **ELF and PE** binaries (the PE/MinGW malware targets) — the DWARF
     is read via :func:`decbench.utils.binfmt.dwarf_info`, which handles PE's
@@ -275,7 +278,7 @@ def extract_ground_truth_types(binary_path: Path) -> dict[str, list[dict[str, An
         binary_path: Path to an ELF or PE binary compiled with -g
 
     Returns:
-        Dict mapping function_name -> list of variable dicts with:
+        Dict mapping function address -> function name -> variable dicts with:
             - name: variable name
             - type: list of normalized type strings
             - rbp_offset: list of stack offsets
@@ -283,7 +286,7 @@ def extract_ground_truth_types(binary_path: Path) -> dict[str, list[dict[str, An
     """
     from decbench.utils import binfmt
 
-    result: dict[str, list[dict[str, Any]]] = {}
+    result: GroundTruthTypeIndex = {}
 
     try:
         dwarfinfo = binfmt.dwarf_info(binary_path)
@@ -297,14 +300,54 @@ def extract_ground_truth_types(binary_path: Path) -> dict[str, list[dict[str, An
                 if DIE.tag != "DW_TAG_subprogram":
                     continue
 
+                ranges = _die_ranges(DIE, dwarfinfo)
+                if not ranges:
+                    continue
                 func_name, variables = _parse_function_die(DIE, dwarfinfo)
                 if func_name and variables:
-                    result[func_name] = variables
+                    function_address = min(begin for begin, _end in ranges)
+                    result.setdefault(function_address, {})[func_name] = variables
 
     except Exception as e:
         logger.warning("Failed to extract DWARF types from %s: %s", binary_path, e)
 
     return result
+
+
+def extract_ground_truth_types(binary_path: Path) -> dict[str, list[dict[str, Any]]]:
+    """Return the legacy name-only view for functions with an unambiguous name.
+
+    Production scoring uses :func:`extract_ground_truth_type_index`; silently
+    choosing one of several static or C++ functions with the same unqualified
+    name would grade against the wrong DIE.
+    """
+
+    candidates: defaultdict[str, list[list[dict[str, Any]]]] = defaultdict(list)
+    for functions in extract_ground_truth_type_index(binary_path).values():
+        for function_name, variables in functions.items():
+            candidates[function_name].append(variables)
+    return {
+        function_name: rows[0]
+        for function_name, rows in sorted(candidates.items())
+        if len(rows) == 1
+    }
+
+
+def _ground_truth_for_function(
+    index: GroundTruthTypeIndex,
+    function_name: str,
+    function_address: int,
+) -> list[dict[str, Any]]:
+    at_address = index.get(int(function_address), {})
+    exact = at_address.get(function_name)
+    if exact is not None:
+        return exact
+    if len(at_address) == 1:
+        return next(iter(at_address.values()))
+    by_name = [
+        functions[function_name] for functions in index.values() if function_name in functions
+    ]
+    return by_name[0] if len(by_name) == 1 else []
 
 
 def _parse_function_die(die: Any, dwarfinfo: Any) -> tuple[str | None, list[dict[str, Any]]]:
@@ -848,10 +891,10 @@ def _matching_evidence_payload(variables: list[VariableEvidence]) -> list[dict[s
         {
             "identity": variable.identity,
             "addresses": sorted(variable.addresses),
-            "stack_offsets": list(variable.stack_offsets),
+            "stack_offsets": sorted(variable.stack_offsets),
             "kind": variable.kind,
             "arg_index": variable.arg_index,
-            "usage_features": list(variable.usage_features),
+            "usage_features": sorted(variable.usage_features),
             "inferred_from_code": variable.inferred_from_code,
         }
         for variable in sorted(variables, key=lambda item: item.identity)
@@ -888,7 +931,9 @@ class TypeMatchMetric(Metric):
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
-        self._ground_truth_cache: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        self._ground_truth_cache: dict[str, GroundTruthTypeIndex] = {}
+        self._source_context_key: tuple[Path, str, tuple[Path, ...]] | None = None
+        self._source_context: PreprocessedSourceContext | None = None
         options = self.config.extra_options
         mode = str(options.get("variable_match_mode", "auto"))
         if mode not in _VARIABLE_MATCH_MODES:
@@ -922,6 +967,7 @@ class TypeMatchMetric(Metric):
         calibration_shift: int | None = None,
         binary_path: Path | None = None,
         source_context: PreprocessedSourceContext | None = None,
+        backend: str = "decompiler",
         **kwargs: Any,
     ) -> MetricValue:
         """Compute type accuracy after type-blind variable correspondence."""
@@ -948,7 +994,8 @@ class TypeMatchMetric(Metric):
         try:
             extracted = extract_decompiler_evidence(
                 working,
-                backend="decompiler",
+                backend=backend,
+                identity_prefix="decompiler",
                 include_unnamed=True,
                 infer_code_variables=True,
             )
@@ -1008,6 +1055,15 @@ class TypeMatchMetric(Metric):
             MatcherMode,
             "address+usage" if self.variable_match_mode == "auto" else self.variable_match_mode,
         )
+        linemap_present = bool(
+            any(
+                getattr(mapping, "addresses", [])
+                for mapping in (getattr(decompiled, "line_mappings", []) or [])
+            )
+        )
+        source_file = (
+            source_result.source_path.name if source_result.source_path is not None else None
+        )
         key_inputs = [
             {
                 "requested_mode": self.variable_match_mode,
@@ -1028,6 +1084,10 @@ class TypeMatchMetric(Metric):
             stack_shift_hint,
             source_result.error,
             evidence_error,
+            {
+                "linemap_present": linemap_present,
+                "source_file": source_file,
+            },
         ]
         return self._cached_value(
             key_inputs,
@@ -1041,12 +1101,7 @@ class TypeMatchMetric(Metric):
                 resolved_mode,
                 source_result,
                 evidence_error,
-                bool(
-                    any(
-                        getattr(mapping, "addresses", [])
-                        for mapping in (getattr(decompiled, "line_mappings", []) or [])
-                    )
-                ),
+                linemap_present,
             ),
         )
 
@@ -1400,18 +1455,27 @@ class TypeMatchMetric(Metric):
         errors: list[str] = []
 
         binary_path = decompilation.binary_path
-        preprocessed_sources = [Path(path) for path in (kwargs.get("preprocessed_sources") or [])]
-        source_context = (
-            PreprocessedSourceContext(preprocessed_sources, decompilation.binary_name)
-            if preprocessed_sources
-            else None
+        preprocessed_sources = tuple(
+            sorted({Path(path).resolve() for path in (kwargs.get("preprocessed_sources") or [])})
         )
-        cache_key = str(binary_path)
+        source_context_key = (
+            binary_path.resolve(),
+            decompilation.binary_name,
+            preprocessed_sources,
+        )
+        if preprocessed_sources and source_context_key != self._source_context_key:
+            self._source_context = PreprocessedSourceContext(
+                preprocessed_sources,
+                decompilation.binary_name,
+            )
+            self._source_context_key = source_context_key
+        source_context = self._source_context if preprocessed_sources else None
+        cache_key = str(binary_path.resolve())
 
         if cache_key in self._ground_truth_cache:
             gt_types = self._ground_truth_cache[cache_key]
         else:
-            gt_types = extract_ground_truth_types(binary_path)
+            gt_types = extract_ground_truth_type_index(binary_path)
             self._ground_truth_cache[cache_key] = gt_types
 
         if not gt_types:
@@ -1424,7 +1488,11 @@ class TypeMatchMetric(Metric):
 
         for func_name, func_decomp in decompilation.functions.items():
             try:
-                gt_vars = gt_types.get(func_name, [])
+                gt_vars = _ground_truth_for_function(
+                    gt_types,
+                    func_decomp.name,
+                    int(func_decomp.address),
+                )
                 if not gt_vars:
                     continue
 
@@ -1434,6 +1502,7 @@ class TypeMatchMetric(Metric):
                     calibration_shift=binary_shift,
                     binary_path=binary_path,
                     source_context=source_context,
+                    backend=decompilation.decompiler.decompiler_name,
                 )
                 function_results[func_name] = value
 
@@ -1443,9 +1512,17 @@ class TypeMatchMetric(Metric):
         if gt_types and (
             not function_results or all(v.value == 0.0 for v in function_results.values())
         ):
-            total_gt_vars = sum(len(v) for v in gt_types.values())
+            total_gt_vars = sum(
+                len(variables)
+                for functions in gt_types.values()
+                for variables in functions.values()
+            )
             total_gt_stack_vars = sum(
-                1 for vs in gt_types.values() for gv in vs if gv.get("rbp_offset")
+                1
+                for functions in gt_types.values()
+                for variables in functions.values()
+                for variable in variables
+                if variable.get("rbp_offset")
             )
             logger.warning(
                 "type_match scored 0 for all matched functions in %s "
@@ -1455,7 +1532,7 @@ class TypeMatchMetric(Metric):
                 "(b) native address and usage evidence was absent or ambiguous; "
                 "(c) recovered types did not match DWARF after correspondence.",
                 binary_path,
-                len(gt_types),
+                sum(len(functions) for functions in gt_types.values()),
                 total_gt_vars,
                 total_gt_stack_vars,
             )
@@ -1476,7 +1553,7 @@ class TypeMatchMetric(Metric):
     @staticmethod
     def _calibrate_binary_shift(
         decompilation: DecompilationResult,
-        gt_types: dict[str, list[dict[str, Any]]],
+        gt_types: GroundTruthTypeIndex,
     ) -> int | None:
         """Calibrate the offset shift across all functions of a binary.
 
@@ -1486,8 +1563,12 @@ class TypeMatchMetric(Metric):
         """
         pairs: list[tuple[list[int], list[int]]] = []
 
-        for func_name, func_decomp in decompilation.functions.items():
-            gt_vars = gt_types.get(func_name, [])
+        for func_decomp in decompilation.functions.values():
+            gt_vars = _ground_truth_for_function(
+                gt_types,
+                func_decomp.name,
+                int(func_decomp.address),
+            )
             if not gt_vars:
                 continue
             func_gt = [o for gv in gt_vars for o in gv.get("rbp_offset", [])]

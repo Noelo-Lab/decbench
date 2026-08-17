@@ -71,16 +71,18 @@ not publishable to the dataset yet (see benchmarking.md).
 
 byte_match does not use the preprocessed units (`requires_source_cfg = False`;
 it recompiles the decompiled code). type_match still reads its denominator and
-types from DWARF, but now also uses C `.i` units to construct type-blind source
-address/usage evidence; without them it falls back to ABI argument and stack
-anchors. Sample source extraction only *falls back* to them. So do NOT disable
-`Project.emit_preprocessed` (default True, `models/project.py`) or
-`-save-temps=obj` in the default `base_flags` (`compilers/gcc.py`). The only
-preprocessed-free evaluation path is the published-dataset `--source-cfgs`
-flow (precomputed `source_cfgs/*.json`, built FROM the preprocessed units at
-publish time by `publish/cfg_export.py`) — and that path cannot score
-type_match. The publish/dataset paths still glob only `*.i`
-(`publish/layout.py`, `publish/cfg_export.py`, `dataset.py`,
+types from DWARF, but now also uses `.i`/`.ii` units to construct source
+evidence. C `.i` units provide native address and type-blind usage evidence;
+C++ `.ii` units provide native address evidence while the C-only usage parser
+explicitly abstains. Without a usable unit, type_match falls back to ABI
+argument and stack anchors. Sample source extraction only *falls back* to them.
+So do NOT disable `Project.emit_preprocessed` (default True,
+`models/project.py`) or `-save-temps=obj` in the default `base_flags`
+(`compilers/gcc.py`). The only preprocessed-free evaluation path is the
+published-dataset `--source-cfgs` flow (precomputed `source_cfgs/*.json`, built
+FROM the preprocessed units at publish time by `publish/cfg_export.py`) — and
+that path cannot score type_match. The publish/dataset paths still glob only
+`*.i` (`publish/layout.py`, `publish/cfg_export.py`, `dataset.py`,
 `scripts/compute_dataset_info.py`), so a C++ project cannot be published to the
 dataset yet.
 
@@ -107,12 +109,21 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="8"`, bumped for the production correspondence invariants.
+Current `cache_version="8"`, bumped for the production correspondence invariants,
+address-pinned source selection, and backend-correct decompiler evidence.
 The per-function key covers the requested/resolved mode, matcher policy,
 redacted address/usage/anchor evidence, the stack shift, decompiled types used
 for grading, and DWARF ground truth. It does NOT cover `normalize_type`, so a
 normalization-policy change still requires a version bump (see
 [Metric caching](#metric-caching)).
+
+Production ground truth is indexed by the top-level subprogram's address and
+name. This prevents two static or C++ functions with the same unqualified name
+from overwriting one another; a unique-name fallback remains available when a
+non-ELF backend uses a different address space. The legacy name-only extraction
+helper omits ambiguous names rather than choosing one. This qualification does
+not change the variable denominator within the selected subprogram: variables
+from its existing inlined-subroutine traversal remain included.
 
 **The ground-truth payload must be ORDER-STABLE.** `_parse_variable_die` returns
 `type` and `rbp_offset` as SORTED lists. They land in the cache key through
@@ -142,12 +153,19 @@ are:
    to `address+usage` so native line maps are used when present and usage
    evidence fills genuine gaps.
 
-C source evidence is selected from the evaluation's preprocessed translation
-units and joined to DWARF variables by stable DIE identity. The decompiler side
+C source evidence is selected by the function address's DWARF compilation unit
+and its path-qualified preprocessor line marker, then joined to DWARF variables
+by stable DIE identity. Each C translation unit's exact-name function index is
+built once; the sole-definition fallback is forbidden because it can attribute
+an unrelated body to the requested function. If DWARF pinning is unavailable,
+only one unambiguous exact C definition is accepted. C++ follows the same native
+address path but contributes no C usage features. Optional selection, native,
+or usage-extraction failures retain every DWARF variable in the denominator and
+fall back to the remaining evidence channels. The decompiler side
 uses `VariableInfo.addresses` directly, or derives them from
 `VariableInfo.line_numbers` plus `FunctionDecompilation.line_mappings`.
 The current source-side instruction-address adapter supports x86 ELF binaries;
-PE and non-x86 inputs transparently continue with strict usage evidence and
+PE and non-x86 inputs transparently continue with strict C usage evidence and
 argument/stack anchors, and their accepted-stage evidence marker reflects that
 fallback. This limitation is in source evidence construction, not in a
 decompiler's ability to report its own line map.
@@ -341,6 +359,10 @@ over seen (decompiled, source) pairs skip recomputation.
 - **Caching is deterministic by content: if you change a metric's algorithm,
   bump its `cache_version` class attr** — else stale values are served — or
   run with `DECBENCH_NO_CACHE=1`.
+- Diagnostic fields returned from cached values must also be key inputs. For
+  type_match this includes line-map presence and the selected source basename;
+  omitting them can return another function's otherwise score-equivalent
+  provenance metadata.
 - The converse also matters: a change that is **provably a no-op for existing
   input** must NOT bump `cache_version`, because the frozen rival checkpoints
   are pinned and a needless bump forces a corpus-wide recompute. The C++
