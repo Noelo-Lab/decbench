@@ -487,9 +487,7 @@ def _elf_function_bytes(path: Path, func_name: str, address: int) -> bytes | Non
                 raw_address = sym["st_value"]
                 symbol_address = raw_address & ~1 if is_arm else raw_address
                 if (
-                    sym.name == func_name
-                    or symbol_address == address
-                    or raw_address == address
+                    sym.name == func_name or symbol_address == address or raw_address == address
                 ) and sym["st_size"] > 0:
                     addr, size = symbol_address, sym["st_size"]
                     for section in elf.iter_sections():

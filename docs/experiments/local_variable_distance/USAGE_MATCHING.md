@@ -24,8 +24,9 @@ reimplementation of discovRE's binary-function matcher.
 
 - `address` uses argument position, consensus-calibrated
   stack slots, then inverse-frequency-weighted address overlap. It is still the
-  explicit ablation. Variables inferred only from pseudocode are excluded from this mode,
-  preserving the original candidate universe.
+  explicit ablation. Variables inferred only from pseudocode retain reliable
+  ABI argument and explicit-stack anchors in this mode, but receive no inferred
+  line-address or usage evidence.
 - `usage` is the strict address-free ablation. It does not read instruction or
   source-line addresses, stack offsets, argument positions, declaration order,
   variable names, types, sizes, pointer depth, or cast target types.
