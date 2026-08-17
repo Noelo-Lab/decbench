@@ -390,13 +390,13 @@ percentage client-side keeps the JSON small and lossless.
 
 `metric_evidence` is additive and sparse. For `type_match`, `native` means native
 line/address provenance and deterministic anchors were sufficient; `mixed` means
-native and heuristic usage/name evidence both contributed; and `fallback_only`
-means local-variable correspondence had no native line/address evidence. `measured`
-counts this decompiler's finite values in the active combo. It is deliberately not
-the shared `per_metric` denominator, which can also include a decompiler's missing
-value as a miss. Older `function_results.json` files carry no evidence metadata, so
-the three categories may sum to less than `measured`; the client never guesses a
-category from a decompiler's name.
+type-blind usage evidence was used jointly with native address/anchor evidence; and
+`fallback_only` means type-blind usage evidence was used alone. `measured` counts this
+decompiler's finite values in the active combo. It is deliberately not the shared
+`per_metric` denominator, which can also include a decompiler's missing value as a
+miss. Older `function_results.json` files carry no evidence metadata, so the three
+categories may sum to less than `measured`; the client never guesses a category from
+a decompiler's name.
 
 The leaderboard adds an asterisk to a Type percentage when its active combo has at
 least one `mixed` or `fallback_only` measurement. The marker is explanatory only:

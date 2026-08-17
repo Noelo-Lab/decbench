@@ -53,4 +53,4 @@ on the [view page](https://decbench.com/view/?dataset=sample-set&tier=sample-set
 
 <div id="leaderboard-dataset-desc"></div>
 
-<p id="type-evidence-note" class="view-desc evidence-note" hidden><sup class="evidence-mark">*</sup> Some Type measurements used usage/name evidence where native line/address provenance was unavailable. This heuristic can leave plausible matches unmatched, so the reported recovery rate may be conservative. Scores and denominators are calculated identically.</p>
+<p id="type-evidence-note" class="view-desc evidence-note" hidden><span class="evidence-mark" aria-hidden="true">*</span> Some Type measurements used type-blind usage evidence, either alone or jointly with native address/anchor evidence. This heuristic can leave plausible matches unmatched, so the reported recovery rate may be conservative. Scores and denominators are calculated identically.</p>

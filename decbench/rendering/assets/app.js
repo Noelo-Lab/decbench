@@ -532,8 +532,9 @@ function cellPctHtml(cell, evidence) {
     const p = pct(cell);
     const description = evidenceUsesHeuristic(evidence) ? evidenceDescription(evidence) : "";
     const marker = description
-        ? '<sup class="evidence-mark" title="' + escapeHtml(description) +
-          '" aria-label="' + escapeHtml(description) + '">*</sup>'
+        ? '<a class="evidence-mark" href="#type-evidence-note" ' +
+          'aria-label="Type-score measurement note" aria-describedby="type-evidence-note" ' +
+          'title="' + escapeHtml(description) + '">*</a>'
         : "";
     return '<span class="bar-ascii">' + asciiBar(p, 8) + '</span> ' +
         '<span class="cell-pct pct-' + pctClass(p) + '">' + p.toFixed(1) + '%' + marker +

@@ -391,12 +391,12 @@ When we sampled this process, we found it was small.
 ### Type Edit Distance
 Type recovery first has to determine which decompiled variable corresponds to which
 source variable. When a backend provides native pseudocode-to-instruction provenance,
-we use the variable's instruction addresses. If that evidence is incomplete or absent,
-we can also compare type-blind usage patterns such as reads, writes, operations, and
-call-site roles. The heuristic deliberately leaves ambiguous candidates unmatched, so
-results that use mixed or fallback-only evidence may conservatively undercount recovery.
-The leaderboard marks those Type percentages with an asterisk without changing their
-scores or denominators.
+we use the variable's instruction addresses. The matcher can also compare type-blind
+usage patterns such as reads, writes, operations, and call-site roles, either alone or
+jointly with native address/anchor evidence. The heuristic deliberately leaves ambiguous
+candidates unmatched, so results that use mixed or fallback-only evidence may
+conservatively undercount recovery. The leaderboard marks those Type percentages with
+an asterisk without changing their scores or denominators.
 
 ### Recompilation Byte Edit Distance
 The flaw here is that each function is evaluated alone.

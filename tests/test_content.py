@@ -122,6 +122,8 @@ def test_type_evidence_note_and_limitation_are_explained(content: Content) -> No
     leaderboard = content.view("leaderboard").body_html
     assert 'id="type-evidence-note"' in leaderboard
     assert "may be conservative" in leaderboard
+    assert "type-blind usage evidence" in leaderboard
+    assert "usage/name evidence" not in leaderboard
 
     about = content.view("about").outro_html
     assert "mixed or fallback-only evidence" in about

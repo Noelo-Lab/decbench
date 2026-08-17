@@ -230,8 +230,10 @@ tr:last-child td { border-bottom: none; }
 td.metric-cell { white-space: nowrap; }
 .cell-pct { font-weight: 700; }
 .evidence-mark {
-    color: var(--amber); cursor: help; font-size: 0.8em; margin-left: 0.08em;
+    color: var(--amber); font-size: 0.8em; line-height: 0; margin-left: 0.08em;
+    text-decoration: none; vertical-align: super;
 }
+.evidence-mark:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .evidence-note { color: var(--text-muted); font-size: 0.82em; }
 .evidence-note .evidence-mark { font-size: 1em; }
 .cell-count { color: var(--text-muted); font-size: 0.82em; }

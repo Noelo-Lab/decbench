@@ -184,8 +184,12 @@ def test_type_measurement_evidence_and_dynamic_note_ship(
     assert 'id="type-evidence-note"' in index
     assert "may be conservative" in index
     assert "evidenceUsesHeuristic" in app
-    assert 'class="evidence-mark"' in app
+    assert '<a class="evidence-mark" href="#type-evidence-note"' in app
+    assert 'aria-label="Type-score measurement note"' in app
+    assert 'aria-describedby="type-evidence-note"' in app
+    assert '<sup class="evidence-mark"' not in app
     assert ".evidence-mark" in css
+    assert ".evidence-mark:focus-visible" in css
 
 
 def test_preset_text_comes_from_the_content_registry(
