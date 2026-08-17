@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from decbench.experimental.local_variable_distance import FunctionEvidence, VariableEvidence
+from decbench.metrics.variable_match import VariableMatch
 from scripts.evaluate_local_variable_matchers import (
     EvidencePair,
     ModeConfig,
@@ -12,6 +11,9 @@ from scripts.evaluate_local_variable_matchers import (
     _edge_metrics,
     _feature_coverage,
     _paired_deltas,
+    _production_policy,
+    _replace_private_decisions,
+    _unlabeled_source_cases,
     _validate_audit_binding,
 )
 
@@ -63,7 +65,7 @@ def test_paired_deltas_compare_the_same_source_function_clusters() -> None:
     assert comparison["edge_f1"]["paired_clustered_bootstrap_ci95"] is not None
 
 
-def test_common_universe_filters_feature_only_sources_before_matching() -> None:
+def test_full_production_universe_competes_before_frozen_label_join() -> None:
     shared = (("call:named:consume:arg:0", 1),)
     source = FunctionEvidence(
         "f",
@@ -100,16 +102,72 @@ def test_common_universe_filters_feature_only_sources_before_matching() -> None:
         audit_source_ids,
     )
 
-    assert set(decisions) == {("sample", "ida", "s_audited")}
-    assert coverage["accepted_in_audit_total"] == 1
+    assert decisions == {}
+    assert coverage["accepted_in_production_universe_total"] == 0
     assert coverage["frozen_source_case_total"] == 1
+    assert coverage["production_source_case_total"] == 2
+    assert coverage["source_cases_outside_frozen_audit"] == 1
     assert feature_coverage["unique_source_variables"] == {
         "total": 2,
+        "address_matchable": 0,
         "features_extracted": 2,
         "usage_matchable": 2,
         "frozen_audit": 1,
-        "feature_only_usage_matchable": 1,
+        "outside_frozen_audit": 1,
+        "usage_only": 2,
+        "address_and_usage": 0,
+        "neither_channel": 0,
     }
+
+
+def test_mode_config_is_the_exact_type_match_policy() -> None:
+    for mode in ("address", "usage", "address+usage"):
+        config = ModeConfig(mode=mode)
+        assert config.matcher_kwargs() == {"mode": mode, **_production_policy()}
+
+
+def test_new_source_and_candidate_decisions_remain_unlabeled() -> None:
+    feature = (("call:named:consume:arg:0", 1),)
+    source = FunctionEvidence(
+        "f",
+        0,
+        1,
+        [
+            VariableEvidence("s_audited", "", usage_features=feature),
+            VariableEvidence("s_new", "", usage_features=feature),
+        ],
+    )
+    decompiled = FunctionEvidence(
+        "f",
+        0,
+        1,
+        [VariableEvidence("d_old", ""), VariableEvidence("d_new", "")],
+    )
+    pair = EvidencePair("sample", "held_out", "ida", source, decompiled)
+    decisions = {
+        ("sample", "ida", "s_audited"): VariableMatch("s_audited", "d_new", "usage", 0.8),
+        ("sample", "ida", "s_new"): VariableMatch("s_new", "d_old", "usage", 0.7),
+    }
+    private = {
+        "case_id": "case",
+        "sample_id": "sample",
+        "backend_id": "ida",
+        "source_id": "s_audited",
+        "decompiled_audit_map": {"candidate_0": ["d_old"]},
+    }
+
+    derived, candidate_blockers = _replace_private_decisions([private], decisions)
+    source_blockers = _unlabeled_source_cases(
+        [pair],
+        decisions,
+        {("sample", "ida"): frozenset({"s_audited"})},
+        ModeConfig(mode="usage"),
+    )
+
+    assert derived == []
+    assert candidate_blockers[0]["reason"] == "decompiled_candidate_outside_frozen_catalog"
+    assert source_blockers[0]["reason"] == "source_outside_frozen_audit"
+    assert source_blockers[0]["decision"]["decompiled_id"] == "d_old"
 
 
 def test_scorer_audit_binding_rejects_address_universe_drift() -> None:
@@ -125,7 +183,7 @@ def test_scorer_audit_binding_rejects_address_universe_drift() -> None:
         "ambiguity_margin": 0.03,
         "matcher_mode": "address",
     }
-    shared_provenance = {
+    audit_provenance = {
         "checkpoint_sha256": "checkpoint",
         "strict_universe": {"sha256": "universe"},
         "selected_sample_sha256": "sample-set",
@@ -133,6 +191,8 @@ def test_scorer_audit_binding_rejects_address_universe_drift() -> None:
         "decompilers": ["ida"],
         "score_config": frozen_config,
     }
+    scorer_config = {**frozen_config, "production_type_match_policy": True}
+    scorer_provenance = {**audit_provenance, "score_config": scorer_config}
     row = {
         "sample_id": "sample",
         "function": {"name": "f"},
@@ -157,17 +217,30 @@ def test_scorer_audit_binding_rejects_address_universe_drift() -> None:
 
     result = _validate_audit_binding(
         [row],
-        {"provenance": shared_provenance},
-        {"input_provenance": shared_provenance},
+        {"provenance": scorer_provenance, "frozen_thresholds": _production_policy()},
+        {"input_provenance": audit_provenance},
         [private],
     )
     assert result["passed"] is True
 
-    row["source_evidence"]["variables"][0]["addresses"] = []
-    with pytest.raises(ValueError, match="address-observable source universe differs"):
-        _validate_audit_binding(
-            [row],
-            {"provenance": shared_provenance},
-            {"input_provenance": shared_provenance},
-            [private],
-        )
+    row["source_evidence"]["variables"].append(
+        {"identity": "s_new", "addresses": [], "usage_features": {"call:x": 1}}
+    )
+    row["decompilers"]["ida"]["evidence"]["variables"].append({"identity": "d_new"})
+    expanded = _validate_audit_binding(
+        [row],
+        {"provenance": scorer_provenance, "frozen_thresholds": _production_policy()},
+        {"input_provenance": audit_provenance},
+        [private],
+    )
+    assert expanded["production_source_variables_outside_frozen_audit"] == 1
+    assert expanded["production_decompiler_candidates_outside_frozen_catalog"] == 1
+
+    row["source_evidence"]["variables"] = [row["source_evidence"]["variables"][1]]
+    reduced = _validate_audit_binding(
+        [row],
+        {"provenance": scorer_provenance, "frozen_thresholds": _production_policy()},
+        {"input_provenance": audit_provenance},
+        [private],
+    )
+    assert reduced["frozen_audit_source_cases_outside_production_denominator"] == 1

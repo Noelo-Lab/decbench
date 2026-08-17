@@ -16,12 +16,13 @@ import pickle
 import random
 import re
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from decbench.caching import stable_hash
-from decbench.experimental.local_variable_distance import (
+from decbench.metrics.variable_match import (
     MATCHER_MODES,
     DistanceResult,
     FunctionEvidence,
@@ -136,6 +137,17 @@ class FunctionSource:
 
 
 @dataclass(frozen=True)
+class ProductionFunctionInputs:
+    """Inputs that make one scorer row reproduce production TypeMatch."""
+
+    ground_truth_variables: tuple[dict[str, Any], ...]
+    start: int
+    end: int
+    source_context: Any
+    stack_shift_by_backend: Mapping[str, int | None]
+
+
+@dataclass(frozen=True)
 class ScoreConfig:
     project: str = "coreutils"
     optimizations: tuple[str, ...] = ("O0",)
@@ -151,6 +163,7 @@ class ScoreConfig:
     min_combined_similarity: float = 0.1
     address_weight: float = 0.5
     include_inlined: bool = False
+    production_type_match_policy: bool = False
     bootstrap_iterations: int = 2000
 
     def __post_init__(self) -> None:
@@ -197,6 +210,7 @@ def score_config_payload(config: ScoreConfig) -> dict[str, Any]:
         "min_combined_similarity": config.min_combined_similarity,
         "address_weight": config.address_weight,
         "include_inlined": config.include_inlined,
+        "production_type_match_policy": config.production_type_match_policy,
         "bootstrap_iterations": config.bootstrap_iterations,
     }
 
@@ -894,13 +908,23 @@ def build_scoring_universe(
     return source_rows, decompilers, diagnostics
 
 
-def _blind_evidence(evidence: FunctionEvidence, prefix: str) -> FunctionEvidence:
+def _blind_evidence(
+    evidence: FunctionEvidence,
+    prefix: str,
+    *,
+    clear_sizes: bool = False,
+) -> FunctionEvidence:
     ordered = sorted(evidence.variables, key=lambda variable: variable.identity)
     aliases = {variable.identity: f"{prefix}_{index:03d}" for index, variable in enumerate(ordered)}
     return replace(
         evidence,
         variables=[
-            replace(variable, name=aliases[variable.identity]) for variable in evidence.variables
+            replace(
+                variable,
+                name=aliases[variable.identity],
+                size=None if clear_sizes else variable.size,
+            )
+            for variable in evidence.variables
         ],
         # Decompiler C contains raw local names. Usage vectors are extracted
         # before blinding, so neither matcher mode needs the text afterward.
@@ -925,6 +949,24 @@ def _match_confidence(
     }
 
 
+def _effective_matcher_thresholds(config: ScoreConfig) -> dict[str, float | bool]:
+    if config.production_type_match_policy:
+        from decbench.metrics.type_match import _VARIABLE_MATCH_DEFAULTS
+
+        return {
+            **_VARIABLE_MATCH_DEFAULTS,
+            "use_size_compatibility": False,
+        }
+    return {
+        "min_overlap": config.min_overlap,
+        "ambiguity_margin": config.ambiguity_margin,
+        "min_usage_similarity": config.min_usage_similarity,
+        "usage_ambiguity_margin": config.usage_ambiguity_margin,
+        "min_combined_similarity": config.min_combined_similarity,
+        "address_weight": config.address_weight,
+    }
+
+
 def _matching_dict(result: DistanceResult, config: ScoreConfig) -> dict[str, Any]:
     matches = []
     for match in result.matches:
@@ -933,14 +975,7 @@ def _matching_dict(result: DistanceResult, config: ScoreConfig) -> dict[str, Any
         matches.append(row)
     return {
         "mode": config.matcher_mode,
-        "thresholds": {
-            "min_overlap": config.min_overlap,
-            "ambiguity_margin": config.ambiguity_margin,
-            "min_usage_similarity": config.min_usage_similarity,
-            "usage_ambiguity_margin": config.usage_ambiguity_margin,
-            "min_combined_similarity": config.min_combined_similarity,
-            "address_weight": config.address_weight,
-        },
+        "thresholds": _effective_matcher_thresholds(config),
         "source_observable_count": result.source_count,
         "decompiled_count": result.decompiled_count,
         "accepted_count": len(result.matches),
@@ -1031,12 +1066,153 @@ def _filter_to_function_instructions(
     )
 
 
+def _production_ground_truth_functions(
+    binary_path: Path,
+) -> dict[tuple[str, int], tuple[tuple[dict[str, Any], ...], int, int]]:
+    """Return production-retained DWARF variables keyed by function name and address."""
+
+    from decbench.metrics.type_match import _parse_function_die
+    from decbench.metrics.variable_match import _die_ranges
+    from decbench.utils import binfmt
+
+    dwarfinfo = binfmt.dwarf_info(binary_path)
+    if dwarfinfo is None:
+        raise ValueError(f"no DWARF ground truth in {binary_path}")
+    functions: dict[tuple[str, int], tuple[tuple[dict[str, Any], ...], int, int]] = {}
+    for cu in dwarfinfo.iter_CUs():
+        for die in cu.get_top_DIE().iter_children():
+            if die.tag != "DW_TAG_subprogram":
+                continue
+            low_pc = die.attributes.get("DW_AT_low_pc")
+            if low_pc is None:
+                continue
+            name, variables = _parse_function_die(die, dwarfinfo)
+            if not name:
+                continue
+            start = int(low_pc.value)
+            ranges = _die_ranges(die, dwarfinfo)
+            end = max((range_end for _range_start, range_end in ranges), default=start + 1)
+            key = (name, start)
+            if key in functions:
+                raise ValueError(f"duplicate DWARF function {name}@0x{start:x} in {binary_path}")
+            functions[key] = (tuple(variables), start, end)
+    return functions
+
+
+def _production_binary_shift(
+    result: DecompilationResult,
+    functions: Mapping[
+        tuple[str, int],
+        tuple[tuple[dict[str, Any], ...], int, int],
+    ],
+) -> int | None:
+    """Apply production's binary-wide stack calibration to address-qualified GT."""
+
+    from decbench.metrics.type_match import _calibrate_shift_multi
+
+    pairs: list[tuple[list[int], list[int]]] = []
+    for decompiled in result.functions.values():
+        row = functions.get((str(decompiled.name), int(decompiled.address)))
+        if row is None:
+            continue
+        ground_truth, _start, _end = row
+        source_offsets = [
+            int(offset) for variable in ground_truth for offset in variable.get("rbp_offset", [])
+        ]
+        decompiled_offsets = [
+            int(offset)
+            for variable in (getattr(decompiled, "variables", []) or [])
+            if (offset := getattr(variable, "stack_offset", None)) is not None
+        ]
+        if source_offsets and decompiled_offsets:
+            pairs.append((source_offsets, decompiled_offsets))
+    return _calibrate_shift_multi(pairs)
+
+
+def _production_score_inputs(
+    selected: Sequence[CheckpointFunction],
+    all_functions: Sequence[CheckpointFunction],
+    config: ScoreConfig,
+) -> dict[FunctionKey, ProductionFunctionInputs]:
+    """Prepare reusable exact-production evidence inputs for sampled rows."""
+
+    from decbench.metrics.type_evidence import PreprocessedSourceContext
+
+    results: dict[tuple[str, str, str], DecompilationResult] = {}
+    for candidate in all_functions:
+        for backend, result in candidate.results.items():
+            key = (candidate.key.optimization, candidate.key.binary, backend)
+            previous = results.setdefault(key, result)
+            if previous is not result:
+                raise ValueError(f"conflicting checkpoint results for {key}")
+
+    ground_truth_by_binary: dict[
+        tuple[str, str],
+        dict[tuple[str, int], tuple[tuple[dict[str, Any], ...], int, int]],
+    ] = {}
+    contexts: dict[tuple[str, str, Path], PreprocessedSourceContext] = {}
+    shifts: dict[tuple[str, str, str], int | None] = {}
+    prepared: dict[FunctionKey, ProductionFunctionInputs] = {}
+    for candidate in selected:
+        if candidate.source is None:
+            raise ValueError(f"sampled function lacks resolved source: {candidate.key}")
+        binary_key = (candidate.key.optimization, candidate.key.binary)
+        ground_truth = ground_truth_by_binary.get(binary_key)
+        if ground_truth is None:
+            ground_truth = _production_ground_truth_functions(candidate.source.binary_path)
+            ground_truth_by_binary[binary_key] = ground_truth
+        context_key = (*binary_key, candidate.source.preprocessed_path)
+        context = contexts.get(context_key)
+        if context is None:
+            context = PreprocessedSourceContext(
+                [candidate.source.preprocessed_path],
+                candidate.key.binary,
+            )
+            contexts[context_key] = context
+        function_row = ground_truth.get((candidate.key.name, candidate.key.address))
+        if function_row is None:
+            raise ValueError(
+                "sampled function is absent from address-qualified production ground truth: "
+                f"{candidate.key}"
+            )
+        stack_shift_by_backend: dict[str, int | None] = {}
+        for backend in sorted(candidate.functions):
+            shift_key = (*binary_key, backend)
+            if shift_key not in shifts:
+                result = results[shift_key]
+                shifts[shift_key] = _production_binary_shift(result, ground_truth)
+            stack_shift_by_backend[backend] = shifts[shift_key]
+        variables, start, end = function_row
+        prepared[candidate.key] = ProductionFunctionInputs(
+            variables,
+            start,
+            end,
+            context,
+            stack_shift_by_backend,
+        )
+    return prepared
+
+
 def _match_with_config(
     source: list[VariableEvidence],
     decompiled: list[VariableEvidence],
     config: ScoreConfig,
+    *,
+    stack_shift_hint: int | None = None,
 ) -> DistanceResult:
-    from decbench.experimental.local_variable_distance import match_variables
+    from decbench.metrics.variable_match import match_variables
+
+    if config.production_type_match_policy:
+        from decbench.metrics.type_match import _VARIABLE_MATCH_DEFAULTS
+
+        return match_variables(
+            source,
+            decompiled,
+            mode=config.matcher_mode,
+            stack_shift_hint=stack_shift_hint,
+            use_size_compatibility=False,
+            **_VARIABLE_MATCH_DEFAULTS,
+        )
 
     return match_variables(
         source,
@@ -1048,6 +1224,7 @@ def _match_with_config(
         usage_ambiguity_margin=config.usage_ambiguity_margin,
         min_combined_similarity=config.min_combined_similarity,
         address_weight=config.address_weight,
+        stack_shift_hint=stack_shift_hint,
     )
 
 
@@ -1059,6 +1236,7 @@ def _controls(
     dropped_decompiler_addresses: tuple[int, ...],
     stripped_path: Path,
     config: ScoreConfig,
+    stack_shift_hint: int | None = None,
 ) -> dict[str, Any]:
     renamed_source = [
         replace(variable, name=f"renamed_source_{index}")
@@ -1072,11 +1250,13 @@ def _controls(
         renamed_source,
         renamed_decompiled,
         config,
+        stack_shift_hint=stack_shift_hint,
     )
     repeated = _match_with_config(
         source.variables,
         decompiled.variables,
         config,
+        stack_shift_hint=stack_shift_hint,
     )
     address_only_source = [
         replace(variable, stack_offsets=(), arg_index=None) for variable in source.variables
@@ -1096,6 +1276,7 @@ def _controls(
         address_only_source,
         disjoint_decompiled,
         config,
+        stack_shift_hint=stack_shift_hint,
     )
     fake = VariableEvidence(
         identity="control:fake-local",
@@ -1105,6 +1286,7 @@ def _controls(
         source.variables,
         [*decompiled.variables, fake],
         config,
+        stack_shift_hint=stack_shift_hint,
     )
 
     evidence_addresses = {
@@ -1159,6 +1341,7 @@ def score_function(
     decompilers: list[str],
     config: ScoreConfig,
     cache: SourceLineCache,
+    production_inputs: ProductionFunctionInputs | None = None,
 ) -> dict[str, Any]:
     """Extract and match one sampled function, preserving errors as data."""
 
@@ -1196,21 +1379,60 @@ def score_function(
                 f"resolved .i primary marker {primary_marker!r} does not match "
                 f"CU {candidate.source.cu_path!r}"
             )
-        source = extract_source_evidence(
-            binary_path,
-            source_path,
-            candidate.key.name,
-            preprocessed_path=preprocessed_path,
-            include_inlined=config.include_inlined,
-            function_address=candidate.key.address,
-            source_lines=cache.lines(source_path, preprocessed_path),
-            feature_code=cache.function_code(
-                source_path,
-                preprocessed_path,
+        if config.production_type_match_policy:
+            if production_inputs is None:
+                raise ValueError("production TypeMatch inputs were not prepared")
+            from decbench.metrics.type_evidence import build_source_evidence
+
+            source_result = build_source_evidence(
+                binary_path,
                 candidate.key.name,
-            ),
+                candidate.key.address,
+                list(production_inputs.ground_truth_variables),
+                production_inputs.source_context,
+            )
+            source = FunctionEvidence(
+                candidate.key.name,
+                production_inputs.start,
+                production_inputs.end,
+                list(source_result.variables),
+            )
+            source_policy = {
+                "policy": "production TypeMatch retained-DWARF denominator",
+                "ground_truth_variables": len(production_inputs.ground_truth_variables),
+                "native_address_variables": source_result.native_address_variables,
+                "usage_variables": source_result.usage_variables,
+                "source_evidence_error": source_result.error,
+                "selected_preprocessed_source": (
+                    str(source_result.source_path)
+                    if source_result.source_path is not None
+                    else None
+                ),
+            }
+        else:
+            source = extract_source_evidence(
+                binary_path,
+                source_path,
+                candidate.key.name,
+                preprocessed_path=preprocessed_path,
+                include_inlined=config.include_inlined,
+                function_address=candidate.key.address,
+                source_lines=cache.lines(source_path, preprocessed_path),
+                feature_code=cache.function_code(
+                    source_path,
+                    preprocessed_path,
+                    candidate.key.name,
+                ),
+            )
+            source_policy = {
+                "policy": "frozen local-variable-distance source extractor",
+                "include_inlined": config.include_inlined,
+            }
+        source = _blind_evidence(
+            source,
+            "source",
+            clear_sizes=config.production_type_match_policy,
         )
-        source = _blind_evidence(source, "source")
         stripped_path = (
             results_root
             / candidate.key.optimization
@@ -1234,7 +1456,8 @@ def score_function(
                 "passed": True,
                 "dwarf_cu_path": candidate.source.cu_path,
                 "preprocessed_primary_marker": primary_marker,
-            }
+            },
+            "correspondence_universe": source_policy,
         }
         record["source_evidence"] = source.to_dict()
         instructions = _function_instruction_set(binary_path, source.start, source.end)
@@ -1244,8 +1467,6 @@ def score_function(
         for decompiler in decompilers:
             record["decompilers"][decompiler] = {"status": "source_error"}
         return record
-
-    from decbench.experimental.local_variable_distance import match_variables
 
     for decompiler in decompilers:
         function = candidate.functions.get(decompiler)
@@ -1258,28 +1479,41 @@ def score_function(
                 backend=decompiler,
                 function_name=candidate.key.name,
                 function_end=source.end,
+                include_unnamed=config.production_type_match_policy,
+                infer_code_variables=True,
             )
-            decompiled = _blind_evidence(decompiled, "decompiled")
-            decompiled, dropped_addresses = _filter_to_function_instructions(
+            decompiled = _blind_evidence(
                 decompiled,
-                instructions,
+                "decompiled",
+                clear_sizes=config.production_type_match_policy,
             )
-            result = match_variables(
+            if config.production_type_match_policy:
+                dropped_addresses: tuple[int, ...] = ()
+            else:
+                decompiled, dropped_addresses = _filter_to_function_instructions(
+                    decompiled,
+                    instructions,
+                )
+            stack_shift_hint = (
+                production_inputs.stack_shift_by_backend.get(decompiler)
+                if production_inputs is not None
+                else None
+            )
+            result = _match_with_config(
                 source.variables,
                 decompiled.variables,
-                mode=config.matcher_mode,
-                min_overlap=config.min_overlap,
-                ambiguity_margin=config.ambiguity_margin,
-                min_usage_similarity=config.min_usage_similarity,
-                usage_ambiguity_margin=config.usage_ambiguity_margin,
-                min_combined_similarity=config.min_combined_similarity,
-                address_weight=config.address_weight,
+                config,
+                stack_shift_hint=stack_shift_hint,
             )
             record["decompilers"][decompiler] = {
                 "status": "ok",
                 "evidence": decompiled.to_dict(),
                 "address_filter": {
-                    "policy": "decoded instruction starts in the DWARF function range",
+                    "policy": (
+                        "none (production TypeMatch input)"
+                        if config.production_type_match_policy
+                        else "decoded instruction starts in the DWARF function range"
+                    ),
                     "boundary_merge_status": (
                         "out_of_range_or_noninstruction_evidence_filtered"
                         if dropped_addresses
@@ -1288,6 +1522,7 @@ def score_function(
                     "dropped_count": len(dropped_addresses),
                     "dropped_addresses": [f"0x{address:x}" for address in dropped_addresses],
                 },
+                "production_stack_shift_hint": stack_shift_hint,
                 "matching": _matching_dict(result, config),
                 "controls": _controls(
                     source,
@@ -1297,6 +1532,7 @@ def score_function(
                     dropped_addresses,
                     stripped_path,
                     config,
+                    stack_shift_hint,
                 ),
             }
         except Exception as exc:  # noqa: BLE001
@@ -1930,13 +2166,12 @@ def aggregate_report(
         },
         "frozen_thresholds": {
             "matcher_mode": config.matcher_mode,
-            "min_overlap": config.min_overlap,
-            "ambiguity_margin": config.ambiguity_margin,
-            "min_usage_similarity": config.min_usage_similarity,
-            "usage_ambiguity_margin": config.usage_ambiguity_margin,
-            "min_combined_similarity": config.min_combined_similarity,
-            "address_weight": config.address_weight,
-            "warning": "Tune only on the tuning partition; report held_out unchanged.",
+            **_effective_matcher_thresholds(config),
+            "policy": (
+                "production TypeMatch defaults; do not tune on this audit"
+                if config.production_type_match_policy
+                else "Tune only on the tuning partition; report held_out unchanged."
+            ),
         },
         "source_line_cache": cache.stats(),
         "source_universe": universe_diagnostics or {},
@@ -1979,6 +2214,11 @@ def score_checkpoint(
         size=config.sample_size,
         seed=config.sample_seed,
     )
+    production_inputs = (
+        _production_score_inputs(selected, functions, config)
+        if config.production_type_match_policy
+        else {}
+    )
     records = [
         score_function(
             candidate,
@@ -1986,6 +2226,7 @@ def score_checkpoint(
             decompilers=decompilers,
             config=config,
             cache=cache,
+            production_inputs=production_inputs.get(candidate.key),
         )
         for candidate in selected
     ]

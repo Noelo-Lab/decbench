@@ -95,6 +95,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--include-inlined", action="store_true")
     parser.add_argument(
+        "--production-type-match-policy",
+        action="store_true",
+        help=(
+            "serialize the exact production TypeMatch correspondence inputs: retained-DWARF "
+            "denominator, unnamed candidates, binary shift hints, and type/size-free matching"
+        ),
+    )
+    parser.add_argument(
         "--bootstrap-iterations",
         type=int,
         default=2000,
@@ -159,6 +167,7 @@ def main(argv: list[str] | None = None) -> int:
             min_combined_similarity=args.min_combined_similarity,
             address_weight=args.address_weight,
             include_inlined=args.include_inlined,
+            production_type_match_policy=args.production_type_match_policy,
             bootstrap_iterations=args.bootstrap_iterations,
         )
         labels = load_audit_labels(args.labels)

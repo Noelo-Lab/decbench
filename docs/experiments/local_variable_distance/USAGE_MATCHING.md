@@ -1,8 +1,8 @@
 # Usage-based local-variable correspondence
 
-Status: experimental. This matcher is not yet part of the published
-`type_match` metric, and changing it does not require a metric cache-version
-bump.
+Status: the matcher and feature extractor are used by production `type_match`;
+the frozen semantic audit remains an experimental development measurement.
+Changing correspondence behavior requires a `type_match` cache-version bump.
 
 ## Motivation
 
@@ -22,9 +22,9 @@ reimplementation of discovRE's binary-function matcher.
 
 `match_variables()` accepts three modes:
 
-- `address` is the exact PR #48 matcher: argument position, consensus-calibrated
+- `address` uses argument position, consensus-calibrated
   stack slots, then inverse-frequency-weighted address overlap. It is still the
-  default. Variables inferred only from pseudocode are excluded from this mode,
+  explicit ablation. Variables inferred only from pseudocode are excluded from this mode,
   preserving the original candidate universe.
 - `usage` is the strict address-free ablation. It does not read instruction or
   source-line addresses, stack offsets, argument positions, declaration order,
@@ -37,6 +37,7 @@ reimplementation of discovRE's binary-function matcher.
 The modes are deliberately explicit. In particular, `usage` does not quietly
 receive easy argument-position matches; that would inflate an address-free
 ablation with another backend-supplied identity channel.
+Production `type_match` resolves its `auto` default to `address+usage`.
 
 ## Parsing and candidate discovery
 
@@ -100,11 +101,8 @@ renames and scan feature values for local spellings.
 The exclusions around type information are load-bearing: the correspondence
 is intended to support grading recovered variable types, so type spelling,
 byte width, pointer depth, and cast target type would leak the answer being
-graded. Strict `usage` mode obeys that rule end to end. The fused mode inherits
-the legacy matcher's size-compatible stack anchor so that it is literally the
-old mode plus a new residual signal; its fused usage score itself remains
-type-blind. Removing size from that legacy anchor should be reported as a
-separate ablation rather than silently folded into this comparison.
+graded. All production modes obey that rule end to end: names and sizes are
+cleared before correspondence, and size-compatible matching is disabled.
 
 ## Similarity and assignment
 
@@ -129,6 +127,11 @@ contexts exist. A genuinely absent channel leaves the available channel
 unscaled; two present but contradictory channels retain the zero from the
 contradicting side.
 
+The fixed production policy is overlap threshold `0.10`, address ambiguity
+margin `0.03`, usage threshold `0.15`, usage ambiguity margin `0`, combined
+threshold `0.20`, combined ambiguity margin `0`, and address weight `0.50`.
+Variable-size compatibility is always false.
+
 ## Reproducing the Coreutils comparison
 
 First regenerate serialized feature evidence from the existing checkpoint;
@@ -144,14 +147,15 @@ python scripts/score_local_variable_distance.py \
   --decompiler ida \
   --decompiler ghidra \
   --sample-size 100 \
+  --production-type-match-policy \
   --bootstrap-iterations 0 \
   --output /tmp/lved-features-scorer.jsonl \
   --report /tmp/lved-features-aggregate.json \
   --no-label-template
 ```
 
-Then tune only on the existing tuning partition and evaluate all modes against
-the unchanged completed audit package:
+Then replay the fixed production policy against the unchanged completed audit
+package:
 
 ```bash
 python scripts/evaluate_local_variable_matchers.py \
@@ -161,22 +165,68 @@ python scripts/evaluate_local_variable_matchers.py \
   --mode address \
   --mode usage \
   --mode address+usage \
-  --tune \
   --bootstrap-iterations 2000 \
   --output /tmp/lved-mode-comparison.json
 ```
 
-The evaluator validates scorer provenance and the immutable audit package,
-requires exact address-mode accepted-edge parity, joins every mode through the
-existing private identity map in memory, and records implementation/input
-hashes plus function-clustered reports and paired bootstrap deltas. It never
-modifies the canonical audit package. Semantic-audit construction itself
-accepts only an address-mode scorer; alternate modes are derived against the
-completed audit with this evaluator.
+The evaluator rejects threshold tuning and size compatibility. It sends the
+full production-retained DWARF denominator and full production decompiler
+candidate set to the matcher before joining labels. Frozen-label metrics are
+computed only where the old private identity map can classify the resulting
+decision. New source cases and decisions selecting newly exposed candidates
+are emitted as unlabeled blockers; no label is inferred. The canonical audit
+package is never modified.
 
-## Coreutils O2 development evaluation
+## Exact production-policy replay (2026-08-17)
 
-The definitive 2026-08-11 run reused the frozen 100-function Coreutils sample
+The current replay used the same frozen 100 Coreutils O2 functions and the
+same IDA/Ghidra checkpoint, but constructed the source denominator from the
+variables retained by production TypeMatch, included unnamed decompiler
+candidates, applied production binary shift hints, disabled size matching, and
+ran the full candidate competition before looking up audit labels.
+
+The frozen-label results below are conditional measurements, not full-universe
+accuracy. They include only retained source cases whose resulting decision can
+be represented by the immutable private audit map.
+
+| Scope | Mode | Accepted | TP | FP | FN | Precision | Edge recall | Edge F1 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Overall | `address` | 684 | 612 | 71 | 362 | 89.60% | 62.83% | 73.87% |
+| Overall | `usage` | 339 | 266 | 73 | 708 | 78.47% | 27.31% | 40.52% |
+| Overall | `address+usage` | 683 | 630 | 52 | 344 | 92.38% | 64.68% | 76.09% |
+| Development held out | `address` | 500 | 436 | 63 | 294 | 87.37% | 59.73% | 70.95% |
+| Development held out | `usage` | 242 | 180 | 62 | 550 | 74.38% | 24.66% | 37.04% |
+| Development held out | `address+usage` | 499 | 451 | 47 | 279 | 90.56% | 61.78% | 73.45% |
+
+On the held-out conditional subset, stacking changed precision by +3.19
+percentage points (paired function-cluster bootstrap 95% CI +1.19 to +5.31),
+edge recall by +2.05 points (+0.22 to +4.35), and F1 by +2.50 points (+1.02 to
++4.42), using 2,000 paired bootstrap iterations.
+
+The validity audit is the more important result. Production retains 1,420
+unique source variables in the sample: 438 have an address/ABI anchor, 237
+have usable usage context, five are usage-only, and 977 have neither channel
+but remain in the TypeMatch denominator. Only 440 retained identities overlap
+the old audit, leaving 980 unique variables (1,957 source/backend cases)
+without labels. Sixteen old audit cases are not retained by production because
+they lack a gradable located type. Production also exposes 112 unnamed IDA
+candidates across 72 function/backend groups. No evaluated mode selected one
+of those new candidates for an old audited source, but the frozen oracle cannot
+establish their relations or validate abstentions against them. A complete
+production-universe accuracy claim therefore requires an audit extension.
+
+Reproducibility anchors for this replay:
+
+- production-policy scorer JSONL SHA-256:
+  `2f78c7dc263f4542cd73d13e7509fc97eb494cf794cf7688d17b689026f453fe`
+- scorer aggregate SHA-256:
+  `fe0849ee2eca7b7de009f45d7d9b3336825f2ec9e6b072c84cb3e4e6c315fde4`
+- exact-policy comparison SHA-256:
+  `26ba92cabee9b4330cfc025ad1b3ca940ee0d69e5f5c535749432b1b56a03204`
+
+## Historical common-universe evaluation (2026-08-11)
+
+This historical run reused the frozen 100-function Coreutils sample
 (26 tuning, 74 development held out), IDA 9.2 and Ghidra 12.1 outputs, and the
 completed 896-case semantic audit. Source candidates were filtered to the
 frozen address-observable audit universe *before* matching, so the 12 newly
@@ -228,11 +278,22 @@ Reproducibility anchors:
 
 ## Interpretation limits
 
-The completed audit labels only the old address-observable source universe.
-It is suitable for a common-universe development comparison, but it cannot
-measure the additional coverage of source variables made eligible only by
-usage features. It also is not a pristine confirmation set for the new method:
+The completed audit labels only the old address-observable source universe and
+the old named decompiler-candidate catalog. It cannot supply full-denominator
+recall for production TypeMatch, classify a decision to a newly included
+unnamed candidate, or prove that an abstention is correct when such a candidate
+was never shown to reviewers. The exact-policy report therefore separates
+full-universe coverage from frozen-catalog label metrics and marks the latter
+as conditional. It also is not a pristine confirmation set for the new method:
 the old held-out report and labels already existed during development.
+
+Optimized DWARF can make this gap much larger than a count of lexical variables
+suggests. In the frozen sample, `b2sum:blake2b_compress` has one top-level DIE
+covering `[0x4470, 0x5a50)`, but that DIE contains 384 inlined `rotr64`
+instances. Production retains 625 located variable DIEs for the function; the
+old non-inlined audit contains five. Those identities must remain in the
+production denominator unless the metric's inlining policy itself is changed
+and independently justified.
 
 A confirmatory experiment should freeze this implementation and its
 parameters, select the next disjoint stable-hash sample, define eligibility

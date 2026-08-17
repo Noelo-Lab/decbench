@@ -390,3 +390,24 @@ def test_checkpoint_scorer_resolves_blinds_caches_and_stays_unlabeled(
                 row["micro"]["matcher_coverage"]
                 < row["success_conditioned_micro"]["matcher_coverage"]
             )
+
+    production_records, production_report, _production_labels = score_checkpoint(
+        checkpoint,
+        root,
+        ScoreConfig(
+            sample_size=0,
+            bootstrap_iterations=0,
+            production_type_match_policy=True,
+        ),
+    )
+    assert production_report["frozen_thresholds"]["use_size_compatibility"] is False
+    assert production_report["frozen_thresholds"]["min_usage_similarity"] == 0.15
+    assert production_report["frozen_thresholds"]["min_combined_similarity"] == 0.2
+    for record in production_records:
+        assert (
+            len(record["source_evidence"]["variables"])
+            == record["source_controls"]["correspondence_universe"]["ground_truth_variables"]
+        )
+        for entry in record["decompilers"].values():
+            if entry["status"] == "ok":
+                assert entry["matching"]["thresholds"]["use_size_compatibility"] is False

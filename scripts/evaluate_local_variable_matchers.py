@@ -10,27 +10,27 @@ import random
 import sys
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any, cast
 
 from decbench.caching import stable_hash
 from decbench.experimental.local_variable_checkpoint import canonical_sha256, file_sha256
-from decbench.experimental.local_variable_distance import (
-    MATCHER_MODES,
-    FunctionEvidence,
-    MatcherMode,
-    VariableMatch,
-    has_usage_context,
-    match_variables,
-)
 from decbench.experimental.local_variable_semantic_audit import (
     join_audit_rows,
     load_completed_audit_package,
     make_audit_report,
     read_jsonl,
     write_json,
+)
+from decbench.metrics.variable_match import (
+    MATCHER_MODES,
+    FunctionEvidence,
+    MatcherMode,
+    VariableMatch,
+    has_usage_context,
+    match_variables,
 )
 
 DEFAULT_THRESHOLDS = (0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5)
@@ -43,10 +43,12 @@ class ModeConfig:
     mode: MatcherMode
     min_overlap: float = 0.1
     ambiguity_margin: float = 0.03
-    min_usage_similarity: float = 0.1
-    usage_ambiguity_margin: float = 0.03
-    min_combined_similarity: float = 0.1
+    min_usage_similarity: float = 0.15
+    usage_ambiguity_margin: float = 0.0
+    min_combined_similarity: float = 0.2
+    combined_ambiguity_margin: float = 0.0
     address_weight: float = 0.5
+    use_size_compatibility: bool = False
 
     def matcher_kwargs(self) -> dict[str, Any]:
         return asdict(self)
@@ -59,12 +61,19 @@ class EvidencePair:
     backend_id: str
     source: FunctionEvidence
     decompiled: FunctionEvidence
+    stack_shift_hint: int | None = None
 
 
 DecisionKey = tuple[str, str, str]
 DecisionMap = dict[DecisionKey, VariableMatch]
 AuditPairKey = tuple[str, str]
 AuditSourceMap = Mapping[AuditPairKey, frozenset[str]]
+
+
+def _production_policy() -> dict[str, float | bool]:
+    from decbench.metrics.type_match import _VARIABLE_MATCH_DEFAULTS
+
+    return {**_VARIABLE_MATCH_DEFAULTS, "use_size_compatibility": False}
 
 
 def _float_list(value: str) -> tuple[float, ...]:
@@ -95,14 +104,15 @@ def _parser() -> argparse.ArgumentParser:
         type=float,
         help="must match the frozen address scorer (defaults to its value)",
     )
-    parser.add_argument("--min-usage-similarity", type=float, default=0.1)
-    parser.add_argument("--usage-ambiguity-margin", type=float, default=0.03)
-    parser.add_argument("--min-combined-similarity", type=float, default=0.1)
+    parser.add_argument("--min-usage-similarity", type=float, default=0.15)
+    parser.add_argument("--usage-ambiguity-margin", type=float, default=0.0)
+    parser.add_argument("--min-combined-similarity", type=float, default=0.2)
+    parser.add_argument("--combined-ambiguity-margin", type=float, default=0.0)
     parser.add_argument("--address-weight", type=float, default=0.5)
     parser.add_argument(
         "--tune",
         action="store_true",
-        help="select usage/fused parameters by tuning-partition edge F1",
+        help="deprecated: production-policy evaluation rejects audit tuning",
     )
     parser.add_argument(
         "--threshold-grid",
@@ -162,11 +172,21 @@ def _evidence_pairs(rows: Sequence[Mapping[str, Any]]) -> list[EvidencePair]:
         if row.get("source_status") != "ok":
             continue
         source = FunctionEvidence.from_dict(row["source_evidence"])
+        source = replace(
+            source,
+            variables=[replace(variable, name="", size=None) for variable in source.variables],
+        )
         feature_source_variables += sum(bool(var.usage_features) for var in source.variables)
         for backend_id, entry in row.get("decompilers", {}).items():
             if entry.get("status") != "ok":
                 continue
             decompiled = FunctionEvidence.from_dict(entry["evidence"])
+            decompiled = replace(
+                decompiled,
+                variables=[
+                    replace(variable, name="", size=None) for variable in decompiled.variables
+                ],
+            )
             feature_decompiled_variables += sum(
                 bool(var.usage_features) for var in decompiled.variables
             )
@@ -177,6 +197,11 @@ def _evidence_pairs(rows: Sequence[Mapping[str, Any]]) -> list[EvidencePair]:
                     backend_id=str(backend_id),
                     source=source,
                     decompiled=decompiled,
+                    stack_shift_hint=(
+                        int(entry["production_stack_shift_hint"])
+                        if entry.get("production_stack_shift_hint") is not None
+                        else None
+                    ),
                 )
             )
     if feature_source_variables == 0 or feature_decompiled_variables == 0:
@@ -213,20 +238,33 @@ def _validate_audit_binding(
         "sample_size",
         "sample_seed",
         "tuning_fraction",
-        "include_inlined",
         "min_overlap",
         "ambiguity_margin",
     }
     if any(scorer_config.get(field) != audit_config.get(field) for field in stable_config_fields):
         raise ValueError("scorer/audit frozen sample or address-matcher config differs")
     if scorer_config.get("matcher_mode") != "address":
-        raise ValueError("feature evidence scorer must use address mode for legacy parity")
+        raise ValueError("feature evidence scorer must use address mode for audit comparison")
+    if scorer_config.get("production_type_match_policy") is not True:
+        raise ValueError("scorer was not generated with --production-type-match-policy")
+    frozen_thresholds = aggregate.get("frozen_thresholds")
+    if not isinstance(frozen_thresholds, dict):
+        raise ValueError("scorer aggregate lacks effective matcher thresholds")
+    expected_policy = _production_policy()
+    if any(frozen_thresholds.get(key) != value for key, value in expected_policy.items()):
+        raise ValueError("scorer does not carry the exact production TypeMatch policy")
 
     scorer_by_sample = {str(row["sample_id"]): row for row in rows}
     groups: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
     for private in private_rows:
         key = (str(private["sample_id"]), str(private["backend_id"]))
         groups.setdefault(key, []).append(private)
+    added_source_ids: set[tuple[str, str]] = set()
+    added_address_source_occurrences = 0
+    frozen_sources_without_production_address_evidence = 0
+    frozen_source_cases_outside_production_denominator = 0
+    added_decompiled_ids: set[tuple[str, str, str]] = set()
+    expanded_decompiler_groups = 0
     for (sample_id, backend_id), private_group in groups.items():
         scorer = scorer_by_sample.get(sample_id)
         if scorer is None:
@@ -245,27 +283,38 @@ def _validate_audit_binding(
             for variable in scorer.get("source_evidence", {}).get("variables", [])
             if isinstance(variable, dict)
         ]
-        source_ids = {
+        all_source_ids = {str(variable["identity"]) for variable in source_variables}
+        address_source_ids = {
             str(variable["identity"])
             for variable in source_variables
             if variable.get("addresses")
             or variable.get("stack_offsets")
             or variable.get("arg_index") is not None
         }
-        if expected_source_ids != source_ids:
-            raise ValueError(
-                f"scorer/audit address-observable source universe differs for "
-                f"{sample_id}/{backend_id}"
-            )
+        missing_source_ids = expected_source_ids - all_source_ids
+        frozen_source_cases_outside_production_denominator += len(missing_source_ids)
+        frozen_sources_without_production_address_evidence += len(
+            expected_source_ids - address_source_ids
+        )
+        added_source_ids.update(
+            (sample_id, source_id) for source_id in all_source_ids - expected_source_ids
+        )
+        added_address_source_occurrences += len(address_source_ids - expected_source_ids)
         decompiled_ids = {
             str(variable["identity"])
             for variable in backend.get("evidence", {}).get("variables", [])
         }
         expected_decompiled_ids = {str(value) for value in first["checkpoint_decompiled_ids"]}
-        if decompiled_ids != expected_decompiled_ids:
+        missing_decompiled_ids = expected_decompiled_ids - decompiled_ids
+        if missing_decompiled_ids:
             raise ValueError(
-                f"scorer/audit decompiler candidate universe differs for {sample_id}/{backend_id}"
+                f"scorer lacks frozen decompiler candidates for {sample_id}/{backend_id}: "
+                f"{sorted(missing_decompiled_ids)}"
             )
+        added = decompiled_ids - expected_decompiled_ids
+        if added:
+            expanded_decompiler_groups += 1
+            added_decompiled_ids.update((sample_id, backend_id, identity) for identity in added)
     return {
         "passed": True,
         "frozen_fields": sorted(stable_config_fields),
@@ -275,6 +324,18 @@ def _validate_audit_binding(
         },
         "audited_function_backend_groups": len(groups),
         "audited_source_cases": len(private_rows),
+        "production_source_variables_outside_frozen_audit": len(added_source_ids),
+        "production_address_source_occurrences_outside_frozen_audit": (
+            added_address_source_occurrences
+        ),
+        "frozen_source_occurrences_without_production_address_evidence": (
+            frozen_sources_without_production_address_evidence
+        ),
+        "frozen_audit_source_cases_outside_production_denominator": (
+            frozen_source_cases_outside_production_denominator
+        ),
+        "production_decompiler_candidates_outside_frozen_catalog": len(added_decompiled_ids),
+        "function_backend_groups_with_expanded_decompiler_catalog": (expanded_decompiler_groups),
     }
 
 
@@ -288,12 +349,32 @@ def _audit_source_map(
     return {key: frozenset(values) for key, values in mutable.items()}
 
 
+def _production_private_rows(
+    scorer_rows: Sequence[Mapping[str, Any]],
+    private_rows: Sequence[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    source_ids_by_sample = {
+        str(row["sample_id"]): {
+            str(variable["identity"])
+            for variable in row.get("source_evidence", {}).get("variables", [])
+        }
+        for row in scorer_rows
+        if row.get("source_status") == "ok"
+    }
+    return [
+        row
+        for row in private_rows
+        if str(row["source_id"]) in source_ids_by_sample.get(str(row["sample_id"]), set())
+    ]
+
+
 def _feature_coverage(
     rows: Sequence[Mapping[str, Any]],
     pairs: Sequence[EvidencePair],
     audit_source_ids: AuditSourceMap,
 ) -> dict[str, Any]:
     all_source: set[tuple[str, str]] = set()
+    address_source: set[tuple[str, str]] = set()
     extracted_source: set[tuple[str, str]] = set()
     matchable_source: set[tuple[str, str]] = set()
     audited_source = {
@@ -314,6 +395,8 @@ def _feature_coverage(
         for variable in source.variables:
             source_key = (sample_id, variable.identity)
             all_source.add(source_key)
+            if variable.addresses or variable.stack_offsets or variable.arg_index is not None:
+                address_source.add(source_key)
             if variable.usage_features:
                 extracted_source.add(source_key)
             if has_usage_context(variable):
@@ -326,6 +409,8 @@ def _feature_coverage(
         for variable in pair.source.variables:
             source_key = (pair.sample_id, variable.identity)
             source_occurrences["total"] += 1
+            if variable.addresses or variable.stack_offsets or variable.arg_index is not None:
+                source_occurrences["address_matchable"] += 1
             if variable.usage_features:
                 source_occurrences["features_extracted"] += 1
             if has_usage_context(variable):
@@ -338,12 +423,16 @@ def _feature_coverage(
                     source_occurrences["frozen_audit_usage_matchable"] += 1
             elif has_usage_context(variable):
                 source_occurrences["feature_only_usage_matchable"] += 1
+            if variable.identity not in audited_ids:
+                source_occurrences["outside_frozen_audit"] += 1
         for variable in pair.decompiled.variables:
             decompiled_occurrences["total"] += 1
             if variable.usage_features:
                 decompiled_occurrences["features_extracted"] += 1
             if has_usage_context(variable):
                 decompiled_occurrences["usage_matchable"] += 1
+            if variable.addresses or variable.stack_offsets or variable.arg_index is not None:
+                decompiled_occurrences["address_matchable"] += 1
             if variable.inferred_from_code:
                 decompiled_occurrences["inferred_from_code"] += 1
                 if has_usage_context(variable):
@@ -360,10 +449,14 @@ def _feature_coverage(
         "pair_conditioned_source_occurrences": dict(sorted(source_occurrences.items())),
         "unique_source_variables": {
             "total": len(all_source),
+            "address_matchable": len(address_source),
             "features_extracted": len(extracted_source),
             "usage_matchable": len(matchable_source),
             "frozen_audit": len(audited_source),
-            "feature_only_usage_matchable": len(matchable_source - audited_source),
+            "outside_frozen_audit": len(all_source - audited_source),
+            "usage_only": len(matchable_source - address_source),
+            "address_and_usage": len(address_source & matchable_source),
+            "neither_channel": len(all_source - address_source - matchable_source),
         },
         "decompiled_occurrences": dict(sorted(decompiled_occurrences.items())),
     }
@@ -382,27 +475,29 @@ def _decisions(
     decompiled_count = 0
     pair_count = 0
     frozen_source_count = 0
+    full_source_count = 0
+    unobservable_count = 0
+    accepted_frozen_count = 0
     for pair in pairs:
         if partition is not None and pair.partition != partition:
             continue
-        audited_ids = audit_source_ids.get((pair.sample_id, pair.backend_id))
-        if not audited_ids:
-            continue
-        source_variables = [
-            variable for variable in pair.source.variables if variable.identity in audited_ids
-        ]
-        if len(source_variables) != len(audited_ids):
+        audited_ids = audit_source_ids.get((pair.sample_id, pair.backend_id), frozenset())
+        available_ids = {variable.identity for variable in pair.source.variables}
+        if not audited_ids <= available_ids:
             raise ValueError(
                 f"scorer lacks a frozen source candidate for {pair.sample_id}/{pair.backend_id}"
             )
         result = match_variables(
-            source_variables,
+            pair.source.variables,
             pair.decompiled.variables,
+            stack_shift_hint=pair.stack_shift_hint,
             **config.matcher_kwargs(),
         )
         pair_count += 1
-        frozen_source_count += len(source_variables)
+        frozen_source_count += len(audited_ids)
+        full_source_count += len(pair.source.variables)
         source_count += result.source_count
+        unobservable_count += len(result.unobservable_source)
         decompiled_count += result.decompiled_count
         for match in result.matches:
             key = (pair.sample_id, pair.backend_id, match.source_id)
@@ -410,13 +505,20 @@ def _decisions(
                 raise ValueError(f"matcher produced duplicate source decision {key}")
             decisions[key] = match
             stages[match.stage] += 1
+            if match.source_id in audited_ids:
+                accepted_frozen_count += 1
     return decisions, {
-        "scope": "frozen address-observable semantic-audit universe",
+        "scope": "full production TypeMatch source and decompiler universe",
         "function_backend_pairs": pair_count,
         "frozen_source_case_total": frozen_source_count,
+        "production_source_case_total": full_source_count,
+        "source_cases_outside_frozen_audit": full_source_count - frozen_source_count,
         "matcher_eligible_source_total": source_count,
+        "matcher_unobservable_source_total": unobservable_count,
         "matcher_candidate_decompiled_total": decompiled_count,
-        "accepted_in_audit_total": len(decisions),
+        "accepted_in_production_universe_total": len(decisions),
+        "accepted_for_frozen_source_total": accepted_frozen_count,
+        "accepted_for_unlabeled_source_total": len(decisions) - accepted_frozen_count,
         "accepted_by_stage": dict(sorted(stages.items())),
     }
 
@@ -437,9 +539,9 @@ def _confidence(match: VariableMatch) -> dict[str, float | None]:
 def _replace_private_decisions(
     private_rows: Sequence[Mapping[str, Any]],
     decisions: Mapping[DecisionKey, VariableMatch],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     derived: list[dict[str, Any]] = []
-    used_keys: set[DecisionKey] = set()
+    unlabeled: list[dict[str, Any]] = []
     for original in private_rows:
         row = dict(original)
         key = (
@@ -458,10 +560,19 @@ def _replace_private_decisions(
                     inverse[str(identity)] = str(alias)
             alias = inverse.get(match.decompiled_id)
             if alias is None:
-                raise ValueError(
-                    f"case {row['case_id']}: matcher selected {match.decompiled_id!r}, "
-                    "which is outside the frozen audit catalog"
+                unlabeled.append(
+                    {
+                        "reason": "decompiled_candidate_outside_frozen_catalog",
+                        "case_id": str(row["case_id"]),
+                        "sample_id": key[0],
+                        "backend_id": key[1],
+                        "source_id": key[2],
+                        "decompiled_id": match.decompiled_id,
+                        "stage": match.stage,
+                        "score": match.score,
+                    }
                 )
+                continue
             accepted.append(
                 {
                     "decompiled_id": match.decompiled_id,
@@ -471,18 +582,65 @@ def _replace_private_decisions(
                     "confidence": _confidence(match),
                 }
             )
-            used_keys.add(key)
         row["matcher_accepted"] = accepted
         derived.append(row)
-    audited_keys = {
-        (str(row["sample_id"]), str(row["backend_id"]), str(row["source_id"]))
-        for row in private_rows
-    }
-    if set(decisions) - audited_keys:
-        raise ValueError("matcher produced decisions outside the frozen audit universe")
-    if used_keys != set(decisions):
-        raise ValueError("derived matcher decisions were not consumed deterministically")
-    return derived
+    return derived, unlabeled
+
+
+def _is_matcher_eligible(variable: Any, mode: MatcherMode) -> bool:
+    address = bool(variable.addresses or variable.stack_offsets or variable.arg_index is not None)
+    usage = has_usage_context(variable)
+    if mode == "address":
+        return address
+    if mode == "usage":
+        return usage
+    return address or usage
+
+
+def _unlabeled_source_cases(
+    pairs: Sequence[EvidencePair],
+    decisions: Mapping[DecisionKey, VariableMatch],
+    audit_source_ids: AuditSourceMap,
+    config: ModeConfig,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for pair in pairs:
+        audited = audit_source_ids.get((pair.sample_id, pair.backend_id), frozenset())
+        for variable in pair.source.variables:
+            if variable.identity in audited:
+                continue
+            key = (pair.sample_id, pair.backend_id, variable.identity)
+            match = decisions.get(key)
+            row: dict[str, Any] = {
+                "reason": "source_outside_frozen_audit",
+                "sample_id": pair.sample_id,
+                "backend_id": pair.backend_id,
+                "source_id": variable.identity,
+                "matcher_status": (
+                    "accepted"
+                    if match is not None
+                    else (
+                        "unmatched"
+                        if _is_matcher_eligible(variable, config.mode)
+                        else "unobservable"
+                    )
+                ),
+                "has_address_or_anchor": bool(
+                    variable.addresses or variable.stack_offsets or variable.arg_index is not None
+                ),
+                "has_usage_context": has_usage_context(variable),
+            }
+            if match is not None:
+                row["decision"] = {
+                    "decompiled_id": match.decompiled_id,
+                    "stage": match.stage,
+                    "score": match.score,
+                }
+            rows.append(row)
+    return sorted(
+        rows,
+        key=lambda row: (row["sample_id"], row["backend_id"], row["source_id"]),
+    )
 
 
 def _package_subset(
@@ -505,6 +663,28 @@ def _package_subset(
     evidence_subset = [row for row in evidence_rows if str(row["evidence_id"]) in evidence_ids]
     label_subset = {case_id: labels[case_id] for case_id in case_ids}
     return evidence_subset, case_subset, private_subset, label_subset
+
+
+def _package_for_private_rows(
+    evidence_rows: Sequence[Mapping[str, Any]],
+    cases: Sequence[Mapping[str, Any]],
+    private_rows: Sequence[Mapping[str, Any]],
+    labels: Mapping[str, Mapping[str, Any]],
+) -> tuple[
+    list[Mapping[str, Any]],
+    list[Mapping[str, Any]],
+    list[Mapping[str, Any]],
+    dict[str, Mapping[str, Any]],
+]:
+    case_ids = {str(row["case_id"]) for row in private_rows}
+    case_subset = [row for row in cases if str(row["case_id"]) in case_ids]
+    evidence_ids = {str(row["evidence_id"]) for row in case_subset}
+    return (
+        [row for row in evidence_rows if str(row["evidence_id"]) in evidence_ids],
+        case_subset,
+        list(private_rows),
+        {case_id: labels[case_id] for case_id in case_ids},
+    )
 
 
 def _headline(statistics: Mapping[str, Any]) -> dict[str, Any]:
@@ -538,18 +718,38 @@ def _evaluate(
     audit_source_ids: AuditSourceMap,
     bootstrap_iterations: int,
     partition: str | None = None,
-) -> tuple[dict[str, Any], dict[str, Any], DecisionMap, list[dict[str, Any]]]:
+) -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    DecisionMap,
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
     decisions, coverage = _decisions(
         pairs,
         config,
         audit_source_ids=audit_source_ids,
         partition=partition,
     )
-    derived_private = _replace_private_decisions(private_rows, decisions)
-    active_evidence: Sequence[Mapping[str, Any]] = evidence_rows
-    active_cases: Sequence[Mapping[str, Any]] = cases
-    active_private: Sequence[Mapping[str, Any]] = derived_private
-    active_labels: Mapping[str, Mapping[str, Any]] = labels
+    derived_private, unlabeled_candidate_decisions = _replace_private_decisions(
+        private_rows,
+        decisions,
+    )
+    unlabeled = [
+        *_unlabeled_source_cases(pairs, decisions, audit_source_ids, config),
+        *unlabeled_candidate_decisions,
+    ]
+    coverage["classifiable_frozen_source_cases"] = len(derived_private)
+    coverage["unlabeled_production_source_cases"] = sum(
+        row["reason"] == "source_outside_frozen_audit" for row in unlabeled
+    )
+    coverage["unlabeled_new_candidate_decisions"] = len(unlabeled_candidate_decisions)
+    active_evidence, active_cases, active_private, active_labels = _package_for_private_rows(
+        evidence_rows,
+        cases,
+        derived_private,
+        labels,
+    )
     if partition is not None:
         active_evidence, active_cases, active_private, active_labels = _package_subset(
             evidence_rows,
@@ -569,7 +769,7 @@ def _evaluate(
         manifest=manifest,
         bootstrap_iterations=bootstrap_iterations,
     )
-    return report, coverage, decisions, joined
+    return report, coverage, decisions, joined, unlabeled
 
 
 def _objective(headline: Mapping[str, Any], config: ModeConfig) -> tuple[float, ...]:
@@ -645,7 +845,7 @@ def _tune_config(
         margins,
         address_weights,
     ):
-        report, coverage, _decisions_by_source, _joined = _evaluate(
+        report, coverage, _decisions_by_source, _joined, _unlabeled = _evaluate(
             config=config,
             pairs=pairs,
             manifest=manifest,
@@ -885,6 +1085,8 @@ def main(argv: list[str] | None = None) -> int:
         print("error: bootstrap iterations must be non-negative", file=sys.stderr)
         return 2
     try:
+        if args.tune:
+            raise ValueError("--tune is incompatible with an exact production-policy evaluation")
         rows, aggregate = _load_scorer(args.scorer, args.aggregate)
         pairs = _evidence_pairs(rows)
         manifest, evidence_rows, cases, private_rows, labels = load_completed_audit_package(
@@ -904,7 +1106,23 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(
                 "evaluator address thresholds must equal the frozen scorer/audit config"
             )
-        audit_source_ids = _audit_source_map(private_rows)
+        requested_policy = {
+            "min_overlap": min_overlap,
+            "ambiguity_margin": ambiguity_margin,
+            "min_usage_similarity": args.min_usage_similarity,
+            "usage_ambiguity_margin": args.usage_ambiguity_margin,
+            "min_combined_similarity": args.min_combined_similarity,
+            "combined_ambiguity_margin": args.combined_ambiguity_margin,
+            "address_weight": args.address_weight,
+            "use_size_compatibility": False,
+        }
+        if requested_policy != _production_policy():
+            raise ValueError(
+                "evaluator parameters must equal the exact production TypeMatch policy: "
+                f"{_production_policy()}"
+            )
+        production_private_rows = _production_private_rows(rows, private_rows)
+        audit_source_ids = _audit_source_map(production_private_rows)
         feature_coverage = _feature_coverage(rows, pairs, audit_source_ids)
         modes = tuple(cast(MatcherMode, value) for value in (args.mode or MATCHER_MODES))
         results: dict[str, Any] = {}
@@ -917,44 +1135,34 @@ def main(argv: list[str] | None = None) -> int:
                 min_usage_similarity=args.min_usage_similarity,
                 usage_ambiguity_margin=args.usage_ambiguity_margin,
                 min_combined_similarity=args.min_combined_similarity,
+                combined_ambiguity_margin=args.combined_ambiguity_margin,
                 address_weight=args.address_weight,
+                use_size_compatibility=False,
             )
             tuning = None
             selected = base
-            if args.tune and mode != "address":
-                selected, tuning = _tune_config(
-                    base=base,
-                    thresholds=args.threshold_grid,
-                    margins=args.margin_grid,
-                    address_weights=args.address_weight_grid,
-                    pairs=pairs,
-                    manifest=manifest,
-                    evidence_rows=evidence_rows,
-                    cases=cases,
-                    private_rows=private_rows,
-                    labels=labels,
-                    audit_source_ids=audit_source_ids,
-                )
-            report, coverage, decisions, joined = _evaluate(
+            report, coverage, decisions, joined, unlabeled = _evaluate(
                 config=selected,
                 pairs=pairs,
                 manifest=manifest,
                 evidence_rows=evidence_rows,
                 cases=cases,
-                private_rows=private_rows,
+                private_rows=production_private_rows,
                 labels=labels,
                 audit_source_ids=audit_source_ids,
                 bootstrap_iterations=args.bootstrap_iterations,
             )
-            parity = _legacy_parity(private_rows, decisions) if mode == "address" else None
-            if parity is not None and not parity["passed"]:
-                raise ValueError(f"address mode failed legacy parity: {parity}")
+            parity = (
+                _legacy_parity(production_private_rows, decisions) if mode == "address" else None
+            )
             results[mode] = {
                 "selected_config": asdict(selected),
                 "tuning": tuning,
                 "coverage": coverage,
                 "decision_sha256": canonical_sha256(_decision_payload(decisions)),
                 "legacy_parity": parity,
+                "production_universe_labels_complete": not unlabeled,
+                "unlabeled_cases": unlabeled,
                 "headline": {
                     "overall": _headline(report["summary"]),
                     **{
@@ -968,6 +1176,8 @@ def main(argv: list[str] | None = None) -> int:
 
         import decbench.experimental.local_variable_checkpoint as scorer_module
         import decbench.experimental.local_variable_semantic_audit as audit_module
+        import decbench.metrics.type_evidence as type_evidence_module
+        import decbench.metrics.type_match as type_match_module
         import decbench.metrics.variable_features as feature_module
         import decbench.metrics.variable_match as matcher_module
 
@@ -976,7 +1186,7 @@ def main(argv: list[str] | None = None) -> int:
             args.merge_provenance or args.audit_package / "label_merge_provenance.json"
         )
         payload = {
-            "schema_version": 1,
+            "schema_version": 2,
             "kind": "local-variable-matcher-mode-comparison",
             "provenance": {
                 "scorer_path": str(args.scorer),
@@ -993,6 +1203,10 @@ def main(argv: list[str] | None = None) -> int:
                 "label_merge_provenance_sha256": file_sha256(merge_provenance_path),
                 "matcher_implementation_sha256": file_sha256(Path(matcher_module.__file__)),
                 "feature_implementation_sha256": file_sha256(Path(feature_module.__file__)),
+                "type_match_implementation_sha256": file_sha256(Path(type_match_module.__file__)),
+                "type_evidence_implementation_sha256": file_sha256(
+                    Path(type_evidence_module.__file__)
+                ),
                 "scorer_implementation_sha256": file_sha256(Path(scorer_module.__file__)),
                 "evaluator_implementation_sha256": file_sha256(Path(__file__).resolve()),
                 "semantic_audit_implementation_sha256": file_sha256(Path(audit_module.__file__)),
@@ -1003,21 +1217,39 @@ def main(argv: list[str] | None = None) -> int:
                 "scorer_audit_binding": audit_binding,
             },
             "methodology": {
-                "selection": (
-                    "usage and address+usage parameters selected only by the frozen tuning "
-                    "partition's candidate-edge F1"
-                    if args.tune
-                    else "parameters supplied directly; no evaluator tuning"
-                ),
+                "selection": "exact production TypeMatch policy; no evaluator tuning",
                 "evaluation_universe": (
-                    "source candidates are filtered before matching to the existing "
-                    "address-observable semantic-audit cases; feature-only variables neither "
-                    "receive decisions nor compete for decompiler candidates"
+                    "the matcher receives every production-retained DWARF source variable and "
+                    "every production decompiler candidate before frozen labels are joined"
                 ),
-                "development_caveat": (
-                    "the existing audit labels are reused development data for this new matcher, "
-                    "not a pristine confirmatory held-out audit"
+                "label_validity": (
+                    "reported precision/recall are conditional on cases and decompiler "
+                    "candidates covered by the immutable frozen audit; unlabeled production "
+                    "sources and decisions are listed and never assigned inferred labels"
                 ),
+            },
+            "production_universe_labels_complete": all(
+                result["production_universe_labels_complete"] for result in results.values()
+            )
+            and audit_binding["production_decompiler_candidates_outside_frozen_catalog"] == 0,
+            "labeling_blocker": {
+                "status": "audit_extension_required",
+                "reason": (
+                    "the production source denominator and decompiler catalog extend beyond "
+                    "the immutable frozen audit"
+                ),
+                "source_variables_outside_frozen_audit": feature_coverage[
+                    "unique_source_variables"
+                ]["outside_frozen_audit"],
+                "pair_conditioned_source_cases_outside_frozen_audit": feature_coverage[
+                    "pair_conditioned_source_occurrences"
+                ]["outside_frozen_audit"],
+                "decompiler_candidates_outside_frozen_catalog": audit_binding[
+                    "production_decompiler_candidates_outside_frozen_catalog"
+                ],
+                "frozen_cases_outside_production_denominator": audit_binding[
+                    "frozen_audit_source_cases_outside_production_denominator"
+                ],
             },
             "feature_coverage": feature_coverage,
             "bootstrap_iterations": args.bootstrap_iterations,
