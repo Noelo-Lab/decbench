@@ -95,6 +95,13 @@ license = "open-source"
 logo = true
 
 [[decompiler]]
+id = "fission"
+display_name = "Fission"
+url = "https://github.com/fission-systems/Fission"
+license = "open-source"
+logo = true
+
+[[decompiler]]
 id = "claude-code"
 display_name = "Claude Code"
 url = "https://claude.com/claude-code"
