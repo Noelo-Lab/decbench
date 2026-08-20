@@ -138,6 +138,7 @@ Key conventions:
   date with our changes, found at https://huggingface.co/datasets/noelo-lab/decbench-dataset.
   You can usually find a local clone one directory above this repo in
   `decbench-dataset`, which has results stored in it.
+- Any time any public thing is created fully automatically, it should start with `[AUTOMATED]`. That goes for PRs, Issues (opening and responses). It should also be in the commit message, but can go outside of the tagline and more inside the extended part.
 
 ## Coding Standards
 
