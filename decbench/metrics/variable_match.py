@@ -13,8 +13,6 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
-import networkx as nx
-
 
 @dataclass(frozen=True)
 class VariableEvidence:
@@ -182,6 +180,23 @@ def _size_compatible(
     return source.size is None or decompiled.size is None or source.size == decompiled.size
 
 
+def _maximum_bipartite_cardinality(neighbors: Mapping[str, set[str]]) -> int:
+    matched_decompiled: dict[str, str] = {}
+
+    def augment(source_id: str, seen: set[str]) -> bool:
+        for decompiled_id in sorted(neighbors[source_id]):
+            if decompiled_id in seen:
+                continue
+            seen.add(decompiled_id)
+            previous = matched_decompiled.get(decompiled_id)
+            if previous is None or augment(previous, seen):
+                matched_decompiled[decompiled_id] = source_id
+                return True
+        return False
+
+    return sum(augment(source_id, set()) for source_id in sorted(neighbors))
+
+
 def _stack_shift(
     source: list[VariableEvidence],
     decompiled: list[VariableEvidence],
@@ -203,37 +218,31 @@ def _stack_shift(
     if not shifts:
         return None
 
-    ranked: list[tuple[int, int, int]] = []
+    decompiled_by_offset: defaultdict[int, list[VariableEvidence]] = defaultdict(list)
+    for variable in decompiled:
+        for offset in set(variable.stack_offsets):
+            decompiled_by_offset[offset].append(variable)
+
+    ranked: list[tuple[int, int]] = []
     for shift in shifts:
-        graph = nx.Graph()
+        neighbors: defaultdict[str, set[str]] = defaultdict(set)
         for source_var in source:
-            graph.add_node(("s", source_var.identity), bipartite=0)
-        for decompiled_var in decompiled:
-            graph.add_node(("d", decompiled_var.identity), bipartite=1)
-        for source_var in source:
-            for decompiled_var in decompiled:
-                if not _size_compatible(
-                    source_var,
-                    decompiled_var,
-                    enabled=use_size_compatibility,
-                ):
-                    continue
-                if any(
-                    decompiled_offset + shift == source_offset
-                    for source_offset in source_var.stack_offsets
-                    for decompiled_offset in decompiled_var.stack_offsets
-                ):
-                    graph.add_edge(
-                        ("s", source_var.identity),
-                        ("d", decompiled_var.identity),
-                    )
-        cardinality = len(nx.algorithms.matching.max_weight_matching(graph, maxcardinality=True))
-        ranked.append((cardinality, -abs(shift), shift))
+            for source_offset in set(source_var.stack_offsets):
+                for decompiled_var in decompiled_by_offset.get(source_offset - shift, ()):
+                    if _size_compatible(
+                        source_var,
+                        decompiled_var,
+                        enabled=use_size_compatibility,
+                    ):
+                        neighbors[source_var.identity].add(decompiled_var.identity)
+
+        cardinality = _maximum_bipartite_cardinality(neighbors)
+        ranked.append((cardinality, shift))
     best_cardinality = max(row[0] for row in ranked)
     best = [row for row in ranked if row[0] == best_cardinality]
     if best_cardinality < 2 or len(best) != 1:
         return None
-    return best[0][2]
+    return best[0][1]
 
 
 def _weighted_dice(
