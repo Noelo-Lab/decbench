@@ -61,6 +61,13 @@ if os.environ.get("DECBENCH_OPT_LEVELS"):
 METRICS = [
     m.strip() for m in (os.environ.get("DECBENCH_METRICS") or "").split(",") if m.strip()
 ] or None
+
+
+def needs_source_cfgs(metrics: list[str] | None) -> bool:
+    return metrics is None or "ged" in metrics
+
+
+NEEDS_SOURCE_CFGS = needs_source_cfgs(METRICS)
 DECOMPILERS = (os.environ.get("DECBENCH_DECOMPILERS") or "angr,ghidra").split(",")
 WORKERS = int(os.environ.get("DECBENCH_WORKERS") or "40")
 # Hard per-(binary, decompiler) budget; an overrun is recorded as a decompiler
@@ -610,7 +617,7 @@ def main() -> int:
             project.compiled_binaries[opt] = kept_binaries
             n = len(kept_binaries)
 
-            if os.environ.get("DECBENCH_DECOMPILE_ONLY") == "1":
+            if os.environ.get("DECBENCH_DECOMPILE_ONLY") == "1" or not NEEDS_SOURCE_CFGS:
                 src_cfgs = {}
             else:
                 src_cfgs = extract_source_cfgs(

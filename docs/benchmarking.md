@@ -295,6 +295,10 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 - `DECBENCH_OPT_LEVELS` (comma list, e.g. `"O0"` to narrow the run)
 - `DECBENCH_METRICS` (comma list, e.g. `"ged"` for a GED-only run)
 
+When `DECBENCH_METRICS` is explicit and omits `ged`, the driver skips Joern
+source-CFG extraction. Preprocessed sources are still forwarded to TypeMatch
+for usage evidence and source-address selection.
+
 ### Per-decompiler wall-clock budgets
 
 `DECOMPILER_TIMEOUT` in `scripts/run_benchmark.py` overrides
