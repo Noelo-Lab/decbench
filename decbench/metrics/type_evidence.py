@@ -11,9 +11,12 @@ from typing import Any
 from decbench.metrics.variable_features import analyze_c_function, index_c_functions
 from decbench.metrics.variable_match import (
     FunctionEvidence,
+    SourceBinaryEvidenceContext,
     VariableEvidence,
     _die_ranges,
     extract_source_evidence,
+    load_source_lines,
+    open_source_binary_context,
 )
 from decbench.utils.binfmt import die_str_attr
 from decbench.utils.langs import is_cxx_preprocessed, strip_source_ext
@@ -106,6 +109,8 @@ class PreprocessedSourceContext:
         self._primary_markers: dict[Path, str | None] = {}
         self._dwarf_sources: dict[Path, dict[tuple[str, int], tuple[str, ...]]] = {}
         self._dwarf_errors: dict[Path, str] = {}
+        self._binary_contexts: dict[Path, SourceBinaryEvidenceContext] = {}
+        self._source_line_indexes: dict[Path, dict[tuple[str, int], str]] = {}
 
     def _text(self, path: Path) -> str:
         text = self._texts.get(path)
@@ -149,29 +154,42 @@ class PreprocessedSourceContext:
         if cached is not None:
             return cached
 
-        from elftools.elf.elffile import ELFFile
-
         rows: defaultdict[tuple[str, int], set[str]] = defaultdict(set)
-        with key.open("rb") as stream:
-            dwarfinfo = ELFFile(stream).get_dwarf_info()
-            for cu in dwarfinfo.iter_CUs():
-                line_program = dwarfinfo.line_program_for_CU(cu)
-                if line_program is None:
+        dwarfinfo = self.binary_context(key).dwarfinfo
+        for cu in dwarfinfo.iter_CUs():
+            line_program = dwarfinfo.line_program_for_CU(cu)
+            if line_program is None:
+                continue
+            cu_path = _cu_source_path(cu, line_program)
+            if not cu_path:
+                continue
+            for die in cu.iter_DIEs():
+                if die.tag != "DW_TAG_subprogram":
                     continue
-                cu_path = _cu_source_path(cu, line_program)
-                if not cu_path:
+                function_name = die_str_attr(die, "DW_AT_name")
+                if not function_name:
                     continue
-                for die in cu.iter_DIEs():
-                    if die.tag != "DW_TAG_subprogram":
-                        continue
-                    function_name = die_str_attr(die, "DW_AT_name")
-                    if not function_name:
-                        continue
-                    for begin, _end in _die_ranges(die, dwarfinfo):
-                        rows[(function_name, begin)].add(cu_path)
+                for begin, _end in _die_ranges(die, dwarfinfo):
+                    rows[(function_name, begin)].add(cu_path)
         index = {identity: tuple(sorted(paths)) for identity, paths in rows.items()}
         self._dwarf_sources[key] = index
         return index
+
+    def binary_context(self, binary_path: Path) -> SourceBinaryEvidenceContext:
+        key = binary_path.resolve()
+        context = self._binary_contexts.get(key)
+        if context is None:
+            context = open_source_binary_context(key)
+            self._binary_contexts[key] = context
+        return context
+
+    def source_line_index(self, source_path: Path) -> dict[tuple[str, int], str]:
+        key = source_path.resolve()
+        lines = self._source_line_indexes.get(key)
+        if lines is None:
+            lines = load_source_lines(key, key)
+            self._source_line_indexes[key] = lines
+        return lines
 
     def _path_for_cu(self, cu_path: str, function_name: str) -> Path | None:
         candidates = [
@@ -306,6 +324,12 @@ def build_source_evidence(
                 include_inlined=True,
                 function_address=function_address,
                 feature_code=("" if is_cxx_preprocessed(source_path) else source_code),
+                source_lines=(
+                    context.source_line_index(source_path) if context is not None else None
+                ),
+                binary_context=(
+                    context.binary_context(binary_path) if context is not None else None
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - anchors remain a safe fallback
             errors.append(f"native:{type(exc).__name__}")

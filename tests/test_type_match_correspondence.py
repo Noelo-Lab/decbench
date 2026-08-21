@@ -17,7 +17,11 @@ from decbench.metrics.type_match import (
     extract_ground_truth_type_index,
     extract_ground_truth_types,
 )
-from decbench.metrics.variable_match import VariableEvidence, match_variables
+from decbench.metrics.variable_match import (
+    VariableEvidence,
+    extract_source_evidence,
+    match_variables,
+)
 from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
@@ -565,6 +569,81 @@ def test_source_context_pins_duplicate_static_names_by_dwarf_cu(tmp_path: Path) 
     assert "int" in left_argument["type"]
     assert "long long" in right_argument["type"]
     assert "duplicate" not in extract_ground_truth_types(binary)
+
+
+@pytest.mark.skipif(shutil.which("gcc") is None, reason="gcc is required")
+def test_source_context_reuses_binary_and_line_indexes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import decbench.metrics.type_evidence as evidence_module
+
+    source = tmp_path / "unit.c"
+    preprocessed = tmp_path / "unit.i"
+    binary = tmp_path / "program"
+    source.write_text(
+        "int first(int value) { int local = value + 1; return local; }\n"
+        "int second(int value) { int local = value + 2; return local; }\n"
+        "int main(void) { return first(1) + second(2); }\n"
+    )
+    subprocess.run(
+        ["gcc", "-E", str(source), "-o", str(preprocessed)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["gcc", "-g", "-O0", "-fno-pie", "-no-pie", str(source), "-o", str(binary)],
+        check=True,
+        capture_output=True,
+    )
+    addresses = {
+        name: _dwarf_function_addresses_by_cu(binary, name)["unit.c"]
+        for name in ("first", "second")
+    }
+    real_open = evidence_module.open_source_binary_context
+    open_calls = 0
+
+    def counting_open(path: Path) -> Any:
+        nonlocal open_calls
+        open_calls += 1
+        return real_open(path)
+
+    monkeypatch.setattr(evidence_module, "open_source_binary_context", counting_open)
+    context = PreprocessedSourceContext([preprocessed], binary.name)
+    first_selection = context.select(
+        "first",
+        binary_path=binary,
+        function_address=addresses["first"],
+    )
+    second_selection = context.select(
+        "second",
+        binary_path=binary,
+        function_address=addresses["second"],
+    )
+    assert first_selection.path == preprocessed.resolve()
+    assert second_selection.path == preprocessed.resolve()
+
+    source_lines = context.source_line_index(preprocessed)
+    cached = extract_source_evidence(
+        binary,
+        preprocessed,
+        "first",
+        preprocessed_path=preprocessed,
+        function_address=addresses["first"],
+        source_lines=source_lines,
+        binary_context=context.binary_context(binary),
+    )
+    direct = extract_source_evidence(
+        binary,
+        preprocessed,
+        "first",
+        preprocessed_path=preprocessed,
+        function_address=addresses["first"],
+    )
+
+    assert cached.to_dict() == direct.to_dict()
+    assert context.source_line_index(preprocessed) is source_lines
+    assert open_calls == 1
 
 
 @pytest.mark.skipif(shutil.which("g++") is None, reason="g++ is required")

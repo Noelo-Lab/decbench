@@ -169,6 +169,14 @@ class FunctionEvidence:
         )
 
 
+@dataclass
+class SourceBinaryEvidenceContext:
+    stream: Any
+    elf: Any
+    dwarfinfo: Any
+    functions: dict[tuple[str, int], tuple[Any, Any]]
+
+
 def _size_compatible(
     source: VariableEvidence,
     decompiled: VariableEvidence,
@@ -760,6 +768,29 @@ def _die_ranges(
     return tuple(ranges) or fallback
 
 
+def open_source_binary_context(binary_path: Path) -> SourceBinaryEvidenceContext:
+    from elftools.elf.elffile import ELFFile
+
+    stream = binary_path.open("rb")
+    try:
+        elf = ELFFile(stream)
+        dwarfinfo = elf.get_dwarf_info()
+        functions: dict[tuple[str, int], tuple[Any, Any]] = {}
+        for cu in dwarfinfo.iter_CUs():
+            for die in cu.iter_DIEs():
+                if die.tag != "DW_TAG_subprogram":
+                    continue
+                name = _die_name(die)
+                if not name:
+                    continue
+                for begin, _end in _die_ranges(die, dwarfinfo):
+                    functions.setdefault((name, begin), (cu, die))
+    except Exception:
+        stream.close()
+        raise
+    return SourceBinaryEvidenceContext(stream, elf, dwarfinfo, functions)
+
+
 def _location_info(
     die: Any,
     dwarfinfo: Any,
@@ -903,6 +934,7 @@ def extract_source_evidence(
     function_address: int | None = None,
     source_lines: Mapping[tuple[str, int], str] | None = None,
     feature_code: str | None = None,
+    binary_context: SourceBinaryEvidenceContext | None = None,
 ) -> FunctionEvidence:
     from elftools.elf.elffile import ELFFile
 
@@ -911,11 +943,22 @@ def extract_source_evidence(
         if source_lines is not None
         else load_source_lines(source_path, preprocessed_path)
     )
-    with binary_path.open("rb") as stream:
-        elf = ELFFile(stream)
-        dwarfinfo = elf.get_dwarf_info()
-        found = None
+    with contextlib.ExitStack() as stack:
+        if binary_context is None:
+            stream = stack.enter_context(binary_path.open("rb"))
+            elf = ELFFile(stream)
+            dwarfinfo = elf.get_dwarf_info()
+        else:
+            elf = binary_context.elf
+            dwarfinfo = binary_context.dwarfinfo
+        found = (
+            binary_context.functions.get((function_name, function_address))
+            if binary_context is not None and function_address is not None
+            else None
+        )
         for cu in dwarfinfo.iter_CUs():
+            if found is not None:
+                break
             for die in cu.iter_DIEs():
                 if die.tag != "DW_TAG_subprogram" or _die_name(die) != function_name:
                     continue
