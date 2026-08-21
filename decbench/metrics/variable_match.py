@@ -175,6 +175,13 @@ class SourceBinaryEvidenceContext:
     elf: Any
     dwarfinfo: Any
     functions: dict[tuple[str, int], tuple[Any, Any]]
+    machine: Any
+    text_address: int | None
+    text_data: bytes | None
+    line_rows: dict[
+        int,
+        tuple[tuple[int, ...], tuple[tuple[str, int] | None, ...]],
+    ] = field(default_factory=dict)
 
 
 def _size_compatible(
@@ -775,6 +782,9 @@ def open_source_binary_context(binary_path: Path) -> SourceBinaryEvidenceContext
     try:
         elf = ELFFile(stream)
         dwarfinfo = elf.get_dwarf_info()
+        text = elf.get_section_by_name(".text")
+        text_address = int(text["sh_addr"]) if text is not None else None
+        text_data = text.data() if text is not None else None
         functions: dict[tuple[str, int], tuple[Any, Any]] = {}
         for cu in dwarfinfo.iter_CUs():
             for die in cu.iter_DIEs():
@@ -788,7 +798,15 @@ def open_source_binary_context(binary_path: Path) -> SourceBinaryEvidenceContext
     except Exception:
         stream.close()
         raise
-    return SourceBinaryEvidenceContext(stream, elf, dwarfinfo, functions)
+    return SourceBinaryEvidenceContext(
+        stream,
+        elf,
+        dwarfinfo,
+        functions,
+        elf["e_machine"],
+        text_address,
+        text_data,
+    )
 
 
 def _location_info(
@@ -857,6 +875,44 @@ def _decl_location(die: Any, line_program: Any) -> tuple[str | None, int | None]
     return name, int(line_attr.value) if line_attr is not None else None
 
 
+def _line_program_rows(
+    cu: Any,
+    line_program: Any,
+) -> tuple[tuple[int, ...], tuple[tuple[str, int] | None, ...]]:
+    rows: dict[int, tuple[str, int] | None] = {}
+    entries = line_program.header["file_entry"]
+    for entry in line_program.get_entries():
+        state = entry.state
+        if state is None or state.end_sequence:
+            continue
+        actual = int(state.file) if cu["version"] >= 5 else int(state.file) - 1
+        location: tuple[str, int] | None = None
+        if 0 <= actual < len(entries) and state.line is not None:
+            raw_name = entries[actual].name
+            filename = (
+                raw_name.decode("utf-8", "replace")
+                if isinstance(raw_name, bytes)
+                else str(raw_name)
+            )
+            location = (Path(filename).name, int(state.line))
+        rows[int(state.address)] = location
+    starts = tuple(sorted(rows))
+    return starts, tuple(rows[address] for address in starts)
+
+
+def _context_line_program_rows(
+    binary_context: SourceBinaryEvidenceContext,
+    cu: Any,
+    line_program: Any,
+) -> tuple[tuple[int, ...], tuple[tuple[str, int] | None, ...]]:
+    key = int(cu.cu_offset)
+    rows = binary_context.line_rows.get(key)
+    if rows is None:
+        rows = _line_program_rows(cu, line_program)
+        binary_context.line_rows[key] = rows
+    return rows
+
+
 def source_file_lines(source_path: Path) -> dict[tuple[str, int], str]:
     """Read one source file into the ``(basename, line)`` lookup used by DWARF.
 
@@ -909,17 +965,26 @@ def instruction_addresses(
     elf: Any,
     start: int,
     end: int,
+    binary_context: SourceBinaryEvidenceContext | None = None,
 ) -> list[int]:
     from capstone import CS_ARCH_X86, CS_MODE_32, CS_MODE_64, Cs
 
-    machine = elf["e_machine"]
+    machine = binary_context.machine if binary_context is not None else elf["e_machine"]
     if machine != "EM_X86_64" and machine != "EM_386":
         raise ValueError(f"unsupported demo architecture {machine}")
-    text = elf.get_section_by_name(".text")
-    if text is None:
-        return []
-    offset = start - int(text["sh_addr"])
-    code = text.data()[offset : offset + (end - start)]
+    if binary_context is None:
+        text = elf.get_section_by_name(".text")
+        if text is None:
+            return []
+        text_address = int(text["sh_addr"])
+        text_data = text.data()
+    else:
+        text_address = binary_context.text_address
+        text_data = binary_context.text_data
+        if text_address is None or text_data is None:
+            return []
+    offset = start - text_address
+    code = text_data[offset : offset + (end - start)]
     mode = CS_MODE_64 if machine == "EM_X86_64" else CS_MODE_32
     return [instruction.address for instruction in Cs(CS_ARCH_X86, mode).disasm(code, start)]
 
@@ -981,7 +1046,7 @@ def extract_source_evidence(
             raise ValueError(f"DWARF function {function_name!r} has no address range")
         start = min(begin for begin, _end in function_ranges)
         end = max(finish for _begin, finish in function_ranges)
-        instructions = instruction_addresses(elf, start, end)
+        instructions = instruction_addresses(elf, start, end, binary_context)
         inline_ranges: list[tuple[int, int]] = []
 
         def collect_inline_ranges(parent: Any) -> None:
@@ -993,25 +1058,18 @@ def extract_source_evidence(
 
         collect_inline_ranges(function_die)
 
-        rows: dict[int, tuple[str, int] | None] = {}
-        entries = line_program.header["file_entry"]
-        for entry in line_program.get_entries():
-            state = entry.state
-            if state is None or state.end_sequence or not start <= int(state.address) < end:
-                continue
-            actual = int(state.file) if cu["version"] >= 5 else int(state.file) - 1
-            location: tuple[str, int] | None = None
-            if 0 <= actual < len(entries) and state.line is not None:
-                raw_name = entries[actual].name
-                filename = (
-                    raw_name.decode("utf-8", "replace")
-                    if isinstance(raw_name, bytes)
-                    else str(raw_name)
-                )
-                location = (Path(filename).name, int(state.line))
-            rows[int(state.address)] = location
-        row_starts = sorted(rows)
-        row_locations = [rows[address] for address in row_starts]
+        if binary_context is None:
+            all_row_starts, all_row_locations = _line_program_rows(cu, line_program)
+        else:
+            all_row_starts, all_row_locations = _context_line_program_rows(
+                binary_context,
+                cu,
+                line_program,
+            )
+        row_begin = bisect.bisect_left(all_row_starts, start)
+        row_end = bisect.bisect_left(all_row_starts, end, lo=row_begin)
+        row_starts = all_row_starts[row_begin:row_end]
+        row_locations = all_row_locations[row_begin:row_end]
 
         address_location: dict[int, tuple[str, int]] = {}
         for address in instructions:
