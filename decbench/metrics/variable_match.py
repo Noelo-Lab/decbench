@@ -979,10 +979,12 @@ def instruction_addresses(
         text_address = int(text["sh_addr"])
         text_data = text.data()
     else:
-        text_address = binary_context.text_address
-        text_data = binary_context.text_data
-        if text_address is None or text_data is None:
+        context_address = binary_context.text_address
+        context_data = binary_context.text_data
+        if context_address is None or context_data is None:
             return []
+        text_address = context_address
+        text_data = context_data
     offset = start - text_address
     code = text_data[offset : offset + (end - start)]
     mode = CS_MODE_64 if machine == "EM_X86_64" else CS_MODE_32
