@@ -294,6 +294,10 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
   runs)
 - `DECBENCH_OPT_LEVELS` (comma list, e.g. `"O0"` to narrow the run)
 - `DECBENCH_METRICS` (comma list, e.g. `"ged"` for a GED-only run)
+- `DECBENCH_SKIP_FINALIZE=1` leaves the completed per-project checkpoints in
+  place without rebuilding root-level derived files. Use it for concurrent
+  runs over disjoint `-- project ...` shards, then run
+  `scripts/finalize_results.py <tree>` once after every shard succeeds.
 
 When `DECBENCH_METRICS` is explicit and omits `ged`, the driver skips Joern
 source-CFG extraction. Preprocessed sources are still forwarded to TypeMatch

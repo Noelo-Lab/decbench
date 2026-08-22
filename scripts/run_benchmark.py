@@ -67,6 +67,10 @@ def needs_source_cfgs(metrics: list[str] | None) -> bool:
     return metrics is None or "ged" in metrics
 
 
+def skip_finalize() -> bool:
+    return os.environ.get("DECBENCH_SKIP_FINALIZE", "").lower() in {"1", "true", "yes", "on"}
+
+
 NEEDS_SOURCE_CFGS = needs_source_cfgs(METRICS)
 DECOMPILERS = (os.environ.get("DECBENCH_DECOMPILERS") or "angr,ghidra").split(",")
 WORKERS = int(os.environ.get("DECBENCH_WORKERS") or "40")
@@ -520,7 +524,9 @@ def main() -> int:
             "  -- project    limit to the named projects\n\n"
             "Env: DECBENCH_DECOMPILERS, DECBENCH_REDO_DECOMPILERS, DECBENCH_WORKERS,\n"
             "     DECBENCH_DECOMPILE_TIMEOUT, DECBENCH_{KUNA,ANGR,GHIDRA,BINJA}_TIMEOUT,\n"
-            "     DECBENCH_KUNA_MAX_FN_SECONDS, DECBENCH_DECOMPILE_ONLY, GHIDRA_INSTALL_DIR,\n"
+            "     DECBENCH_KUNA_MAX_FN_SECONDS, DECBENCH_DECOMPILE_ONLY, "
+            "DECBENCH_SKIP_FINALIZE,\n"
+            "     GHIDRA_INSTALL_DIR,\n"
             "     DECBENCH_SAMPLESET_MANIFEST (gate the run to the frozen sample-set slice;\n"
             "       required for the LLM backends codex/claude-code/kimi-code — see\n"
             "       docs/decompilers.md)."
@@ -698,6 +704,11 @@ def main() -> int:
             f"(checkpointed)",
             flush=True,
         )
+
+    if skip_finalize():
+        print("\nCheckpoint-only run complete; finalization skipped.", flush=True)
+        print("RUN_DRIVER_CHECKPOINTS_DONE", flush=True)
+        return 0
 
     # The canonical rebuild: regenerates derived files from EVERY checkpoint in the
     # tree, so a scoped resume can no longer silently shrink function_results.json.
