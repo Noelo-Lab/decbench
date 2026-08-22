@@ -357,6 +357,10 @@ killable subprocess, (c) recovers partial results on timeout
 non-isomorphic CFGs ≤ `DECBENCH_GED_MAX_NODES` nodes. VJ-GED uses a compiled
 linear-assignment solver with the same cost model as cfgutils' pure-Python
 Munkres implementation. A few still-larger optimized CFGs otherwise dominate.
+Partial-result pickles are atomically refreshed at most once every five seconds;
+the child always writes the complete result when it exits normally. This bounds
+timeout recovery loss without repeatedly serializing the entire growing result
+after every fast IDA/Kuna function.
 These make angr tractable and bound the run; default in-process `decbench run`
 does none of them.
 

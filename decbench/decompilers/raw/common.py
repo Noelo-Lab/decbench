@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import pickle
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
     from decbench.models.decompilation import DecompilationResult
 
 _l = logging.getLogger(__name__)
+_PROGRESS_DUMP_TIMES: dict[Path, float] = {}
 
 SKIP_NAMES = frozenset(
     {
@@ -234,19 +236,34 @@ def extract_metrics(code: str) -> dict[str, Any]:
 def dump_progress(
     progress_path: Path | None,
     result: DecompilationResult,
+    *,
+    min_interval_seconds: float = 5.0,
+    force: bool = False,
 ) -> None:
     """Atomically pickle a partial :class:`DecompilationResult` to disk.
 
     Writes to a ``.tmp`` sibling and ``os.replace``s it into place so a reader
-    (or a killed-then-restarted run) never sees a half-written file. Best
-    effort: any failure is swallowed so it never breaks decompilation.
+    (or a killed-then-restarted run) never sees a half-written file. Repeated
+    calls are throttled because serializing a growing multi-thousand-function
+    result after every function is quadratic in output size. Best effort: any
+    failure is swallowed so it never breaks decompilation.
     """
     if progress_path is None:
+        return
+    now = time.monotonic()
+    last_dump = _PROGRESS_DUMP_TIMES.get(progress_path)
+    if (
+        not force
+        and last_dump is not None
+        and min_interval_seconds > 0
+        and now - last_dump < min_interval_seconds
+    ):
         return
     try:
         tmp = progress_path.with_suffix(progress_path.suffix + ".tmp")
         tmp.write_bytes(pickle.dumps(result))
         tmp.replace(progress_path)
+        _PROGRESS_DUMP_TIMES[progress_path] = now
     except Exception:  # noqa: BLE001 - progress dump is best-effort
         pass
 
