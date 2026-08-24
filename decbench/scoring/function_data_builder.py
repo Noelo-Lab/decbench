@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from decbench.metrics.registry import MetricRegistry
 from decbench.models.function_data import (
+    PRODUCER_VARIABLE_OCCURRENCE_POLICIES,
     VARIABLE_MATCH_EVIDENCE,
     BinaryGroup,
     FunctionData,
@@ -97,6 +98,15 @@ def _metric_evidence_for(metric_name: str, value: object) -> str | None:
     md = getattr(value, "metadata", None) or {}
     evidence = md.get("variable_match_evidence")
     return evidence if evidence in VARIABLE_MATCH_EVIDENCE else None
+
+
+def _producer_variable_occurrence_policy_for(metric_name: str, value: object) -> str | None:
+    """Return the recognized producer occurrence policy for a TypeMatch row."""
+    if metric_name != "type_match":
+        return None
+    md = getattr(value, "metadata", None) or {}
+    policy = md.get("producer_variable_occurrence_policy")
+    return policy if policy in PRODUCER_VARIABLE_OCCURRENCE_POLICIES else None
 
 
 def _line_count_for(
@@ -232,6 +242,13 @@ def build_function_data(
                                 record.metric_evidence.setdefault(dec_name, {})[
                                     metric_name
                                 ] = evidence
+                            occurrence_policy = _producer_variable_occurrence_policy_for(
+                                metric_name, value
+                            )
+                            if occurrence_policy is not None:
+                                record.producer_variable_occurrence_policy[dec_name] = (
+                                    occurrence_policy
+                                )
                             dist = _distance_for(metric_name, value)
                             if dist is not None:
                                 record.distances.setdefault(dec_name, {})[metric_name] = dist

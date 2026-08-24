@@ -46,6 +46,9 @@ def _fd() -> FunctionData:
                         metric_evidence={
                             d: {"type_match": "native"} for d in ("angr", "hiddendec", "ghidra")
                         },
+                        producer_variable_occurrence_policy={
+                            d: "exact" for d in ("angr", "hiddendec", "ghidra")
+                        },
                         distances={d: {"ged": 0.0} for d in ("angr", "hiddendec", "ghidra")},
                         decompiled={"angr": True, "hiddendec": True, "ghidra": True},
                         datasets=["unoptimized"],
@@ -111,6 +114,7 @@ def test_hidden_decompiler_stripped_everywhere() -> None:
         rec.values,
         rec.perfects,
         rec.metric_evidence,
+        rec.producer_variable_occurrence_policy,
         rec.distances,
         rec.decompiled,
     ):

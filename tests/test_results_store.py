@@ -480,10 +480,11 @@ def test_atomic_typematch_write_rolls_back_manifest_when_overlay_replace_fails(
     assert manifest.read_bytes() == b"manifest sentinel\n"
 
 
-def test_update_typematch_replaces_and_clears_metric_evidence() -> None:
+def test_update_typematch_replaces_and_clears_row_provenance() -> None:
     fd = _fd_two_slices()
     record = fd.groups[0].functions[0]
     record.metric_evidence = {"kuna": {"type_match": "mixed"}}
+    record.producer_variable_occurrence_policy = {"kuna": "direct"}
     key = "projA::O0::binA::f1"
 
     updated = update_type_match(
@@ -494,6 +495,7 @@ def test_update_typematch_replaces_and_clears_metric_evidence() -> None:
                     "value": 0.75,
                     "dist": 1,
                     "variable_match_evidence": "fallback_only",
+                    "producer_variable_occurrence_policy": "unavailable",
                 }
             }
         },
@@ -502,9 +504,11 @@ def test_update_typematch_replaces_and_clears_metric_evidence() -> None:
     assert updated == 1
     assert record.values["kuna"]["type_match"] == 0.75
     assert record.metric_evidence == {"kuna": {"type_match": "fallback_only"}}
+    assert record.producer_variable_occurrence_policy == {"kuna": "unavailable"}
 
     update_type_match(fd, {"kuna": {key: {"value": 1.0, "dist": 0}}})
     assert "kuna" not in record.metric_evidence
+    assert "kuna" not in record.producer_variable_occurrence_policy
 
 
 def test_coverage_guard_catches_column_drop() -> None:
@@ -587,6 +591,47 @@ def test_finalize_tree_reads_all_checkpoints(tmp_path: Path) -> None:
         finalize_tree(root, log=lambda _msg: None)
     fd2, _sb2 = finalize_tree(root, exclude_projects=["beta"], log=lambda _msg: None)
     assert sorted(g.project for g in fd2.groups) == ["alpha"]
+
+
+def test_finalize_tree_persists_overlay_occurrence_policy(tmp_path: Path) -> None:
+    root = _mini_tree(tmp_path, projects=("alpha",))
+    checkpoint_path = root / "checkpoints" / "alpha.pkl"
+    checkpoint = pickle.loads(checkpoint_path.read_bytes())
+    checkpoint["evaluate"][OptimizationLevel.O0]["alphabin"]["angr"]["type_match"] = MetricResult(
+        metric_name="type_match",
+        decompiler_name="angr",
+        binary_name="alphabin",
+        function_results={
+            "main": MetricValue(
+                value=1.0,
+                metadata={"producer_variable_occurrence_policy": "direct"},
+            )
+        },
+    )
+    checkpoint_path.write_bytes(pickle.dumps(checkpoint))
+    write_typematch_overlay_atomic(
+        root / "type_match_new.json",
+        {
+            "angr": {
+                "alpha::O0::alphabin::main": {
+                    "value": 0.5,
+                    "dist": 1,
+                    "producer_variable_occurrence_policy": "unavailable",
+                    "structured_occurrence_mode": "producer",
+                }
+            }
+        },
+        _typematch_provenance(cache_version="11"),
+    )
+
+    fd, _ = finalize_tree(root, log=lambda _msg: None)
+    record = fd.groups[0].functions[0]
+    assert record.values["angr"]["type_match"] == 0.5
+    assert record.producer_variable_occurrence_policy == {"angr": "unavailable"}
+    reloaded = FunctionData.from_json(root / "function_results.json")
+    assert reloaded.groups[0].functions[0].producer_variable_occurrence_policy == {
+        "angr": "unavailable"
+    }
 
 
 def test_finalize_preserves_dataset_info_and_history(tmp_path: Path) -> None:

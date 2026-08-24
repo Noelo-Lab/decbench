@@ -46,6 +46,7 @@ def make_fd() -> FunctionData:
             KEPT: {"type_match": "native"},
             STRIPPED: {"type_match": "fallback_only"},
         },
+        producer_variable_occurrence_policy={KEPT: "exact", STRIPPED: "unavailable"},
         distances={KEPT: {"ged": 0.0}, STRIPPED: {"ged": 2.0}},
         decompiled={KEPT: True, STRIPPED: True},
         compiles={KEPT: True, STRIPPED: False},
@@ -103,6 +104,7 @@ def test_strip_decompilers_removes_all_traces():
     assert set(fn.values) == {KEPT}
     assert set(fn.perfects) == {KEPT}
     assert set(fn.metric_evidence) == {KEPT}
+    assert set(fn.producer_variable_occurrence_policy) == {KEPT}
     assert set(fn.distances) == {KEPT}
     assert set(fn.decompiled) == {KEPT}
     assert set(fn.compiles) == {KEPT}
@@ -134,6 +136,7 @@ def test_strip_decompilers_reports_partial_traces():
             f.values,
             f.perfects,
             f.metric_evidence,
+            f.producer_variable_occurrence_policy,
             f.distances,
             f.decompiled,
             f.compiles,
@@ -202,6 +205,10 @@ def test_write_master_scores_excludes_and_regenerates_scoreboard(results_tree: P
     master = (dest / "results" / "function_results.json").read_text()
     assert STRIPPED not in master
     assert KEPT in master
+    published = json.loads(master)
+    assert published["groups"][0]["functions"][0]["producer_variable_occurrence_policy"] == {
+        KEPT: "exact"
+    }
     sb_text = (dest / "results" / "scoreboard.toml").read_text()
     assert STRIPPED not in sb_text
     assert KEPT in sb_text

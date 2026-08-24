@@ -13,6 +13,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 VARIABLE_MATCH_EVIDENCE = frozenset({"native", "mixed", "fallback_only"})
+PRODUCER_VARIABLE_OCCURRENCE_POLICIES = frozenset({"exact", "direct", "unavailable", "undeclared"})
 
 
 class FunctionRecord(BaseModel):
@@ -31,6 +32,11 @@ class FunctionRecord(BaseModel):
         default_factory=dict,
         description="decompiler -> metric -> measurement-evidence category; absent "
         "when older results did not record provenance",
+    )
+    producer_variable_occurrence_policy: dict[str, str] = Field(
+        default_factory=dict,
+        description="decompiler -> producer variable-occurrence policy for its "
+        "type_match row; absent when older results did not record the policy",
     )
     distances: dict[str, dict[str, float]] = Field(
         default_factory=dict,

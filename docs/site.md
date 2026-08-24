@@ -375,6 +375,9 @@ button (`#theme-toggle`) flips and persists it at runtime.
                          "fallback_only": 2, "measured": 93}
         }
       },
+      "producer_variable_occurrence_policy": { // sparse TypeMatch producer policy counts
+        "angr": {"exact": 70, "direct": 10, "unavailable": 8, "undeclared": 2}
+      },
       "distance": {                      // decompiler -> metric -> stats | null
         "angr": {"ged": {"mean": 3.25, "median": 2, "n": 5000, "at0": 1200}}
       }
@@ -396,11 +399,21 @@ decompiler's finite values in the active combo. It is deliberately not the share
 `per_metric` denominator, which can also include a decompiler's missing value as a
 miss. Older `function_results.json` files carry no evidence metadata, so the three
 categories may sum to less than `measured`; the client never guesses a category from
-a decompiler's name.
+a decompiler's name. A measured TypeMatch row still contributes to `measured` when
+correspondence accepted no pair and therefore emitted no evidence category.
+
+`producer_variable_occurrence_policy` is also additive and sparse. Its
+`exact` / `direct` / `unavailable` / `undeclared` counts cover finite TypeMatch rows
+whose producer policy was persisted in `FunctionRecord`. Older `function_results.json`
+files omit that field and remain loadable; the aggregate then omits their unknown policy
+instead of guessing it.
 
 The leaderboard adds an asterisk to a Type percentage when its active combo has at
-least one `mixed` or `fallback_only` measurement. The marker is explanatory only:
-sorting, percentages, denominators, and Union still read the existing count pairs.
+least one `mixed` or `fallback_only` measurement, or at least one `unavailable` or
+`undeclared` producer policy. Policy is counted independently of accepted-match evidence,
+so the marker also covers a measured row where correspondence accepted no pair and
+`variable_match_evidence` is absent. The marker is explanatory only: sorting,
+percentages, denominators, and Union still read the existing count pairs.
 
 `distance[dec][metric]` is `null` when no function under the combo had a finite
 distance for that metric.

@@ -310,10 +310,15 @@ The reporting path accepts
 the backend's name. Mixed and fallback-only measurements use type-blind usage evidence
 jointly with native address/anchor evidence or alone, respectively. When the production
 metric emits it, this provenance is carried through `FunctionRecord.metric_evidence`
-and the site's `metric_evidence` aggregate. A mixed/fallback-only Type percentage
-receives an explanatory asterisk because conservative heuristic abstention may
-undercount recovery. The provenance never changes a metric value, perfect flag, shared
-denominator, Union, or sort order.
+and the site's `metric_evidence` aggregate. The row's
+`producer_variable_occurrence_policy` is independently carried through the matching
+`FunctionRecord` field and aggregate. A Type percentage receives an explanatory
+asterisk for mixed/fallback-only accepted evidence or for an unavailable/undeclared
+producer policy. Keeping the channels independent includes measured functions where
+correspondence accepted no pair and `variable_match_evidence` is therefore absent.
+The provenance never changes a metric value, perfect flag, shared denominator, Union,
+or sort order. Function data written before either provenance field existed remains
+loadable and is not assigned a guessed category.
 
 A subprogram's name is read through `binfmt.die_attr` rather than straight off
 the DIE, because gcc keeps a C++ out-of-line member definition's `DW_AT_name`

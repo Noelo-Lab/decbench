@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from decbench.models.function_data import (
+    PRODUCER_VARIABLE_OCCURRENCE_POLICIES,
     VARIABLE_MATCH_EVIDENCE,
     FunctionData,
     FunctionRecord,
@@ -58,6 +59,7 @@ ALL_PRESET = "__all__"
 SAMPLE_SET_PRESET = "sample-set"
 
 _EVIDENCE_ORDER = ("native", "mixed", "fallback_only")
+_OCCURRENCE_POLICY_ORDER = ("exact", "direct", "unavailable", "undeclared")
 
 # Do NOT reintroduce rounding here. The client re-renders some values at fewer
 # places than they are stored, so pre-rounding manufactures half-boundaries that
@@ -215,6 +217,7 @@ class _FunctionFacts:
     compiles: tuple[bool | None, ...]
     metric_evidence: tuple[tuple[str | None, ...], ...]
     metric_measured: tuple[tuple[bool, ...], ...]
+    producer_variable_occurrence_policy: tuple[str | None, ...]
 
 
 def _function_facts(
@@ -236,6 +239,7 @@ def _function_facts(
     compiles: list[bool | None] = []
     metric_evidence: list[tuple[str | None, ...]] = []
     metric_measured: list[tuple[bool, ...]] = []
+    producer_variable_occurrence_policy: list[str | None] = []
     all_decompiled = True
     all_full_coverage_decompiled = True
 
@@ -290,6 +294,12 @@ def _function_facts(
                 for metric in metrics
             )
         )
+        occurrence_policy = func.producer_variable_occurrence_policy.get(dec)
+        producer_variable_occurrence_policy.append(
+            occurrence_policy
+            if occurrence_policy in PRODUCER_VARIABLE_OCCURRENCE_POLICIES
+            else None
+        )
 
     return _FunctionFacts(
         datasets=frozenset(func.datasets),
@@ -305,6 +315,7 @@ def _function_facts(
         compiles=tuple(compiles),
         metric_evidence=tuple(metric_evidence),
         metric_measured=tuple(metric_measured),
+        producer_variable_occurrence_policy=tuple(producer_variable_occurrence_policy),
     )
 
 
@@ -367,6 +378,10 @@ class _ComboAccumulator:
             [[0] * len(_EVIDENCE_ORDER) for _ in range(n_met)] for _ in range(n_dec)
         ]
         self._metric_measured = [[0] * n_met for _ in range(n_dec)]
+        self._type_match_index = metrics.index("type_match") if "type_match" in metrics else None
+        self._producer_variable_occurrence_policy = [
+            [0] * len(_OCCURRENCE_POLICY_ORDER) for _ in range(n_dec)
+        ]
 
     def add(self, facts: _FunctionFacts) -> None:
         """Fold one active function into this combo."""
@@ -391,6 +406,12 @@ class _ComboAccumulator:
                 dec_total[mi] += 1
                 if dec_perfect[mi]:
                     dec_perfect_counts[mi] += 1
+            type_match_index = self._type_match_index
+            if type_match_index is not None and facts.metric_measured[di][type_match_index]:
+                occurrence_policy = facts.producer_variable_occurrence_policy[di]
+                if occurrence_policy is not None:
+                    policy_index = _OCCURRENCE_POLICY_ORDER.index(occurrence_policy)
+                    self._producer_variable_occurrence_policy[di][policy_index] += 1
             if facts.any_measurable:
                 self._overall_total[di] += 1
                 if facts.union_perfect[di]:
@@ -418,14 +439,24 @@ class _ComboAccumulator:
             per_metric: dict[str, dict[str, int]] = {}
             for mi, metric in enumerate(self._metrics):
                 counts = self._metric_evidence[di][mi]
-                if not any(counts):
+                measured = self._metric_measured[di][mi]
+                if not any(counts) and (metric != "type_match" or not measured):
                     continue
                 per_metric[metric] = {
                     **dict(zip(_EVIDENCE_ORDER, counts, strict=True)),
-                    "measured": self._metric_measured[di][mi],
+                    "measured": measured,
                 }
             if per_metric:
                 metric_evidence[dec] = per_metric
+        occurrence_policy = {
+            dec: dict(zip(_OCCURRENCE_POLICY_ORDER, counts, strict=True))
+            for dec, counts in zip(
+                self._decompilers,
+                self._producer_variable_occurrence_policy,
+                strict=True,
+            )
+            if any(counts)
+        }
         return {
             "functions": self.functions,
             "binaries": self.binaries,
@@ -449,6 +480,7 @@ class _ComboAccumulator:
                 for di, dec in enumerate(self._decompilers)
             },
             "metric_evidence": metric_evidence,
+            "producer_variable_occurrence_policy": occurrence_policy,
             "distance": {
                 dec: {
                     metric: _distance_stats(self._distances[di][mi])

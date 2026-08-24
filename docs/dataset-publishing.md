@@ -80,8 +80,9 @@ content/size check).
 decompilers in `layout.EXCLUDED_DECOMPILERS` (currently empty) from the
 loaded `FunctionData` before anything is copied or written —
 `fd.decompilers`/`decompiler_versions`, per-function
-`values`/`perfects`/`distances`/`decompiled`/`compiles`, `compile_rates`,
-`samples`, `hardest`, and `history` (see `layout.strip_decompilers`). The
+`values`/`perfects`/`metric_evidence`/`producer_variable_occurrence_policy`/
+`distances`/`decompiled`/`compiles`, `compile_rates`, `samples`, `hardest`, and
+`history` (see `layout.strip_decompilers`). The
 master `results/function_results.json` is therefore written from the stripped
 in-memory object (never a verbatim file copy) and `results/scoreboard.toml` is
 regenerated from it, so an excluded decompiler appears **nowhere** in the

@@ -129,6 +129,14 @@ def test_type_evidence_note_and_limitation_are_explained(content: Content) -> No
     assert "mixed or fallback-only evidence" in about
     assert "scores or denominators" in about
 
+    type_card = next(
+        goal for goal in content.view("about").goals if goal.metric_key == "type_match"
+    )
+    assert "validated instruction-address overlap" in type_card.body_html
+    assert "type-blind usage" in type_card.body_html
+    assert "Names and recovered types are never correspondence evidence" in type_card.body_html
+    assert "by exact name" not in type_card.body_html
+
 
 def test_convention_comments_are_stripped(content: Content) -> None:
     for spec in content.view_specs:

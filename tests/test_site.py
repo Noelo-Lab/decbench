@@ -65,6 +65,7 @@ def function_data() -> FunctionData:
                         values={"angr": {"ged": 0.0, "type_match": 1.0}},
                         perfects={"angr": {"ged": True, "type_match": True}},
                         metric_evidence={"angr": {"type_match": "native"}},
+                        producer_variable_occurrence_policy={"angr": "exact"},
                         decompiled={"angr": True},
                         datasets=["unoptimized"],
                     ),
@@ -72,7 +73,7 @@ def function_data() -> FunctionData:
                         function="f2",
                         values={"angr": {"ged": 2.0, "type_match": 0.5}},
                         perfects={"angr": {"ged": False, "type_match": False}},
-                        metric_evidence={"angr": {"type_match": "fallback_only"}},
+                        producer_variable_occurrence_policy={"angr": "unavailable"},
                         decompiled={"angr": True},
                         datasets=["unoptimized", "sample-set"],
                     ),
@@ -163,7 +164,7 @@ def test_aggregates_carry_the_registry_and_the_default_view(
     }
 
 
-def test_type_measurement_evidence_and_dynamic_note_ship(
+def test_type_measurement_provenance_and_dynamic_note_ship(
     tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
 ) -> None:
     out = tmp_path / "site"
@@ -174,16 +175,26 @@ def test_type_measurement_evidence_and_dynamic_note_ship(
     assert evidence == {
         "native": 1,
         "mixed": 0,
-        "fallback_only": 1,
+        "fallback_only": 0,
         "measured": 2,
+    }
+    policies = agg["combos"]["unoptimized|0"]["producer_variable_occurrence_policy"]["angr"]
+    assert policies == {
+        "exact": 1,
+        "direct": 0,
+        "unavailable": 1,
+        "undeclared": 0,
     }
 
     index = (out / "index.html").read_text()
     app = (out / "app.js").read_text()
     css = (out / "app.css").read_text()
     assert 'id="type-evidence-note"' in index
-    assert "may be conservative" in index
+    assert "no accepted variable correspondence" in index
     assert "evidenceUsesHeuristic" in app
+    assert "occurrencePolicyNeedsCaveat" in app
+    assert "typeMeasurementNeedsCaveat" in app
+    assert "(policy.unavailable || 0) + (policy.undeclared || 0) > 0" in app
     assert '<a class="evidence-mark" href="#type-evidence-note"' in app
     assert 'aria-label="Type-score measurement note"' in app
     assert 'aria-describedby="type-evidence-note"' in app

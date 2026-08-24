@@ -443,17 +443,41 @@ function metricEvidence(result, d, m) {
     const byDec = (result.metric_evidence || {})[d] || {};
     return byDec[m] || null;
 }
+function producerVariableOccurrencePolicy(result, d) {
+    return ((result.producer_variable_occurrence_policy || {})[d]) || null;
+}
 function evidenceUsesHeuristic(evidence) {
     return !!evidence && ((evidence.mixed || 0) + (evidence.fallback_only || 0) > 0);
 }
-function evidenceDescription(evidence) {
+function occurrencePolicyNeedsCaveat(policy) {
+    return !!policy && ((policy.unavailable || 0) + (policy.undeclared || 0) > 0);
+}
+function typeMeasurementNeedsCaveat(evidence, policy) {
+    return evidenceUsesHeuristic(evidence) || occurrencePolicyNeedsCaveat(policy);
+}
+function evidenceDescription(evidence, policy) {
+    evidence = evidence || {};
+    policy = policy || {};
     const nativeCount = evidence.native || 0;
     const mixedCount = evidence.mixed || 0;
     const fallbackCount = evidence.fallback_only || 0;
     const measured = evidence.measured || 0;
-    return "Variable-match evidence across measured functions: " + nativeCount +
-        " native, " + mixedCount + " mixed, " + fallbackCount +
-        " fallback-only, " + measured + " measured total. The Type score may be conservative.";
+    const exactCount = policy.exact || 0;
+    const directCount = policy.direct || 0;
+    const unavailableCount = policy.unavailable || 0;
+    const undeclaredCount = policy.undeclared || 0;
+    const details = [];
+    if (measured || nativeCount || mixedCount || fallbackCount) {
+        details.push("Variable-match evidence across measured functions: " + nativeCount +
+            " native, " + mixedCount + " mixed, " + fallbackCount +
+            " fallback-only, " + measured + " measured total.");
+    }
+    if (exactCount || directCount || unavailableCount || undeclaredCount) {
+        details.push("Producer occurrence policies: " + exactCount + " exact, " +
+            directCount + " direct, " + unavailableCount + " unavailable, " +
+            undeclaredCount + " undeclared.");
+    }
+    return details.join(" ") + " The Type score may be conservative.";
 }
 
 // Decompilers to render as rows for the CURRENT preset. AGG.sample_set_only
@@ -528,9 +552,10 @@ function showBanner(viewId, msg) {
     b.textContent = "[ error ] " + msg;
 }
 
-function cellPctHtml(cell, evidence) {
+function cellPctHtml(cell, evidence, occurrencePolicy) {
     const p = pct(cell);
-    const description = evidenceUsesHeuristic(evidence) ? evidenceDescription(evidence) : "";
+    const description = typeMeasurementNeedsCaveat(evidence, occurrencePolicy)
+        ? evidenceDescription(evidence, occurrencePolicy) : "";
     const marker = description
         ? '<a class="evidence-mark" href="#type-evidence-note" ' +
           'aria-label="Type-score measurement note" aria-describedby="type-evidence-note" ' +
@@ -543,13 +568,17 @@ function cellPctHtml(cell, evidence) {
 }
 function metricPctHtml(result, d, m) {
     const evidence = m === "type_match" ? metricEvidence(result, d, m) : null;
-    return cellPctHtml(metricCell(result, d, m), evidence);
+    const occurrencePolicy = m === "type_match"
+        ? producerVariableOccurrencePolicy(result, d) : null;
+    return cellPctHtml(metricCell(result, d, m), evidence, occurrencePolicy);
 }
 function updateTypeEvidenceNote(result) {
     const note = document.getElementById("type-evidence-note");
     if (!note) return;
     note.hidden = !visibleDecs().some(d =>
-        evidenceUsesHeuristic(metricEvidence(result, d, "type_match")));
+        typeMeasurementNeedsCaveat(
+            metricEvidence(result, d, "type_match"),
+            producerVariableOccurrencePolicy(result, d)));
 }
 function errPctClass(p) { return p < 2 ? "high" : (p < 10 ? "mid" : "low"); }
 function errRate(cell) { return cell && cell[1] > 0 ? (cell[0] / cell[1]) * 100 : 0; }

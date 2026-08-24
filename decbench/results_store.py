@@ -46,7 +46,12 @@ from decbench.models.decompilation import (
     VARIABLE_OCCURRENCE_POLICIES,
     VARIABLE_OCCURRENCE_POLICY_SCHEMA,
 )
-from decbench.models.function_data import VARIABLE_MATCH_EVIDENCE, FunctionData, HistoryPoint
+from decbench.models.function_data import (
+    PRODUCER_VARIABLE_OCCURRENCE_POLICIES,
+    VARIABLE_MATCH_EVIDENCE,
+    FunctionData,
+    HistoryPoint,
+)
 from decbench.models.scoreboard import Scoreboard
 
 Slice = tuple[str, str, str, str]
@@ -501,9 +506,9 @@ def update_type_match(fd: FunctionData, new: dict[str, dict[str, Any]]) -> int:
     """Merge freshly recomputed type_match in (add-only; never clears).
 
     ``new`` is ``{decompiler: {"proj::opt::bin::fn": value}}`` (the shape emitted by
-    ``scripts/reeval_typematch.py``). For every covered (function, decompiler) SET
-    type_match + its perfect flag; entries with no fresh value are kept. Returns the
-    number of (function, decompiler) entries set.
+    ``scripts/reeval_typematch.py``). For every covered (function, decompiler), set
+    type_match, its perfect flag, distance, and row provenance; entries with no fresh
+    value are kept. Returns the number of (function, decompiler) entries set.
     """
     n = 0
     for g in fd.groups:
@@ -519,10 +524,12 @@ def update_type_match(fd: FunctionData, new: dict[str, dict[str, Any]]) -> int:
                     val = float(rec["value"])
                     dist = rec.get("dist")
                     evidence = rec.get("variable_match_evidence")
+                    occurrence_policy = rec.get("producer_variable_occurrence_policy")
                 else:
                     val = float(rec)
                     dist = None
                     evidence = None
+                    occurrence_policy = None
                 f.values.setdefault(dec, {})["type_match"] = val
                 f.perfects.setdefault(dec, {})["type_match"] = val >= PERFECT["type_match"]
                 if dist is not None:
@@ -534,6 +541,9 @@ def update_type_match(fd: FunctionData, new: dict[str, dict[str, Any]]) -> int:
                         f.metric_evidence.pop(dec, None)
                 if evidence in VARIABLE_MATCH_EVIDENCE:
                     f.metric_evidence.setdefault(dec, {})["type_match"] = evidence
+                f.producer_variable_occurrence_policy.pop(dec, None)
+                if occurrence_policy in PRODUCER_VARIABLE_OCCURRENCE_POLICIES:
+                    f.producer_variable_occurrence_policy[dec] = occurrence_policy
                 n += 1
     return n
 
