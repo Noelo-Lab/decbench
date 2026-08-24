@@ -205,6 +205,36 @@ merges. Canonical promotion is transactional: any scoring exception, reported me
 error, or exact function/decompiler coverage mismatch leaves the existing overlay
 unchanged. Explicit A/B outputs remain usable for partial experiments.
 
+Summarize independently generated modes with the shared-denominator reporter,
+not the re-evaluator's per-mode console mean:
+
+```bash
+python scripts/report_typematch_ab.py \
+  --function-data results/full_run/function_results.json \
+  --results-root results/full_run \
+  --manifest results/full_run/sample_set_manifest.json \
+  --mode address=/tmp/type-ab/address.json \
+  --mode usage=/tmp/type-ab/usage.json \
+  --mode auto=/tmp/type-ab/auto.json \
+  --baseline-mode address \
+  --checkpoint-dir /tmp/pr48-native-sample/checkpoints \
+  --output /tmp/type-ab/report.json \
+  --markdown /tmp/type-ab/report.md
+```
+
+The report validates every overlay's digest-bound policy/cache provenance and
+requires identical per-backend score keys across modes. It reports two different
+statistics deliberately: the conditional partial mean uses only finite scores,
+while the published Type percentage counts perfect functions over the shared set
+where any backend measured TypeMatch. A backend's missing score is therefore a
+not-perfect miss in the latter. Coverage gains/losses, paired regressions, evidence
+category transitions, and architecture/format strata remain explicit. Passing
+`--checkpoint-dir` additionally audits actual function line maps and variable-line /
+variable-address fields; a line map without variable occurrence addresses is not
+claimed as usable correspondence evidence. The JSON is canonical; Markdown contains
+only the review headline. Invalid scope or provenance still writes the diagnostic
+report but exits nonzero unless `--allow-invalid` is requested.
+
 The reporting path accepts
 `MetricValue.metadata["variable_match_evidence"]` as `native`, `mixed`, or
 `fallback_only`, based on the evidence actually used for that function rather than
