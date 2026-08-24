@@ -32,9 +32,14 @@ with the shared ``common`` helpers, exactly like the other raw backends.
 Architecture support: x86-64, AArch64, and **ARM32/Thumb-2** (the DecBench CPS
 firmware is Cortex-M Thumb, so this covers the ARM slice). ARM32 mode selection
 uses ELF mapping symbols, function-symbol Thumb bits, and bounded decode probes;
-both Thumb-2 and A32 have dedicated round-trip lanes. Structured
-``VariableInfo`` is not emitted yet; type_match uses its C-signature text-parsing
-path over the emitted ``long name(long arg0, …)`` prototype.
+both Thumb-2 and A32 have dedicated round-trip lanes. The pinned revision cannot
+emit sound ``LineMapping`` or ``VariableInfo`` occurrence evidence: its LLIR
+instructions carry machine addresses, but that origin is discarded before the
+final, rewriting AST pipeline. The adapter therefore leaves both fields empty
+instead of joining final C names back to an earlier IR by spelling.
+``type_match`` uses its C-signature and usage fallback over the emitted
+``long name(long arg0, …)`` prototype. The producer-side contract needed to
+unlock native evidence is documented in ``docs/decompilers.md``.
 
 Locate the CLI via ``$GLAURUNG_BIN`` (an explicit path), the DecBench
 decompiler configuration, or ``glaurung`` on ``$PATH``. When no native CLI
@@ -548,8 +553,8 @@ class RawGlaurungDecompiler(Decompiler):
             address=file_addr,
             decompiled_code=code,
             line_count=code.count("\n") + 1,
-            line_mappings=[],  # not emitted; GED parses the C directly
-            variables=[],  # v1: type_match uses the C-signature text path
+            line_mappings=[],
+            variables=[],
             metadata=common.extract_metrics(code),
         )
 

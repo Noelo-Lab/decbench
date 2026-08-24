@@ -32,10 +32,15 @@ Addresses are reported in **ELF-file space**, matching the other raw backends:
 manifold reads the ELF's own virtual addresses, so its addresses are already in
 that space and need no rebasing.
 
-Variables are deliberately left unset: manifold's C output carries declared
-types but no stack offsets, so ``type_match`` scores it through decbench's
-``parse_c_variables`` text path (arguments by ABI position + locals by name),
-exactly as it does for the code-only LLM backends.
+Native line and variable evidence is deliberately left unset. Manifold's
+address-keyed Clight nodes lose their node identity when the final C AST is
+assembled, before later for-loop, variable-coalescing, and goto-elision passes.
+Joining the resulting C names to an earlier IR by spelling would not be native
+provenance. ``type_match`` therefore scores the declared types through
+DecBench's C parser and usage fallback (arguments by ABI position + locals by
+name), exactly as it does for the code-only LLM backends. The producer-side
+contract needed to unlock native evidence is documented in
+``docs/decompilers.md``.
 """
 
 from __future__ import annotations

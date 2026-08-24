@@ -184,6 +184,9 @@ def test_decompile_binary_maps_fun_names_to_addresses(
     assert result.functions[f"FUN_{add_nums:x}"].address == add_nums
     assert result.functions[f"FUN_{main:x}"].address == main
     assert result.functions[f"FUN_{add_nums:x}"].decompiled_code.strip()
+    # The current producer emits no final-AST lineage sidecar.
+    assert all(not function.line_mappings for function in result.functions.values())
+    assert all(not function.variables for function in result.functions.values())
     assert (tmp_path / f"manifold_{tiny_binary.stem}.c").exists()
 
 

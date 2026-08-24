@@ -227,6 +227,92 @@ The canonical raw adapters use these native sources:
   and variable `line_numbers`/`addresses` in `decompile-all --json`. Missing
   fields remain empty for compatibility with older Kuna builds.
 
+##### Glaurung and Manifold: final-AST lineage blockers
+
+An address attached to an early IR statement is not native evidence for a
+variable in the final C. The variable can be renamed, folded into another
+expression, coalesced with another local, cloned, or deleted before printing.
+The final renderer must still know which variable identity and machine
+instructions produced each occurrence. Two audited backends do not currently
+retain that information:
+
+- Glaurung `fb4ee6ba5966e0e4a7fe001b523231fc5fcd43f4` stores a machine VA on
+  `LlirInstr`, but `ir/ast.rs::lower_block` calls `lower_op(&ins.op, ...)` and
+  drops `ins.va`. Its `Expr` and `Stmt` nodes have no origin field, after which
+  expression reconstruction, copy propagation, DCE, condition folding, and
+  the DecBench preparation passes rewrite the tree. The JSON command emits
+  only `name`, `entry_va`, and `pseudocode`.
+- Manifold `b63daf30ccfbcc3a88d7ead117df17e41127f499` keeps instruction-address
+  `Node` keys through `SelectedFunction.statements: HashMap<Node, ClightStmt>`.
+  Clight emission then assembles those statements into a C tree whose
+  `CExpr::Var` contains only a string and whose `CStmt` has no node identity.
+  `ForLoopPass`, `VarReducePass`, and `GotoElidePass` run afterward;
+  `VarReducePass` applies and discards a local-name coalescing map. The coverage
+  audit tracks exact syntax persistence, not node-to-final-variable lineage.
+
+Their DecBench adapters deliberately emit no native occurrence addresses or
+line maps. Final-name-to-earlier-IR joins would be heuristic, so local-variable
+correspondence uses the type-blind usage fallback. ABI argument anchors still
+apply when the final C signature exposes them. Metric metadata records
+`linemap_present=false` and zero `decompiler_address_variables`; the report's
+mixed/fallback caveat covers any score that depended on usage evidence.
+
+The minimal upstream implementation is a provenance-carrying final AST, not a
+post-render text matcher:
+
+1. Seed every lowered statement/expression with its set of real machine
+   instruction VAs and give every variable a stable identity independent of
+   its printed name.
+2. Preserve those identities and origin sets through every rewrite. Moving or
+   cloning a node preserves its origin; combining nodes unions proven origins;
+   deletion drops them. An intentional variable coalescing creates one final
+   identity with the union of its members. A synthetic or ambiguous node has no
+   mapping.
+3. During the same final render that produces the measured C, record the
+   1-based output line for each proven statement and variable occurrence.
+   Never recover occurrences afterward by matching identifier text.
+4. Emit only instruction starts inside the function, normalized to linked
+   ELF/PE space. Invalid, out-of-range, duplicate-identity, or stale-render
+   evidence must be omitted rather than repaired approximately.
+
+Glaurung can extend each existing per-function JSON record without changing
+the CLI shape:
+
+```json
+{
+  "name": "target",
+  "entry_va": 4198400,
+  "size": 64,
+  "pseudocode": "long target(long arg0) { ... }",
+  "line_mappings": [
+    {"line_number": 2, "addresses": [4198404]}
+  ],
+  "variables": [
+    {
+      "variable_id": "v3",
+      "name": "count",
+      "type": "long",
+      "kind": "stack",
+      "arg_index": null,
+      "stack_offset": null,
+      "line_numbers": [2],
+      "addresses": [4198404]
+    }
+  ]
+}
+```
+
+Manifold needs a sidecar because its current CLI emits one C translation unit.
+Writing `<output.c>.decbench.json` keeps the existing interface and works for
+both native and bind-mounted Docker runs. The sidecar must contain a schema
+version, SHA-256 of the exact output bytes, and per-function records with
+`name`, `entry_va`, exclusive `end_va`, and the same `line_mappings` and
+`variables` arrays. Its line numbers are 1-based in the whole translation unit,
+and each function record includes its final definition's `start_line` and
+`end_line`. The adapter can then verify the hash and translate body lines after
+adding DecBench's per-function preamble. Direct variable `addresses` remain
+required, so a preamble transformation cannot create variable provenance.
+
 Variable addresses normally come from native occurrence-line evidence. r2dec's
 `afvRj` / `afvWj` access lists are stronger than its rendered line offsets and
 are therefore retained directly; `line_numbers` records exact address joins

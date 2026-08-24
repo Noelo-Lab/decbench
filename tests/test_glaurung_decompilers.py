@@ -264,7 +264,12 @@ class TestDockerInstall:
 
         result = RawGlaurungDecompiler().decompile_binary(tiny_binary, function_names={target})
 
-        assert result.functions["add_nums"].address == target
+        function = result.functions["add_nums"]
+        assert function.address == target
+        # The current producer has no final-AST lineage. Do not manufacture
+        # native evidence by joining this C spelling to an earlier IR.
+        assert function.line_mappings == []
+        assert function.variables == []
         assert result.decompiler.extra["run_via"] == "docker"
         run = next(
             call
