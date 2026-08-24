@@ -191,6 +191,30 @@ Every mapped address is normalized to the binary's linked ELF/PE address space
 and should identify a machine instruction in that function. A backend must
 collect text and mappings from the same render pass; pairing a Pseudo-C render
 with independently enumerated IL rows produces invalid line numbers.
+
+The in-process pipeline and scalable driver pass each complete
+`DecompilationResult` through the shared native-provenance sanitizer. It indexes
+DWARF function identities and executable regions once per binary, resolves each
+function by exact name plus entry address (including split DWARF ranges), and
+retains only exact Capstone instruction starts. ARM Thumb-state bits are
+normalized only when the cleared address is an exact start; ELF M-profile
+attributes enable the Cortex-M decoder mode. Valid subsets and direct-only
+variable addresses survive independently. Empty mapping rows are removed, but
+variables and decompiled code are never discarded merely because their address
+evidence fails validation. Unmapped signature/declaration line numbers also
+survive; a variable line number is removed only when its original mapped row is
+removed.
+
+The scalable driver intentionally decompiles a stripped worker copy, so its
+worker records validation as deferred. After address-to-DWARF relabeling, the
+parent validates strictly against the unstripped original before evaluation and
+checkpoint persistence. The ordinary in-process pipeline validates strictly at
+its adapter boundary. If the exact binary/function context is unavailable at a
+final boundary, native address claims fail closed while code and structured
+variables remain available to usage/argument/stack matching. Durable metadata
+contains only aggregate status, counts, and fixed reason counts—never addresses,
+variable/function names, or exception text.
+
 Fresh checkpoint evidence can be checked independently with
 `scripts/audit_native_provenance.py`; its strict sample-manifest and
 architecture-aware validation contract is documented in

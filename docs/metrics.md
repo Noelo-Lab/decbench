@@ -219,6 +219,13 @@ merges. Canonical promotion is transactional: any scoring exception, reported me
 error, or exact function/decompiler coverage mismatch leaves the existing overlay
 unchanged. Explicit A/B outputs remain usable for partial experiments.
 
+Before scoring each checkpoint result, the re-evaluator resolves the binary in
+the selected results tree, deep-copies and relocates the result, and applies the
+same strict native-provenance sanitizer as a fresh run. Thus TypeMatch v10 can
+reuse valid subsets of historical IDA/Kuna/native evidence without trusting
+cross-function, padding, or instruction-interior claims. This is in-memory only:
+the raw checkpoint pickle is never rewritten.
+
 Summarize independently generated modes with the shared-denominator reporter,
 not the re-evaluator's per-mode console mean:
 

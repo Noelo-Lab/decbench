@@ -463,6 +463,28 @@ summary goes to stderr. An explicit output must be outside the audited result
 tree and is atomically replaced, preserving the read-only contract even when a
 path is mistyped or hardlinked to an existing result file.
 
+Fresh runs sanitize provenance before checkpoint persistence. Historical raw
+checkpoints remain immutable: `reeval_typematch.py` relocates and sanitizes a
+deep copy in memory. When a durable audit-ready checkpoint set is useful, make
+an explicit derived copy instead:
+
+```bash
+python scripts/sanitize_native_checkpoints.py \
+  results/full_run /tmp/full-run-sanitized-checkpoints
+python scripts/audit_native_provenance.py results/full_run \
+  --checkpoint /tmp/full-run-sanitized-checkpoints/sailr.pkl \
+  --output /tmp/sanitized-native-audit.json
+```
+
+The destination must not exist and must be outside the canonical
+`checkpoints/` directory. The command loads every selected pickle, relocates
+results to the source tree's compiled binaries, sanitizes strictly, writes a
+digest/status manifest, and atomically publishes the whole destination only
+after every checkpoint succeeds. Optional trailing project stems restrict the
+copy. It never rewrites raw checkpoints and its durable sanitizer metadata has
+aggregate counts/reasons only; exact rejected addresses remain confined to the
+explicit audit report.
+
 ## The FULL run
 
 A **full run = EVERY project AND EVERY supported decompiler**: all of
@@ -565,9 +587,10 @@ coverage (`--allow-drops` / `DECBENCH_ALLOW_DROPS=1` overrides;
 After adding a decompiler, refresh the overlays and re-finalize before
 publishing.
 
-**A reeval can only fix what the checkpoint recorded.** `reeval_typematch.py`
-recomputes the METRIC from `FunctionDecompilation.variables`; it cannot repair a
-backend that stored the wrong thing. The live case: PR #60 fix 3 corrected IDA's
+**A reeval can only use what the checkpoint recorded.** `reeval_typematch.py`
+can discard invalid native claims while retaining their valid subsets, but it
+cannot invent missing variables, argument positions, or usage evidence. The
+live case: PR #60 fix 3 corrected IDA's
 `arg_index` from Hex-Rays allocation order to `cfunc.argidx`, but every
 `checkpoints/*.pkl` in `results/full_run` was written BEFORE that fix and still
 carries the scrambled indices, so re-scoring from checkpoints reproduces the old
