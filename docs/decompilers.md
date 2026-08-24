@@ -202,12 +202,15 @@ DWARF function identities and executable regions once per binary, resolves each
 function by exact name plus entry address (including split DWARF ranges), and
 retains only exact Capstone instruction starts. ARM Thumb-state bits are
 normalized only when the cleared address is an exact start; ELF M-profile
-attributes enable the Cortex-M decoder mode. Valid subsets and direct-only
-variable addresses survive independently. Empty mapping rows are removed, but
-variables and decompiled code are never discarded merely because their address
-evidence fails validation. Unmapped signature/declaration line numbers also
-survive; a variable line number is removed only when its original mapped row is
-removed.
+attributes enable the Cortex-M decoder mode. ARM instruction state comes from
+an odd entry address, an exact or unique named ELF function symbol, or a known
+PE ARM machine type. Missing, conflicting, or non-unique state fails closed;
+M-profile is a Thumb fallback only when no symbol is available and rejects an
+explicit ARM-state symbol. Valid subsets and direct-only variable addresses
+survive independently. Empty mapping rows are removed, but variables and
+decompiled code are never discarded merely because their address evidence
+fails validation. Unmapped signature/declaration line numbers also survive; a
+variable line number is removed only when its original mapped row is removed.
 
 The scalable driver intentionally decompiles a stripped worker copy, so its
 worker records validation as deferred. After address-to-DWARF relabeling, the

@@ -6,7 +6,10 @@ from types import SimpleNamespace
 import pytest
 
 from decbench.decompilers import provenance
-from decbench.decompilers.provenance import sanitize_native_provenance
+from decbench.decompilers.provenance import (
+    NativeProvenanceContext,
+    sanitize_native_provenance,
+)
 from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
@@ -37,6 +40,23 @@ def _result(*functions: FunctionDecompilation) -> DecompilationResult:
         decompiler=DecompilerMetadata(decompiler_name="test"),
         functions={function.name: function for function in functions},
     )
+
+
+def _arm_mode_resolver(
+    *,
+    binary_format: str = "elf",
+    mclass: bool = False,
+    exact: set[bool] | None = None,
+    named: list[bool] | None = None,
+    pe_machine: int | None = None,
+) -> NativeCodeResolver:
+    resolver = object.__new__(NativeCodeResolver)
+    resolver.info = binfmt.BinInfo(binary_format, "arm", 32)
+    resolver.mclass = mclass
+    resolver._thumb_by_address = {0x1000: set(exact or ())}  # type: ignore[assignment]
+    resolver._thumb_by_name = {"target": list(named or ())}  # type: ignore[assignment]
+    resolver._pe_machine = pe_machine
+    return resolver
 
 
 class _Resolver:
@@ -231,8 +251,45 @@ def test_sanitizer_builds_one_binary_context_for_all_functions(
 
     sanitize_native_provenance(_result(first, second))
 
-    assert created == [Path("tool")]
+    assert created == [Path("tool").resolve()]
     assert resolved == ["first", "second"]
+
+
+def test_explicit_context_reuses_one_binary_index_across_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[Path] = []
+
+    class Resolver:
+        def __init__(self, path: Path):
+            created.append(path)
+
+        def resolve(self, _function_name: str, address: int) -> FunctionCode:
+            return _code(address)
+
+    monkeypatch.setattr(provenance, "NativeCodeResolver", Resolver)
+    context = NativeProvenanceContext(Path("tool"))
+    first = _result(
+        FunctionDecompilation(
+            name="first",
+            address=0x1000,
+            decompiled_code="void first(void) {}",
+            variables=[VariableInfo(name="x", addresses=[0x1000])],
+        )
+    )
+    second = _result(
+        FunctionDecompilation(
+            name="second",
+            address=0x2000,
+            decompiled_code="void second(void) {}",
+            variables=[VariableInfo(name="y", addresses=[0x2000])],
+        )
+    )
+
+    sanitize_native_provenance(first, Path("tool"), context=context)
+    sanitize_native_provenance(second, Path("tool"), context=context)
+
+    assert created == [Path("tool").resolve()]
 
 
 def test_sanitizer_does_not_resolve_line_only_declaration_evidence(
@@ -277,7 +334,7 @@ def test_native_resolver_uses_entry_pc_and_indexes_dwarf_once(
     }
     binary = tmp_path / "tool"
     binary.write_bytes(b"fixture")
-    calls = {"dwarf": 0, "regions": 0}
+    calls = {"decode": 0, "dwarf": 0, "regions": 0}
 
     monkeypatch.setattr(binfmt, "detect", lambda _path: binfmt.BinInfo("elf", "x86-64", 64))
 
@@ -297,18 +354,92 @@ def test_native_resolver_uses_entry_pc_and_indexes_dwarf_once(
         lambda die, _name: "first" if die is first else "second",
     )
     monkeypatch.setattr(native_code, "die_ranges", lambda die, _info: ranges[id(die)])
-    monkeypatch.setattr(
-        native_code,
-        "decode_instruction_starts",
-        lambda _info, extents, _regions, **_kwargs: frozenset(begin for begin, _end in extents),
-    )
+
+    def decode(
+        _info: object,
+        extents: tuple[tuple[int, int], ...],
+        _regions: object,
+        **_kwargs: object,
+    ) -> frozenset[int]:
+        calls["decode"] += 1
+        return frozenset(begin for begin, _end in extents)
+
+    monkeypatch.setattr(native_code, "decode_instruction_starts", decode)
 
     resolver = NativeCodeResolver(binary)
+    assert resolver.resolve("first", 0x2670).ranges == ranges[id(first)]
     assert resolver.resolve("first", 0x2670).ranges == ranges[id(first)]
     assert resolver.resolve("second", 0x3000).ranges == ranges[id(second)]
     with pytest.raises(ValueError, match="no DWARF function matches"):
         resolver.resolve("first", 0x2640)
-    assert calls == {"dwarf": 1, "regions": 1}
+    with pytest.raises(ValueError, match="no DWARF function matches"):
+        resolver.resolve("first", 0x2640)
+    assert calls == {"decode": 2, "dwarf": 1, "regions": 1}
+
+
+@pytest.mark.parametrize(
+    ("resolver", "expected"),
+    [
+        (_arm_mode_resolver(exact={False}), False),
+        (_arm_mode_resolver(exact={True}), True),
+        (_arm_mode_resolver(exact={False}, named=[True]), False),
+        (_arm_mode_resolver(exact={True}, named=[False, False]), True),
+        (_arm_mode_resolver(named=[False]), False),
+        (_arm_mode_resolver(named=[True]), True),
+        (_arm_mode_resolver(mclass=True), True),
+    ],
+)
+def test_arm_elf_mode_uses_exact_named_and_mprofile_authorities(
+    resolver: NativeCodeResolver,
+    expected: bool,
+) -> None:
+    assert resolver._uses_thumb("target", 0x1000) is expected
+
+
+@pytest.mark.parametrize(
+    "resolver",
+    [
+        _arm_mode_resolver(),
+        _arm_mode_resolver(exact={False, True}),
+        _arm_mode_resolver(named=[True, True]),
+        _arm_mode_resolver(mclass=True, exact={False}),
+        _arm_mode_resolver(mclass=True, named=[False]),
+        _arm_mode_resolver(mclass=True, named=[True, True]),
+    ],
+)
+def test_arm_elf_mode_fails_closed_on_missing_conflicting_or_nonunique_state(
+    resolver: NativeCodeResolver,
+) -> None:
+    with pytest.raises(ValueError, match="ARM instruction state"):
+        resolver._uses_thumb("target", 0x1000)
+
+
+def test_odd_arm_entry_selects_thumb_before_symbol_fallback() -> None:
+    resolver = _arm_mode_resolver(exact={False})
+
+    assert resolver._uses_thumb("target", 0x1001) is True
+
+
+@pytest.mark.parametrize(
+    ("machine", "expected"),
+    [
+        (0x1C0, False),
+        (0x1C2, True),
+        (0x1C4, True),
+    ],
+)
+def test_pe_arm_machine_selects_instruction_state(machine: int, expected: bool) -> None:
+    resolver = _arm_mode_resolver(binary_format="pe", pe_machine=machine)
+
+    assert resolver._uses_thumb("target", 0x1000) is expected
+
+
+@pytest.mark.parametrize("machine", [None, 0xFFFF])
+def test_pe_arm_unknown_machine_fails_closed(machine: int | None) -> None:
+    resolver = _arm_mode_resolver(binary_format="pe", pe_machine=machine)
+
+    with pytest.raises(ValueError, match="ARM instruction state"):
+        resolver._uses_thumb("target", 0x1000)
 
 
 def test_pipeline_sanitizes_adapter_result_with_explicit_deferral(

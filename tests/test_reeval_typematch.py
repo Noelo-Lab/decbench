@@ -450,8 +450,14 @@ def test_reevaluation_sanitizes_relocated_copy_without_rewriting_checkpoint(
     relocated = tmp_path / "O0" / "proj" / "compiled" / "bin"
     seen: list[tuple[Path, Path]] = []
 
-    def sanitize(result: DecompilationResult, binary: Path) -> dict[str, object]:
+    def sanitize(
+        result: DecompilationResult,
+        binary: Path,
+        *,
+        context: reeval_typematch.NativeProvenanceContext,
+    ) -> dict[str, object]:
         seen.append((result.binary_path, binary))
+        assert context.binary_path == relocated
         result.functions["f"].line_mappings = []
         return {"status": "sanitized"}
 

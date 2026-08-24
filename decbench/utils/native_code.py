@@ -140,23 +140,6 @@ def _pe_machine(path: Path) -> int | None:
         return None
 
 
-def uses_thumb(
-    binary_path: Path,
-    info: binfmt.BinInfo,
-    function_name: str,
-    function_address: int,
-) -> bool:
-    """Select ARM or Thumb without relying on decode success as a heuristic."""
-
-    if info.arch != "arm":
-        return False
-    if function_address & 1:
-        return True
-    if info.fmt == "elf":
-        return bool(binfmt.elf_function_is_thumb(binary_path, function_name, function_address))
-    return _pe_machine(binary_path) in {0x1C2, 0x1C4}
-
-
 def decode_instruction_starts(
     info: binfmt.BinInfo,
     ranges: Sequence[tuple[int, int]],
@@ -226,6 +209,7 @@ class NativeCodeResolver:
         self._ranges: defaultdict[tuple[str, int], set[tuple[tuple[int, int], ...]]] = defaultdict(
             set
         )
+        self._resolved: dict[tuple[str, int], FunctionCode | str] = {}
         for cu in dwarfinfo.iter_CUs():
             for die in cu.iter_DIEs():
                 if die.tag != "DW_TAG_subprogram":
@@ -271,16 +255,50 @@ class NativeCodeResolver:
         if function_address & 1:
             return True
         if self.info.fmt == "pe":
-            return self._pe_machine in {0x1C2, 0x1C4}
+            if self._pe_machine in {0x1C2, 0x1C4}:
+                return True
+            if self._pe_machine == 0x1C0:
+                return False
+            raise ValueError("ARM instruction state is unavailable for the PE machine")
         exact = self._thumb_by_address.get(function_address & ~1, set())
         if exact:
-            return next(iter(exact)) if len(exact) == 1 else False
+            if len(exact) != 1:
+                raise ValueError("ARM instruction state has conflicting exact ELF symbols")
+            state = next(iter(exact))
+            if self.mclass and not state:
+                raise ValueError("ARM instruction state contradicts the ELF M-profile")
+            return state
         named = self._thumb_by_name.get(function_name, [])
-        return named[0] if len(named) == 1 else False
+        if len(named) == 1:
+            state = named[0]
+            if self.mclass and not state:
+                raise ValueError("ARM instruction state contradicts the ELF M-profile")
+            return state
+        if not named and self.mclass:
+            return True
+        raise ValueError(
+            "ARM instruction state is unavailable without an exact or unique named ELF symbol"
+        )
 
     def resolve(self, function_name: str, function_address: int) -> FunctionCode:
         """Resolve one exact function through the cached binary index."""
 
+        cache_key = (function_name, function_address)
+        cached = self._resolved.get(cache_key)
+        if isinstance(cached, str):
+            raise ValueError(cached)
+        if cached is not None:
+            return cached
+        try:
+            code = self._resolve_uncached(function_name, function_address)
+        except Exception as exc:  # noqa: BLE001
+            message = str(exc)
+            self._resolved[cache_key] = message
+            raise ValueError(message) from exc
+        self._resolved[cache_key] = code
+        return code
+
+    def _resolve_uncached(self, function_name: str, function_address: int) -> FunctionCode:
         expected = function_address & ~1 if self.info.arch == "arm" else function_address
         candidates = self._ranges.get((function_name, expected), set())
         if not candidates:

@@ -22,7 +22,11 @@ from pathlib import Path
 from typing import Any
 
 import decbench.decompilers  # noqa: F401
-from decbench.decompilers.provenance import SANITIZER_SCHEMA, sanitize_native_provenance
+from decbench.decompilers.provenance import (
+    SANITIZER_SCHEMA,
+    NativeProvenanceContext,
+    sanitize_native_provenance,
+)
 from decbench.models.decompilation import DecompilationResult
 from decbench.utils.results_tree import compiled_dir, resolve_binary
 
@@ -105,6 +109,7 @@ def _sanitize_checkpoint(
                 raise ValueError(f"{project}/{opt_name}/{binary_name}: malformed backend mapping")
             name = str(binary_name)
             binary_path = resolve_binary(directory, name) or directory / name
+            context = NativeProvenanceContext(binary_path)
             for backend, result in decompilers.items():
                 if not isinstance(result, DecompilationResult):
                     raise ValueError(
@@ -112,7 +117,11 @@ def _sanitize_checkpoint(
                         "checkpoint value is not a DecompilationResult"
                     )
                 result.binary_path = binary_path
-                metadata = sanitize_native_provenance(result, binary_path)
+                metadata = sanitize_native_provenance(
+                    result,
+                    binary_path,
+                    context=context,
+                )
                 result_count += 1
                 status_counts[str(metadata["status"])] += 1
                 for key, value in metadata.items():

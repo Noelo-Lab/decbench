@@ -33,6 +33,29 @@ _COUNT_NAMES = (
 )
 
 
+class NativeProvenanceContext:
+    """Lazily cache one exact native-code resolver across backend results."""
+
+    def __init__(self, binary_path: Path):
+        self.binary_path = binary_path.resolve()
+        self._initialized = False
+        self._resolver: NativeCodeResolver | None = None
+        self._error_message: str | None = None
+
+    def resolver(self) -> NativeCodeResolver:
+        if not self._initialized:
+            try:
+                self._resolver = NativeCodeResolver(self.binary_path)
+            except Exception as exc:  # noqa: BLE001
+                self._error_message = str(exc)
+            self._initialized = True
+        if self._error_message is not None:
+            raise ValueError(self._error_message)
+        if self._resolver is None:
+            raise RuntimeError("native provenance resolver initialization failed")
+        return self._resolver
+
+
 @dataclass
 class _SanitizerReport:
     counts: dict[str, int] = field(default_factory=lambda: {name: 0 for name in _COUNT_NAMES})
@@ -74,6 +97,8 @@ def _function_failure_reason(error: BaseException) -> str:
         return "binary_format_unrecognized"
     if "unsupported binary format/architecture" in message:
         return "binary_target_unsupported"
+    if "ARM instruction state" in message:
+        return "arm_instruction_state_unavailable"
     return "validation_error"
 
 
@@ -194,6 +219,7 @@ def sanitize_native_provenance(
     binary_path: Path | None = None,
     *,
     defer_unavailable: bool = False,
+    context: NativeProvenanceContext | None = None,
 ) -> dict[str, Any]:
     """Validate all native provenance in one result against one binary context.
 
@@ -214,7 +240,11 @@ def sanitize_native_provenance(
 
     path = Path(binary_path if binary_path is not None else result.binary_path)
     try:
-        resolver = NativeCodeResolver(path)
+        if context is None:
+            context = NativeProvenanceContext(path)
+        elif context.binary_path != path.resolve():
+            raise ValueError("native provenance context does not match the requested binary")
+        resolver = context.resolver()
     except Exception as exc:  # noqa: BLE001
         report.record_function_failure(exc)
         report.counts["functions_unresolved"] = len(candidates)

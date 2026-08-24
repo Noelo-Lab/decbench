@@ -29,7 +29,10 @@ from pathlib import Path
 from typing import TypedDict
 
 import decbench.decompilers  # noqa: F401 (register backends so pickles load)
-from decbench.decompilers.provenance import sanitize_native_provenance
+from decbench.decompilers.provenance import (
+    NativeProvenanceContext,
+    sanitize_native_provenance,
+)
 from decbench.metrics.base import MetricConfig
 from decbench.metrics.type_match import TypeMatchMetric
 from decbench.models.decompilation import DecompilationResult
@@ -201,17 +204,21 @@ def _relocate_decompilation(decompilation: object, binary_path: Path) -> object:
 def _prepare_decompilation(
     decompilation: object,
     functions: set[str] | None,
-    binary_path: Path,
+    context: NativeProvenanceContext,
 ) -> object:
     selected = (
         _limit_decompilation(decompilation, functions) if functions is not None else decompilation
     )
-    relocated = _relocate_decompilation(selected, binary_path)
+    relocated = _relocate_decompilation(selected, context.binary_path)
     if not isinstance(relocated, DecompilationResult):
         raise BinaryRelocationError(
-            f"checkpoint decompilation is not a DecompilationResult for {binary_path}"
+            f"checkpoint decompilation is not a DecompilationResult for {context.binary_path}"
         )
-    sanitize_native_provenance(relocated, binary_path)
+    sanitize_native_provenance(
+        relocated,
+        context.binary_path,
+        context=context,
+    )
     return relocated
 
 
@@ -345,13 +352,14 @@ def main(argv: Sequence[str] | None = None) -> None:
                         promotion_failures.append(f"binary relocation failed for {context}: {exc}")
                         continue
                     raise
+                native_context = NativeProvenanceContext(binary_path)
                 for decompiler_name, decompilation in decompilers.items():
                     try:
                         result = metric.compute_for_binary(
                             _prepare_decompilation(
                                 decompilation,
                                 selected_functions,
-                                binary_path,
+                                native_context,
                             ),
                             preprocessed_sources=sources,
                         )
