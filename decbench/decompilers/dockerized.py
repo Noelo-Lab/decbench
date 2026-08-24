@@ -26,12 +26,13 @@ Common design (:class:`DockerizedDecompiler`):
     with DWARF and the rest of decbench — the same convention declib_dec uses.
 
     These tools do not expose provenance uniformly. RetDec supplies native line
-    and variable evidence from annotated JSON and DSM output, while r2dec attaches
-    ``pddj`` line offsets plus ``afv*`` variable metadata and access addresses
-    when available. Reko leaves these optional fields empty. The metrics degrade
-    gracefully when provenance is absent: GED still parses the recovered C,
-    byte_match recompiles it, and type_match falls back to syntax and usage
-    evidence.
+    and variable evidence from annotated JSON and DSM output. Reko's image emits
+    a sidecar that carries exact final-identifier identity through its lower IR
+    and structured AST, yielding native variable access addresses without a line
+    map. r2dec attaches ``pddj`` line offsets plus ``afv*`` variable metadata and
+    access addresses when available. Older images retain the text-only fallback,
+    and the metrics degrade gracefully to syntax and usage evidence when optional
+    provenance is absent.
 
 Images are **not** auto-built. ``is_available()`` only reports whether the image
 already exists locally; build it explicitly with ``decbench decompiler-build
@@ -155,7 +156,7 @@ def elf_function_symbols(binary_path: Path) -> list[tuple[str, int]]:
 
 
 _FUNC_DEF_RE = re.compile(
-    r"^[A-Za-z_][\w\s\*\(\),:<>\[\]&]*?\b([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{",
+    r"^[A-Za-z_][\w\s\*\(\),:<>\[\]&]*?\b([A-Za-z_]\w*)\s*\([^;{}]*\)" r"(?:\s*\{|\s*$)",
     re.MULTILINE,
 )
 
@@ -163,12 +164,13 @@ _FUNC_DEF_RE = re.compile(
 def split_c_functions(combined_c: str) -> dict[str, str]:
     """Best-effort split of whole-program C into ``{function_name: snippet}``.
 
-    Walks the source tracking brace depth. When a ``name(...) {`` definition is
-    seen at depth 0, everything up to the matching closing brace is captured for
-    that name. Only top-level definitions are recorded (nested braces are
-    balanced). This is heuristic — decompiler output is messy — and any function
-    we cannot isolate simply won't get an individual snippet (callers fall back
-    to other names or the combined source).
+    Walks the source tracking brace depth. When a ``name(...)`` definition is
+    seen at depth 0, with its opening brace on that line or a following line,
+    everything up to the matching closing brace is captured for that name. Only
+    top-level definitions are recorded (nested braces are balanced). This is
+    heuristic — decompiler output is messy — and any function we cannot isolate
+    simply won't get an individual snippet (callers fall back to other names or
+    the combined source).
     """
     results: dict[str, str] = {}
     lines = combined_c.splitlines(keepends=True)
@@ -890,7 +892,7 @@ class RetDecDecompiler(DockerizedDecompiler):
 
 @register_decompiler("reko")
 class RekoDecompiler(DockerizedDecompiler):
-    """Reko via a Docker image (.NET CLI ``reko --c <binary>``).
+    """Reko via a Docker image (.NET CLI ``reko decompile <binary>``).
 
     Build: ``decbench decompiler-build reko`` (slow — builds Reko via dotnet).
     The image's helper script runs Reko headless and copies the generated
@@ -902,19 +904,235 @@ class RekoDecompiler(DockerizedDecompiler):
     image = "decbench/reko:latest"
     dockerfile = "reko.Dockerfile"
 
+    def __init__(self, config: DecompilerConfig | None = None):
+        super().__init__(config)
+        self._native_provenance: dict[int, dict[str, Any]] = {}
+
     def _container_decompile(self, binary_path: Path, work_dir: Path) -> str:
+        self._native_provenance = {}
         proc = self._run_docker(
-            args=[f"/in/{binary_path.name}", "/work/out.c"],
+            args=[
+                f"/in/{binary_path.name}",
+                "/work/out.c",
+                "/work/native-provenance.json",
+            ],
             binary_path=binary_path,
             work_dir=work_dir,
         )
         out_c = work_dir / "out.c"
         if out_c.is_file():
+            self._native_provenance = _load_reko_provenance(work_dir / "native-provenance.json")
             return out_c.read_text(errors="replace")
         raise RuntimeError(
             f"reko produced no out.c (rc={proc.returncode}): "
             f"{proc.stderr[-500:] if proc.stderr else ''}"
         )
+
+    def _build_result(
+        self,
+        binary_path: Path,
+        combined_c: str,
+        functions: list[tuple[str, int]] | None,
+        function_names: set[int] | set[str] | None,
+        elapsed: float,
+        timed_out: bool,
+        error: str | None,
+        output_dir: Path | None,
+    ) -> DecompilationResult:
+        """Bind Reko's stripped names and native variables by exact entry address."""
+        if functions is not None:
+            name_to_addr = {name: address for name, address in functions}
+        else:
+            name_to_addr = dict(elf_function_symbols(binary_path))
+
+        if function_names:
+            address_targets = _addr_targets_of(function_names)
+            name_targets = {value for value in function_names if isinstance(value, str)}
+            name_to_addr = {
+                name: address
+                for name, address in name_to_addr.items()
+                if name in name_targets
+                or (address_targets and raw_common._addr_matches(address, address_targets))
+            }
+
+        snippets = split_c_functions(combined_c) if combined_c else {}
+        executable_regions = _reko_executable_regions(binary_path)
+        decompiled: dict[str, FunctionDecompilation] = {}
+        failed: list[str] = []
+        native_variables = 0
+        for name, address in name_to_addr.items():
+            record = _reko_record_at(self._native_provenance, address)
+            reko_name = str(record.get("name") or "") if record else ""
+            code = snippets.get(reko_name) if reko_name else None
+            if not code:
+                code = snippets.get(name)
+            if not code:
+                failed.append(name)
+                continue
+            code = self._normalize_code(code)
+            code_identifier = _func_ident_in_code(code)
+            if code_identifier and code_identifier != name:
+                code = re.sub(r"\b" + re.escape(code_identifier) + r"\b", name, code)
+            variables = _reko_variables_from_code(
+                code,
+                name,
+                record,
+                executable_regions,
+            )
+            native_variables += sum(bool(variable.addresses) for variable in variables)
+            decompiled[name] = FunctionDecompilation(
+                name=name,
+                address=address,
+                decompiled_code=code,
+                line_count=code.count("\n") + 1,
+                line_mappings=[],
+                variables=variables,
+                metadata=raw_common.extract_metrics(code),
+            )
+
+        extra: dict[str, object] = {
+            "via": "docker",
+            "image": self.image,
+            "native_provenance_schema": _REKO_PROVENANCE_SCHEMA,
+            "native_provenance_functions": len(self._native_provenance),
+            "native_provenance_variables": native_variables,
+        }
+        if error:
+            extra["error"] = error
+        if not combined_c:
+            failed = list(name_to_addr.keys()) or ["all"]
+
+        return DecompilationResult(
+            binary_path=binary_path,
+            binary_name=binary_path.stem,
+            decompiler=DecompilerMetadata(
+                decompiler_name=self.id,
+                decompiler_version=self.get_version(),
+                total_time_seconds=elapsed,
+                timeout_occurred=timed_out,
+                failed_functions=failed,
+                extra=extra,
+            ),
+            functions=decompiled,
+            combined_source=combined_c or None,
+            output_dir=output_dir,
+        )
+
+
+_REKO_PROVENANCE_SCHEMA = "decbench-reko-native-provenance-v1"
+
+
+def _reko_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value, 0) if isinstance(value, str) else int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _load_reko_provenance(path: Path) -> dict[int, dict[str, Any]]:
+    """Load an exact-identity Reko sidecar, dropping every ambiguous record."""
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(payload, dict) or payload.get("schema") != _REKO_PROVENANCE_SCHEMA:
+        return {}
+    records: dict[int, dict[str, Any]] = {}
+    duplicate_addresses: set[int] = set()
+    raw_functions = payload.get("functions")
+    if not isinstance(raw_functions, list):
+        return {}
+    for raw_record in raw_functions:
+        if not isinstance(raw_record, dict):
+            continue
+        address = _reko_int(raw_record.get("address"))
+        name = str(raw_record.get("name") or "")
+        if address is None or not re.fullmatch(r"[A-Za-z_]\w*", name):
+            continue
+        variables: dict[str, list[int]] = {}
+        duplicate_names: set[str] = set()
+        raw_variables = raw_record.get("variables")
+        if not isinstance(raw_variables, list):
+            raw_variables = []
+        for raw_variable in raw_variables:
+            if not isinstance(raw_variable, dict):
+                continue
+            variable_name = str(raw_variable.get("name") or "")
+            if not re.fullmatch(r"[A-Za-z_]\w*", variable_name):
+                continue
+            if variable_name in variables:
+                duplicate_names.add(variable_name)
+                continue
+            raw_addresses = raw_variable.get("addresses")
+            if not isinstance(raw_addresses, list):
+                continue
+            variables[variable_name] = sorted(
+                {parsed for value in raw_addresses if (parsed := _reko_int(value)) is not None}
+            )
+        for duplicate in duplicate_names:
+            variables.pop(duplicate, None)
+        record = {"name": name, "address": address, "variables": variables}
+        if address in records:
+            duplicate_addresses.add(address)
+        else:
+            records[address] = record
+    for duplicate_address in duplicate_addresses:
+        records.pop(duplicate_address, None)
+    return records
+
+
+def _reko_record_at(provenance: dict[int, dict[str, Any]], address: int) -> dict[str, Any] | None:
+    matches = [
+        record
+        for record_address, record in provenance.items()
+        if raw_common._addr_matches(address, {record_address})
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _reko_executable_regions(binary_path: Path) -> tuple[tuple[int, int], ...]:
+    try:
+        from decbench.utils.binfmt import executable_regions
+
+        return tuple((start, start + len(data)) for start, data in executable_regions(binary_path))
+    except Exception:  # noqa: BLE001
+        return ()
+
+
+def _reko_variables_from_code(
+    code: str,
+    function_name: str,
+    record: dict[str, Any] | None,
+    executable_regions: tuple[tuple[int, int], ...],
+) -> list[VariableInfo]:
+    """Parse every rendered variable, then attach only verified native addresses."""
+    try:
+        from decbench.metrics.type_match import parse_c_variables
+
+        variables = parse_c_variables(code, function_name)
+    except Exception:  # noqa: BLE001
+        return []
+    evidence = record.get("variables", {}) if record else {}
+    name_counts: dict[str, int] = {}
+    for variable in variables:
+        if variable.name:
+            name_counts[variable.name] = name_counts.get(variable.name, 0) + 1
+    out: list[VariableInfo] = []
+    for variable in variables:
+        addresses: list[int] = []
+        if variable.name and name_counts.get(variable.name) == 1:
+            addresses = sorted(
+                {
+                    address
+                    for address in evidence.get(variable.name, [])
+                    if any(start <= address < end for start, end in executable_regions)
+                }
+            )
+        out.append(variable.model_copy(update={"addresses": addresses}))
+    return out
 
 
 _R2_ENTRY_NAMES = frozenset({"entry0", "entry1", "entry.init0", "entry.fini0", "entry.preinit0"})

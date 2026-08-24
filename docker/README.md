@@ -76,11 +76,15 @@ RetDec **v5.0** Linux release tarball (`avast/retdec`).
 ### Reko
 
 The image ships `/opt/reko/decompile.sh` (`reko-decompile.sh` in this dir),
-invoked as `/in/<bin> /work/out.c`; it runs Reko's headless CmdLine driver and
-concatenates every emitted `*.c` into `/work/out.c`. Reko is built from source
-with the **.NET 8 SDK** (multi-stage build →
-`mcr.microsoft.com/dotnet/runtime:8.0` runtime). Heavy build (clones +
-`dotnet publish`).
+invoked as `/in/<bin> /work/out.c /work/native-provenance.json`; it runs Reko's
+headless CmdLine driver and concatenates every emitted `*.c` into `/work/out.c`.
+The pinned build also emits a sidecar by retaining exact final-identifier object
+identity across Reko's lower IR and structured AST. DecBench uses its direct
+instruction addresses for variable correspondence and exact function entry
+addresses to bind stripped names. Ambiguous names are omitted. Reko is built
+from source with the **.NET 8 SDK** (multi-stage build →
+`mcr.microsoft.com/dotnet/runtime:8.0` runtime). Heavy build (clones + `dotnet
+publish`).
 
 ### r2dec
 

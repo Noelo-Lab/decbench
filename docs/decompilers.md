@@ -229,6 +229,14 @@ The canonical raw adapters use these native sources:
   Its exact snippet supplies recovered types and ABI argument positions; duplicate
   or shadowed identifiers abstain from variable-occurrence evidence. Missing or
   malformed annotated output falls back to the older plain-C path.
+- Reko's pinned image captures exact `Identifier` object identities and their
+  lower-IR `Statement.Address` values immediately before structuring, then
+  intersects them with the identifiers that survive into the final Absyn tree.
+  Synthetic def/use/phi/alias statements are excluded and duplicate final names
+  abstain. The resulting sidecar carries direct variable addresses and binds
+  stripped Reko function names to requested targets by exact entry address. Reko's
+  renderer has no stable token-to-line callback, so it deliberately emits no line
+  map; older images retain the text/usage fallback.
 - Kuna accepts additive `line_mappings` entries (`line_number`, `addresses`)
   and variable `line_numbers`/`addresses` in `decompile-all --json`. Missing
   fields remain empty for compatibility with older Kuna builds.

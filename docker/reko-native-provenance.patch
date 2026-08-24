@@ -1,0 +1,20 @@
+diff --git a/src/Decompiler/Decompiler.cs b/src/Decompiler/Decompiler.cs
+index 78b9108a3..8f5a73931 100644
+--- a/src/Decompiler/Decompiler.cs
++++ b/src/Decompiler/Decompiler.cs
+@@ -707,6 +707,7 @@ namespace Reko
+ 		{
+             if (project is null)
+                 return;
++            var nativeProvenance = NativeVariableProvenance.CaptureIfRequested(project.Programs);
+             foreach (var program in project.Programs)
+             {
+                 int i = 0;
+@@ -735,6 +736,7 @@ namespace Reko
+                 eventListener.Progress.Finish();
+             }
+             project.FireScriptEvent(ScriptEvent.OnProgramDecompiled);
++            nativeProvenance?.Write(project.Programs);
+             WriteDecompilerProducts();
+             eventListener.Progress.ShowStatus("Rewriting complete.");
+ 		}

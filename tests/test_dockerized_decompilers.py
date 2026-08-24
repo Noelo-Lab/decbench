@@ -19,11 +19,13 @@ import pytest
 from decbench.decompilers.dockerized import (
     _DOCKER_DIR,
     _R2_DRIVER_CONTAINER_PATH,
+    _REKO_PROVENANCE_SCHEMA,
     DockerizedDecompiler,
     R2DecDecompiler,
     RekoDecompiler,
     RetDecDecompiler,
     _func_ident_in_code,
+    _load_reko_provenance,
     _parse_retdec_json,
     _r2_bare_name,
     _r2_is_import,
@@ -389,6 +391,132 @@ def test_retdec_plain_output_fallback_when_json_is_unavailable(
     assert dec._container_decompile(tmp_path / "missing.bin", tmp_path) == plain
     assert "json" in calls[0]
     assert calls[1][-2:] == ["-o", "/work/out.c"]
+
+
+def test_split_accepts_opening_brace_on_following_line() -> None:
+    src = "void declaration(word32 value);\nvoid reko_style(word32 value)\n{\n\treturn;\n}\n"
+    parts = split_c_functions(src)
+    assert set(parts) == {"reko_style"}
+    assert "word32 value" in parts["reko_style"]
+
+
+def test_reko_sidecar_fails_closed_on_ambiguous_records(tmp_path: Path) -> None:
+    sidecar = tmp_path / "native.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "schema": _REKO_PROVENANCE_SCHEMA,
+                "functions": [
+                    {"name": "fn1000", "address": 0x1000, "variables": []},
+                    {"name": "other1000", "address": 0x1000, "variables": []},
+                    {
+                        "name": "fn2000",
+                        "address": "0x2000",
+                        "variables": [
+                            {"name": "local", "addresses": [0x2004]},
+                            {"name": "local", "addresses": [0x2008]},
+                            {"name": "kept", "addresses": [0x200C, "bad", -1]},
+                        ],
+                    },
+                ],
+            }
+        )
+    )
+
+    provenance = _load_reko_provenance(sidecar)
+    assert set(provenance) == {0x2000}
+    assert provenance[0x2000]["variables"] == {"kept": [0x200C]}
+
+    sidecar.write_text(json.dumps({"schema": _REKO_PROVENANCE_SCHEMA, "functions": 7}))
+    assert _load_reko_provenance(sidecar) == {}
+
+    sidecar.write_text(
+        json.dumps(
+            {
+                "schema": _REKO_PROVENANCE_SCHEMA,
+                "functions": [
+                    {
+                        "name": "fn3000",
+                        "address": 0x3000,
+                        "variables": [{"name": "bad", "addresses": 0x3004}],
+                    }
+                ],
+            }
+        )
+    )
+    assert _load_reko_provenance(sidecar)[0x3000]["variables"] == {}
+
+
+def test_reko_container_collects_native_sidecar(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    dec = RekoDecompiler()
+
+    def fake_run(**kwargs):  # noqa: ANN202
+        assert kwargs["args"][-1] == "/work/native-provenance.json"
+        (kwargs["work_dir"] / "out.c").write_text("int fn1000(void) { return 0; }\n")
+        (kwargs["work_dir"] / "native-provenance.json").write_text(
+            json.dumps(
+                {
+                    "schema": _REKO_PROVENANCE_SCHEMA,
+                    "functions": [{"name": "fn1000", "address": 0x1000, "variables": []}],
+                }
+            )
+        )
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(dec, "_run_docker", fake_run)
+    code = dec._container_decompile(Path("/nonexistent/bin"), tmp_path)
+    assert "fn1000" in code
+    assert dec._native_provenance[0x1000]["name"] == "fn1000"
+
+
+def test_reko_build_result_binds_names_and_native_variable_addresses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dec = RekoDecompiler()
+    dec._native_provenance = {
+        0x1000: {
+            "name": "fn1000",
+            "address": 0x1000,
+            "variables": {
+                "arg0": [0x1000, 0x1004],
+                "local": [0x1004, 0x1008, 0x3000],
+            },
+        }
+    }
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized._reko_executable_regions",
+        lambda _path: ((0x1000, 0x1020),),
+    )
+    combined = (
+        "int32_t fn1000(int32_t arg0) {\n"
+        "    int32_t local;\n"
+        "    local = arg0 + 1;\n"
+        "    return local;\n"
+        "}\n"
+    )
+    result = dec._build_result(
+        binary_path=Path("/nonexistent/bin"),
+        combined_c=combined,
+        functions=[("wanted", 0x1000)],
+        function_names={0x1000},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+
+    function = result.functions["wanted"]
+    assert "wanted(" in function.decompiled_code
+    assert "fn1000(" not in function.decompiled_code
+    assert function.line_mappings == []
+    variables = {variable.name: variable for variable in function.variables}
+    assert variables["arg0"].kind == "arg"
+    assert variables["arg0"].arg_index == 0
+    assert variables["arg0"].addresses == [0x1000, 0x1004]
+    assert variables["local"].addresses == [0x1004, 0x1008]
+    assert result.decompiler.extra["native_provenance_variables"] == 2
 
 
 class _FakeR2:
