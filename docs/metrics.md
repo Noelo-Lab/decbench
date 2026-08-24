@@ -227,7 +227,10 @@ the selected results tree, deep-copies and relocates the result, and applies the
 same strict native-provenance sanitizer as a fresh run. Thus TypeMatch v10 can
 reuse valid subsets of historical IDA/Kuna/native evidence without trusting
 cross-function, padding, or instruction-interior claims. This is in-memory only:
-the raw checkpoint pickle is never rewritten.
+the raw checkpoint pickle is never rewritten. Pickles created before additive
+variable-line/address fields existed are hydrated with empty lists at this boundary;
+the sanitizer records the number of hydrated fields and never treats schema repair as
+native evidence.
 
 Summarize independently generated modes with the shared-denominator reporter,
 not the re-evaluator's per-mode console mean:
