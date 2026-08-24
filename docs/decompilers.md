@@ -236,10 +236,14 @@ Hex-Rays coordinates, which DecBench shifts while preserving declib's synthetic
 function-entry row. For those three backends, exact parsed identifier bindings
 join uniquely named structured variables to validated rows. Duplicate or
 shadowed names, C parse errors, malformed rows, addresses outside the function,
-and lines outside the rendered text all abstain. Binary Ninja's declib renderer
-counts skipped `LinearView` header/warning rows in its map, so its offsets can
-drift within a function; `binja-declib` deliberately emits neither line nor
-variable-occurrence provenance until declib supplies an exact-row map.
+and lines outside the rendered text all abstain. Current declib releases can
+double-lift angr's line addresses on PIE binaries; `angr-declib` tests both the
+reported coordinate and that coordinate plus angr's runtime load base, accepting
+an address only when exactly one candidate falls inside the function. Binary
+Ninja's declib renderer counts skipped `LinearView` header/warning rows in its
+map, so its offsets can drift within a function; `binja-declib` deliberately
+emits neither line nor variable-occurrence provenance until declib supplies an
+exact-row map.
 
 ##### Glaurung and Manifold: final-AST lineage blockers
 

@@ -353,6 +353,7 @@ class DeclibDecompiler(Decompiler):
             lifted_addr,
             elf_base,
             function_size,
+            address_offsets=self._line_map_address_offsets(deci),
         )
         variables = self._extract_variables(deci, lifted_addr)
         self._add_variable_evidence(variables, func_name, code, line_mappings)
@@ -390,6 +391,8 @@ class DeclibDecompiler(Decompiler):
         lifted_addr: int,
         elf_base: int,
         function_size: int | None,
+        *,
+        address_offsets: tuple[int, ...] = (0,),
     ) -> list[LineMapping]:
         """Validate a backend's declib line contract and normalize it to 1-based rows."""
         if self._line_map_style not in {"one_based", "ida_zero_based"}:
@@ -416,16 +419,22 @@ class DeclibDecompiler(Decompiler):
             for address in addresses:
                 if isinstance(address, bool) or not isinstance(address, int):
                     continue
-                if not lifted_addr <= address < function_end:
+                candidates = {
+                    address + offset
+                    for offset in address_offsets
+                    if lifted_addr <= address + offset < function_end
+                }
+                if len(candidates) != 1:
                     continue
+                normalized_address = candidates.pop()
                 if (
                     self._line_map_style == "ida_zero_based"
                     and raw_line == 1
-                    and address == lifted_addr
+                    and normalized_address == lifted_addr
                 ):
                     ida_entry = True
                     continue
-                line_addresses[line_number].add(address + elf_base)
+                line_addresses[line_number].add(normalized_address + elf_base)
 
         if ida_entry:
             line_addresses[1].add(lifted_addr + elf_base)
@@ -434,6 +443,9 @@ class DeclibDecompiler(Decompiler):
             for line, addresses in sorted(line_addresses.items())
             if addresses
         ]
+
+    def _line_map_address_offsets(self, deci: DecompilerInterface) -> tuple[int, ...]:
+        return (0,)
 
     @staticmethod
     def _add_variable_evidence(
@@ -655,6 +667,16 @@ class AngrDeclibDecompiler(DeclibDecompiler):
     display_name = "angr (declib)"
     force_decompiler = "angr"
     _line_map_style = "one_based"
+
+    def _line_map_address_offsets(self, deci: DecompilerInterface) -> tuple[int, ...]:
+        try:
+            binary_base = deci.binary_base_addr
+        except Exception as e:
+            _l.debug("Could not read angr's binary base for line mappings: %s", e)
+            return (0,)
+        if isinstance(binary_base, bool) or not isinstance(binary_base, int):
+            return (0,)
+        return tuple(sorted({0, binary_base}))
 
     def is_available(self) -> bool:
         try:

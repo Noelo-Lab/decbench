@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from decbench.decompilers.declib_dec import (
@@ -60,6 +62,48 @@ def test_declib_maps_fail_closed_without_a_function_range() -> None:
         )
         == []
     )
+
+
+def test_angr_pie_double_lift_is_recovered_only_when_unique_in_function() -> None:
+    backend = AngrDeclibDecompiler()
+    mappings = backend._extract_line_mappings(
+        {1: {-0x3FCAD5}},
+        "int f(void) {}",
+        lifted_addr=0x352B,
+        elf_base=0,
+        function_size=0x20,
+        address_offsets=(0, 0x400000),
+    )
+    assert mappings == [LineMapping(line_number=1, addresses=[0x352B])]
+
+    already_correct = backend._extract_line_mappings(
+        {1: {0x352B}},
+        "int f(void) {}",
+        lifted_addr=0x352B,
+        elf_base=0,
+        function_size=0x20,
+        address_offsets=(0, 0x400000),
+    )
+    assert already_correct == [LineMapping(line_number=1, addresses=[0x352B])]
+
+    ambiguous = backend._extract_line_mappings(
+        {1: {0x1000}},
+        "int f(void) {}",
+        lifted_addr=0x1000,
+        elf_base=0,
+        function_size=0x10,
+        address_offsets=(0, 4),
+    )
+    assert ambiguous == []
+
+
+def test_angr_line_map_offsets_include_the_runtime_load_base() -> None:
+    backend = AngrDeclibDecompiler()
+    assert backend._line_map_address_offsets(SimpleNamespace(binary_base_addr=0x400000)) == (
+        0,
+        0x400000,
+    )
+    assert backend._line_map_address_offsets(SimpleNamespace(binary_base_addr=True)) == (0,)
 
 
 def test_ida_zero_based_rows_are_normalized_without_shifting_the_synthetic_entry() -> None:
