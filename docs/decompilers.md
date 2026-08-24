@@ -702,7 +702,8 @@ drops the C output into the kit's `results/` folder, runs the bundled
 `package.py`, and sends back one `results.zip`. The maintainer ingests that zip
 as a new **sample-set-only** decompiler column (like `codex`/`claude-code`),
 scored by GED / type_match / byte_match exactly like Ghidra or IDA, and it
-appears on the [leaderboard](https://decbench.com/).
+appears on the [leaderboard](https://decbench.com/). The published columns
+ingested this way are `manifold`, `glaurung`, and `fission`.
 
 ```
 MAINTAINER                     CONTRIBUTOR                    MAINTAINER
