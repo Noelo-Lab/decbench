@@ -212,6 +212,68 @@ def test_retdec_json_parser_reconstructs_exact_c_and_native_evidence() -> None:
     assert variables["local"].addresses == [0x1014, 0x1018]
 
 
+def test_retdec_variable_addresses_use_each_occurrence_statement() -> None:
+    code = (
+        "int32_t f(int32_t right) {\n"
+        "    int32_t left = right; int32_t other = 0;\n"
+        "    return left;\n"
+        "}\n"
+    )
+    tokens = [
+        {"addr": "0x1010"},
+        {"kind": "ws", "val": "int32_t "},
+        {"kind": "i_fnc", "val": "f"},
+        {"kind": "ws", "val": "(int32_t "},
+        {"kind": "i_lvar", "val": "right"},
+        {"kind": "ws", "val": ") {\n"},
+        {"addr": "0x1014"},
+        {"kind": "ws", "val": "    int32_t "},
+        {"addr": "0x1010"},
+        {"kind": "i_lvar", "val": "left"},
+        {"addr": "0x1014"},
+        {"kind": "ws", "val": " = "},
+        {"kind": "i_lvar", "val": "right"},
+        {"kind": "ws", "val": "; "},
+        {"addr": "0x1018"},
+        {"kind": "ws", "val": "int32_t "},
+        {"addr": "0x1014"},
+        {"kind": "i_lvar", "val": "other"},
+        {"addr": "0x1018"},
+        {"kind": "ws", "val": " = 0;\n"},
+        {"addr": "0x101c"},
+        {"kind": "ws", "val": "    return "},
+        {"addr": "0x1010"},
+        {"kind": "i_lvar", "val": "left"},
+        {"addr": "0x101c"},
+        {"kind": "ws", "val": ";\n"},
+        {"addr": "0x1010"},
+        {"kind": "ws", "val": "}\n"},
+    ]
+    parsed = _parse_retdec_json(
+        json.dumps({"language": "C", "tokens": tokens}),
+        valid_instruction_addresses=frozenset({0x1010, 0x1014, 0x1018, 0x101C}),
+        function_ranges=((0x1010, 0x1020),),
+    )
+
+    function = parsed.functions["f"]
+    assert parsed.text == code
+    assert [(mapping.line_number, mapping.addresses) for mapping in function.line_mappings] == [
+        (1, [0x1010]),
+        (2, [0x1014, 0x1018]),
+        (3, [0x101C]),
+        (4, [0x1010]),
+    ]
+    assert function.variable_addresses == {
+        "left": (0x1014, 0x101C),
+        "other": (0x1018,),
+        "right": (0x1010, 0x1014),
+    }
+
+    variables = {variable.name: variable for variable in _retdec_variables(function)}
+    assert variables["right"].addresses == [0x1010, 0x1014]
+    assert variables["left"].addresses == [0x1014, 0x101C]
+
+
 def test_retdec_dsm_parser_accepts_only_instruction_rows_and_rebases_rva() -> None:
     dsm = (
         "; function: function_1000 at 0x1000 -- 0x1010\n"

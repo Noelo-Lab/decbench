@@ -220,7 +220,7 @@ class _RetDecToken:
     end: int
     kind: str
     value: str
-    address: int | None
+    occurrence_address: int | None
 
 
 @dataclass(frozen=True)
@@ -237,6 +237,10 @@ class _RetDecFunction:
 class _RetDecAnnotatedSource:
     text: str
     functions: dict[str, _RetDecFunction]
+
+
+_RETDEC_VARIABLE_KINDS = frozenset({"i_arg", "i_lvar", "i_var"})
+_RETDEC_ORIGIN_IDENTIFIER_KINDS = _RETDEC_VARIABLE_KINDS | {"i_gvar"}
 
 
 def _retdec_address(value: object, image_base: int) -> int | None:
@@ -388,14 +392,19 @@ def _parse_retdec_json(
         raise ValueError(f"unsupported RetDec output language: {payload.get('language')!r}")
 
     current_address: int | None = None
+    previous_address: int | None = None
+    address_changed = False
     parts: list[str] = []
     tokens: list[_RetDecToken] = []
     position = 0
-    for item in payload["tokens"]:
+    raw_tokens = payload["tokens"]
+    for index, item in enumerate(raw_tokens):
         if not isinstance(item, dict):
             raise ValueError("RetDec token is not an object")
         if "addr" in item:
+            previous_address = current_address
             current_address = _retdec_address(item["addr"], image_base)
+            address_changed = True
         has_kind = "kind" in item
         has_value = "val" in item
         if not has_kind and not has_value:
@@ -406,10 +415,21 @@ def _parse_retdec_json(
         value = item["val"]
         if not isinstance(kind, str) or not isinstance(value, str):
             raise ValueError("RetDec token kind/value must be strings")
+        occurrence_address = current_address
+        # Defined Variable tokens temporarily carry their LLVM origin address;
+        # an immediate restoration confirms the enclosing statement address.
+        if address_changed and kind in _RETDEC_ORIGIN_IDENTIFIER_KINDS:
+            next_item = raw_tokens[index + 1] if index + 1 < len(raw_tokens) else None
+            if isinstance(next_item, dict) and "addr" in next_item:
+                restored_address = _retdec_address(next_item["addr"], image_base)
+                if restored_address == previous_address:
+                    occurrence_address = previous_address
         end = position + len(value)
-        tokens.append(_RetDecToken(position, end, kind, value, current_address))
+        tokens.append(_RetDecToken(position, end, kind, value, occurrence_address))
         parts.append(value)
         position = end
+        previous_address = None
+        address_changed = False
 
     text = "".join(parts)
     functions: dict[str, _RetDecFunction] = {}
@@ -420,7 +440,7 @@ def _parse_retdec_json(
         function_tokens = [token for token in tokens if start <= token.start < end]
         entry = next(
             (
-                token.address
+                token.occurrence_address
                 for token in function_tokens
                 if token.start < header_end and token.kind == "i_fnc" and token.value == name
             ),
@@ -437,18 +457,18 @@ def _parse_retdec_json(
                 continue
             line = raw_common.pos_to_line(token.start - start, starts)
             accepted = _retdec_accepts_address(
-                token.address,
+                token.occurrence_address,
                 valid_instruction_addresses,
                 function_range,
                 function_ranges is not None,
             )
-            if accepted and token.address is not None:
-                line_addresses[line].add(int(token.address))
-            if token.kind not in {"i_arg", "i_lvar", "i_var"} or not token.value:
+            if accepted and token.occurrence_address is not None:
+                line_addresses[line].add(int(token.occurrence_address))
+            if token.kind not in _RETDEC_VARIABLE_KINDS or not token.value:
                 continue
             variable_lines[token.value].add(line)
-            if accepted and token.address is not None:
-                variable_addresses[token.value].add(int(token.address))
+            if accepted and token.occurrence_address is not None:
+                variable_addresses[token.value].add(int(token.occurrence_address))
 
         functions.setdefault(
             name,
@@ -487,18 +507,13 @@ def _retdec_variables(function: _RetDecFunction) -> list[VariableInfo]:
     counts = Counter(variable.name for variable in variables if variable.name)
     ambiguous = set(analysis.ambiguous_names)
     ambiguous.update(name for name, count in counts.items() if count != 1)
-    line_addresses = {
-        mapping.line_number: set(mapping.addresses) for mapping in function.line_mappings
-    }
     enriched: list[VariableInfo] = []
     for variable in variables:
         if not variable.name or variable.name in ambiguous:
             enriched.append(variable)
             continue
         lines = list(function.variable_lines.get(variable.name, ()))
-        addresses = sorted(
-            {address for line in lines for address in line_addresses.get(line, set())}
-        )
+        addresses = list(function.variable_addresses.get(variable.name, ()))
         enriched.append(
             variable.model_copy(
                 update={

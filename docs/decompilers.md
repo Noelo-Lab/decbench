@@ -220,6 +220,9 @@ The canonical raw adapters use these native sources:
   joined to those native rows by exact identifier occurrence.
 - RetDec reconstructs exact C from its annotated JSON token values and validates
   inherited token addresses against DSM instruction starts and function ranges.
+  Local identifier tokens carry their LLVM origin address, so the adapter
+  recognizes RetDec's validated origin push/pop sequence and attributes each
+  occurrence to its enclosing statement address instead.
   Its exact snippet supplies recovered types and ABI argument positions; duplicate
   or shadowed identifiers abstain from variable-occurrence evidence. Missing or
   malformed annotated output falls back to the older plain-C path.
@@ -318,6 +321,14 @@ Variable addresses normally come from native occurrence-line evidence. r2dec's
 are therefore retained directly; `line_numbers` records exact address joins
 when r2dec emits one. This deliberately supports local-variable matching
 without requiring source/decompiler variable names to agree.
+
+Most adapters derive variable addresses from the native addresses on each
+occurrence line. RetDec can be narrower: its token stream exposes a temporary
+`statement -> variable origin -> statement` address transition around local
+identifiers, so the enclosing statement address is retained for each individual
+occurrence. This supports local-variable matching without requiring
+source/decompiler variable names to agree while avoiding unrelated addresses on
+multi-address lines.
 
 ## 2. Minimal working example
 

@@ -64,11 +64,13 @@ The image's `ENTRYPOINT` is `retdec-decompiler`, first invoked as
 addresses supply 1-based line mappings and variable occurrences. DecBench
 accepts only addresses that also appear as machine-instruction rows inside the
 same function's `/work/out.dsm` range, filtering data symbols and leaked address
-state. It derives argument positions and recovered types from the exact function
-snippet, and abstains from attaching occurrence evidence to duplicate or shadowed
-identifiers. Older RetDec builds without annotated JSON automatically retry
-plain-C output. The image uses the pinned RetDec **v5.0** Linux release tarball
-(`avast/retdec`).
+state. A local identifier temporarily carries its LLVM origin address; DecBench
+recognizes the surrounding address transition and attributes that occurrence to
+its enclosing statement instead. It derives argument positions and recovered
+types from the exact function snippet, and abstains from attaching occurrence
+evidence to duplicate or shadowed identifiers. Older RetDec builds without
+annotated JSON automatically retry plain-C output. The image uses the pinned
+RetDec **v5.0** Linux release tarball (`avast/retdec`).
 
 ### Reko
 
