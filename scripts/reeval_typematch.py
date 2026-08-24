@@ -40,6 +40,7 @@ from decbench.results_store import (
     typematch_overlay_provenance,
     write_typematch_overlay_atomic,
 )
+from decbench.utils import binfmt
 from decbench.utils.langs import preprocessed_by_stem
 
 MODES = ("auto", "address", "usage", "address+usage")
@@ -56,6 +57,10 @@ class AggregateRow(TypedDict):
 
 class CanonicalPromotionError(RuntimeError):
     """Raised when a canonical type-match overlay cannot be promoted safely."""
+
+
+class BinaryRelocationError(RuntimeError):
+    """Raised when a checkpoint binary cannot be rebound to the selected tree."""
 
 
 def _paths_alias(left: Path, right: Path) -> bool:
@@ -138,6 +143,59 @@ def _limit_decompilation(decompilation: object, functions: set[str]) -> object:
     return model_copy(update={"functions": selected})
 
 
+def _resolve_checkpoint_binary(
+    root: Path,
+    optimization: str,
+    project: str,
+    binary_name: str,
+) -> Path:
+    """Resolve one checkpoint binary strictly inside the selected results tree."""
+    if not binary_name or Path(binary_name).name != binary_name:
+        raise BinaryRelocationError(
+            f"invalid checkpoint binary key {binary_name!r} for {project}/{optimization}"
+        )
+
+    compiled = root / optimization / project / "compiled"
+    if not compiled.is_dir():
+        raise BinaryRelocationError(f"missing compiled directory: {compiled}")
+
+    exact = compiled / binary_name
+    if exact.is_file() and not exact.is_symlink() and binfmt.detect(exact) is not None:
+        return exact.resolve()
+
+    candidates = sorted(
+        path.resolve()
+        for path in compiled.iterdir()
+        if path.is_file()
+        and not path.is_symlink()
+        and path.stem == binary_name
+        and binfmt.detect(path) is not None
+    )
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise BinaryRelocationError(
+            f"no compiled ELF/PE matches {project}/{optimization}/{binary_name} in {compiled}"
+        )
+    choices = ", ".join(path.name for path in candidates)
+    raise BinaryRelocationError(
+        f"ambiguous compiled binary for {project}/{optimization}/{binary_name}: {choices}"
+    )
+
+
+def _relocate_decompilation(decompilation: object, binary_path: Path) -> object:
+    """Copy a checkpoint result while replacing its recorded binary path."""
+    model_copy = getattr(decompilation, "model_copy", None)
+    if not callable(model_copy):
+        raise BinaryRelocationError(f"checkpoint decompilation cannot be rebound to {binary_path}")
+    relocated = model_copy(update={"binary_path": binary_path})
+    if Path(getattr(relocated, "binary_path", "")) != binary_path:
+        raise BinaryRelocationError(
+            f"checkpoint decompilation did not accept binary path {binary_path}"
+        )
+    return relocated
+
+
 def _old_scores(root: Path) -> dict[tuple[str, str, str, str, str], float]:
     with open(root / "function_results.json") as file:
         function_data = json.load(file)
@@ -206,7 +264,7 @@ def _promotion_provenance(metric: TypeMatchMetric, mode: str) -> dict[str, objec
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
-    root: Path = args.results_dir
+    root: Path = args.results_dir.resolve()
     old = _old_scores(root)
     checkpoint_dir = root / "checkpoints"
     sample_keys = _sample_keys(args.manifest) if args.manifest is not None else None
@@ -254,13 +312,28 @@ def main(argv: Sequence[str] | None = None) -> None:
                 )
                 if selected_functions is not None and not selected_functions:
                     continue
+                try:
+                    binary_path = _resolve_checkpoint_binary(
+                        root,
+                        opt_name,
+                        project,
+                        binary_name,
+                    )
+                except BinaryRelocationError as exc:
+                    context = f"{project}/{opt_name}/{binary_name}"
+                    print(f"  ! {context}: {exc}")
+                    if args.emit:
+                        promotion_failures.append(f"binary relocation failed for {context}: {exc}")
+                        continue
+                    raise
                 for decompiler_name, decompilation in decompilers.items():
                     try:
+                        relocated = _relocate_decompilation(decompilation, binary_path)
                         result = metric.compute_for_binary(
                             (
-                                _limit_decompilation(decompilation, selected_functions)
+                                _limit_decompilation(relocated, selected_functions)
                                 if selected_functions is not None
-                                else decompilation
+                                else relocated
                             ),
                             preprocessed_sources=sources,
                         )

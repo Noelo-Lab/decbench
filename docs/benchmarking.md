@@ -501,7 +501,11 @@ with an overlay carrying identical provenance. Canonical `--emit` promotion occu
 only after every computation is exception/error-free and its exact
 function/decompiler coverage matches `function_results.json`; failures preserve the
 existing canonical bytes. Noncanonical `--output` paths cannot alias the canonical
-overlay, while explicitly named A/B outputs may remain intentionally partial.
+overlay, while explicitly named A/B outputs may remain intentionally partial. Each
+checkpoint decompilation is rebound from its exact `(optimization, project, binary)`
+key to the compiled ELF/PE under the supplied results directory. This makes copied or
+moved result trees self-contained instead of consulting the checkpoint's stale path;
+a missing or ambiguous compiled binary aborts rather than selecting an arbitrary file.
 
 The canonical rebuild is `scripts/finalize_results.py <tree>` (also what
 `run_benchmark.py`'s finalize calls): ALL checkpoints (never scoped — a

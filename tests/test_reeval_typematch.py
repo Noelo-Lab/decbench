@@ -24,6 +24,8 @@ from scripts import reeval_typematch
 
 
 def _make_results_tree(root: Path) -> None:
+    binary = root / "O0" / "proj" / "compiled" / "bin"
+    _write_elf(binary)
     checkpoint_dir = root / "checkpoints"
     checkpoint_dir.mkdir(parents=True)
     with open(checkpoint_dir / "proj.pkl", "wb") as file:
@@ -32,7 +34,18 @@ def _make_results_tree(root: Path) -> None:
                 "decompile": {
                     "O0": {
                         "bin": {
-                            "angr": {"stub": "decompilation"},
+                            "angr": DecompilationResult(
+                                binary_path=binary,
+                                binary_name="bin",
+                                decompiler=DecompilerMetadata(decompiler_name="angr"),
+                                functions={
+                                    "f": FunctionDecompilation(
+                                        name="f",
+                                        address=1,
+                                        decompiled_code="",
+                                    )
+                                },
+                            ),
                         }
                     }
                 }
@@ -58,6 +71,14 @@ def _make_results_tree(root: Path) -> None:
             }
         )
     )
+
+
+def _write_elf(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    header = bytearray(20)
+    header[:4] = b"\x7fELF"
+    header[18:20] = (0x3E).to_bytes(2, "little")
+    path.write_bytes(header)
 
 
 def _result(*, functions: tuple[str, ...] = ("f",), errors: tuple[str, ...] = ()) -> MetricResult:
@@ -97,6 +118,122 @@ def _install_metric(
             return outcome
 
     monkeypatch.setattr(reeval_typematch, "TypeMatchMetric", StubMetric)
+
+
+def _set_checkpoint_binary_path(root: Path, binary_path: Path) -> None:
+    checkpoint = root / "checkpoints" / "proj.pkl"
+    with open(checkpoint, "rb") as file:
+        data = pickle.load(file)
+    decompilation = data["decompile"]["O0"]["bin"]["angr"]
+    data["decompile"]["O0"]["bin"]["angr"] = decompilation.model_copy(
+        update={"binary_path": binary_path}
+    )
+    with open(checkpoint, "wb") as file:
+        pickle.dump(data, file)
+
+
+@pytest.mark.parametrize("recorded_path", ["relative", "stale-absolute", "current"])
+def test_reevaluation_rebinds_checkpoint_binary_to_selected_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    recorded_path: Literal["relative", "stale-absolute", "current"],
+) -> None:
+    root = tmp_path / "copied-results"
+    _make_results_tree(root)
+    expected = (root / "O0" / "proj" / "compiled" / "bin").resolve()
+    if recorded_path == "relative":
+        recorded = Path("results/full_run/O0/proj/compiled/bin")
+    elif recorded_path == "stale-absolute":
+        recorded = tmp_path / "original-results" / "O0" / "proj" / "compiled" / "bin"
+        _write_elf(recorded)
+    else:
+        recorded = expected
+    _set_checkpoint_binary_path(root, recorded)
+    seen: list[Path] = []
+
+    class StubMetric:
+        cache_version = "stub-cache-v1"
+        variable_match_policy = {"min_overlap": 0.1, "address_weight": 0.5}
+
+        def __init__(self, _config: object) -> None:
+            pass
+
+        def compute_for_binary(
+            self,
+            decompilation: DecompilationResult,
+            **_kwargs: object,
+        ) -> MetricResult:
+            seen.append(decompilation.binary_path)
+            return _result()
+
+    monkeypatch.setattr(reeval_typematch, "TypeMatchMetric", StubMetric)
+
+    reeval_typematch.main([str(root)])
+
+    assert seen == [expected]
+
+
+def test_reevaluation_rejects_ambiguous_compiled_binary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_results_tree(tmp_path)
+    exact = tmp_path / "O0" / "proj" / "compiled" / "bin"
+    exact.unlink()
+    _write_elf(exact.with_suffix(".exe"))
+    _write_elf(exact.with_suffix(".so"))
+    _install_metric(monkeypatch, _result())
+
+    with pytest.raises(reeval_typematch.BinaryRelocationError, match="ambiguous"):
+        reeval_typematch.main([str(tmp_path)])
+
+
+def test_reevaluation_rebinds_unique_suffixed_binary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_results_tree(tmp_path)
+    exact = tmp_path / "O0" / "proj" / "compiled" / "bin"
+    suffixed = exact.with_suffix(".exe")
+    exact.rename(suffixed)
+    seen: list[Path] = []
+
+    class StubMetric:
+        cache_version = "stub-cache-v1"
+        variable_match_policy = {"min_overlap": 0.1, "address_weight": 0.5}
+
+        def __init__(self, _config: object) -> None:
+            pass
+
+        def compute_for_binary(
+            self,
+            decompilation: DecompilationResult,
+            **_kwargs: object,
+        ) -> MetricResult:
+            seen.append(decompilation.binary_path)
+            return _result()
+
+    monkeypatch.setattr(reeval_typematch, "TypeMatchMetric", StubMetric)
+
+    reeval_typematch.main([str(tmp_path)])
+
+    assert seen == [suffixed.resolve()]
+
+
+def test_canonical_relocation_failure_preserves_existing_overlay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_results_tree(tmp_path)
+    (tmp_path / "O0" / "proj" / "compiled" / "bin").unlink()
+    canonical = tmp_path / "type_match_new.json"
+    canonical.write_bytes(b"canonical sentinel\n")
+    _install_metric(monkeypatch, _result())
+
+    with pytest.raises(reeval_typematch.CanonicalPromotionError, match="relocation failed"):
+        reeval_typematch.main([str(tmp_path), "--emit"])
+
+    assert canonical.read_bytes() == b"canonical sentinel\n"
 
 
 @pytest.mark.parametrize("failure", ["exception", "metric_errors", "coverage"])
