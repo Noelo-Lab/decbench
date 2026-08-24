@@ -8,6 +8,12 @@ analysis once per binary and streams one JSON object per function back on stdout
 which this backend turns into :class:`FunctionDecompilation` objects with
 ELF-file-space addresses (so they line up with DWARF for scoring).
 
+The driver also returns dewolf's final structured variables. For each surviving
+variable, it follows the retained Binary Ninja SSA identity through phi nodes
+and eliminated SSA copies, then reports only verified machine-instruction starts
+as direct ``VariableInfo.addresses``. dewolf's renderer has no stable token/line
+map, so ``line_mappings`` and variable ``line_numbers`` remain empty.
+
 Configuration (``~/.config/decbench/decompilers.toml`` ``[dewolf.versions."X"]``
 or the environment):
 
@@ -53,6 +59,7 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    VariableInfo,
 )
 
 _l = logging.getLogger(__name__)
@@ -118,6 +125,51 @@ class RawDewolfDecompiler(Decompiler):
         if astyle:
             env["PATH"] = astyle + os.pathsep + env.get("PATH", "")
         return env
+
+    @staticmethod
+    def _parse_variables(payload: Any) -> list[VariableInfo]:
+        """Validate the out-of-process driver's additive variable sidecar."""
+        if not isinstance(payload, list):
+            return []
+        variables: list[VariableInfo] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "")
+            if not name:
+                continue
+            kind = "arg" if item.get("kind") == "arg" else "stack"
+            arg_index = item.get("arg_index")
+            if isinstance(arg_index, bool) or not isinstance(arg_index, int) or arg_index < 0:
+                arg_index = None
+            size = item.get("size")
+            if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+                size = None
+            raw_addresses = item.get("addresses")
+            addresses = (
+                sorted(
+                    {
+                        address
+                        for address in raw_addresses
+                        if isinstance(address, int)
+                        and not isinstance(address, bool)
+                        and address >= 0
+                    }
+                )
+                if isinstance(raw_addresses, list)
+                else []
+            )
+            variables.append(
+                VariableInfo(
+                    name=name,
+                    type=str(item.get("type") or ""),
+                    size=size,
+                    kind=kind,
+                    arg_index=arg_index if kind == "arg" else None,
+                    addresses=addresses,
+                )
+            )
+        return variables
 
     def is_available(self) -> bool:
         python = self._python()
@@ -235,7 +287,7 @@ class RawDewolfDecompiler(Decompiler):
                             decompiled_code=code,
                             line_count=code.count("\n") + 1,
                             line_mappings=[],
-                            variables=[],
+                            variables=self._parse_variables(obj.get("variables")),
                             metadata=common.extract_metrics(code),
                         )
                         with lock:

@@ -194,6 +194,12 @@ The canonical raw adapters use these native sources:
 - Binary Ninja renders token text and collects row/token expression addresses
   in one Pseudo-C `LinearViewCursor` walk. Structural and warning rows are
   excluded before assigning the global 1-based output line.
+- dewolf's out-of-process sidecar walks the final pseudo variables' retained
+  Binary Ninja `ssa_name` identities. It resolves their MLIL definitions and
+  uses to verified machine-instruction starts, follows phi equivalence and
+  eliminated SSA-only copies, and emits direct `VariableInfo.addresses` in ELF
+  space. Its renderer exposes no stable token-to-line map, so it deliberately
+  leaves `line_mappings` and variable `line_numbers` empty.
 - Ghidra walks the `ClangToken` tree belonging to the same decompile result as
   `getC()`, using HighSymbol IDs for variable occurrences and both token range
   endpoints.
