@@ -31,6 +31,7 @@ from decbench.metrics.variable_match import (
     extract_decompiler_evidence,
     match_variables,
 )
+from decbench.models.decompilation import VariableOccurrencePolicy, variable_occurrence_policy
 from decbench.models.metrics import AggregationType, MetricResult, MetricValue
 
 if TYPE_CHECKING:
@@ -919,7 +920,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "10"
+    cache_version = "11"
 
     weight = 1.0
     lower_is_better = False
@@ -998,6 +999,7 @@ class TypeMatchMetric(Metric):
                 identity_prefix="decompiler",
                 include_unnamed=True,
                 infer_code_variables=True,
+                structured_occurrence_mode="producer",
             )
             decompiled_evidence = [
                 replace(
@@ -1061,6 +1063,9 @@ class TypeMatchMetric(Metric):
                 for mapping in (getattr(decompiled, "line_mappings", []) or [])
             )
         )
+        producer_occurrence_policy = variable_occurrence_policy(
+            getattr(decompiled, "metadata", None)
+        )
         source_file = (
             source_result.source_path.name if source_result.source_path is not None else None
         )
@@ -1086,6 +1091,7 @@ class TypeMatchMetric(Metric):
             evidence_error,
             {
                 "linemap_present": linemap_present,
+                "producer_variable_occurrence_policy": producer_occurrence_policy,
                 "source_file": source_file,
             },
         ]
@@ -1102,6 +1108,7 @@ class TypeMatchMetric(Metric):
                 source_result,
                 evidence_error,
                 linemap_present,
+                producer_occurrence_policy,
             ),
         )
 
@@ -1117,6 +1124,7 @@ class TypeMatchMetric(Metric):
         source_result: SourceEvidenceResult,
         evidence_error: str | None,
         linemap_present: bool,
+        producer_occurrence_policy: VariableOccurrencePolicy | None,
     ) -> MetricValue:
         gt_stack_vars = sum(1 for gv in ground_truth_vars if gv.get("rbp_offset"))
         decomp_stack_vars = sum(bool(variable.stack_offsets) for variable in decompiled_evidence)
@@ -1192,6 +1200,8 @@ class TypeMatchMetric(Metric):
                 "unobservable_source_count": len(result.unobservable_source),
                 "unmatched_decompiled_count": len(result.unmatched_decompiled),
                 "linemap_present": linemap_present,
+                "producer_variable_occurrence_policy": (producer_occurrence_policy or "undeclared"),
+                "structured_occurrence_mode": "producer",
                 "source_address_variables": source_address_vars,
                 "decompiler_address_variables": decompiled_address_vars,
                 "source_usage_variables": source_usage_vars,

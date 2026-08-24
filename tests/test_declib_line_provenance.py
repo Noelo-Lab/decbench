@@ -17,7 +17,7 @@ from decbench.decompilers.declib_dec import (
     _pe_file_space_origins,
 )
 from decbench.metrics.variable_features import variable_occurrence_lines
-from decbench.models.decompilation import LineMapping, VariableInfo
+from decbench.models.decompilation import LineMapping, VariableInfo, variable_occurrence_policy
 
 
 def _write_minimal_pe(path: Path) -> None:
@@ -214,6 +214,7 @@ def test_declib_pe_target_round_trips_through_the_backend_origin(
     assert result.functions["target"].line_mappings == [
         LineMapping(line_number=1, addresses=[0x403280])
     ]
+    assert variable_occurrence_policy(result.functions["target"].metadata) == "exact"
 
 
 def test_declib_elf_keeps_the_file_header_base(tmp_path: Path) -> None:
@@ -266,6 +267,22 @@ def test_binja_declib_map_abstains_on_skipped_row_drift() -> None:
         )
         == []
     )
+
+
+@pytest.mark.parametrize(
+    ("backend", "policy"),
+    [
+        (AngrDeclibDecompiler(), "exact"),
+        (GhidraDeclibDecompiler(), "exact"),
+        (IDADeclibDecompiler(), "exact"),
+        (BinjaDeclibDecompiler(), "unavailable"),
+    ],
+)
+def test_declib_occurrence_policy_matches_render_contract(
+    backend: DeclibDecompiler,
+    policy: str,
+) -> None:
+    assert backend._variable_occurrence_policy() == policy
 
 
 def test_variable_occurrences_are_binding_aware_and_shadow_safe() -> None:

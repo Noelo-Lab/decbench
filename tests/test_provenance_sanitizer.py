@@ -10,6 +10,7 @@ from decbench.decompilers.provenance import (
     NativeProvenanceContext,
     sanitize_native_provenance,
 )
+from decbench.metrics.variable_match import extract_decompiler_evidence
 from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
@@ -128,6 +129,37 @@ def test_sanitizer_hydrates_fields_missing_from_legacy_pickles() -> None:
     assert variable.line_numbers == []
     assert metadata["status"] == "no_address_provenance"
     assert metadata["legacy_additive_fields_hydrated"] == 2
+
+
+def test_hydrated_legacy_structured_variables_do_not_infer_native_addresses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    function = FunctionDecompilation(
+        name="legacy",
+        address=0x1000,
+        decompiled_code="int legacy(int value) {\n    return value;\n}\n",
+        line_mappings=[LineMapping(line_number=2, addresses=[0x1004])],
+        variables=[VariableInfo(name="value", kind="arg", arg_index=0)],
+    )
+    variable = function.variables[0]
+    del variable.__dict__["addresses"]
+    del variable.__dict__["line_numbers"]
+    resolver = _Resolver({"legacy": _code(0x1000, 0x1004)})
+    monkeypatch.setattr(provenance, "NativeCodeResolver", lambda _path: resolver)
+
+    metadata = sanitize_native_provenance(_result(function))
+    evidence = extract_decompiler_evidence(function, backend="legacy")
+    experimental = extract_decompiler_evidence(
+        function,
+        backend="legacy",
+        structured_occurrence_mode="experimental_legacy_regex",
+    )
+
+    assert metadata["legacy_additive_fields_hydrated"] == 2
+    assert evidence.variables[0].lines == ()
+    assert evidence.variables[0].addresses == frozenset()
+    assert experimental.variables[0].lines == (1, 2)
+    assert experimental.variables[0].addresses == frozenset({0x1004})
 
 
 def test_sanitizer_normalizes_thumb_state_and_removes_duplicates(

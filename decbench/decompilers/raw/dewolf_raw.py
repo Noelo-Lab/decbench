@@ -63,6 +63,7 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
     VariableInfo,
+    with_variable_occurrence_policy,
 )
 
 _l = logging.getLogger(__name__)
@@ -305,7 +306,9 @@ class RawDewolfDecompiler(Decompiler):
                             line_count=code.count("\n") + 1,
                             line_mappings=[],
                             variables=self._parse_variables(obj.get("variables")),
-                            metadata=common.extract_metrics(code),
+                            metadata=with_variable_occurrence_policy(
+                                common.extract_metrics(code), "direct"
+                            ),
                         )
                         with lock:
                             decompiled_functions[name] = fd

@@ -19,6 +19,7 @@ from decbench.metrics.type_match import (
 )
 from decbench.metrics.variable_match import (
     VariableEvidence,
+    extract_decompiler_evidence,
     extract_source_evidence,
     match_variables,
 )
@@ -28,6 +29,8 @@ from decbench.models.decompilation import (
     FunctionDecompilation,
     LineMapping,
     VariableInfo,
+    VariableOccurrencePolicy,
+    with_variable_occurrence_policy,
 )
 from decbench.models.metrics import MetricResult
 
@@ -755,7 +758,7 @@ def test_optional_source_failures_preserve_binary_denominator(
     assert expected_error in result.function_results["target"].metadata["source_evidence_error"]
 
 
-def test_binary_backend_policy_prevents_ghidra_name_derived_addresses(
+def test_structured_occurrence_policy_prevents_name_derived_addresses(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -793,12 +796,85 @@ def test_binary_backend_policy_prevents_ghidra_name_derived_addresses(
         return _metric("address").compute_for_binary(decompilation).function_results["target"]
 
     ghidra = score("ghidra@12.1")
-    generic = score("other")
+    legacy = score("other")
 
     assert ghidra.value == 0.0
     assert ghidra.metadata["match_stage_counts"] == {}
-    assert generic.value == 1.0
-    assert generic.metadata["match_stage_counts"] == {"overlap": 1}
+    assert ghidra.metadata["producer_variable_occurrence_policy"] == "undeclared"
+    assert ghidra.metadata["structured_occurrence_mode"] == "producer"
+    assert legacy.value == 0.0
+    assert legacy.metadata["match_stage_counts"] == {}
+
+
+@pytest.mark.parametrize(
+    ("backend", "policy"),
+    [
+        ("angr", "exact"),
+        ("binja", "exact"),
+        ("ghidra", "exact"),
+        ("ida", "exact"),
+        ("kuna", "exact"),
+        ("retdec", "exact"),
+        ("r2dec", "exact"),
+        ("dewolf", "direct"),
+        ("reko", "direct"),
+        ("glaurung", "unavailable"),
+        ("manifold", "unavailable"),
+        ("angr-declib", "exact"),
+        ("ghidra-declib", "exact"),
+        ("ida-declib", "exact"),
+        ("binja-declib", "unavailable"),
+    ],
+)
+def test_empty_structured_occurrences_fail_closed_for_every_producer(
+    backend: str,
+    policy: VariableOccurrencePolicy,
+) -> None:
+    function = FunctionDecompilation(
+        name="target",
+        address=0x1000,
+        decompiled_code=(
+            "int target(void) {\n"
+            "    int shadow = 0;\n"
+            "    { int shadow = 1; shadow++; }\n"
+            "    return shadow;\n"
+            "}\n"
+        ),
+        line_mappings=[
+            LineMapping(line_number=2, addresses=[0x1004]),
+            LineMapping(line_number=3, addresses=[0x1008]),
+            LineMapping(line_number=4, addresses=[0x100C]),
+        ],
+        variables=[VariableInfo(name="shadow", type="int")],
+        metadata=with_variable_occurrence_policy({}, policy),
+    )
+
+    evidence = extract_decompiler_evidence(function, backend=backend)
+    experimental = extract_decompiler_evidence(
+        function,
+        backend=backend,
+        structured_occurrence_mode="experimental_legacy_regex",
+    )
+
+    assert evidence.variables[0].lines == ()
+    assert evidence.variables[0].addresses == frozenset()
+    assert experimental.variables[0].lines == (2, 3, 4)
+    assert experimental.variables[0].addresses == frozenset({0x1004, 0x1008, 0x100C})
+
+
+def test_structured_occurrence_mode_rejects_implicit_legacy_aliases() -> None:
+    function = FunctionDecompilation(
+        name="target",
+        address=0x1000,
+        decompiled_code="int target(void) { return 0; }",
+    )
+
+    with pytest.raises(ValueError, match="structured_occurrence_mode"):
+        extract_decompiler_evidence(
+            function,
+            backend="legacy",
+            structured_occurrence_mode="legacy",  # type: ignore[arg-type]
+        )
 
 
 def test_binary_selects_ground_truth_by_function_address(

@@ -58,6 +58,7 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
     VariableInfo,
+    with_variable_occurrence_policy,
 )
 
 _l = logging.getLogger(__name__)
@@ -337,7 +338,7 @@ class RawKunaDecompiler(Decompiler):
             line_count=line_count,
             line_mappings=line_mappings,
             variables=self._variables(rec, line_count, _evidence_address),
-            metadata=common.extract_metrics(code),
+            metadata=with_variable_occurrence_policy(common.extract_metrics(code), "exact"),
         )
 
     @staticmethod

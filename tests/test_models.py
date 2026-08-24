@@ -1,26 +1,29 @@
 """Tests for data models."""
 
-import pytest
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
-from decbench.models.project import (
-    Project,
-    ProjectConfig,
-    CompilationConfig,
-    OptimizationLevel,
-    RemoteType,
-)
+import pytest
+
 from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    variable_occurrence_policy,
+    with_variable_occurrence_policy,
 )
 from decbench.models.metrics import (
-    MetricValue,
     MetricResult,
+    MetricValue,
 )
-from decbench.models.scoreboard import Scoreboard, DecompilerScore, MetricScore
+from decbench.models.project import (
+    CompilationConfig,
+    OptimizationLevel,
+    Project,
+    ProjectConfig,
+    RemoteType,
+)
+from decbench.models.scoreboard import DecompilerScore, MetricScore, Scoreboard
 
 
 class TestProjectModels:
@@ -108,6 +111,28 @@ optimization_levels = ["O0", "O2", "O2-noinline"]
 
 
 class TestDecompilationModels:
+
+    def test_variable_occurrence_policy_schema_is_validated(self) -> None:
+        metadata = with_variable_occurrence_policy({"gotos": 2}, "direct")
+
+        assert metadata["gotos"] == 2
+        assert metadata["variable_occurrence_policy"] == {
+            "schema": "decbench-variable-occurrence-policy-v1",
+            "policy": "direct",
+        }
+        assert variable_occurrence_policy(metadata) == "direct"
+        assert variable_occurrence_policy({}) is None
+        assert (
+            variable_occurrence_policy(
+                {
+                    "variable_occurrence_policy": {
+                        "schema": "unknown",
+                        "policy": "exact",
+                    }
+                }
+            )
+            is None
+        )
 
     def test_function_decompilation(self) -> None:
         func = FunctionDecompilation(

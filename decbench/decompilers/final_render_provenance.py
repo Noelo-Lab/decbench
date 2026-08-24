@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from decbench.models.decompilation import DecompilationResult, FunctionDecompilation
+from decbench.models.decompilation import (
+    DecompilationResult,
+    FunctionDecompilation,
+    with_variable_occurrence_policy,
+)
 
 FINAL_RENDER_PROVENANCE_KEY = "final_render_variable_provenance"
 FINAL_RENDER_PROVENANCE_SCHEMA = "decbench-final-render-variable-provenance-v1"
@@ -78,20 +82,13 @@ def enrich_final_render_variable_provenance(
     a mismatched final definition.
     """
 
-    from decbench.metrics.variable_features import (
-        EXACT_VARIABLE_OCCURRENCE_METADATA_KEY,
-        EXACT_VARIABLE_OCCURRENCE_SCHEMA,
-        variable_occurrence_lines,
-    )
+    from decbench.metrics.variable_features import variable_occurrence_lines
 
     report = FinalRenderProvenanceReport()
     backend = result.decompiler.decompiler_name
     for function in result.functions.values():
         report.functions_seen += 1
-        function.metadata = {
-            **(function.metadata or {}),
-            EXACT_VARIABLE_OCCURRENCE_METADATA_KEY: EXACT_VARIABLE_OCCURRENCE_SCHEMA,
-        }
+        function.metadata = with_variable_occurrence_policy(function.metadata, "exact")
         line_addresses = _validated_line_addresses(function)
         if line_addresses is None or not function.variables:
             continue

@@ -23,6 +23,7 @@ from decbench.decompilers.raw.dewolf_driver import (
 )
 from decbench.decompilers.raw.dewolf_raw import RawDewolfDecompiler
 from decbench.decompilers.registry import DecompilerRegistry
+from decbench.models.decompilation import variable_occurrence_policy
 
 
 def test_dewolf_is_registered() -> None:
@@ -108,6 +109,7 @@ def test_decompile_binary_parses_driver_stream(monkeypatch, tmp_path: Path) -> N
         "addresses": [4100, 4104],
     }
     assert result.functions["gamma"].line_count == 1
+    assert variable_occurrence_policy(result.functions["alpha"].metadata) == "direct"
     assert "beta" in result.decompiler.failed_functions
     assert result.decompiler.extra["worker_threads_per_driver"] == 2
     assert (out / "dewolf_bin.c").exists()

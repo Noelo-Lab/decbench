@@ -42,6 +42,7 @@ from decbench.decompilers.dockerized import (
     split_c_functions,
 )
 from decbench.decompilers.registry import DecompilerRegistry
+from decbench.models.decompilation import variable_occurrence_policy
 
 _GZIP_CANDIDATES = [
     Path("results/sailr_full/O0/gzip/compiled/gzip"),
@@ -261,6 +262,18 @@ def test_retdec_json_parser_reconstructs_exact_c_and_native_evidence() -> None:
     assert variables["local"].type == "int32_t"
     assert variables["local"].line_numbers == [2, 3]
     assert variables["local"].addresses == [0x1014, 0x1018]
+
+    result = RetDecDecompiler()._build_result(
+        binary_path=Path("/nonexistent/bin"),
+        combined_c=parsed,
+        functions=[("f", 0x1010)],
+        function_names=None,
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+    assert variable_occurrence_policy(result.functions["f"].metadata) == "exact"
 
 
 def test_retdec_variable_addresses_use_each_occurrence_statement() -> None:
@@ -1049,6 +1062,7 @@ def test_reko_build_result_binds_names_and_native_variable_addresses(
     assert variables["arg0"].arg_index == 0
     assert variables["arg0"].addresses == [0x1000, 0x1004]
     assert variables["local"].addresses == [0x1004, 0x1008]
+    assert variable_occurrence_policy(function.metadata) == "direct"
     assert result.decompiler.extra["native_provenance_variables"] == 2
     assert result.decompiler.extra["requested_target_addresses"] == 1
     assert result.decompiler.extra["native_target_matches"] == 1
@@ -1584,6 +1598,7 @@ def test_r2_code_inferred_local_joins_pdcj_line_addresses() -> None:
     assert function is not None
     assert function.variables[0].line_numbers == [2, 3]
     assert function.variables[0].addresses == [0x1004]
+    assert variable_occurrence_policy(function.metadata) == "exact"
     metric = TypeMatchMetric(MetricConfig(extra_options={"variable_match_mode": "address"}))
     result = metric.compute_for_function(
         function,
@@ -1601,6 +1616,35 @@ def test_r2_code_inferred_local_joins_pdcj_line_addresses() -> None:
     assert result.value == 1.0
     assert result.metadata["match_stage_counts"] == {"overlap": 1}
     assert result.metadata["decompiler_address_variables"] == 1
+
+
+def test_r2_code_inferred_variables_abstain_on_shadowed_names() -> None:
+    provenance = {
+        "addr": 0x1000,
+        "size": 0x20,
+        "line_mappings": [
+            {"line_number": 2, "addresses": [0x1004]},
+            {"line_number": 3, "addresses": [0x1008]},
+            {"line_number": 4, "addresses": [0x100C]},
+        ],
+    }
+    function = R2DecDecompiler._make_function(
+        "fcn.1000",
+        0x1000,
+        "int target(void) {\n"
+        "    int shadow = 0;\n"
+        "    { int shadow = 1; shadow++; }\n"
+        "    return shadow;\n"
+        "}\n",
+        None,
+        provenance,
+        r2_addr=0x1000,
+    )
+
+    assert function is not None
+    assert [variable.name for variable in function.variables] == ["shadow"]
+    assert all(variable.line_numbers == [] for variable in function.variables)
+    assert all(variable.addresses == [] for variable in function.variables)
 
 
 def test_r2_docker_payload_populates_native_provenance(
@@ -1725,6 +1769,7 @@ def test_build_result_maps_snippets_to_elf_addresses() -> None:
     assert "rsync_roll" in fn.decompiled_code
     assert fn.variables == []
     assert fn.line_mappings == []
+    assert variable_occurrence_policy(fn.metadata) == "unavailable"
     assert result.decompiler.decompiler_name == "retdec"
 
 

@@ -33,6 +33,8 @@ from decbench.models.decompilation import (
     FunctionDecompilation,
     LineMapping,
     VariableInfo,
+    VariableOccurrencePolicy,
+    with_variable_occurrence_policy,
 )
 from decbench.utils import binfmt
 
@@ -378,7 +380,9 @@ class DeclibDecompiler(Decompiler):
         )
         variables = self._extract_variables(deci, lifted_addr)
         self._add_variable_evidence(variables, func_name, code, line_mappings)
-        metadata = self._extract_metrics(code)
+        metadata = with_variable_occurrence_policy(
+            self._extract_metrics(code), self._variable_occurrence_policy()
+        )
 
         return FunctionDecompilation(
             name=func_name,
@@ -467,6 +471,9 @@ class DeclibDecompiler(Decompiler):
 
     def _line_map_address_offsets(self, deci: DecompilerInterface) -> tuple[int, ...]:
         return (0,)
+
+    def _variable_occurrence_policy(self) -> VariableOccurrencePolicy:
+        return "exact" if self._line_map_style is not None else "unavailable"
 
     @staticmethod
     def _add_variable_evidence(

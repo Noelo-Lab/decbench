@@ -24,6 +24,7 @@ import decbench.decompilers  # noqa: F401  (registers plugins)
 from decbench.decompilers.raw import common
 from decbench.decompilers.raw.glaurung_raw import RawGlaurungDecompiler
 from decbench.decompilers.registry import DecompilerRegistry
+from decbench.models.decompilation import variable_occurrence_policy
 
 TINY_C_SOURCE = """
 #include <stdio.h>
@@ -275,6 +276,7 @@ class TestDockerInstall:
         # native evidence by joining this C spelling to an earlier IR.
         assert function.line_mappings == []
         assert function.variables == []
+        assert variable_occurrence_policy(function.metadata) == "unavailable"
         assert result.decompiler.extra["run_via"] == "docker"
         run = next(
             call

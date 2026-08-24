@@ -318,6 +318,15 @@ The canonical raw adapters use these native sources:
   forwards them as sorted `--addr` selections so Kuna analyzes only the
   benchmarkable functions in that binary.
 
+Each function records a versioned `variable_occurrence_policy` declaration for
+diagnostics. Raw angr, Binary Ninja, Ghidra, IDA, Kuna, r2dec, and annotated RetDec
+declare `exact`; dewolf and Reko declare `direct` because they provide sound variable
+addresses without final render rows. Plain-C RetDec fallback, Glaurung, Manifold,
+LLM/code-agent output, imported eval-kit C, and marker-materialized C declare
+`unavailable`. An empty occurrence field remains authoritative under every policy:
+`exact` describes the producer contract, not a promise that every variable has an
+unambiguous surviving occurrence.
+
 The legacy declib adapters apply a separate fail-closed contract. angr and
 Ghidra expose 1-based rows in the exact returned C; IDA exposes zero-based
 Hex-Rays coordinates, which DecBench shifts while preserving declib's synthetic
@@ -331,7 +340,8 @@ an address only when exactly one candidate falls inside the function. Binary
 Ninja's declib renderer counts skipped `LinearView` header/warning rows in its
 map, so its offsets can drift within a function; `binja-declib` deliberately
 emits neither line nor variable-occurrence provenance until declib supplies an
-exact-row map.
+exact-row map. The first three adapters therefore declare the `exact` occurrence
+policy, while `binja-declib` declares `unavailable`.
 
 Phoenix is retired and is not a registered backend, but its frozen angr 9.2.213
 checkpoints remain reproducible inputs. The former raw Phoenix adapter obtained
@@ -345,8 +355,9 @@ It preserves any existing variable evidence and never rewrites the checkpoint.
 The join reads only the decompiler's final C, structured variable names, and
 sanitized native rows; source/DWARF variable names and recovered or ground-truth
 types are not inputs. The established function label is used only to reject a
-mismatched final definition. Its explicit exact-occurrence marker prevents the metric's
-generic text fallback from undoing an intentional parse or ambiguity abstention.
+mismatched final definition. Its `exact` occurrence-policy declaration records the
+historical producer contract; the metric independently treats every empty structured
+occurrence field as an authoritative abstention.
 This historical exception does not restore Phoenix as a producer and is not
 applied to another backend merely because it has C text and line-like metadata.
 
@@ -391,8 +402,9 @@ Their DecBench adapters deliberately emit no native occurrence addresses or
 line maps. Final-name-to-earlier-IR joins would be heuristic, so local-variable
 correspondence uses the type-blind usage fallback. ABI argument anchors still
 apply when the final C signature exposes them. Metric metadata records
-`linemap_present=false` and zero `decompiler_address_variables`; the report's
-mixed/fallback caveat covers any score that depended on usage evidence.
+`linemap_present=false`, an `unavailable` producer occurrence policy, and zero
+`decompiler_address_variables`; the report's mixed/fallback caveat covers any
+score that depended on usage evidence.
 
 The minimal upstream implementation is a provenance-carrying final AST, not a
 post-render text matcher:

@@ -21,7 +21,7 @@ from decbench.decompilers.raw.binja_raw import RawBinjaDecompiler
 from decbench.decompilers.raw.ghidra_raw import RawGhidraDecompiler
 from decbench.decompilers.raw.ida_raw import RawIDADecompiler
 from decbench.decompilers.raw.kuna_raw import RawKunaDecompiler
-from decbench.models.decompilation import LineMapping, VariableInfo
+from decbench.models.decompilation import LineMapping, VariableInfo, variable_occurrence_policy
 
 
 @pytest.fixture(scope="module")
@@ -383,6 +383,29 @@ def test_angr_identifier_fallback_masks_members_literals_and_duplicate_names() -
     assert variables[3].line_numbers == []
 
 
+def test_angr_identifier_fallback_abstains_on_shadowed_names() -> None:
+    variables = [VariableInfo(name="shadow", type="int")]
+    RawAngrDecompiler._add_variable_evidence(
+        variables,
+        [],
+        SimpleNamespace(map_ast_to_pos=None),
+        "int f(void) {\n"
+        "    int shadow = 0;\n"
+        "    { int shadow = 1; shadow++; }\n"
+        "    return shadow;\n"
+        "}\n",
+        [
+            LineMapping(line_number=2, addresses=[0x1004]),
+            LineMapping(line_number=3, addresses=[0x1008]),
+            LineMapping(line_number=4, addresses=[0x100C]),
+        ],
+        function_name="f",
+    )
+
+    assert variables[0].line_numbers == []
+    assert variables[0].addresses == []
+
+
 def test_angr_thumb_detection_is_address_dependent() -> None:
     project = SimpleNamespace(arch=SimpleNamespace(is_thumb=lambda address: bool(address & 1)))
     assert not RawAngrDecompiler._is_thumb_address(project, 0x1000)
@@ -526,6 +549,7 @@ def test_kuna_additive_provenance_is_validated_and_rebased() -> None:
     assert function.line_mappings == [LineMapping(line_number=2, addresses=[0x1004, 0x1008])]
     assert function.variables[0].line_numbers == [2]
     assert function.variables[0].addresses == [0x1008]
+    assert variable_occurrence_policy(function.metadata) == "exact"
 
     no_evidence = RawKunaDecompiler()._build_function(
         {"address": 0x1000, "size": 4, "code": "void f(void) {}", "variables": [{}]},

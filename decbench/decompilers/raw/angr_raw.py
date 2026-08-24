@@ -18,7 +18,6 @@ and produces the same :class:`DecompilationResult` shape as the declib-backed
 from __future__ import annotations
 
 import logging
-import re
 import shutil
 import tempfile
 import time
@@ -37,6 +36,7 @@ from decbench.models.decompilation import (
     FunctionDecompilation,
     LineMapping,
     VariableInfo,
+    with_variable_occurrence_policy,
 )
 
 _l = logging.getLogger(__name__)
@@ -373,8 +373,9 @@ class RawAngrDecompiler(Decompiler):
             codegen,
             code,
             line_mappings,
+            function_name=func_name,
         )
-        metadata = common.extract_metrics(code)
+        metadata = with_variable_occurrence_policy(common.extract_metrics(code), "exact")
 
         return FunctionDecompilation(
             name=func_name,
@@ -570,6 +571,8 @@ class RawAngrDecompiler(Decompiler):
         codegen: Any,
         code: str,
         line_mappings: list[LineMapping],
+        *,
+        function_name: str | None = None,
     ) -> None:
         starts = common.line_starts(code)
         variable_lines: dict[int, set[int]] = defaultdict(set)
@@ -599,20 +602,22 @@ class RawAngrDecompiler(Decompiler):
                 for index in indices:
                     variable_lines[index].add(line_no)
 
-        name_counts: dict[str, int] = defaultdict(int)
-        for variable in variables:
-            if variable.name:
-                name_counts[variable.name] += 1
-        masked_code = RawAngrDecompiler._mask_nonidentifiers(code)
+        try:
+            from decbench.metrics.variable_features import variable_occurrence_lines
+
+            occurrence_lines = variable_occurrence_lines(
+                code,
+                function_name or "",
+                (variable.name for variable in variables),
+                require_exact_function_name=function_name is not None,
+            )
+        except Exception as e:
+            _l.debug("Could not join angr variable occurrences in %s: %s", function_name, e)
+            occurrence_lines = {}
         for index, variable in enumerate(variables):
-            if variable_lines.get(index) or not variable.name or name_counts[variable.name] != 1:
+            if variable_lines.get(index) or not variable.name:
                 continue
-            pattern = rf"(?<![A-Za-z0-9_]){re.escape(variable.name)}(?![A-Za-z0-9_])"
-            for match in re.finditer(pattern, masked_code):
-                prefix = masked_code[max(0, match.start() - 2) : match.start()]
-                if prefix.endswith(".") or prefix.endswith("->"):
-                    continue
-                variable_lines[index].add(common.pos_to_line(match.start(), starts))
+            variable_lines[index].update(occurrence_lines.get(variable.name, ()))
 
         line_addresses = {mapping.line_number: set(mapping.addresses) for mapping in line_mappings}
         for index, lines in variable_lines.items():

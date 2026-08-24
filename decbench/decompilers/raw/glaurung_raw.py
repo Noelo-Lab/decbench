@@ -69,6 +69,7 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    with_variable_occurrence_policy,
 )
 from decbench.utils.docker_task import docker_task_label_args
 
@@ -560,7 +561,7 @@ class RawGlaurungDecompiler(Decompiler):
             line_count=code.count("\n") + 1,
             line_mappings=[],
             variables=[],
-            metadata=common.extract_metrics(code),
+            metadata=with_variable_occurrence_policy(common.extract_metrics(code), "unavailable"),
         )
 
     def _error_result(

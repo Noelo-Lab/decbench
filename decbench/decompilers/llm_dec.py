@@ -54,6 +54,7 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    with_variable_occurrence_policy,
 )
 
 _l = logging.getLogger(__name__)
@@ -392,7 +393,9 @@ class _AgentDecompiler(Decompiler):
                         address=addr,
                         decompiled_code=code,
                         line_count=code.count("\n") + 1,
-                        metadata=common.extract_metrics(code),
+                        metadata=with_variable_occurrence_policy(
+                            common.extract_metrics(code), "unavailable"
+                        ),
                         time_seconds=elapsed,
                         llm_tokens=tokens,
                     )

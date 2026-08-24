@@ -31,6 +31,7 @@ from decbench.models.decompilation import (
     FunctionDecompilation,
     LineMapping,
     VariableInfo,
+    with_variable_occurrence_policy,
 )
 
 _l = logging.getLogger(__name__)
@@ -248,7 +249,7 @@ class RawBinjaDecompiler(Decompiler):
             variables[index].addresses = sorted(
                 {address for line in lines for address in line_addresses.get(line, set())}
             )
-        metadata = common.extract_metrics(code)
+        metadata = with_variable_occurrence_policy(common.extract_metrics(code), "exact")
 
         return FunctionDecompilation(
             name=func_name,

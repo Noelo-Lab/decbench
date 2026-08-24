@@ -27,6 +27,7 @@ from decbench.decompilers.raw.manifold_raw import (
     split_functions,
 )
 from decbench.decompilers.registry import DecompilerRegistry
+from decbench.models.decompilation import variable_occurrence_policy
 
 TINY_C_SOURCE = """
 int add_nums(int a, int b) {
@@ -201,6 +202,10 @@ def test_decompile_binary_maps_fun_names_to_addresses(
     # The adapter consumes no variable/line lineage from the Clight sidecar.
     assert all(not function.line_mappings for function in result.functions.values())
     assert all(not function.variables for function in result.functions.values())
+    assert all(
+        variable_occurrence_policy(function.metadata) == "unavailable"
+        for function in result.functions.values()
+    )
     assert (tmp_path / f"manifold_{tiny_binary.stem}.c").exists()
 
 

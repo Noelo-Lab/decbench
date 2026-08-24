@@ -43,9 +43,6 @@ _INTEGER_SUFFIX = re.compile(r"(?i)(?:u|l)+$")
 _GENERIC_FEATURES = frozenset({"use:read", "use:write", "use:readwrite"})
 _COMMUTATIVE_OPERATORS = frozenset({"+", "*", "&", "|", "^", "==", "!=", "&&", "||"})
 
-EXACT_VARIABLE_OCCURRENCE_METADATA_KEY = "exact_variable_occurrence_evidence"
-EXACT_VARIABLE_OCCURRENCE_SCHEMA = "decbench-exact-variable-occurrences-v1"
-
 
 @dataclass(frozen=True)
 class DiscoveredVariable:

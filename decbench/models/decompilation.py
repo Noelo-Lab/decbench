@@ -2,10 +2,52 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
+
+VARIABLE_OCCURRENCE_POLICY_METADATA_KEY = "variable_occurrence_policy"
+VARIABLE_OCCURRENCE_POLICY_SCHEMA = "decbench-variable-occurrence-policy-v1"
+VariableOccurrencePolicy = Literal["exact", "direct", "unavailable"]
+
+
+def with_variable_occurrence_policy(
+    metadata: Mapping[str, Any] | None,
+    policy: VariableOccurrencePolicy,
+) -> dict[str, Any]:
+    """Attach a stable producer declaration for structured occurrence fields."""
+
+    return {
+        **(metadata or {}),
+        VARIABLE_OCCURRENCE_POLICY_METADATA_KEY: {
+            "schema": VARIABLE_OCCURRENCE_POLICY_SCHEMA,
+            "policy": policy,
+        },
+    }
+
+
+def variable_occurrence_policy(
+    metadata: Mapping[str, Any] | None,
+) -> VariableOccurrencePolicy | None:
+    """Read a valid structured-occurrence producer declaration."""
+
+    if not isinstance(metadata, Mapping):
+        return None
+    declaration = metadata.get(VARIABLE_OCCURRENCE_POLICY_METADATA_KEY)
+    if not isinstance(declaration, Mapping):
+        return None
+    if declaration.get("schema") != VARIABLE_OCCURRENCE_POLICY_SCHEMA:
+        return None
+    policy = declaration.get("policy")
+    if policy == "exact":
+        return "exact"
+    if policy == "direct":
+        return "direct"
+    if policy == "unavailable":
+        return "unavailable"
+    return None
 
 
 class LineMapping(BaseModel):
@@ -160,7 +202,7 @@ class DecompilationResult(BaseModel):
         """Save decompilation result metadata to TOML."""
         import toml
 
-        data = {
+        data: dict[str, Any] = {
             "binary": self.binary_name,
             "decompiler": self.decompiler.decompiler_name,
             "version": self.decompiler.decompiler_version,

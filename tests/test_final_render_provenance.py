@@ -17,6 +17,7 @@ from decbench.models.decompilation import (
     FunctionDecompilation,
     LineMapping,
     VariableInfo,
+    variable_occurrence_policy,
 )
 from scripts import reeval_typematch
 
@@ -75,6 +76,7 @@ def test_final_render_join_attaches_only_exact_local_identifiers() -> None:
     assert report.functions_enriched == 1
     assert report.variables_enriched == 2
     assert report.addresses_attached == 6
+    assert variable_occurrence_policy(result.functions["f"].metadata) == "exact"
     assert result.decompiler.extra[FINAL_RENDER_PROVENANCE_KEY] == {
         "schema": FINAL_RENDER_PROVENANCE_SCHEMA,
         "backend": "phoenix",

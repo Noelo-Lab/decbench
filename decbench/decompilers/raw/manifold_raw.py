@@ -67,6 +67,7 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    with_variable_occurrence_policy,
 )
 from decbench.utils import binfmt
 from decbench.utils.docker_task import docker_task_label_args
@@ -821,7 +822,9 @@ class ManifoldDecompiler(Decompiler):
                 address=file_addr,
                 decompiled_code=code,
                 line_count=len(code.splitlines()),
-                metadata=common.extract_metrics(code),
+                metadata=with_variable_occurrence_policy(
+                    common.extract_metrics(code), "unavailable"
+                ),
             )
 
         kept = common.narrow_to_source(

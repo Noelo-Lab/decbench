@@ -109,9 +109,12 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="10"`, bumped when Cortex-M Thumb decoding began honoring
-the ELF ARM architecture profile. Version 9 expanded native source evidence from
-x86 ELF to cross-format x86, ARM/Thumb, and AArch64 executable regions and made
+Current `cache_version="11"`. Version 11 makes producer-supplied structured
+variable occurrence fields authoritative: an empty `line_numbers`/`addresses`
+pair is an abstention and is never repopulated by matching the variable's spelling
+against rendered C. Version 10 began honoring the ELF ARM architecture profile
+when decoding Cortex-M Thumb. Version 9 expanded native source evidence from x86
+ELF to cross-format x86, ARM/Thumb, and AArch64 executable regions and made
 line-table file indexes follow the line program's own DWARF version.
 The per-function key covers the requested/resolved mode, matcher policy,
 redacted address/usage/anchor evidence, the stack shift, decompiled types used
@@ -224,7 +227,7 @@ unchanged. Explicit A/B outputs remain usable for partial experiments.
 
 Before scoring each checkpoint result, the re-evaluator resolves the binary in
 the selected results tree, deep-copies and relocates the result, and applies the
-same strict native-provenance sanitizer as a fresh run. Thus TypeMatch v10 can
+same strict native-provenance sanitizer as a fresh run. Thus TypeMatch v11 can
 reuse valid subsets of historical IDA/Kuna/native evidence without trusting
 cross-function, padding, or instruction-interior claims. This is in-memory only:
 the raw checkpoint pickle is never rewritten. Pickles created before additive
@@ -236,8 +239,19 @@ object, exact unique final identifiers are joined to surviving sanitized rows. P
 errors, stale or duplicate rows, name shadowing, a mismatched function definition, and
 variables without a mapped occurrence all abstain. No other legacy backend receives
 this repair without an equivalent same-render producer contract. The in-memory result
-marks those exact occurrences as authoritative, so the generic identifier-text line
-fallback cannot turn an explicit abstention back into address evidence.
+declares those exact occurrences through the same producer policy metadata as a fresh
+backend.
+
+Every fresh function declares a versioned `variable_occurrence_policy` in its
+metadata: `exact` for final-render line/variable identity, `direct` for sound
+variable addresses without a stable render-line callback, or `unavailable` for
+intentional abstention. Missing declarations on legacy checkpoints also fail closed.
+The production metric always uses `structured_occurrence_mode="producer"` and records
+both the declaration and mode in per-function diagnostics. The extractor retains an
+explicitly named `experimental_legacy_regex` API for isolated v10 comparisons, but no
+production adapter or metric configuration enables it. This restriction applies only
+to structured occurrence addresses; address-free, type-blind usage features are still
+extracted from the final C for every backend.
 
 Summarize independently generated modes with the shared-denominator reporter,
 not the re-evaluator's per-mode console mean:

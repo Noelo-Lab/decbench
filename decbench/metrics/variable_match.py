@@ -13,6 +13,9 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
+StructuredOccurrenceMode = Literal["producer", "experimental_legacy_regex"]
+STRUCTURED_OCCURRENCE_MODES = frozenset({"producer", "experimental_legacy_regex"})
+
 
 @dataclass(frozen=True)
 class VariableEvidence:
@@ -1357,14 +1360,13 @@ def extract_decompiler_evidence(
     function_end: int | None = None,
     include_unnamed: bool = False,
     infer_code_variables: bool = True,
+    structured_occurrence_mode: StructuredOccurrenceMode = "producer",
 ) -> FunctionEvidence:
-    from decbench.metrics.variable_features import (
-        EXACT_VARIABLE_OCCURRENCE_METADATA_KEY,
-        EXACT_VARIABLE_OCCURRENCE_SCHEMA,
-        analyze_c_function,
-    )
+    from decbench.metrics.variable_features import analyze_c_function
 
-    base_backend = backend.split("@", 1)[0]
+    if structured_occurrence_mode not in STRUCTURED_OCCURRENCE_MODES:
+        choices = ", ".join(sorted(STRUCTURED_OCCURRENCE_MODES))
+        raise ValueError(f"structured_occurrence_mode must be one of: {choices}")
     evidence_prefix = backend if identity_prefix is None else identity_prefix
     line_addresses = {
         int(mapping.line_number): frozenset(int(address) for address in mapping.addresses)
@@ -1372,12 +1374,6 @@ def extract_decompiler_evidence(
     }
     code_lines = function.decompiled_code.splitlines()
     structured = list(getattr(function, "variables", []) or [])
-    function_metadata = getattr(function, "metadata", {})
-    exact_occurrence_evidence = (
-        isinstance(function_metadata, Mapping)
-        and function_metadata.get(EXACT_VARIABLE_OCCURRENCE_METADATA_KEY)
-        == EXACT_VARIABLE_OCCURRENCE_SCHEMA
-    )
     analysis = analyze_c_function(
         function.decompiled_code,
         function.name,
@@ -1390,10 +1386,9 @@ def extract_decompiler_evidence(
                 continue
             lines = {int(line) for line in getattr(variable, "line_numbers", [])}
             if (
-                variable.name
+                structured_occurrence_mode == "experimental_legacy_regex"
+                and variable.name
                 and not lines
-                and base_backend not in {"ida", "ghidra"}
-                and not exact_occurrence_evidence
             ):
                 token = re.compile(r"\b" + re.escape(variable.name) + r"\b")
                 lines = {

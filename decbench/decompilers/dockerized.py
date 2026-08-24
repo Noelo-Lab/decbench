@@ -65,6 +65,7 @@ from decbench.models.decompilation import (
     FunctionDecompilation,
     LineMapping,
     VariableInfo,
+    with_variable_occurrence_policy,
 )
 from decbench.utils import binfmt
 from decbench.utils.docker_task import docker_task_label_args
@@ -927,10 +928,13 @@ class DockerizedDecompiler(Decompiler):
                 line_count=code.count("\n") + 1,
                 line_mappings=list(annotation.line_mappings) if annotation is not None else [],
                 variables=_retdec_variables(annotation) if annotation is not None else [],
-                metadata={
-                    "gotos": code.count("goto "),
-                    "bools": code.count(" && ") + code.count(" || "),
-                },
+                metadata=with_variable_occurrence_policy(
+                    {
+                        "gotos": code.count("goto "),
+                        "bools": code.count(" && ") + code.count(" || "),
+                    },
+                    "exact" if annotation is not None else "unavailable",
+                ),
             )
 
         extra: dict[str, object] = {"via": "docker", "image": self.image}
@@ -1155,7 +1159,9 @@ class RekoDecompiler(DockerizedDecompiler):
                 line_count=code.count("\n") + 1,
                 line_mappings=[],
                 variables=variables,
-                metadata=raw_common.extract_metrics(code),
+                metadata=with_variable_occurrence_policy(
+                    raw_common.extract_metrics(code), "direct"
+                ),
             )
 
         extra: dict[str, object] = {
@@ -1684,27 +1690,27 @@ def _r2_inferred_variables(
     function_name: str,
     line_mappings: list[Any],
 ) -> list[VariableInfo]:
-    """Join code-parsed variables to native r2 render-line addresses."""
+    """Join uniquely bound C variables to native r2 render-line addresses."""
     try:
         from decbench.metrics.type_match import parse_c_variables
+        from decbench.metrics.variable_features import variable_occurrence_lines
 
         variables = parse_c_variables(code, function_name)
+        occurrence_lines = variable_occurrence_lines(
+            code,
+            function_name,
+            (variable.name for variable in variables),
+            require_exact_function_name=True,
+        )
     except Exception:  # noqa: BLE001
         return []
     line_addresses = {
         int(mapping.line_number): {int(address) for address in mapping.addresses}
         for mapping in line_mappings
     }
-    code_lines = code.splitlines()
     out: list[VariableInfo] = []
     for variable in variables:
-        if not variable.name:
-            out.append(variable)
-            continue
-        token = re.compile(r"\b" + re.escape(variable.name) + r"\b")
-        lines = sorted(
-            line_number for line_number, text in enumerate(code_lines, 1) if token.search(text)
-        )
+        lines = list(occurrence_lines.get(variable.name, ())) if variable.name else []
         out.append(
             variable.model_copy(
                 update={
@@ -2104,7 +2110,7 @@ class R2DecDecompiler(DockerizedDecompiler):
             line_count=line_count,
             line_mappings=line_mappings,
             variables=variables,
-            metadata=raw_common.extract_metrics(code),
+            metadata=with_variable_occurrence_policy(raw_common.extract_metrics(code), "exact"),
         )
 
     def _make_result(

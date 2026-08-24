@@ -44,6 +44,7 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    with_variable_occurrence_policy,
 )
 from decbench.utils.langs import preprocessed_by_stem
 
@@ -407,7 +408,7 @@ def _build_entry(
             address=low_pc,
             decompiled_code=code,
             line_count=code.count("\n") + 1,
-            metadata=extract_metrics(code),
+            metadata=with_variable_occurrence_policy(extract_metrics(code), "unavailable"),
         )
 
     failed = sorted(allowed - set(kept))
