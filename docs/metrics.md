@@ -211,7 +211,10 @@ prints old/new comparisons. Non-canonical overlays require an explicit
 `--output`; only `--emit` with `auto` may write `type_match_new.json`. `--output`
 cannot alias the canonical path. `--manifest sample_set_manifest.json` filters
 decompilations before scoring for a fast, non-canonical sample-set replay and cannot
-be combined with `--emit`. Written overlays retain the legacy raw score-map
+be combined with `--emit`. Repeatable `--backend NAME` selectors avoid replaying
+unrelated checkpoint columns and are likewise forbidden for canonical `--emit`
+promotion. A requested backend that produces no scores fails instead of writing a
+misleading empty overlay. Written overlays retain the legacy raw score-map
 shape and gain a digest-bound `.meta.json` companion containing the requested and
 resolved modes, complete policy values, policy/manifest schemas, and metric cache
 version. Scoped updates require compatible provenance and refuse legacy or mixed-policy

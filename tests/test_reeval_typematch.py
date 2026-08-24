@@ -425,6 +425,54 @@ def test_sample_manifest_cannot_promote_canonical_overlay(tmp_path: Path) -> Non
         reeval_typematch.parse_args([str(tmp_path), "--manifest", str(manifest), "--emit"])
 
 
+def test_backend_filter_cannot_promote_canonical_overlay(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        reeval_typematch.parse_args([str(tmp_path), "--backend", "angr", "--emit"])
+
+
+def test_backend_filter_requires_named_ab_output(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        reeval_typematch.parse_args([str(tmp_path), "--backend", "angr"])
+
+
+def test_backend_filter_scores_only_exact_selected_backend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_results_tree(tmp_path)
+    checkpoint = tmp_path / "checkpoints" / "proj.pkl"
+    with checkpoint.open("rb") as file:
+        data = pickle.load(file)
+    angr = data["decompile"]["O0"]["bin"]["angr"]
+    data["decompile"]["O0"]["bin"]["ghidra"] = angr.model_copy(
+        update={
+            "decompiler": DecompilerMetadata(decompiler_name="ghidra"),
+        }
+    )
+    with checkpoint.open("wb") as file:
+        pickle.dump(data, file)
+    _install_metric(monkeypatch, _result())
+    output = tmp_path / "angr-only.json"
+
+    reeval_typematch.main([str(tmp_path), "--backend", "angr", "--output", str(output)])
+
+    payload, _provenance = read_typematch_overlay(output)
+    assert set(payload) == {"angr"}
+
+
+def test_backend_filter_rejects_backend_without_scores(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_results_tree(tmp_path)
+    _install_metric(monkeypatch, _result())
+
+    with pytest.raises(ValueError, match="produced no scores: ghidra"):
+        reeval_typematch.main(
+            [str(tmp_path), "--backend", "ghidra", "--output", str(tmp_path / "none.json")]
+        )
+
+
 def test_reevaluation_sanitizes_relocated_copy_without_rewriting_checkpoint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

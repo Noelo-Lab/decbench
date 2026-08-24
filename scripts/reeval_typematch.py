@@ -87,6 +87,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=Path,
         help="limit an A/B run to functions in a sample-set manifest",
     )
+    parser.add_argument(
+        "--backend",
+        action="append",
+        default=[],
+        help="limit a non-canonical replay to this exact backend id; repeatable",
+    )
     outputs = parser.add_mutually_exclusive_group()
     outputs.add_argument(
         "--emit",
@@ -103,6 +109,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--emit is reserved for the canonical auto mode; use --output for A/B modes")
     if args.emit and args.manifest is not None:
         parser.error("--manifest is for partial A/B runs and cannot be combined with --emit")
+    if args.emit and args.backend:
+        parser.error("--backend is for non-canonical A/B runs and cannot be combined with --emit")
+    if args.backend and args.output is None:
+        parser.error("--backend requires an explicitly named --output A/B overlay")
     if args.output is not None:
         canonical = args.results_dir / "type_match_new.json"
         protected = (canonical, typematch_overlay_manifest_path(canonical))
@@ -309,6 +319,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     new_scores: dict[str, dict[str, dict[str, float | int | str]]] = {}
     promotion_failures: list[str] = []
+    requested_backends = set(args.backend)
+    scored_backends: set[str] = set()
 
     for project in projects:
         checkpoint_path = checkpoint_dir / f"{project}.pkl"
@@ -354,6 +366,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                     raise
                 native_context = NativeProvenanceContext(binary_path)
                 for decompiler_name, decompilation in decompilers.items():
+                    if requested_backends and decompiler_name not in requested_backends:
+                        continue
                     try:
                         result = metric.compute_for_binary(
                             _prepare_decompilation(
@@ -380,6 +394,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                                 f"metric reported {len(result.errors)} error(s) for {context}"
                             )
                     for function_name, value in result.function_results.items():
+                        scored_backends.add(decompiler_name)
                         key = (
                             project,
                             opt_name,
@@ -410,6 +425,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                             row["imp"] += 1
                         elif value.value < previous - 1e-9:
                             row["wor"] += 1
+
+    missing_backends = sorted(requested_backends - scored_backends)
+    if missing_backends:
+        raise ValueError("requested backend(s) produced no scores: " + ", ".join(missing_backends))
 
     print(f"\nmode: {args.mode}")
     if args.manifest is not None:

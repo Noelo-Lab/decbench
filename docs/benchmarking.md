@@ -584,6 +584,9 @@ checkpoint decompilation is rebound from its exact `(optimization, project, bina
 key to the compiled ELF/PE under the supplied results directory. This makes copied or
 moved result trees self-contained instead of consulting the checkpoint's stale path;
 a missing or ambiguous compiled binary aborts rather than selecting an arbitrary file.
+Repeatable `--backend NAME` selectors are available only for explicitly named A/B
+outputs; canonical `--emit` rejects them so its whole-tree coverage guard cannot be
+bypassed.
 
 The canonical rebuild is `scripts/finalize_results.py <tree>` (also what
 `run_benchmark.py`'s finalize calls): ALL checkpoints (never scoped — a
