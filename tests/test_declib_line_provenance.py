@@ -175,6 +175,44 @@ def test_declib_pe_rejects_a_mismatched_header_base(tmp_path: Path) -> None:
         _pe_file_space_origins(binary, 0x500000)
 
 
+def test_declib_pe_target_round_trips_through_the_backend_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary = tmp_path / "sample.exe"
+    _write_minimal_pe(binary)
+
+    class FakeDeci:
+        binary_base_addr = 0x401000
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[int, bool]] = []
+            self.functions = {0x2280: SimpleNamespace(size=0x20, stack_vars={}, header=None)}
+
+        def decompile(self, address: int, *, map_lines: bool) -> SimpleNamespace:
+            self.calls.append((address, map_lines))
+            return SimpleNamespace(
+                text="int target(void) {\n    return 0;\n}\n",
+                line_map={0: {address}},
+            )
+
+        def shutdown(self) -> None:
+            return None
+
+    deci = FakeDeci()
+    backend = IDADeclibDecompiler()
+    monkeypatch.setattr(backend, "is_available", lambda: True)
+    monkeypatch.setattr(backend, "get_version", lambda: "test")
+    monkeypatch.setattr(backend, "_make_deci", lambda _binary, _project: deci)
+
+    result = backend.decompile_binary(binary, functions=[("target", 0x403280)])
+
+    assert deci.calls == [(0x2280, True)]
+    assert result.functions["target"].address == 0x403280
+    assert result.functions["target"].line_mappings == [
+        LineMapping(line_number=1, addresses=[0x403280])
+    ]
+
+
 def test_declib_elf_keeps_the_file_header_base(tmp_path: Path) -> None:
     binary = tmp_path / "sample"
     data = bytearray(20)
