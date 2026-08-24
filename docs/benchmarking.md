@@ -44,9 +44,9 @@ structurer was fully retired 2026-07-23; see CHANGELOG.md.)
   PROCESS in its own py3.10 venv at `/home/mahaloz/.virtualenvs/dewolf` with
   the repo at `/home/mahaloz/ctf/tools/dewolf`; see `raw/dewolf_raw.py` +
   `raw/dewolf_driver.py`, configured under `[dewolf.versions.default]`.
-- **RetDec / Reko** — Dockerized (`docker/`); their images are NOT currently
-  built on this machine (`list-decompilers` shows N) — build one with
-  `decbench decompiler-build <name>` first.
+- **RetDec / Reko** — Dockerized (`docker/`); both images are built and
+  `list-decompilers` reports them available on this machine. Rebuild a missing
+  image with `decbench decompiler-build <name>`.
 - **Glaurung** — native address-scoped CLI or the
   `decbench/glaurung:latest` image built by
   `decbench decompiler-build glaurung`. The image is a reproducible raw-only
