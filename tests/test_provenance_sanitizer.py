@@ -111,6 +111,25 @@ def test_sanitizer_preserves_valid_subsets_and_direct_only_variables(
     assert metadata["variable_line_numbers_dropped"] == 2
 
 
+def test_sanitizer_hydrates_fields_missing_from_legacy_pickles() -> None:
+    function = FunctionDecompilation(
+        name="legacy",
+        address=0x1000,
+        decompiled_code="int legacy(int value) { return value; }",
+        variables=[VariableInfo(name="value", kind="arg", arg_index=0)],
+    )
+    variable = function.variables[0]
+    del variable.__dict__["addresses"]
+    del variable.__dict__["line_numbers"]
+
+    metadata = sanitize_native_provenance(_result(function))
+
+    assert variable.addresses == []
+    assert variable.line_numbers == []
+    assert metadata["status"] == "no_address_provenance"
+    assert metadata["legacy_additive_fields_hydrated"] == 2
+
+
 def test_sanitizer_normalizes_thumb_state_and_removes_duplicates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

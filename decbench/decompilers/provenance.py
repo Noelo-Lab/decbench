@@ -30,6 +30,7 @@ _COUNT_NAMES = (
     "variable_addresses_normalized",
     "variable_address_duplicates_removed",
     "variable_line_numbers_dropped",
+    "legacy_additive_fields_hydrated",
 )
 
 
@@ -105,7 +106,25 @@ def _function_failure_reason(error: BaseException) -> str:
 def _has_address_provenance(function: FunctionDecompilation) -> bool:
     if function.line_mappings:
         return True
-    return any(variable.addresses for variable in function.variables)
+    return any(getattr(variable, "addresses", []) for variable in function.variables)
+
+
+def _hydrate_additive_provenance(
+    function: FunctionDecompilation,
+    report: _SanitizerReport,
+) -> None:
+    """Hydrate additive fields absent from legacy pickled model instances."""
+    for mapping in function.line_mappings:
+        if not isinstance(getattr(mapping, "addresses", None), list):
+            mapping.addresses = []
+            report.increment("legacy_additive_fields_hydrated")
+    for variable in function.variables:
+        if not isinstance(getattr(variable, "line_numbers", None), list):
+            variable.line_numbers = []
+            report.increment("legacy_additive_fields_hydrated")
+        if not isinstance(getattr(variable, "addresses", None), list):
+            variable.addresses = []
+            report.increment("legacy_additive_fields_hydrated")
 
 
 def _filter_addresses(
@@ -235,6 +254,8 @@ def sanitize_native_provenance(
 
     report = _SanitizerReport()
     report.counts["functions_seen"] = len(result.functions)
+    for function in result.functions.values():
+        _hydrate_additive_provenance(function, report)
     line_only = [
         function
         for function in result.functions.values()
