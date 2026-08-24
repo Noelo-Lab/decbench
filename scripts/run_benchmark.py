@@ -426,6 +426,7 @@ def _timed_decompile(
             partial = None
     pkl.unlink(missing_ok=True)
     if partial is not None and partial.functions:
+        partial.decompiler.timeout_occurred = partial.decompiler.timeout_occurred or timed_out
         partial.decompiler.extra = {
             **(partial.decompiler.extra or {}),
             "failure": failure,
@@ -438,6 +439,7 @@ def _timed_decompile(
         binary_name=binary.stem,
         decompiler=DecompilerMetadata(
             decompiler_name=dec_name,
+            timeout_occurred=timed_out,
             failed_functions=["all"],
             extra={"failure": failure, "timed_out": timed_out},
         ),

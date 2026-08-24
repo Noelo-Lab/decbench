@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pickle
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -14,6 +16,7 @@ from scripts.run_benchmark import (
     DECOMPILER_TIMEOUT,
     _load_sampleset_manifest,
     _relabel_to_dwarf,
+    _timed_decompile,
     decompiler_timeout,
     format_decompiler_timeouts,
     needs_source_cfgs,
@@ -26,6 +29,63 @@ def test_whole_program_docker_backends_have_explicit_time_budgets() -> None:
     assert DECOMPILER_TIMEOUT["reko"] == 1800
     assert decompiler_timeout("retdec@5.0") == 1800
     assert format_decompiler_timeouts(["retdec", "angr@9.2"]) == ("retdec=1800s, angr@9.2=3600s")
+
+
+class _TimedOutProcess:
+    pid = 123
+
+    def wait(self, timeout: int) -> int:
+        raise subprocess.TimeoutExpired("decompile", timeout)
+
+    def poll(self) -> int:
+        return 0
+
+
+def test_timed_decompile_records_timeout_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "scripts.run_benchmark.subprocess.Popen",
+        lambda *args, **kwargs: _TimedOutProcess(),
+    )
+    monkeypatch.setattr("scripts.run_benchmark._kill_process_group", lambda proc: None)
+
+    result = _timed_decompile(tmp_path / "binary", "angr", tmp_path, "NONE")
+
+    assert result.decompiler.timeout_occurred is True
+    assert result.decompiler.extra["timed_out"] is True
+
+
+def test_timed_decompile_marks_recovered_partial_as_timed_out(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "binary"
+    partial_path = tmp_path / "angr_binary.result.pkl"
+    partial = DecompilationResult(
+        binary_path=binary,
+        binary_name="binary",
+        decompiler=DecompilerMetadata(decompiler_name="angr"),
+        functions={
+            "kept": FunctionDecompilation(
+                name="kept",
+                address=0x1000,
+                decompiled_code="int kept(void) { return 0; }",
+            )
+        },
+    )
+    partial_path.write_bytes(pickle.dumps(partial))
+    monkeypatch.setattr(
+        "scripts.run_benchmark.subprocess.Popen",
+        lambda *args, **kwargs: _TimedOutProcess(),
+    )
+    monkeypatch.setattr("scripts.run_benchmark._kill_process_group", lambda proc: None)
+
+    result = _timed_decompile(binary, "angr", tmp_path, "NONE")
+
+    assert result.decompiler.timeout_occurred is True
+    assert result.decompiler.extra["recovered_partial"] is True
 
 
 @pytest.mark.parametrize(
