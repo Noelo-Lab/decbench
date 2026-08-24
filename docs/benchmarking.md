@@ -436,7 +436,10 @@ The audit is read-only: it never rewrites checkpoints, overlays, artifacts, or
 derived results. It resolves each claimed function by exact DWARF name and
 linked entry address, decodes its ELF/PE x86, ARM/Thumb, or AArch64 ranges, and
 requires every stored mapping/variable address to be an instruction start in
-that exact function. Line numbers are checked against the precise
+that exact function. The auditor builds its own immutable DWARF identity index,
+executable-region snapshot, and architecture context once per binary slice, so
+full-corpus validation does not reparse a large binary for every function.
+Line numbers are checked against the precise
 `FunctionDecompilation.decompiled_code` string, and direct variable addresses
 must agree with the selected mapped rows when both forms are present. Dewolf
 and Reko's direct-only variable provenance is valid without a line map after

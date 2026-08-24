@@ -16,6 +16,7 @@ from elftools.elf import elffile
 from decbench.auditing import native_provenance
 from decbench.auditing.native_provenance import (
     AuditState,
+    BinaryCodeIndex,
     FunctionCode,
     audit_function,
     audit_results_tree,
@@ -137,12 +138,60 @@ def test_function_ranges_uses_dwarf_entry_instead_of_lowest_split_range(
     dwarfinfo = SimpleNamespace(iter_CUs=lambda: iter((cu,)))
     ranges = ((0x2670, 0x2FC1), (0x2640, 0x2662))
     monkeypatch.setattr(binfmt, "dwarf_info", lambda _path: dwarfinfo)
+    monkeypatch.setattr(binfmt, "detect", lambda _path: binfmt.BinInfo("elf", "x86-64", 64))
+    monkeypatch.setattr(binfmt, "executable_regions", lambda _path: ((0x2000, b"\x90"),))
     monkeypatch.setattr(binfmt, "die_str_attr", lambda _die, _name: "main")
     monkeypatch.setattr(native_provenance, "_die_ranges", lambda _die, _info: ranges)
 
     assert native_provenance._function_ranges(tmp_path / "tool", "main", 0x2670, "x86-64") == ranges
     with pytest.raises(ValueError, match="no DWARF function matches"):
         native_provenance._function_ranges(tmp_path / "tool", "main", 0x2640, "x86-64")
+    index = BinaryCodeIndex.from_binary(tmp_path / "tool")
+    assert index.function_ranges("main", 0x2670) == ranges
+    with pytest.raises(ValueError, match="no DWARF function matches"):
+        index.function_ranges("main", 0x2640)
+
+
+@pytest.mark.parametrize(
+    ("die_ranges", "ambiguous"),
+    [
+        ((((0x1000, 0x1010),), ((0x1000, 0x1010),)), False),
+        ((((0x1000, 0x1010),), ((0x1000, 0x1020),)), True),
+    ],
+)
+def test_binary_index_preserves_duplicate_and_ambiguous_dwarf_semantics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    die_ranges: tuple[tuple[tuple[int, int], ...], ...],
+    ambiguous: bool,
+) -> None:
+    dies = tuple(
+        SimpleNamespace(tag="DW_TAG_subprogram", attributes={}, ranges=ranges)
+        for ranges in die_ranges
+    )
+    cu = SimpleNamespace(iter_DIEs=lambda: iter(dies))
+    dwarfinfo = SimpleNamespace(iter_CUs=lambda: iter((cu,)))
+    monkeypatch.setattr(binfmt, "detect", lambda _path: binfmt.BinInfo("elf", "x86-64", 64))
+    monkeypatch.setattr(binfmt, "dwarf_info", lambda _path: dwarfinfo)
+    monkeypatch.setattr(binfmt, "die_str_attr", lambda _die, _name: "target")
+    monkeypatch.setattr(binfmt, "executable_regions", lambda _path: ((0x1000, b"\x90"),))
+    monkeypatch.setattr(
+        native_provenance,
+        "_die_ranges",
+        lambda die, _dwarfinfo: die.ranges,
+    )
+    binary = tmp_path / "tool"
+    index = BinaryCodeIndex.from_binary(binary)
+
+    if ambiguous:
+        with pytest.raises(ValueError, match="ambiguous DWARF function"):
+            native_provenance._function_ranges(binary, "target", 0x1000, "x86-64")
+        with pytest.raises(ValueError, match="ambiguous DWARF function"):
+            index.function_ranges("target", 0x1000)
+    else:
+        expected = ((0x1000, 0x1010),)
+        assert native_provenance._function_ranges(binary, "target", 0x1000, "x86-64") == expected
+        assert index.function_ranges("target", 0x1000) == expected
 
 
 def _code(*addresses: int) -> FunctionCode:
@@ -333,6 +382,18 @@ def _resolved(binary: Path, function: str, address: int) -> FunctionCode:
     )
 
 
+class _ResolvedCodeIndex:
+    def __init__(self, binary: Path) -> None:
+        self.binary = binary
+
+    def resolve(self, function: str, address: int) -> FunctionCode:
+        return _resolved(self.binary, function, address)
+
+
+def _resolved_index(binary: Path) -> _ResolvedCodeIndex:
+    return _ResolvedCodeIndex(binary)
+
+
 def test_tree_audit_enforces_manifest_scope_and_reports_backend_counts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -344,7 +405,7 @@ def test_tree_audit_enforces_manifest_scope_and_reports_backend_counts(
     )
     extra = valid.model_copy(update={"name": "extra", "decompiled_code": "int extra(void){}"})
     _binary, manifest = _write_tree(tmp_path, [valid, extra])
-    monkeypatch.setattr(native_provenance, "resolve_function_code", _resolved)
+    monkeypatch.setattr(native_provenance, "_build_binary_code_index", _resolved_index)
 
     report = audit_results_tree(tmp_path, manifest_path=manifest, requested_backends=["reko"])
 
@@ -379,7 +440,7 @@ def test_tree_audit_allows_missing_line_maps_and_cli_writes_json(
     )
     tree = tmp_path / "tree"
     _binary, manifest = _write_tree(tree, [function])
-    monkeypatch.setattr(native_provenance, "resolve_function_code", _resolved)
+    monkeypatch.setattr(native_provenance, "_build_binary_code_index", _resolved_index)
     output = tmp_path / "audit.json"
 
     assert (
@@ -399,6 +460,55 @@ def test_tree_audit_allows_missing_line_maps_and_cli_writes_json(
     report = json.loads(output.read_text())
     assert report["valid"] is True
     assert report["backends"]["reko"]["functions_with_direct_only_addresses"] == 1
+
+
+def test_tree_audit_builds_one_binary_index_and_resolves_each_identity_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    functions = [
+        FunctionDecompilation(
+            name=name,
+            address=address,
+            decompiled_code=f"int {name}(void) {{ return 0; }}",
+            variables=[VariableInfo(name="x", addresses=[address])],
+        )
+        for name, address in (("f", 0x1000), ("g", 0x2000))
+    ]
+    binary, _manifest = _write_tree(tmp_path, functions)
+    checkpoint = tmp_path / "checkpoints/proj.pkl"
+    payload = pickle.loads(checkpoint.read_bytes())
+    original = payload["decompile"]["O0"]["tool"]["reko"]
+    payload["decompile"]["O0"]["tool"]["ida"] = DecompilationResult(
+        binary_path=binary,
+        binary_name="tool",
+        decompiler=DecompilerMetadata(decompiler_name="ida"),
+        functions=original.functions,
+    )
+    checkpoint.write_bytes(pickle.dumps(payload))
+
+    builds: list[Path] = []
+    resolutions: list[tuple[str, int]] = []
+
+    class CountingIndex:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+
+        def resolve(self, function: str, address: int) -> FunctionCode:
+            resolutions.append((function, address))
+            return _resolved(self.path, function, address)
+
+    def build_index(path: Path) -> CountingIndex:
+        builds.append(path)
+        return CountingIndex(path)
+
+    monkeypatch.setattr(native_provenance, "_build_binary_code_index", build_index)
+
+    report = audit_results_tree(tmp_path)
+
+    assert report["valid"] is True
+    assert builds == [binary.resolve()]
+    assert resolutions == [("f", 0x1000), ("g", 0x2000)]
 
 
 def test_cli_refuses_to_write_inside_results_tree(
@@ -570,8 +680,11 @@ def test_resolve_function_code_uses_exact_live_dwarf_range(tmp_path: Path) -> No
     function_range = binfmt._dwarf_function_range(binary, "add_nums")
     assert function_range is not None
 
-    code = native_provenance.resolve_function_code(binary, "add_nums", function_range[0])
+    one_shot = native_provenance.resolve_function_code(binary, "add_nums", function_range[0])
+    index = BinaryCodeIndex.from_binary(binary)
+    code = index.resolve("add_nums", function_range[0])
 
+    assert code == one_shot
     assert code.ranges == (function_range,)
     assert function_range[0] in code.instruction_starts
     assert all(

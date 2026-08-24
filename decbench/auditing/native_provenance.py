@@ -10,6 +10,7 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from decbench.utils import binfmt
@@ -17,6 +18,8 @@ from decbench.utils.results_tree import compiled_dir
 
 FunctionKey = tuple[str, str, str, str]
 SliceKey = tuple[str, str, str]
+FunctionRanges = tuple[tuple[int, int], ...]
+FunctionIdentity = tuple[str, int]
 
 REPORT_SCHEMA = "decbench-native-provenance-audit-v1"
 SUPPORTED_FORMATS = frozenset({"elf", "pe"})
@@ -47,6 +50,145 @@ class FunctionCode:
     ranges: tuple[tuple[int, int], ...]
     instruction_starts: frozenset[int]
     mclass: bool = False
+
+
+@dataclass(frozen=True)
+class BinaryCodeIndex:
+    """Immutable machine-code and DWARF context shared within one binary slice."""
+
+    binary_path: Path
+    info: binfmt.BinInfo
+    executable_regions: tuple[tuple[int, bytes], ...]
+    arm_mclass: bool
+    pe_machine: int | None
+    ranges_by_identity: Mapping[FunctionIdentity, frozenset[FunctionRanges]] = field(repr=False)
+    range_errors_by_name: Mapping[str, Exception] = field(repr=False)
+    thumb_states_by_address: Mapping[int, frozenset[bool]] = field(repr=False)
+    thumb_states_by_name: Mapping[str, tuple[bool, ...]] = field(repr=False)
+
+    @classmethod
+    def from_binary(cls, binary_path: Path) -> BinaryCodeIndex:
+        """Parse one binary and build its exact function-identity index once."""
+
+        binary_path = binary_path.resolve()
+        info = binfmt.detect(binary_path)
+        if info is None:
+            raise ValueError("unrecognized binary format")
+        if info.fmt not in SUPPORTED_FORMATS or info.arch not in SUPPORTED_ARCHITECTURES:
+            raise ValueError(f"unsupported binary format/architecture {info.fmt}/{info.arch}")
+        dwarfinfo = binfmt.dwarf_info(binary_path)
+        if dwarfinfo is None:
+            raise ValueError("binary has no readable DWARF")
+
+        indexed_ranges: defaultdict[FunctionIdentity, set[FunctionRanges]] = defaultdict(set)
+        range_errors: dict[str, Exception] = {}
+        for cu in dwarfinfo.iter_CUs():
+            for die in cu.iter_DIEs():
+                if die.tag != "DW_TAG_subprogram":
+                    continue
+                name = binfmt.die_str_attr(die, "DW_AT_name")
+                if not name:
+                    continue
+                try:
+                    raw_ranges = _die_ranges(die, dwarfinfo)
+                except Exception:
+                    continue
+                try:
+                    ranges = _normalize_ranges(raw_ranges, info.arch)
+                    entry = _function_entry(die, raw_ranges, info.arch)
+                except Exception as exc:  # noqa: BLE001
+                    range_errors.setdefault(name, exc)
+                    continue
+                if (
+                    ranges
+                    and entry is not None
+                    and any(begin <= entry < end for begin, end in ranges)
+                ):
+                    indexed_ranges[(name, entry)].add(ranges)
+
+        thumb_by_address: Mapping[int, frozenset[bool]] = MappingProxyType({})
+        thumb_by_name: Mapping[str, tuple[bool, ...]] = MappingProxyType({})
+        if info.fmt == "elf" and info.arch == "arm":
+            thumb_by_address, thumb_by_name = _elf_thumb_state_index(binary_path)
+        arm_mclass = (
+            info.fmt == "elf" and info.arch == "arm" and binfmt.elf_is_arm_mclass(binary_path)
+        )
+        pe_machine = _pe_machine(binary_path) if info.fmt == "pe" and info.arch == "arm" else None
+        return cls(
+            binary_path=binary_path,
+            info=info,
+            executable_regions=tuple(binfmt.executable_regions(binary_path)),
+            arm_mclass=arm_mclass,
+            pe_machine=pe_machine,
+            ranges_by_identity=MappingProxyType(
+                {identity: frozenset(ranges) for identity, ranges in indexed_ranges.items()}
+            ),
+            range_errors_by_name=MappingProxyType(range_errors),
+            thumb_states_by_address=thumb_by_address,
+            thumb_states_by_name=thumb_by_name,
+        )
+
+    def function_ranges(
+        self,
+        function_name: str,
+        function_address: int,
+    ) -> FunctionRanges:
+        """Resolve one unambiguous DWARF definition by exact name and entry."""
+
+        if function_name in self.range_errors_by_name:
+            raise self.range_errors_by_name[function_name]
+        expected = function_address & ~1 if self.info.arch == "arm" else function_address
+        candidates = self.ranges_by_identity.get((function_name, expected), frozenset())
+        if not candidates:
+            raise ValueError(
+                f"no DWARF function matches {function_name!r} at 0x{function_address:x}"
+            )
+        if len(candidates) != 1:
+            raise ValueError(
+                f"ambiguous DWARF function {function_name!r} at 0x{function_address:x}"
+            )
+        return next(iter(candidates))
+
+    def uses_thumb(self, function_name: str, function_address: int) -> bool:
+        """Select ARM or Thumb from cached authoritative binary metadata."""
+
+        if self.info.arch != "arm":
+            return False
+        if function_address & 1:
+            return True
+        if self.info.fmt == "pe":
+            return self.pe_machine in {0x1C2, 0x1C4}
+        exact = self.thumb_states_by_address.get(function_address & ~1, frozenset())
+        if exact:
+            return next(iter(exact)) if len(exact) == 1 else False
+        named = self.thumb_states_by_name.get(function_name, ())
+        return named[0] if len(named) == 1 else False
+
+    def resolve(self, function_name: str, function_address: int) -> FunctionCode:
+        """Decode one exact function using the cached binary context."""
+
+        ranges = self.function_ranges(function_name, function_address)
+        thumb = self.uses_thumb(function_name, function_address)
+        mclass = thumb and self.arm_mclass
+        starts = decode_instruction_starts(
+            self.info,
+            ranges,
+            self.executable_regions,
+            thumb=thumb,
+            mclass=mclass,
+        )
+        expected = function_address & ~1 if self.info.arch == "arm" else function_address
+        if expected not in starts:
+            raise ValueError(f"function entry 0x{expected:x} is not a decoded instruction start")
+        return FunctionCode(
+            binary_path=self.binary_path,
+            binary_format=self.info.fmt,
+            architecture=("thumb" if thumb else self.info.arch),
+            thumb=thumb,
+            ranges=ranges,
+            instruction_starts=starts,
+            mclass=mclass,
+        )
 
 
 @dataclass(frozen=True)
@@ -204,6 +346,31 @@ def _die_ranges(die: Any, dwarfinfo: Any) -> tuple[tuple[int, int], ...]:
     return tuple(ranges)
 
 
+def _normalize_ranges(ranges: Sequence[tuple[int, int]], architecture: str) -> FunctionRanges:
+    if architecture != "arm":
+        return tuple(ranges)
+    return tuple(((begin & ~1), (begin & ~1) + (end - begin)) for begin, end in ranges)
+
+
+def _function_entry(
+    die: Any,
+    ranges: Sequence[tuple[int, int]],
+    architecture: str,
+) -> int | None:
+    entry_attr = die.attributes.get("DW_AT_entry_pc")
+    low_attr = die.attributes.get("DW_AT_low_pc")
+    raw_entry = (
+        int(entry_attr.value)
+        if entry_attr is not None
+        else (
+            int(low_attr.value) if low_attr is not None else int(ranges[0][0]) if ranges else None
+        )
+    )
+    if raw_entry is not None and architecture == "arm":
+        return raw_entry & ~1
+    return raw_entry
+
+
 def _function_ranges(
     binary_path: Path,
     function_name: str,
@@ -227,27 +394,8 @@ def _function_ranges(
                 ranges = _die_ranges(die, dwarfinfo)
             except Exception:
                 continue
-            normalized = tuple(
-                (
-                    (begin & ~1) if architecture == "arm" else begin,
-                    ((begin & ~1) if architecture == "arm" else begin) + (end - begin),
-                )
-                for begin, end in ranges
-            )
-            entry_attr = die.attributes.get("DW_AT_entry_pc")
-            low_attr = die.attributes.get("DW_AT_low_pc")
-            raw_entry = (
-                int(entry_attr.value)
-                if entry_attr is not None
-                else (
-                    int(low_attr.value)
-                    if low_attr is not None
-                    else ranges[0][0] if ranges else None
-                )
-            )
-            entry = (
-                (raw_entry & ~1) if raw_entry is not None and architecture == "arm" else raw_entry
-            )
+            normalized = _normalize_ranges(ranges, architecture)
+            entry = _function_entry(die, ranges, architecture)
             if (
                 normalized
                 and entry == expected
@@ -279,6 +427,38 @@ def _pe_machine(path: Path) -> int | None:
         return None
 
 
+def _elf_thumb_state_index(
+    binary_path: Path,
+) -> tuple[Mapping[int, frozenset[bool]], Mapping[str, tuple[bool, ...]]]:
+    """Index the same authoritative ARM symbol states as the one-shot resolver."""
+
+    exact_states: defaultdict[int, set[bool]] = defaultdict(set)
+    named_states: defaultdict[str, list[bool]] = defaultdict(list)
+    try:
+        from elftools.elf.elffile import ELFFile
+
+        with binary_path.open("rb") as stream:
+            elf = ELFFile(stream)
+            if elf.header["e_machine"] != "EM_ARM":
+                return MappingProxyType({}), MappingProxyType({})
+            symbol_table: Any = elf.get_section_by_name(".symtab")
+            if symbol_table is None:
+                return MappingProxyType({}), MappingProxyType({})
+            for symbol in symbol_table.iter_symbols():
+                if symbol["st_info"]["type"] != "STT_FUNC" or symbol["st_size"] <= 0:
+                    continue
+                raw_address = int(symbol["st_value"])
+                state = bool(raw_address & 1)
+                exact_states[raw_address & ~1].add(state)
+                named_states[symbol.name].append(state)
+    except Exception:
+        return MappingProxyType({}), MappingProxyType({})
+    return (
+        MappingProxyType({address: frozenset(states) for address, states in exact_states.items()}),
+        MappingProxyType({name: tuple(states) for name, states in named_states.items()}),
+    )
+
+
 def _uses_thumb(
     binary_path: Path,
     info: binfmt.BinInfo,
@@ -294,6 +474,12 @@ def _uses_thumb(
     if info.fmt == "elf":
         return bool(binfmt.elf_function_is_thumb(binary_path, function_name, function_address))
     return _pe_machine(binary_path) in {0x1C2, 0x1C4}
+
+
+def _build_binary_code_index(binary_path: Path) -> BinaryCodeIndex:
+    """Build the auditor-private context for one resolved binary path."""
+
+    return BinaryCodeIndex.from_binary(binary_path)
 
 
 def decode_instruction_starts(
@@ -760,7 +946,6 @@ def audit_results_tree(
     observed_backends: set[str] = set()
     observed_slices: set[SliceKey] = set()
     observed_manifest_keys: set[FunctionKey] = set()
-    code_cache: dict[tuple[Path, str, int], FunctionCode | ValueError] = {}
     checkpoint_rows: list[dict[str, str]] = []
     binary_rows: dict[SliceKey, dict[str, str]] = {}
 
@@ -816,6 +1001,8 @@ def audit_results_tree(
                     continue
                 observed_slices.add(slice_key)
                 binary_path: Path | ValueError | None = None
+                binary_index: BinaryCodeIndex | ValueError | None = None
+                code_cache: dict[tuple[str, int], FunctionCode | ValueError] = {}
                 for raw_backend, result in sorted(
                     raw_decompilers.items(), key=lambda item: str(item[0])
                 ):
@@ -972,12 +1159,24 @@ def audit_results_tree(
                                 "path": str(binary_path),
                                 "sha256": binary_sha256,
                             }
-                        cache_key = (binary_path, function_name, address)
+                        if binary_index is None:
+                            try:
+                                binary_index = _build_binary_code_index(binary_path)
+                            except Exception as exc:  # noqa: BLE001
+                                binary_index = ValueError(f"{type(exc).__name__}: {exc}")
+                        if isinstance(binary_index, ValueError):
+                            _add_function_finding(
+                                state,
+                                key,
+                                backend,
+                                "function_code_resolution_failed",
+                                str(binary_index),
+                            )
+                            continue
+                        cache_key = (function_name, address)
                         if cache_key not in code_cache:
                             try:
-                                code_cache[cache_key] = resolve_function_code(
-                                    binary_path, function_name, address
-                                )
+                                code_cache[cache_key] = binary_index.resolve(function_name, address)
                             except Exception as exc:  # noqa: BLE001
                                 code_cache[cache_key] = ValueError(f"{type(exc).__name__}: {exc}")
                         code = code_cache[cache_key]
