@@ -420,6 +420,46 @@ Other driver facts:
   task in a fresh process via `max_tasks_per_child=1`, so JVM/idalib state
   never leaks between tasks.
 
+### Auditing native line and variable provenance
+
+Before using a fresh native-provenance run for a TypeMatch A/B report, audit
+the checkpoint pickles against the original linked binaries:
+
+```bash
+python scripts/audit_native_provenance.py results/native_sample \
+  --manifest results/native_sample/sample_set_manifest.json \
+  --backend ida --backend kuna --backend dewolf --backend reko \
+  --output /tmp/native-provenance-audit.json
+```
+
+The audit is read-only: it never rewrites checkpoints, overlays, artifacts, or
+derived results. It resolves each claimed function by exact DWARF name and
+linked entry address, decodes its ELF/PE x86, ARM/Thumb, or AArch64 ranges, and
+requires every stored mapping/variable address to be an instruction start in
+that exact function. Line numbers are checked against the precise
+`FunctionDecompilation.decompiled_code` string, and direct variable addresses
+must agree with the selected mapped rows when both forms are present. Dewolf
+and Reko's direct-only variable provenance is valid without a line map after
+the same instruction check.
+
+`--manifest` is a strict allowlist, not a post-hoc filter: any selected-backend
+function outside it makes the audit fail. This is deliberate—it catches a
+sample gate that silently expanded to the full corpus. A manifest slice that is
+absent from the checkpoints also fails. Ordinary decompiler misses/timeouts are
+reported per backend as `manifest_functions_missing` but do not make valid
+stored evidence false. Omit `--manifest` to audit every stored function, and
+repeat `--checkpoint PATH` to inspect selected pickles instead of the whole
+`checkpoints/` directory.
+
+The JSON records checkpoint, manifest, and resolved compiled-binary SHA-256
+digests, per-backend coverage, format/architecture strata, direct-only counts,
+and bounded detailed findings. Exit status is 0 only when the evidence is
+valid, 1 for audit findings, and 2 for malformed inputs or an unreadable audit
+scope. Without `--output`, JSON is written to stdout and the one-line review
+summary goes to stderr. An explicit output must be outside the audited result
+tree and is atomically replaced, preserving the read-only contract even when a
+path is mistyped or hardlinked to an existing result file.
+
 ## The FULL run
 
 A **full run = EVERY project AND EVERY supported decompiler**: all of

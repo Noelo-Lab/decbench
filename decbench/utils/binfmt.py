@@ -47,7 +47,14 @@ _ELF_MACHINES = {
     0x14: "ppc",
     0x15: "ppc64",
 }
-_PE_MACHINES = {0x14C: "x86", 0x8664: "x86-64", 0xAA64: "aarch64", 0x1C0: "arm"}
+_PE_MACHINES = {
+    0x14C: "x86",
+    0x8664: "x86-64",
+    0xAA64: "aarch64",
+    0x1C0: "arm",
+    0x1C2: "arm",
+    0x1C4: "arm",
+}
 
 
 @dataclass
@@ -238,16 +245,22 @@ def elf_function_is_thumb(path: Path, func_name: str, address: int) -> bool:
             if symtab is None:
                 return False
             symbol_table = cast(Any, symtab)
+            exact_states: list[bool] = []
+            named_states: list[bool] = []
+            expected = address & ~1
             for symbol in symbol_table.iter_symbols():
                 if symbol["st_info"]["type"] != "STT_FUNC" or symbol["st_size"] <= 0:
                     continue
-                raw_address = symbol["st_value"]
-                if (
-                    symbol.name == func_name
-                    or (raw_address & ~1) == address
-                    or raw_address == address
-                ):
-                    return bool(raw_address & 1)
+                raw_address = int(symbol["st_value"])
+                state = bool(raw_address & 1)
+                if (raw_address & ~1) == expected:
+                    exact_states.append(state)
+                if symbol.name == func_name:
+                    named_states.append(state)
+            if exact_states:
+                return exact_states[0] if len(set(exact_states)) == 1 else False
+            if len(named_states) == 1:
+                return named_states[0]
     except Exception:
         pass
     return False

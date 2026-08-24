@@ -185,6 +185,10 @@ Every mapped address is normalized to the binary's linked ELF/PE address space
 and should identify a machine instruction in that function. A backend must
 collect text and mappings from the same render pass; pairing a Pseudo-C render
 with independently enumerated IL rows produces invalid line numbers.
+Fresh checkpoint evidence can be checked independently with
+`scripts/audit_native_provenance.py`; its strict sample-manifest and
+architecture-aware validation contract is documented in
+[benchmarking.md](benchmarking.md#auditing-native-line-and-variable-provenance).
 
 The canonical raw adapters use these native sources:
 
