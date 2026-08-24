@@ -5,6 +5,8 @@ import pickle
 import struct
 from pathlib import Path
 
+import pytest
+
 from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
@@ -12,7 +14,11 @@ from decbench.models.decompilation import (
     LineMapping,
     VariableInfo,
 )
-from decbench.results_store import typematch_overlay_provenance, write_typematch_overlay_atomic
+from decbench.results_store import (
+    TypeMatchOverlayError,
+    typematch_overlay_provenance,
+    write_typematch_overlay_atomic,
+)
 from decbench.scoring.typematch_ab import build_report, json_payload, render_markdown
 from scripts.report_typematch_ab import main
 
@@ -375,28 +381,16 @@ def test_coverage_drift_is_reported_and_fails_cli_by_default(tmp_path: Path) -> 
     assert "Shared denominator: **3** of 4 selected functions" in markdown.read_text()
 
 
-def test_v11_report_rejects_missing_entry_occurrence_provenance(tmp_path: Path) -> None:
-    function_data, manifest = _fixture_tree(tmp_path)
+def test_v11_overlay_write_rejects_missing_entry_occurrence_provenance(tmp_path: Path) -> None:
     overlay = tmp_path / "address-v11.json"
-    _write_overlay(
-        overlay,
-        "address",
-        cache_version="11",
-        omit_entry_provenance=True,
-    )
 
-    report = build_report(
-        function_data_path=function_data,
-        results_root=tmp_path,
-        manifest_path=manifest,
-        modes=(("address", overlay),),
-        baseline_mode="address",
-    )
-
-    assert report["validation"]["valid_for_apples_to_apples"] is False
-    assert report["validation"]["errors"] == [
-        "v11 mode 'address' has 1 entries without complete producer occurrence provenance"
-    ]
+    with pytest.raises(TypeMatchOverlayError, match="producer_variable_occurrence_policy"):
+        _write_overlay(
+            overlay,
+            "address",
+            cache_version="11",
+            omit_entry_provenance=True,
+        )
 
 
 def test_markdown_explains_shared_denominator(tmp_path: Path) -> None:

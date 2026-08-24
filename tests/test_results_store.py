@@ -4,9 +4,11 @@ tests for the 2026-07-22 kuna@betaflight O2-noinline wipe."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import pickle
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -178,12 +180,12 @@ def test_merge_typematch_overlay() -> None:
     assert existing["kuna"]["a::O0::b::f"] == {"value": 0.5}
 
 
-def _typematch_provenance(**policy: float) -> dict[str, object]:
+def _typematch_provenance(*, cache_version: str = "7", **policy: float) -> dict[str, object]:
     return typematch_overlay_provenance(
         mode="auto",
         resolved_mode="address+usage",
         policy=policy or {"min_overlap": 0.1, "address_weight": 0.5},
-        metric_cache_version="7",
+        metric_cache_version=cache_version,
         structured_occurrence_mode="producer",
         variable_occurrence_policy_schema="decbench-variable-occurrence-policy-v1",
     )
@@ -206,6 +208,194 @@ def test_typematch_overlay_manifest_is_digest_bound_but_legacy_is_readable(
     path.write_text(json.dumps({"angr": {}}))
     with pytest.raises(TypeMatchOverlayError, match="digest"):
         read_typematch_overlay(path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("structured_occurrence_mode", None, "structured_occurrence_mode"),
+        ("structured_occurrence_mode", "experimental_legacy_regex", "producer"),
+        ("variable_occurrence_policy_schema", None, "variable_occurrence_policy_schema"),
+        ("variable_occurrence_policy_schema", "wrong-schema", "policy_schema"),
+    ],
+)
+def test_v11_typematch_write_requires_exact_manifest_occurrence_contract(
+    tmp_path: Path,
+    field: str,
+    value: str | None,
+    message: str,
+) -> None:
+    provenance = _typematch_provenance(cache_version="11")
+    if value is None:
+        provenance.pop(field)
+    else:
+        provenance[field] = value
+
+    with pytest.raises(TypeMatchOverlayError, match=message):
+        write_typematch_overlay_atomic(tmp_path / "type_match_new.json", {}, provenance)
+
+
+@pytest.mark.parametrize(
+    ("entry", "message"),
+    [
+        (1.0, "must be a mapping"),
+        (
+            {"value": 1.0, "structured_occurrence_mode": "producer"},
+            "producer_variable_occurrence_policy",
+        ),
+        (
+            {
+                "value": 1.0,
+                "producer_variable_occurrence_policy": "guessed",
+                "structured_occurrence_mode": "producer",
+            },
+            "producer_variable_occurrence_policy",
+        ),
+        (
+            {"value": 1.0, "producer_variable_occurrence_policy": "exact"},
+            "structured_occurrence_mode",
+        ),
+        (
+            {
+                "value": 1.0,
+                "producer_variable_occurrence_policy": "exact",
+                "structured_occurrence_mode": "experimental_legacy_regex",
+            },
+            "structured_occurrence_mode",
+        ),
+    ],
+)
+def test_v11_typematch_write_rejects_incomplete_entry_provenance(
+    tmp_path: Path,
+    entry: Any,
+    message: str,
+) -> None:
+    payload = {"angr": {"p::O0::b::f": entry}}
+
+    with pytest.raises(TypeMatchOverlayError, match=message):
+        write_typematch_overlay_atomic(
+            tmp_path / "type_match_new.json",
+            payload,
+            _typematch_provenance(cache_version="11"),
+        )
+
+
+def test_v11_typematch_overlay_accepts_declared_and_undeclared_policies(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "type_match_new.json"
+    payload = {
+        "angr": {
+            "p::O0::b::declared": {
+                "value": 1.0,
+                "producer_variable_occurrence_policy": "direct",
+                "structured_occurrence_mode": "producer",
+            },
+            "p::O0::b::legacy": {
+                "value": 0.5,
+                "producer_variable_occurrence_policy": "undeclared",
+                "structured_occurrence_mode": "producer",
+            },
+        }
+    }
+
+    write_typematch_overlay_atomic(
+        path,
+        payload,
+        _typematch_provenance(cache_version="11"),
+    )
+
+    assert read_typematch_overlay(path)[0] == payload
+
+
+def test_v11_typematch_read_rejects_digest_bound_incomplete_entry(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "type_match_new.json"
+    payload = {
+        "angr": {
+            "p::O0::b::f": {
+                "value": 1.0,
+                "producer_variable_occurrence_policy": "exact",
+                "structured_occurrence_mode": "producer",
+            }
+        }
+    }
+    write_typematch_overlay_atomic(
+        path,
+        payload,
+        _typematch_provenance(cache_version="11"),
+    )
+    payload["angr"]["p::O0::b::f"].pop("producer_variable_occurrence_policy")
+    overlay_bytes = json.dumps(payload, sort_keys=True).encode()
+    path.write_bytes(overlay_bytes)
+    manifest_path = typematch_overlay_manifest_path(path)
+    manifest = json.loads(manifest_path.read_text())
+    manifest["overlay_sha256"] = hashlib.sha256(overlay_bytes).hexdigest()
+    manifest_path.write_text(json.dumps(manifest))
+
+    with pytest.raises(TypeMatchOverlayError, match="producer_variable_occurrence_policy"):
+        read_typematch_overlay(path)
+
+
+def test_v11_typematch_read_rejects_wrong_manifest_occurrence_schema(tmp_path: Path) -> None:
+    path = tmp_path / "type_match_new.json"
+    payload = {
+        "angr": {
+            "p::O0::b::f": {
+                "value": 1.0,
+                "producer_variable_occurrence_policy": "exact",
+                "structured_occurrence_mode": "producer",
+            }
+        }
+    }
+    write_typematch_overlay_atomic(
+        path,
+        payload,
+        _typematch_provenance(cache_version="11"),
+    )
+    manifest_path = typematch_overlay_manifest_path(path)
+    manifest = json.loads(manifest_path.read_text())
+    manifest["variable_occurrence_policy_schema"] = "wrong-schema"
+    manifest_path.write_text(json.dumps(manifest))
+
+    with pytest.raises(TypeMatchOverlayError, match="variable_occurrence_policy_schema"):
+        read_typematch_overlay(path)
+
+
+def test_pre_v11_typematch_overlay_keeps_legacy_entry_compatibility(tmp_path: Path) -> None:
+    path = tmp_path / "type_match_new.json"
+    payload = {"angr": {"p::O0::b::f": {"value": 1.0}}}
+
+    write_typematch_overlay_atomic(
+        path,
+        payload,
+        _typematch_provenance(cache_version="10"),
+    )
+
+    assert read_typematch_overlay(path)[0] == payload
+
+
+def test_v11_scoped_typematch_merge_rejects_incomplete_entry_provenance() -> None:
+    provenance = _typematch_provenance(cache_version="11")
+    valid = {
+        "angr": {
+            "p::O0::b::f": {
+                "value": 1.0,
+                "producer_variable_occurrence_policy": "exact",
+                "structured_occurrence_mode": "producer",
+            }
+        }
+    }
+    incomplete = {"angr": {"p::O0::b::g": {"value": 0.5}}}
+
+    with pytest.raises(TypeMatchOverlayError, match="producer_variable_occurrence_policy"):
+        merge_typematch_overlay(
+            valid,
+            incomplete,
+            existing_provenance=provenance,
+            fresh_provenance=provenance,
+        )
 
 
 def test_scoped_typematch_merge_rejects_mixed_policy() -> None:

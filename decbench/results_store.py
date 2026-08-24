@@ -42,6 +42,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from decbench.models.decompilation import (
+    VARIABLE_OCCURRENCE_POLICIES,
+    VARIABLE_OCCURRENCE_POLICY_SCHEMA,
+)
 from decbench.models.function_data import VARIABLE_MATCH_EVIDENCE, FunctionData, HistoryPoint
 from decbench.models.scoreboard import Scoreboard
 
@@ -90,6 +94,7 @@ _TYPEMATCH_PROVENANCE_COMPATIBILITY_FIELDS = (
     "structured_occurrence_mode",
     "variable_occurrence_policy_schema",
 )
+_TYPEMATCH_V11_OCCURRENCE_POLICIES = (*VARIABLE_OCCURRENCE_POLICIES, "undeclared")
 
 
 def typematch_overlay_manifest_path(path: Path) -> Path:
@@ -145,7 +150,7 @@ def _validated_typematch_provenance(provenance: Mapping[str, Any]) -> dict[str, 
         normalized_policy = {str(key): float(value) for key, value in sorted(policy.items())}
     except (TypeError, ValueError) as exc:
         raise TypeMatchOverlayError("type-match overlay policy values must be numeric") from exc
-    return {
+    normalized = {
         "schema_version": TYPEMATCH_OVERLAY_MANIFEST_SCHEMA,
         "metric": "type_match",
         "mode": str(provenance["mode"]),
@@ -160,6 +165,55 @@ def _validated_typematch_provenance(provenance: Mapping[str, Any]) -> dict[str, 
             provenance.get("variable_occurrence_policy_schema", "unreported")
         ),
     }
+    try:
+        cache_version = int(normalized["metric_cache_version"])
+    except ValueError:
+        cache_version = None
+    if cache_version is not None and cache_version >= 11:
+        if normalized["structured_occurrence_mode"] != "producer":
+            raise TypeMatchOverlayError(
+                "type-match cache-v11+ provenance requires structured_occurrence_mode='producer'"
+            )
+        if normalized["variable_occurrence_policy_schema"] != VARIABLE_OCCURRENCE_POLICY_SCHEMA:
+            raise TypeMatchOverlayError(
+                "type-match cache-v11+ provenance requires variable_occurrence_policy_schema="
+                f"{VARIABLE_OCCURRENCE_POLICY_SCHEMA!r}"
+            )
+    return normalized
+
+
+def _validate_typematch_payload(
+    payload: Mapping[str, Any],
+    provenance: Mapping[str, Any],
+) -> None:
+    try:
+        cache_version = int(str(provenance["metric_cache_version"]))
+    except (KeyError, ValueError):
+        return
+    if cache_version < 11:
+        return
+    for decompiler, per_decompiler in payload.items():
+        if not isinstance(per_decompiler, Mapping):
+            raise TypeMatchOverlayError(
+                "type-match overlay must map decompilers to per-function mappings"
+            )
+        for function_key, entry in per_decompiler.items():
+            location = f"{decompiler}/{function_key}"
+            if not isinstance(entry, Mapping):
+                raise TypeMatchOverlayError(
+                    f"type-match cache-v11+ overlay entry {location} must be a mapping"
+                )
+            occurrence_policy = entry.get("producer_variable_occurrence_policy")
+            if occurrence_policy not in _TYPEMATCH_V11_OCCURRENCE_POLICIES:
+                raise TypeMatchOverlayError(
+                    f"type-match cache-v11+ overlay entry {location} has invalid or missing "
+                    "producer_variable_occurrence_policy"
+                )
+            if entry.get("structured_occurrence_mode") != "producer":
+                raise TypeMatchOverlayError(
+                    f"type-match cache-v11+ overlay entry {location} requires "
+                    "structured_occurrence_mode='producer'"
+                )
 
 
 def _typematch_entry_count(payload: Mapping[str, Any]) -> int:
@@ -208,6 +262,7 @@ def read_typematch_overlay(
         raise TypeMatchOverlayError(
             "type-match overlay entry count does not match its provenance manifest"
         )
+    _validate_typematch_payload(payload, normalized)
     return payload, {**normalized, "overlay_sha256": actual_digest, "entry_count": actual_count}
 
 
@@ -237,6 +292,7 @@ def write_typematch_overlay_atomic(
     """Atomically replace an overlay and its digest-bound provenance companion."""
 
     normalized = _validated_typematch_provenance(provenance)
+    _validate_typematch_payload(payload, normalized)
     overlay_bytes = json.dumps(
         payload,
         allow_nan=False,
@@ -504,6 +560,8 @@ def merge_typematch_overlay(
             )
         existing_identity = _validated_typematch_provenance(existing_provenance)
         fresh_identity = _validated_typematch_provenance(fresh_provenance)
+        _validate_typematch_payload(existing, existing_identity)
+        _validate_typematch_payload(fresh, fresh_identity)
         if existing_identity != fresh_identity:
             changed = [
                 field
