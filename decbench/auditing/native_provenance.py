@@ -157,12 +157,14 @@ class BinaryCodeIndex:
         if function_address & 1:
             return True
         if self.info.fmt == "pe":
-            return self.pe_machine in {0x1C2, 0x1C4}
-        exact = self.thumb_states_by_address.get(function_address & ~1, frozenset())
-        if exact:
-            return next(iter(exact)) if len(exact) == 1 else False
-        named = self.thumb_states_by_name.get(function_name, ())
-        return named[0] if len(named) == 1 else False
+            return _pe_uses_thumb(self.pe_machine)
+        return _elf_uses_thumb(
+            function_name,
+            function_address,
+            self.thumb_states_by_address,
+            self.thumb_states_by_name,
+            arm_mclass=self.arm_mclass,
+        )
 
     def resolve(self, function_name: str, function_address: int) -> FunctionCode:
         """Decode one exact function using the cached binary context."""
@@ -459,11 +461,55 @@ def _elf_thumb_state_index(
     )
 
 
+def _elf_uses_thumb(
+    function_name: str,
+    function_address: int,
+    states_by_address: Mapping[int, frozenset[bool]],
+    states_by_name: Mapping[str, tuple[bool, ...]],
+    *,
+    arm_mclass: bool,
+) -> bool:
+    """Select an ELF ARM mode only when binary metadata is authoritative."""
+
+    if function_address & 1:
+        return True
+    exact = states_by_address.get(function_address & ~1, frozenset())
+    if exact:
+        if len(exact) != 1:
+            raise ValueError(f"conflicting ARM instruction states at 0x{function_address & ~1:x}")
+        thumb = next(iter(exact))
+    else:
+        named = states_by_name.get(function_name, ())
+        if len(named) > 1:
+            raise ValueError(f"non-unique ARM function symbol {function_name!r}")
+        if not named:
+            if arm_mclass:
+                return True
+            raise ValueError(
+                f"no authoritative ARM instruction state for {function_name!r} "
+                f"at 0x{function_address:x}"
+            )
+        thumb = named[0]
+    if arm_mclass and not thumb:
+        raise ValueError(f"ARM instruction state for {function_name!r} conflicts with M-profile")
+    return thumb
+
+
+def _pe_uses_thumb(machine: int | None) -> bool:
+    if machine == 0x1C0:
+        return False
+    if machine in {0x1C2, 0x1C4}:
+        return True
+    raise ValueError(f"unsupported PE ARM machine state {machine!r}")
+
+
 def _uses_thumb(
     binary_path: Path,
     info: binfmt.BinInfo,
     function_name: str,
     function_address: int,
+    *,
+    arm_mclass: bool,
 ) -> bool:
     """Select ARM or Thumb without relying on decode success as a heuristic."""
 
@@ -472,8 +518,15 @@ def _uses_thumb(
     if function_address & 1:
         return True
     if info.fmt == "elf":
-        return bool(binfmt.elf_function_is_thumb(binary_path, function_name, function_address))
-    return _pe_machine(binary_path) in {0x1C2, 0x1C4}
+        states_by_address, states_by_name = _elf_thumb_state_index(binary_path)
+        return _elf_uses_thumb(
+            function_name,
+            function_address,
+            states_by_address,
+            states_by_name,
+            arm_mclass=arm_mclass,
+        )
+    return _pe_uses_thumb(_pe_machine(binary_path))
 
 
 def _build_binary_code_index(binary_path: Path) -> BinaryCodeIndex:
@@ -538,8 +591,15 @@ def resolve_function_code(
     if info.fmt not in SUPPORTED_FORMATS or info.arch not in SUPPORTED_ARCHITECTURES:
         raise ValueError(f"unsupported binary format/architecture {info.fmt}/{info.arch}")
     ranges = _function_ranges(binary_path, function_name, function_address, info.arch)
-    thumb = _uses_thumb(binary_path, info, function_name, function_address)
-    mclass = thumb and info.fmt == "elf" and binfmt.elf_is_arm_mclass(binary_path)
+    arm_mclass = info.fmt == "elf" and info.arch == "arm" and binfmt.elf_is_arm_mclass(binary_path)
+    thumb = _uses_thumb(
+        binary_path,
+        info,
+        function_name,
+        function_address,
+        arm_mclass=arm_mclass,
+    )
+    mclass = thumb and arm_mclass
     starts = decode_instruction_starts(
         info,
         ranges,
@@ -1283,7 +1343,11 @@ def audit_results_tree(
             "function_identity": "exact DWARF name and linked entry address",
             "binary_identity": "unambiguous regular file inside the audited results tree",
             "address_validity": "decoded instruction starts inside exact DWARF function ranges",
-            "arm_profile": "ELF ARM attributes select M-class decoding; PE is never inferred",
+            "arm_instruction_state": (
+                "odd entry, unambiguous exact/unique ELF symbol, M-profile, or PE machine; "
+                "missing, conflicting, and non-unique evidence fails closed"
+            ),
+            "arm_profile": "ELF ARM attributes select M-class decoding and reject A32 state",
             "line_numbering": "1-based rows in FunctionDecompilation.decompiled_code",
             "direct_only_variables": "accepted without a line map after address validation",
             "supported_formats": sorted(SUPPORTED_FORMATS),

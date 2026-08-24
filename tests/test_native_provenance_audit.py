@@ -129,6 +129,125 @@ def test_arm_mclass_detection_uses_exact_elf_profile(
     assert binfmt.elf_is_arm_mclass(binary) is expected
 
 
+def _arm_code_index(
+    *,
+    binary_format: str = "elf",
+    exact_states: frozenset[bool] = frozenset(),
+    named_states: tuple[bool, ...] = (),
+    mclass: bool = False,
+    pe_machine: int | None = None,
+) -> BinaryCodeIndex:
+    return BinaryCodeIndex(
+        binary_path=Path("arm.elf"),
+        info=binfmt.BinInfo(binary_format, "arm", 32),
+        executable_regions=(),
+        arm_mclass=mclass,
+        pe_machine=pe_machine,
+        ranges_by_identity={},
+        range_errors_by_name={},
+        thumb_states_by_address=({0x1000: exact_states} if exact_states else {}),
+        thumb_states_by_name=({"target": named_states} if named_states else {}),
+    )
+
+
+@pytest.mark.parametrize(
+    ("exact_states", "named_states", "mclass", "expected", "error"),
+    [
+        (frozenset({True}), (), False, True, None),
+        (frozenset({False}), (), False, False, None),
+        (frozenset({False, True}), (), False, None, "conflicting ARM instruction states"),
+        (frozenset({False}), (), True, None, "conflicts with M-profile"),
+        (frozenset(), (True,), False, True, None),
+        (frozenset(), (False,), False, False, None),
+        (frozenset(), (False,), True, None, "conflicts with M-profile"),
+        (frozenset(), (), True, True, None),
+        (frozenset(), (), False, None, "no authoritative ARM instruction state"),
+        (frozenset(), (True, True), True, None, "non-unique ARM function symbol"),
+    ],
+)
+def test_binary_index_elf_arm_mode_matches_fail_closed_producer_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    exact_states: frozenset[bool],
+    named_states: tuple[bool, ...],
+    mclass: bool,
+    expected: bool | None,
+    error: str | None,
+) -> None:
+    index = _arm_code_index(
+        exact_states=exact_states,
+        named_states=named_states,
+        mclass=mclass,
+    )
+    states_by_address = {0x1000: exact_states} if exact_states else {}
+    states_by_name = {"target": named_states} if named_states else {}
+    monkeypatch.setattr(
+        native_provenance,
+        "_elf_thumb_state_index",
+        lambda _path: (states_by_address, states_by_name),
+    )
+
+    def one_shot() -> bool:
+        return native_provenance._uses_thumb(
+            Path("arm.elf"),
+            binfmt.BinInfo("elf", "arm", 32),
+            "target",
+            0x1000,
+            arm_mclass=mclass,
+        )
+
+    if error is not None:
+        with pytest.raises(ValueError, match=error):
+            index.uses_thumb("target", 0x1000)
+        with pytest.raises(ValueError, match=error):
+            one_shot()
+    else:
+        assert index.uses_thumb("target", 0x1000) is expected
+        assert one_shot() is expected
+
+
+def test_binary_index_odd_arm_entry_is_authoritative_thumb() -> None:
+    index = _arm_code_index(exact_states=frozenset({False, True}))
+
+    assert index.uses_thumb("target", 0x1001) is True
+
+
+@pytest.mark.parametrize(
+    ("machine", "expected", "error"),
+    [
+        (0x1C0, False, None),
+        (0x1C2, True, None),
+        (0x1C4, True, None),
+        (None, None, "unsupported PE ARM machine state"),
+    ],
+)
+def test_binary_index_pe_arm_machine_selects_mode_or_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    machine: int | None,
+    expected: bool | None,
+    error: str | None,
+) -> None:
+    index = _arm_code_index(binary_format="pe", pe_machine=machine)
+    monkeypatch.setattr(native_provenance, "_pe_machine", lambda _path: machine)
+
+    def one_shot() -> bool:
+        return native_provenance._uses_thumb(
+            Path("arm.exe"),
+            binfmt.BinInfo("pe", "arm", 32),
+            "target",
+            0x1000,
+            arm_mclass=False,
+        )
+
+    if error is not None:
+        with pytest.raises(ValueError, match=error):
+            index.uses_thumb("target", 0x1000)
+        with pytest.raises(ValueError, match=error):
+            one_shot()
+    else:
+        assert index.uses_thumb("target", 0x1000) is expected
+        assert one_shot() is expected
+
+
 def test_function_ranges_uses_dwarf_entry_instead_of_lowest_split_range(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

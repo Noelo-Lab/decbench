@@ -446,6 +446,10 @@ requires every stored mapping/variable address to be an instruction start in
 that exact function. The auditor builds its own immutable DWARF identity index,
 executable-region snapshot, and architecture context once per binary slice, so
 full-corpus validation does not reparse a large binary for every function.
+ARM instruction state must come from an odd linked entry, an unambiguous exact
+or unique-name ELF function symbol, the M-profile attribute, or the PE machine
+type. Missing, conflicting, and non-unique state evidence fails closed instead
+of silently decoding the bytes as A32.
 Line numbers are checked against the precise
 `FunctionDecompilation.decompiled_code` string, and direct variable addresses
 must agree with the selected mapped rows when both forms are present. Dewolf
