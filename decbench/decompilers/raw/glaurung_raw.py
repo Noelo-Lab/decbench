@@ -74,9 +74,9 @@ from decbench.models.decompilation import (
 _l = logging.getLogger(__name__)
 
 # Above this many targets we skip the (command-line-length-bounded) --vas form
-# and decompile the whole binary, then narrow. The sample-set takes at most one
-# function per binary, so --vas is the normal path; this is just a safety valve.
-_MAX_VAS_INLINE = 400
+# and decompile the whole binary, then narrow. The current full corpus stays
+# below this limit per binary while keeping the argument list well below ARG_MAX.
+_MAX_VAS_INLINE = 10_000
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DOCKER_DIR = _REPO_ROOT / "docker"

@@ -283,6 +283,17 @@ class TestDockerInstall:
         assert "decbench/glaurung:latest" in run
         assert run[-2:] == ["--vas", hex(target)]
 
+    def test_full_corpus_target_set_stays_address_scoped(
+        self, fake_docker: Path, tiny_binary: Path
+    ) -> None:
+        target = _func_address(tiny_binary, "add_nums")
+        targets = {target + offset * 4 for offset in range(401)}
+
+        command = RawGlaurungDecompiler()._build_command(tiny_binary, targets)
+
+        assert "--vas" in command
+        assert "--all" not in command
+
     def test_nonzero_exit_with_json_fails_closed(
         self,
         monkeypatch: pytest.MonkeyPatch,
