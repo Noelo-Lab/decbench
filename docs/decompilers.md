@@ -206,13 +206,23 @@ The canonical raw adapters use these native sources:
 - IDA uses `cfunc_t.get_eamap()` and `find_item_coords()` from the same Hex-Rays
   pseudocode object; one bad item or `BADADDR` is skipped without losing prior
   evidence.
+- r2dec stores the exact `pddj` line strings and their instruction offsets, and
+  supplements `afvj` variable metadata with all-variable `afvRj` / `afvWj`
+  access addresses. Native and container paths apply the same function-range,
+  image-base, and ARM Thumb normalization. When the plugin is absent, radare2's
+  `pdcj` annotations provide the same line contract; unavailable JSON commands
+  transparently fall back to plain `pdd` / `pdc` text. If `afvj` is unavailable
+  but JSON line evidence survives, variables parsed from the emitted C are
+  joined to those native rows by exact identifier occurrence.
 - Kuna accepts additive `line_mappings` entries (`line_number`, `addresses`)
   and variable `line_numbers`/`addresses` in `decompile-all --json`. Missing
   fields remain empty for compatibility with older Kuna builds.
 
-Variable addresses are the union of native line addresses for the variable's
-occurrence lines. This deliberately supports local-variable matching without
-requiring source/decompiler variable names to agree.
+Variable addresses normally come from native occurrence-line evidence. r2dec's
+`afvRj` / `afvWj` access lists are stronger than its rendered line offsets and
+are therefore retained directly; `line_numbers` records exact address joins
+when r2dec emits one. This deliberately supports local-variable matching
+without requiring source/decompiler variable names to agree.
 
 ## 2. Minimal working example
 

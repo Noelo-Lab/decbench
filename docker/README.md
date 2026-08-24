@@ -83,9 +83,9 @@ present **or** the Docker image exists.
 The in-container driver `r2dec-decompile.py` is invoked as
 `/in/<bin> /work/out.json [/work/targets.json]`. `targets.json` (optional) is a
 JSON list of ELF-file-space addresses to restrict to (matched Thumb-bit
-tolerant); `out.json` is a JSON list of `{"addr", "baddr", "name", "code"}`
-entries — one per function, keyed by radare2's own analysis addresses, so
-nothing is split by symbol.
+tolerant); `out.json` is a JSON list containing `addr`, `baddr`, `name`, `code`,
+and best-effort `line_mappings` / `variables` from `pddj` and `afv*`. Entries
+are keyed by radare2's own analysis addresses, so nothing is split by symbol.
 
 ### Glaurung
 

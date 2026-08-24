@@ -25,10 +25,10 @@ Common design (:class:`DockerizedDecompiler`):
     table (via pyelftools), so addresses live in **ELF file space** and line up
     with DWARF and the rest of decbench — the same convention declib_dec uses.
 
-    These tools do not expose stack variables / line mappings uniformly, so
-    ``FunctionDecompilation.variables`` and ``.line_mappings`` are left empty.
-    The metrics degrade gracefully: GED still parses the recovered C, byte_match
-    recompiles it, and type_match falls back to regex/name parsing.
+    Reko and RetDec do not expose stack variables / line mappings uniformly, so
+    those fields remain empty for their results. r2dec attaches ``pddj`` line
+    offsets plus ``afv*`` variable metadata and access addresses when available.
+    The metrics still degrade gracefully when optional provenance is absent.
 
 Images are **not** auto-built. ``is_available()`` only reports whether the image
 already exists locally; build it explicitly with ``decbench decompiler-build
@@ -57,6 +57,7 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    VariableInfo,
 )
 
 _l = logging.getLogger(__name__)
@@ -538,6 +539,225 @@ _C_KEYWORDS = frozenset({"if", "while", "for", "switch", "return", "do", "else",
 _R2_DEF_RE = re.compile(r"\b([A-Za-z_][\w.]*)\s*\([^;{}]*?\)\s*\{")
 
 
+def _r2_int(value: Any, default: int | None = None) -> int | None:
+    """Best-effort integer conversion for radare2's mixed JSON scalars."""
+    try:
+        return int(value, 0) if isinstance(value, str) else int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _r2_json_lines(payload: Any) -> tuple[str, list[dict[str, Any]]] | None:
+    """Turn r2dec ``pddj`` rows into code and same-render line evidence."""
+    rows = payload.get("lines") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list) or not rows:
+        return None
+
+    rendered: list[tuple[str, int | None]] = []
+    for row in rows:
+        if not isinstance(row, dict) or "str" not in row:
+            continue
+        text = str(row.get("str") or "")
+        pieces = text.splitlines() or [""]
+        offset = _r2_int(row.get("offset"))
+        rendered.extend((piece, offset) for piece in pieces)
+    if not rendered:
+        return None
+
+    while rendered and not rendered[0][0].strip():
+        rendered.pop(0)
+    while rendered and not rendered[-1][0].strip():
+        rendered.pop()
+    if not rendered:
+        return None
+
+    code = "\n".join(text for text, _offset in rendered)
+    mappings = [
+        {"line_number": line_number, "addresses": [offset]}
+        for line_number, (_text, offset) in enumerate(rendered, 1)
+        if offset is not None
+    ]
+    return code, mappings
+
+
+def _r2_json_annotations(payload: Any) -> tuple[str, list[dict[str, Any]]] | None:
+    """Turn radare2 ``pdcj`` code annotations into per-line offsets."""
+    if not isinstance(payload, dict):
+        return None
+    raw_code = str(payload.get("code") or "")
+    code = raw_code.strip()
+    annotations = payload.get("annotations")
+    if not code or not isinstance(annotations, list):
+        return None
+    code_start = raw_code.find(code)
+    mappings: list[dict[str, Any]] = []
+    for annotation in annotations:
+        if not isinstance(annotation, dict):
+            continue
+        offset = _r2_int(annotation.get("offset"))
+        position = _r2_int(annotation.get("start"))
+        if offset is None or position is None or position < code_start:
+            continue
+        adjusted = min(position - code_start, len(code))
+        mappings.append(
+            {
+                "line_number": code.count("\n", 0, adjusted) + 1,
+                "addresses": [offset],
+            }
+        )
+    return code, mappings
+
+
+def _r2_cmdj(r: Any, command: str, default: Any) -> Any:
+    """Run one JSON command without letting optional provenance break output."""
+    try:
+        payload = r.cmdj(command)
+    except Exception:  # noqa: BLE001
+        return default
+    return default if payload is None else payload
+
+
+def _r2_variable_records(
+    r: Any,
+    addr: int,
+    line_mappings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collect r2's variable metadata and read/write instruction addresses."""
+    metadata = _r2_cmdj(r, f"afvj @ {addr}", {})
+    if not isinstance(metadata, dict):
+        return []
+
+    accesses: dict[str, set[int]] = {}
+    for command in ("afvRj", "afvWj"):
+        records = _r2_cmdj(r, f"{command} @ {addr}", [])
+        if not isinstance(records, list):
+            continue
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            name = str(record.get("name") or "")
+            if not name:
+                continue
+            for value in record.get("addrs") or []:
+                address = _r2_int(value)
+                if address is not None:
+                    accesses.setdefault(name, set()).add(address)
+
+    signature = _r2_cmdj(r, f"afcfj @ {addr}", [])
+    signature_args: list[str] = []
+    if isinstance(signature, list) and signature and isinstance(signature[0], dict):
+        signature_args = [
+            str(arg.get("name") or "")
+            for arg in signature[0].get("args") or []
+            if isinstance(arg, dict) and arg.get("name")
+        ]
+    lines_by_address: dict[int, set[int]] = {}
+    for mapping in line_mappings:
+        line_number = _r2_int(mapping.get("line_number"))
+        if line_number is None:
+            continue
+        for value in mapping.get("addresses") or []:
+            address = _r2_int(value)
+            if address is not None:
+                lines_by_address.setdefault(address, set()).add(line_number)
+
+    ordered: list[tuple[str, dict[str, Any]]] = []
+    for group in ("reg", "sp", "bp"):
+        records = metadata.get(group) or []
+        if not isinstance(records, list):
+            continue
+        ordered.extend((group, record) for record in records if isinstance(record, dict))
+
+    fallback_args = list(
+        dict.fromkeys(
+            str(record.get("name") or "")
+            for group, record in ordered
+            if (group == "reg" or str(record.get("kind") or "") == "arg") and record.get("name")
+        )
+    )
+    signature_positions = {name: index for index, name in enumerate(signature_args)}
+    arg_positions = {
+        name: signature_positions.get(name, index) for index, name in enumerate(fallback_args)
+    }
+
+    variables: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, int | None]] = set()
+    for group, record in ordered:
+        name = str(record.get("name") or "")
+        if not name:
+            continue
+        ref = record.get("ref")
+        stack_offset = _r2_int(ref.get("offset")) if isinstance(ref, dict) else None
+        identity = (group, name, stack_offset)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        raw_addresses = sorted(accesses.get(name, set()))
+        is_arg = name in arg_positions
+        variables.append(
+            {
+                "name": name,
+                "type": str(record.get("type") or ""),
+                "stack_offset": stack_offset,
+                "size": _r2_int(record.get("size")),
+                "kind": "arg" if is_arg else "stack",
+                "arg_index": arg_positions.get(name),
+                "line_numbers": sorted(
+                    {
+                        line_number
+                        for address in raw_addresses
+                        for line_number in lines_by_address.get(address, set())
+                    }
+                ),
+                "addresses": raw_addresses,
+            }
+        )
+    return variables
+
+
+def _r2_inferred_variables(
+    code: str,
+    function_name: str,
+    line_mappings: list[Any],
+) -> list[VariableInfo]:
+    """Join code-parsed variables to native r2 render-line addresses."""
+    try:
+        from decbench.metrics.type_match import parse_c_variables
+
+        variables = parse_c_variables(code, function_name)
+    except Exception:  # noqa: BLE001
+        return []
+    line_addresses = {
+        int(mapping.line_number): {int(address) for address in mapping.addresses}
+        for mapping in line_mappings
+    }
+    code_lines = code.splitlines()
+    out: list[VariableInfo] = []
+    for variable in variables:
+        if not variable.name:
+            out.append(variable)
+            continue
+        token = re.compile(r"\b" + re.escape(variable.name) + r"\b")
+        lines = sorted(
+            line_number for line_number, text in enumerate(code_lines, 1) if token.search(text)
+        )
+        out.append(
+            variable.model_copy(
+                update={
+                    "line_numbers": lines,
+                    "addresses": sorted(
+                        {
+                            address
+                            for line_number in lines
+                            for address in line_addresses.get(line_number, set())
+                        }
+                    ),
+                }
+            )
+        )
+    return out
+
+
 def _r2_is_import(name: str) -> bool:
     """Whether an r2 function flag names an import / PLT / reloc stub."""
     return (
@@ -824,6 +1044,11 @@ class R2DecDecompiler(DockerizedDecompiler):
         file_addr: int,
         code: str,
         label: str | None,
+        provenance: dict[str, Any] | None = None,
+        *,
+        r2_addr: int | None = None,
+        baddr: int = 0,
+        elf_base: int = 0,
     ) -> FunctionDecompilation | None:
         """Build a :class:`FunctionDecompilation`, keeping ``.name`` equal to the
         identifier that appears in ``decompiled_code``.
@@ -837,17 +1062,87 @@ class R2DecDecompiler(DockerizedDecompiler):
         code = (code or "").strip()
         if not code:
             return None
+        provenance = provenance or {}
+        function_raw = _r2_int(r2_addr, _r2_int(provenance.get("addr"), file_addr))
+        function_size = _r2_int(provenance.get("size"), 0) or 0
+        is_thumb = bool(provenance.get("is_thumb"))
+        normalized_start = (
+            (function_raw & ~1) if is_thumb and function_raw is not None else function_raw
+        )
+
+        def _evidence_address(value: Any) -> int | None:
+            raw_address = _r2_int(value)
+            if raw_address is None:
+                return None
+            normalized = raw_address & ~1 if is_thumb else raw_address
+            if normalized_start is not None and normalized < normalized_start:
+                return None
+            if (
+                function_size > 0
+                and normalized_start is not None
+                and normalized >= normalized_start + function_size
+            ):
+                return None
+            return normalized - baddr + elf_base
+
         code_ident = _func_ident_in_code(code)
         final = label or code_ident or r2_flag
         if code_ident and code_ident != final:
             code = re.sub(r"\b" + re.escape(code_ident) + r"\b", final, code)
+        line_count = code.count("\n") + 1
+        line_to_addresses: dict[int, set[int]] = {}
+        for mapping in provenance.get("line_mappings") or []:
+            if not isinstance(mapping, dict):
+                continue
+            line_number = _r2_int(mapping.get("line_number"), 0) or 0
+            if not 1 <= line_number <= line_count:
+                continue
+            for value in mapping.get("addresses") or []:
+                address = _evidence_address(value)
+                if address is not None:
+                    line_to_addresses.setdefault(line_number, set()).add(address)
+        line_mappings = raw_common.merge_line_addresses(line_to_addresses)
+
+        variables: list[VariableInfo] = []
+        for record in provenance.get("variables") or []:
+            if not isinstance(record, dict):
+                continue
+            line_numbers = sorted(
+                {
+                    line_number
+                    for value in record.get("line_numbers") or []
+                    if (line_number := (_r2_int(value, 0) or 0)) and line_number <= line_count
+                }
+            )
+            addresses = sorted(
+                {
+                    address
+                    for value in record.get("addresses") or []
+                    if (address := _evidence_address(value)) is not None
+                }
+            )
+            variables.append(
+                VariableInfo(
+                    name=str(record.get("name") or ""),
+                    type=str(record.get("type") or ""),
+                    stack_offset=_r2_int(record.get("stack_offset")),
+                    size=_r2_int(record.get("size")),
+                    kind="arg" if record.get("kind") == "arg" else "stack",
+                    arg_index=_r2_int(record.get("arg_index")),
+                    line_numbers=line_numbers,
+                    addresses=addresses,
+                )
+            )
+        if not variables and line_mappings:
+            variables = _r2_inferred_variables(code, final, line_mappings)
+        output_address = file_addr & ~1 if is_thumb else file_addr
         return FunctionDecompilation(
             name=final,
-            address=file_addr,
+            address=output_address,
             decompiled_code=code,
-            line_count=code.count("\n") + 1,
-            line_mappings=[],
-            variables=[],
+            line_count=line_count,
+            line_mappings=line_mappings,
+            variables=variables,
             metadata=raw_common.extract_metrics(code),
         )
 
@@ -954,11 +1249,20 @@ class R2DecDecompiler(DockerizedDecompiler):
                 )
             for label, file_addr, raw, r2_flag in targets:
                 try:
-                    code = self._decompile_one_native(r, used_cmd, raw)
+                    provenance = self._decompile_one_native(r, used_cmd, raw)
                 except Exception as e:  # noqa: BLE001
                     _l.debug("r2dec failed on %s@%#x: %s", r2_flag, raw, e)
-                    code = None
-                fd = self._make_function(r2_flag, file_addr, code or "", label)
+                    provenance = None
+                fd = self._make_function(
+                    r2_flag,
+                    file_addr,
+                    str((provenance or {}).get("code") or ""),
+                    label,
+                    provenance,
+                    r2_addr=raw,
+                    baddr=baddr,
+                    elf_base=elf_base,
+                )
                 if fd is None:
                     failed.append(label or _r2_bare_name(r2_flag))
                 else:
@@ -1038,7 +1342,7 @@ class R2DecDecompiler(DockerizedDecompiler):
                 error = str(e)
                 _l.error("%s docker failed on %s: %s", self.name, binary_path, e)
 
-        by_addr: dict[int, tuple[str, str]] = {}
+        by_addr: dict[int, tuple[str, dict[str, Any]]] = {}
         discovered: list[tuple[str, int, int]] = []
         addr_targets = _addr_targets_of(function_names)
         for entry in entries:
@@ -1052,7 +1356,7 @@ class R2DecDecompiler(DockerizedDecompiler):
                 continue
             if _skip_r2_function(_r2_bare_name(nm), file_addr, text_range, addr_targets):
                 continue
-            by_addr[file_addr] = (nm, entry.get("code") or "")
+            by_addr[file_addr] = (nm, entry)
             discovered.append((nm, file_addr, int(raw)))
         discovered.sort(key=lambda t: t[1])
         targets = self._narrow(discovered, function_names, binary_path.name)
@@ -1060,8 +1364,18 @@ class R2DecDecompiler(DockerizedDecompiler):
         decompiled: dict[str, FunctionDecompilation] = {}
         failed: list[str] = []
         for label, file_addr, _raw, r2_flag in targets:
-            _nm, code = by_addr.get(file_addr, (r2_flag, ""))
-            fd = self._make_function(r2_flag, file_addr, code, label)
+            _nm, entry = by_addr.get(file_addr, (r2_flag, {}))
+            entry_baddr = _r2_int(entry.get("baddr"), 0) or 0
+            fd = self._make_function(
+                r2_flag,
+                file_addr,
+                str(entry.get("code") or ""),
+                label,
+                entry,
+                r2_addr=_r2_int(entry.get("addr"), _raw),
+                baddr=entry_baddr,
+                elf_base=elf_base,
+            )
             if fd is None:
                 failed.append(label or _r2_bare_name(r2_flag))
             else:
@@ -1105,15 +1419,43 @@ class R2DecDecompiler(DockerizedDecompiler):
         return "pdc"
 
     @staticmethod
-    def _decompile_one_native(r: Any, cmd: str, addr: int) -> str | None:
-        """Decompile one function at ``addr`` (r2 load space) and return its C."""
-        raw = r.cmd(f"{cmd} @ {addr}")
-        if not raw:
+    def _decompile_one_native(r: Any, cmd: str, addr: int) -> dict[str, Any] | None:
+        """Decompile one function and collect r2-native provenance."""
+        code = ""
+        line_mappings: list[dict[str, Any]] = []
+        if cmd in {"pdd", "pdc"}:
+            payload = _r2_cmdj(r, f"{cmd}j @ {addr}", None)
+            parsed = _r2_json_lines(payload) if cmd == "pdd" else _r2_json_annotations(payload)
+            if parsed is not None:
+                code, line_mappings = parsed
+        if not code:
+            raw = r.cmd(f"{cmd} @ {addr}")
+            if raw:
+                code = str(raw).strip()
+        if not code or "install the plugin" in code:
             return None
-        out = str(raw).strip()
-        if not out or "install the plugin" in out:
-            return None
-        return out
+
+        function_info = _r2_cmdj(r, f"afij @ {addr}", [])
+        info = (
+            function_info[0]
+            if isinstance(function_info, list)
+            and function_info
+            and isinstance(function_info[0], dict)
+            else {}
+        )
+        binary_info = _r2_cmdj(r, "ij", {})
+        architecture = str((binary_info.get("bin") or {}).get("arch") or "").lower()
+        is_thumb = architecture.startswith("arm") and (
+            (_r2_int(info.get("bits"), 0) or 0) == 16 or bool(addr & 1)
+        )
+        return {
+            "addr": addr,
+            "size": _r2_int(info.get("size"), 0) or 0,
+            "is_thumb": is_thumb,
+            "code": code,
+            "line_mappings": line_mappings,
+            "variables": _r2_variable_records(r, addr, line_mappings),
+        }
 
 
 __all__ = [
