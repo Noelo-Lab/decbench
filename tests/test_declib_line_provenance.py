@@ -134,17 +134,20 @@ def test_angr_line_map_offsets_include_the_runtime_load_base() -> None:
         IDADeclibDecompiler(),
     ],
 )
-def test_declib_pe_uses_the_backend_lift_origin(backend: DeclibDecompiler, tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend_base", [0x400000, 0x401000, 0x403000])
+def test_declib_pe_uses_the_backend_lift_origin(
+    backend: DeclibDecompiler, backend_base: int, tmp_path: Path
+) -> None:
     binary = tmp_path / "sample.exe"
     _write_minimal_pe(binary)
 
     assert (
         backend._file_space_base(
-            SimpleNamespace(binary_base_addr=0x401000),
+            SimpleNamespace(binary_base_addr=backend_base),
             binary,
             header_base=0x400000,
         )
-        == 0x401000
+        == backend_base
     )
 
 

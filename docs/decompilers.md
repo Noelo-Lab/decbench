@@ -65,8 +65,9 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
 
 Key conventions (all families):
 
-- Addresses are stored in **ELF-file-space** (`lifted + min PT_LOAD vaddr`) so
-  they match DWARF; raw backends normalise per-tool load bases (angr
+- Addresses are stored in the binary's **linked file space** so they match
+  DWARF: ELF uses `lifted + min PT_LOAD vaddr`, while PE uses
+  `ImageBase + RVA`. Raw backends normalise per-tool load bases (angr
   `0x400000`, Ghidra `0x100000`, IDA `0x0`) for PIE binaries.
 - Functions outside file-backed executable sections, plus PLT/thunks and CRT
   helpers, are skipped.
@@ -158,11 +159,12 @@ def decompile_binary(
 
 ### Output requirements that matter for scoring
 
-- **Addresses are ELF-file-space.** Many decompilers report addresses relative
-  to a lifted/0-based image. Convert with
-  `address = lifted_addr + elf_base`, where `elf_base = min(PT_LOAD vaddr)`.
-  This is what makes your addresses line up with DWARF (used by `type_match`).
-  Helpers live in `decbench/decompilers/raw/common.py`.
+- **Addresses are linked file-space.** Many decompilers report addresses
+  relative to a lifted/0-based image. For ELF, convert with
+  `address = lifted_addr + elf_base`, where `elf_base = min(PT_LOAD vaddr)`;
+  PE addresses use the header-encoded `ImageBase + RVA`. This is what makes
+  addresses line up with DWARF (used by `type_match`). Helpers live in
+  `decbench/decompilers/raw/common.py`.
 - **Skip non-source functions.** Drop PLT stubs/thunks and CRT helpers
   (`_start`, `__libc_csu_init`, `register_tm_clones`, …) and anything outside
   the binary's disjoint file-backed executable ELF/PE sections. Do not replace
@@ -312,6 +314,15 @@ Ninja's declib renderer counts skipped `LinearView` header/warning rows in its
 map, so its offsets can drift within a function; `binja-declib` deliberately
 emits neither line nor variable-occurrence provenance until declib supplies an
 exact-row map.
+
+DecLib's lifted zero for PE is backend-dependent: a fresh import may use the
+PE ImageBase/header mapping or the start of an encoded section. The adapters
+therefore read `deci.binary_base_addr` only after opening the project, require
+it to equal the header ImageBase or `ImageBase + section RVA`, and use that
+validated origin consistently for target lowering and emitted function/line
+addresses. An unreadable PE header, malformed origin, or arbitrary backend
+rebase fails closed. ELF continues to use the file's lowest PT_LOAD address,
+so a tool's runtime PIE base cannot leak into stored addresses.
 
 ##### Glaurung and Manifold: final-AST lineage blockers
 
