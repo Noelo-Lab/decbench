@@ -319,7 +319,7 @@ big targets (bash, openssh, coreutils, the large ARM firmware).
 | `angr-declib` | 3600 s | declib drives the same angr analysis and exposes no enforceable per-function timeout. |
 | `ghidra` / `binja` / `r2dec` | 1800 s | Fast per function, but a few large binaries overrun 300 s. r2dec's `aaa` analysis alone can run minutes. |
 | `ghidra-declib` / `ida-declib` / `binja-declib` | 1800 s | declib exposes no enforceable per-function timeout, so large binaries need the same bounded headroom. |
-| `retdec` / `reko` | 1800 s | Whole-program Docker backends cannot stop after the requested source functions, so large binaries can legitimately overrun the global 300 s budget. |
+| `retdec` / `reko` / `glaurung` / `manifold` | 1800 s | Whole-program or whole-analysis backends can legitimately overrun the global 300 s budget on large binaries, even when the final result is source-filtered. |
 | `kuna` | 900 s | Emits its JSON only at the very end, so a kill yields ZERO functions; needs a budget above its slowest binary (~450 s on bash). Its per-FUNCTION guard is `--max-fn-seconds`, passed by the backend. |
 | `dewolf` | 1200 s | A z3/sympy simplification pipeline that blows up per function. Capped lower than angr because the cap bounds *hangs*, not a slow-but-progressing decompile. |
 | `codex` / `claude-code` / `kimi-code` | 3600 s | One agentic CLI call per function (~minutes). The backend checkpoints after each function, so a large budget bounds a stuck call while still crediting finished ones. |

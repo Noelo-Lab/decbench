@@ -27,6 +27,8 @@ from scripts.run_benchmark import (
 def test_whole_program_docker_backends_have_explicit_time_budgets() -> None:
     assert DECOMPILER_TIMEOUT["retdec"] == 1800
     assert DECOMPILER_TIMEOUT["reko"] == 1800
+    assert DECOMPILER_TIMEOUT["glaurung"] == 1800
+    assert DECOMPILER_TIMEOUT["manifold"] == 1800
     assert decompiler_timeout("retdec@5.0") == 1800
     assert format_decompiler_timeouts(["retdec", "angr@9.2"]) == ("retdec=1800s, angr@9.2=3600s")
 
