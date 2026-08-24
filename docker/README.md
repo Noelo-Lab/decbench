@@ -13,17 +13,20 @@ This directory is decbench's single Docker home. Four images package
 Unlike the canonical raw backends (angr/ghidra/ida/binja — declib-free drivers
 of each tool's own API, `decbench/decompilers/raw/`), these ship as standalone
 CLIs, so decbench runs them in a container. **RetDec and Reko** emit whole-
-program C that decbench splits into per-function snippets; function **names and
-addresses** come from the binary's ELF symbol table (pyelftools), so addresses
-are in ELF file space and match DWARF — the same convention as the raw
-backends. **r2dec** is different: its container driver returns address-keyed
-per-function JSON straight from radare2's **own** analysis (`aaa` + `aflj`), so
-it needs no symbol table and works on fully stripped binaries.
+program C that decbench splits into per-function snippets. Reko obtains function
+names and addresses from the binary's ELF symbol table. RetDec additionally uses
+its annotated token stream to retain function identities and native addresses,
+including for stripped ELF and PE inputs. All stored addresses use the binary's
+linked ELF/PE address space and match DWARF. **r2dec** is different: its container
+driver returns address-keyed per-function JSON straight from radare2's **own**
+analysis (`aaa` + `aflj`), so it needs no symbol table and works on fully stripped
+binaries.
 
-These tools do not expose stack variables / line mappings uniformly, so the
-`FunctionDecompilation.variables` and `.line_mappings` lists are empty. The
-metrics degrade gracefully: GED still parses the recovered C, byte_match
-recompiles it, and type_match falls back to regex/name matching.
+The tools do not expose stack variables / line mappings uniformly. RetDec fills
+both fields from its annotated JSON and DSM outputs; the other whole-program
+backend leaves them empty. The metrics degrade gracefully when provenance is
+absent: GED still parses the recovered C, byte_match recompiles it, and type_match
+falls back to syntax and usage evidence.
 
 ## Building an image
 
@@ -55,10 +58,17 @@ decbench's `DockerizedDecompiler._run_docker` mounts the binary **read-only** at
 
 ### RetDec
 
-The image's `ENTRYPOINT` is `retdec-decompiler`, invoked as
-`/in/<bin> -o /work/out.c`; decbench reads `/work/out.c` back as whole-program
-C. Built from the pinned RetDec **v5.0** Linux release tarball (`avast/retdec`),
-so the build is fast and reproducible.
+The image's `ENTRYPOINT` is `retdec-decompiler`, first invoked as
+`/in/<bin> -f json -o /work/out.json --cleanup`. Concatenating every token's
+`val` field reconstructs the exact whole-program C, while inherited token
+addresses supply 1-based line mappings and variable occurrences. DecBench
+accepts only addresses that also appear as machine-instruction rows inside the
+same function's `/work/out.dsm` range, filtering data symbols and leaked address
+state. It derives argument positions and recovered types from the exact function
+snippet, and abstains from attaching occurrence evidence to duplicate or shadowed
+identifiers. Older RetDec builds without annotated JSON automatically retry
+plain-C output. The image uses the pinned RetDec **v5.0** Linux release tarball
+(`avast/retdec`).
 
 ### Reko
 

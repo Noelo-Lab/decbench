@@ -8,6 +8,7 @@ semantics are always exercised.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -20,11 +21,14 @@ from decbench.decompilers.dockerized import (
     RekoDecompiler,
     RetDecDecompiler,
     _func_ident_in_code,
+    _parse_retdec_json,
     _r2_bare_name,
     _r2_is_import,
     _r2_json_annotations,
     _r2_json_lines,
     _r2_variable_records,
+    _retdec_dsm_evidence,
+    _retdec_variables,
     elf_function_symbols,
     split_c_functions,
 )
@@ -133,6 +137,163 @@ def test_split_keeps_first_definition_of_duplicate_name() -> None:
     parts = split_c_functions(src)
     assert "return 1;" in parts["f"]
     assert "return 2;" not in parts["f"]
+
+
+def test_retdec_json_parser_reconstructs_exact_c_and_native_evidence() -> None:
+    tokens = [
+        {"addr": "0x1010"},
+        {"kind": "type", "val": "int32_t"},
+        {"kind": "ws", "val": " "},
+        {"kind": "i_fnc", "val": "f"},
+        {"kind": "punc", "val": "("},
+        {"kind": "type", "val": "int32_t"},
+        {"kind": "ws", "val": " "},
+        {"kind": "i_arg", "val": "arg"},
+        {"kind": "punc", "val": ")"},
+        {"kind": "ws", "val": " "},
+        {"kind": "punc", "val": "{"},
+        {"kind": "nl", "val": "\n"},
+        {"addr": "0x1014"},
+        {"kind": "ws", "val": "    "},
+        {"kind": "type", "val": "int32_t"},
+        {"kind": "ws", "val": " "},
+        {"kind": "i_lvar", "val": "local"},
+        {"kind": "ws", "val": " "},
+        {"kind": "op", "val": "="},
+        {"kind": "ws", "val": " "},
+        {"kind": "i_lvar", "val": "arg"},
+        {"addr": "0x5000"},
+        {"kind": "ws", "val": " "},
+        {"kind": "op", "val": "+"},
+        {"addr": "0x1014"},
+        {"kind": "ws", "val": " "},
+        {"kind": "l_int", "val": "1"},
+        {"kind": "punc", "val": ";"},
+        {"kind": "nl", "val": "\n"},
+        {"addr": "0x1018"},
+        {"kind": "ws", "val": "    "},
+        {"kind": "keyw", "val": "return"},
+        {"kind": "ws", "val": " "},
+        {"kind": "i_lvar", "val": "local"},
+        {"kind": "punc", "val": ";"},
+        {"kind": "nl", "val": "\n"},
+        {"addr": "0x1010"},
+        {"kind": "punc", "val": "}"},
+        {"kind": "nl", "val": "\n"},
+        {"addr": ""},
+    ]
+    code = "int32_t f(int32_t arg) {\n    int32_t local = arg + 1;\n    return local;\n}\n"
+    parsed = _parse_retdec_json(
+        json.dumps({"language": "C", "tokens": tokens}),
+        valid_instruction_addresses=frozenset({0x1010, 0x1014, 0x1018, 0x5000}),
+        function_ranges=((0x1010, 0x1020),),
+    )
+
+    assert parsed.text == code
+    function = parsed.functions["f"]
+    assert function.code == code
+    assert function.address == 0x1010
+    assert [(mapping.line_number, mapping.addresses) for mapping in function.line_mappings] == [
+        (1, [0x1010]),
+        (2, [0x1014]),
+        (3, [0x1018]),
+        (4, [0x1010]),
+    ]
+    assert function.variable_lines == {"arg": (1, 2), "local": (2, 3)}
+    assert function.variable_addresses == {"arg": (0x1010, 0x1014), "local": (0x1014, 0x1018)}
+
+    variables = {variable.name: variable for variable in _retdec_variables(function)}
+    assert variables["arg"].kind == "arg"
+    assert variables["arg"].arg_index == 0
+    assert variables["arg"].line_numbers == [1, 2]
+    assert variables["arg"].addresses == [0x1010, 0x1014]
+    assert variables["local"].type == "int32_t"
+    assert variables["local"].line_numbers == [2, 3]
+    assert variables["local"].addresses == [0x1014, 0x1018]
+
+
+def test_retdec_dsm_parser_accepts_only_instruction_rows_and_rebases_rva() -> None:
+    dsm = (
+        "; function: function_1000 at 0x1000 -- 0x1010\n"
+        "0x1000:   55                     \tpush ebp\n"
+        "0x1001:   89 e5                  \tmov ebp, esp\n"
+        "0x1003:   90 90 90               |...|\n"
+    )
+
+    instructions, ranges = _retdec_dsm_evidence(dsm, image_base=0x400000)
+
+    assert instructions == frozenset({0x401000, 0x401001})
+    assert ranges == ((0x401000, 0x401010),)
+
+
+def test_retdec_duplicate_shadow_names_abstain_from_occurrence_evidence() -> None:
+    code = (
+        "int32_t f(void) {\n"
+        "    int32_t item = 0;\n"
+        "    {\n"
+        "        int32_t item = 1;\n"
+        "        item++;\n"
+        "    }\n"
+        "    return item;\n"
+        "}\n"
+    )
+    first, second, third = code.split("item", 2)
+    header = "int32_t "
+    assert first.startswith(f"{header}f")
+    tokens = [
+        {"addr": "0x2010"},
+        {"kind": "ws", "val": header},
+        {"kind": "i_fnc", "val": "f"},
+        {"kind": "ws", "val": first[len(header) + 1 :]},
+        {"kind": "i_lvar", "val": "item"},
+        {"addr": "0x2014"},
+        {"kind": "ws", "val": second},
+        {"kind": "i_lvar", "val": "item"},
+        {"addr": "0x2018"},
+        {"kind": "ws", "val": third},
+    ]
+    parsed = _parse_retdec_json(
+        json.dumps({"language": "C", "tokens": tokens}),
+        valid_instruction_addresses=frozenset({0x2010, 0x2014, 0x2018}),
+        function_ranges=((0x2010, 0x2030),),
+    )
+
+    variables = [variable for variable in _retdec_variables(parsed.functions["f"]) if variable.name]
+    assert [variable.name for variable in variables] == ["item", "item"]
+    assert all(variable.line_numbers == [] for variable in variables)
+    assert all(variable.addresses == [] for variable in variables)
+
+
+@pytest.mark.parametrize("annotated", [None, "{not-json"])
+def test_retdec_plain_output_fallback_when_json_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    annotated: str | None,
+) -> None:
+    calls: list[list[str]] = []
+    plain = "int f(void) {\n    return 1;\n}\n"
+
+    def fake_run(
+        args: list[str],
+        binary_path: Path,
+        work_dir: Path,
+        timeout: float | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if "/work/out.json" in args and annotated is not None:
+            (work_dir / "out.json").write_text(annotated)
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if "/work/out.c" in args:
+            (work_dir / "out.c").write_text(plain)
+            return subprocess.CompletedProcess(args, 0, "", "")
+        return subprocess.CompletedProcess(args, 1, "", "json unsupported")
+
+    dec = RetDecDecompiler()
+    monkeypatch.setattr(dec, "_run_docker", fake_run)
+
+    assert dec._container_decompile(tmp_path / "missing.bin", tmp_path) == plain
+    assert "json" in calls[0]
+    assert calls[1][-2:] == ["-o", "/work/out.c"]
 
 
 class _FakeR2:
@@ -628,3 +789,11 @@ def test_docker_decompile_skips_when_image_absent(cls: type) -> None:
         pytest.skip("sample binary absent")
     result = dec.decompile_binary(_GZIP, function_names={"rsync_roll"})
     assert result.decompiler.decompiler_name == cls.name
+    if cls is RetDecDecompiler:
+        function = result.functions["rsync_roll"]
+        assert function.line_mappings
+        assert function.variables
+        assert all(mapping.line_number >= 1 for mapping in function.line_mappings)
+        assert all(mapping.addresses for mapping in function.line_mappings)
+        assert any(variable.line_numbers for variable in function.variables)
+        assert any(variable.addresses for variable in function.variables)

@@ -218,6 +218,11 @@ The canonical raw adapters use these native sources:
   transparently fall back to plain `pdd` / `pdc` text. If `afvj` is unavailable
   but JSON line evidence survives, variables parsed from the emitted C are
   joined to those native rows by exact identifier occurrence.
+- RetDec reconstructs exact C from its annotated JSON token values and validates
+  inherited token addresses against DSM instruction starts and function ranges.
+  Its exact snippet supplies recovered types and ABI argument positions; duplicate
+  or shadowed identifiers abstain from variable-occurrence evidence. Missing or
+  malformed annotated output falls back to the older plain-C path.
 - Kuna accepts additive `line_mappings` entries (`line_number`, `addresses`)
   and variable `line_numbers`/`addresses` in `decompile-all --json`. Missing
   fields remain empty for compatibility with older Kuna builds.
@@ -368,9 +373,10 @@ view renders them today.)
 When a decompiler isn't a Python library (Reko, RetDec, …), subclass
 `decbench.decompilers.dockerized.DockerizedDecompiler`. Provide the image tag,
 a Dockerfile under `docker/`, and a method that maps the tool's whole-program C
-output back onto per-function `FunctionDecompilation`s (pull function
-names/addresses from the ELF symbol table so addresses stay ELF-space). Build
-the image with:
+output back onto per-function `FunctionDecompilation`s. A backend may return an
+annotated representation when its CLI exposes native provenance; otherwise pull
+function names/addresses from the ELF symbol table so addresses stay ELF-space.
+Build the image with:
 
 ```bash
 decbench decompiler-build retdec

@@ -25,10 +25,13 @@ Common design (:class:`DockerizedDecompiler`):
     table (via pyelftools), so addresses live in **ELF file space** and line up
     with DWARF and the rest of decbench — the same convention declib_dec uses.
 
-    Reko and RetDec do not expose stack variables / line mappings uniformly, so
-    those fields remain empty for their results. r2dec attaches ``pddj`` line
-    offsets plus ``afv*`` variable metadata and access addresses when available.
-    The metrics still degrade gracefully when optional provenance is absent.
+    These tools do not expose provenance uniformly. RetDec supplies native line
+    and variable evidence from annotated JSON and DSM output, while r2dec attaches
+    ``pddj`` line offsets plus ``afv*`` variable metadata and access addresses
+    when available. Reko leaves these optional fields empty. The metrics degrade
+    gracefully when provenance is absent: GED still parses the recovered C,
+    byte_match recompiles it, and type_match falls back to syntax and usage
+    evidence.
 
 Images are **not** auto-built. ``is_available()`` only reports whether the image
 already exists locally; build it explicitly with ``decbench decompiler-build
@@ -47,6 +50,8 @@ import shutil
 import subprocess
 import tempfile
 import time
+from collections import Counter, defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +62,7 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    LineMapping,
     VariableInfo,
 )
 
@@ -208,12 +214,309 @@ def _strip_c_literals(line: str) -> str:
     return line
 
 
+@dataclass(frozen=True)
+class _RetDecToken:
+    start: int
+    end: int
+    kind: str
+    value: str
+    address: int | None
+
+
+@dataclass(frozen=True)
+class _RetDecFunction:
+    name: str
+    address: int | None
+    code: str
+    line_mappings: tuple[LineMapping, ...]
+    variable_lines: dict[str, tuple[int, ...]]
+    variable_addresses: dict[str, tuple[int, ...]]
+
+
+@dataclass(frozen=True)
+class _RetDecAnnotatedSource:
+    text: str
+    functions: dict[str, _RetDecFunction]
+
+
+def _retdec_address(value: object, image_base: int) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        address = int(str(value), 0)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid RetDec address: {value!r}") from exc
+    if address < 0:
+        raise ValueError(f"invalid RetDec address: {value!r}")
+    return address + image_base if image_base and address < image_base else address
+
+
+def _matching_c_brace(text: str, opening: int) -> int | None:
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    line_comment = False
+    block_comment = False
+    index = opening
+    while index < len(text):
+        char = text[index]
+        nxt = text[index + 1] if index + 1 < len(text) else ""
+        if line_comment:
+            if char == "\n":
+                line_comment = False
+            index += 1
+            continue
+        if block_comment:
+            if char == "*" and nxt == "/":
+                block_comment = False
+                index += 2
+            else:
+                index += 1
+            continue
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            index += 1
+            continue
+        if char == "/" and nxt == "/":
+            line_comment = True
+            index += 2
+            continue
+        if char == "/" and nxt == "*":
+            block_comment = True
+            index += 2
+            continue
+        if char in {'"', "'"}:
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+        index += 1
+    return None
+
+
+def _c_function_spans(combined_c: str) -> list[tuple[str, int, int]]:
+    spans: list[tuple[str, int, int]] = []
+    prior_end = 0
+    for match in _FUNC_DEF_RE.finditer(combined_c):
+        if match.start() < prior_end:
+            continue
+        name = match.group(1)
+        if name in _C_KEYWORDS:
+            continue
+        opening = combined_c.rfind("{", match.start(), match.end())
+        if opening < 0:
+            continue
+        closing = _matching_c_brace(combined_c, opening)
+        if closing is None:
+            continue
+        newline = combined_c.find("\n", closing + 1)
+        end = len(combined_c) if newline < 0 else newline + 1
+        spans.append((name, match.start(), end))
+        prior_end = end
+    return spans
+
+
+def _retdec_dsm_evidence(
+    dsm: str,
+    image_base: int,
+) -> tuple[frozenset[int], tuple[tuple[int, int], ...]]:
+    instruction_re = re.compile(r"^0x([0-9a-fA-F]+):.*\t", re.MULTILINE)
+    range_re = re.compile(
+        r"^; function: .*? at (0x[0-9a-fA-F]+) -- (0x[0-9a-fA-F]+)\s*$",
+        re.MULTILINE,
+    )
+    instructions = frozenset(
+        address
+        for match in instruction_re.finditer(dsm)
+        if (address := _retdec_address(f"0x{match.group(1)}", image_base)) is not None
+    )
+    ranges: list[tuple[int, int]] = []
+    for match in range_re.finditer(dsm):
+        start = _retdec_address(match.group(1), image_base)
+        end = _retdec_address(match.group(2), image_base)
+        if start is not None and end is not None and start < end:
+            ranges.append((start, end))
+    return instructions, tuple(sorted(set(ranges)))
+
+
+def _retdec_function_range(
+    address: int | None,
+    ranges: tuple[tuple[int, int], ...] | None,
+) -> tuple[int, int] | None:
+    if address is None or ranges is None:
+        return None
+    exact = next((item for item in ranges if item[0] == address), None)
+    if exact is not None:
+        return exact
+    return next((item for item in ranges if item[0] <= address < item[1]), None)
+
+
+def _retdec_accepts_address(
+    address: int | None,
+    valid_instruction_addresses: frozenset[int] | None,
+    function_range: tuple[int, int] | None,
+    require_function_range: bool,
+) -> bool:
+    if address is None:
+        return False
+    if valid_instruction_addresses is not None and address not in valid_instruction_addresses:
+        return False
+    if require_function_range:
+        return function_range is not None and function_range[0] <= address < function_range[1]
+    return True
+
+
+def _parse_retdec_json(
+    raw_json: str,
+    *,
+    image_base: int = 0,
+    valid_instruction_addresses: frozenset[int] | None = None,
+    function_ranges: tuple[tuple[int, int], ...] | None = None,
+) -> _RetDecAnnotatedSource:
+    payload = json.loads(raw_json)
+    if not isinstance(payload, dict) or not isinstance(payload.get("tokens"), list):
+        raise ValueError("RetDec JSON output has no token stream")
+    if payload.get("language") not in (None, "C"):
+        raise ValueError(f"unsupported RetDec output language: {payload.get('language')!r}")
+
+    current_address: int | None = None
+    parts: list[str] = []
+    tokens: list[_RetDecToken] = []
+    position = 0
+    for item in payload["tokens"]:
+        if not isinstance(item, dict):
+            raise ValueError("RetDec token is not an object")
+        if "addr" in item:
+            current_address = _retdec_address(item["addr"], image_base)
+        has_kind = "kind" in item
+        has_value = "val" in item
+        if not has_kind and not has_value:
+            continue
+        if not has_kind or not has_value:
+            raise ValueError("RetDec token kind/value must appear together")
+        kind = item["kind"]
+        value = item["val"]
+        if not isinstance(kind, str) or not isinstance(value, str):
+            raise ValueError("RetDec token kind/value must be strings")
+        end = position + len(value)
+        tokens.append(_RetDecToken(position, end, kind, value, current_address))
+        parts.append(value)
+        position = end
+
+    text = "".join(parts)
+    functions: dict[str, _RetDecFunction] = {}
+    for name, start, end in _c_function_spans(text):
+        code = text[start:end]
+        opening = code.find("{")
+        header_end = end if opening < 0 else start + opening
+        function_tokens = [token for token in tokens if start <= token.start < end]
+        entry = next(
+            (
+                token.address
+                for token in function_tokens
+                if token.start < header_end and token.kind == "i_fnc" and token.value == name
+            ),
+            None,
+        )
+        function_range = _retdec_function_range(entry, function_ranges)
+
+        starts = raw_common.line_starts(code)
+        line_addresses: dict[int, set[int]] = defaultdict(set)
+        variable_lines: dict[str, set[int]] = defaultdict(set)
+        variable_addresses: dict[str, set[int]] = defaultdict(set)
+        for token in function_tokens:
+            if not token.value:
+                continue
+            line = raw_common.pos_to_line(token.start - start, starts)
+            accepted = _retdec_accepts_address(
+                token.address,
+                valid_instruction_addresses,
+                function_range,
+                function_ranges is not None,
+            )
+            if accepted and token.address is not None:
+                line_addresses[line].add(int(token.address))
+            if token.kind not in {"i_arg", "i_lvar", "i_var"} or not token.value:
+                continue
+            variable_lines[token.value].add(line)
+            if accepted and token.address is not None:
+                variable_addresses[token.value].add(int(token.address))
+
+        functions.setdefault(
+            name,
+            _RetDecFunction(
+                name=name,
+                address=entry,
+                code=code,
+                line_mappings=tuple(raw_common.merge_line_addresses(line_addresses)),
+                variable_lines={
+                    variable: tuple(sorted(lines))
+                    for variable, lines in sorted(variable_lines.items())
+                },
+                variable_addresses={
+                    variable: tuple(sorted(addresses))
+                    for variable, addresses in sorted(variable_addresses.items())
+                },
+            ),
+        )
+    return _RetDecAnnotatedSource(text=text, functions=functions)
+
+
+def _retdec_variables(function: _RetDecFunction) -> list[VariableInfo]:
+    try:
+        from decbench.metrics.type_match import parse_c_variables
+        from decbench.metrics.variable_features import analyze_c_function
+
+        variables = list(parse_c_variables(function.code, function.name))
+        analysis = analyze_c_function(
+            function.code,
+            function.name,
+            (variable.name for variable in variables),
+        )
+    except Exception:  # noqa: BLE001
+        return []
+
+    counts = Counter(variable.name for variable in variables if variable.name)
+    ambiguous = set(analysis.ambiguous_names)
+    ambiguous.update(name for name, count in counts.items() if count != 1)
+    line_addresses = {
+        mapping.line_number: set(mapping.addresses) for mapping in function.line_mappings
+    }
+    enriched: list[VariableInfo] = []
+    for variable in variables:
+        if not variable.name or variable.name in ambiguous:
+            enriched.append(variable)
+            continue
+        lines = list(function.variable_lines.get(variable.name, ()))
+        addresses = sorted(
+            {address for line in lines for address in line_addresses.get(line, set())}
+        )
+        enriched.append(
+            variable.model_copy(
+                update={
+                    "line_numbers": lines,
+                    "addresses": addresses,
+                }
+            )
+        )
+    return enriched
+
+
 class DockerizedDecompiler(Decompiler):
     """Base for decompilers run inside a Docker container.
 
     Subclasses set :attr:`image` (tag), :attr:`dockerfile` (file under
     ``docker/``), and implement :meth:`_container_decompile`, which runs the
-    container against a mounted binary and returns whole-program C.
+    container against a mounted binary and returns whole-program C, optionally
+    with native provenance.
     """
 
     name = "dockerized"
@@ -294,8 +597,12 @@ class DockerizedDecompiler(Decompiler):
             return None
         return self.image.rsplit(":", 1)[-1] if ":" in self.image else "latest"
 
-    def _container_decompile(self, binary_path: Path, work_dir: Path) -> str:
-        """Run the container and return whole-program C as a string.
+    def _container_decompile(
+        self,
+        binary_path: Path,
+        work_dir: Path,
+    ) -> str | _RetDecAnnotatedSource:
+        """Run the container and return whole-program C, optionally annotated.
 
         ``work_dir`` is a host temp dir bind-mounted into the container so the
         tool can write outputs there. Subclasses implement the tool-specific
@@ -367,7 +674,7 @@ class DockerizedDecompiler(Decompiler):
 
         start = time.time()
         timed_out = False
-        combined_c = ""
+        combined_c: str | _RetDecAnnotatedSource = ""
         error: str | None = None
 
         with tempfile.TemporaryDirectory(prefix=f"decbench_{self.name}_") as td:
@@ -404,7 +711,7 @@ class DockerizedDecompiler(Decompiler):
     def _build_result(
         self,
         binary_path: Path,
-        combined_c: str,
+        combined_c: str | _RetDecAnnotatedSource,
         functions: list[tuple[str, int]] | None,
         function_names: set[int] | set[str] | None,
         elapsed: float,
@@ -413,10 +720,23 @@ class DockerizedDecompiler(Decompiler):
         output_dir: Path | None,
     ) -> DecompilationResult:
         """Assemble a :class:`DecompilationResult` from whole-program C."""
+        if isinstance(combined_c, _RetDecAnnotatedSource):
+            annotated: _RetDecAnnotatedSource | None = combined_c
+            source_text = combined_c.text
+        else:
+            annotated = None
+            source_text = combined_c
         if functions is not None:
             name_to_addr = {n: a for n, a in functions}
         else:
             name_to_addr = dict(elf_function_symbols(binary_path))
+
+        if annotated is not None and not name_to_addr:
+            name_to_addr = {
+                name: function.address
+                for name, function in annotated.functions.items()
+                if function.address is not None
+            }
 
         if function_names:
             address_targets = _addr_targets_of(function_names)
@@ -428,12 +748,21 @@ class DockerizedDecompiler(Decompiler):
                 or (address_targets and raw_common._addr_matches(address, address_targets))
             }
 
-        snippets = split_c_functions(combined_c) if combined_c else {}
+        snippets = split_c_functions(source_text) if source_text else {}
+        annotated_by_address: dict[int, list[_RetDecFunction]] = defaultdict(list)
+        if annotated is not None:
+            for function in annotated.functions.values():
+                if function.address is not None:
+                    annotated_by_address[function.address & ~1].append(function)
 
         decompiled: dict[str, FunctionDecompilation] = {}
         failed: list[str] = []
         for name, addr in name_to_addr.items():
-            code = snippets.get(name)
+            annotation = annotated.functions.get(name) if annotated is not None else None
+            if annotation is None and annotated is not None:
+                candidates = annotated_by_address.get(addr & ~1, [])
+                annotation = candidates[0] if len(candidates) == 1 else None
+            code = annotation.code if annotation is not None else snippets.get(name)
             if not code:
                 failed.append(name)
                 continue
@@ -443,8 +772,8 @@ class DockerizedDecompiler(Decompiler):
                 address=addr,
                 decompiled_code=code,
                 line_count=code.count("\n") + 1,
-                line_mappings=[],
-                variables=[],
+                line_mappings=list(annotation.line_mappings) if annotation is not None else [],
+                variables=_retdec_variables(annotation) if annotation is not None else [],
                 metadata={
                     "gotos": code.count("goto "),
                     "bools": code.count(" && ") + code.count(" || "),
@@ -454,7 +783,7 @@ class DockerizedDecompiler(Decompiler):
         extra: dict[str, object] = {"via": "docker", "image": self.image}
         if error:
             extra["error"] = error
-        if not combined_c:
+        if not source_text:
             failed = list(name_to_addr.keys()) or ["all"]
 
         return DecompilationResult(
@@ -469,7 +798,7 @@ class DockerizedDecompiler(Decompiler):
                 extra=extra,
             ),
             functions=decompiled,
-            combined_source=combined_c or None,
+            combined_source=source_text or None,
             output_dir=output_dir,
         )
 
@@ -480,7 +809,7 @@ class DockerizedDecompiler(Decompiler):
 
 @register_decompiler("retdec")
 class RetDecDecompiler(DockerizedDecompiler):
-    """RetDec via a Docker image (``retdec-decompiler <binary> -o out.c``).
+    """RetDec via its annotated JSON token stream in a Docker image.
 
     Build: ``decbench decompiler-build retdec`` (slow — builds/downloads RetDec).
     """
@@ -490,7 +819,39 @@ class RetDecDecompiler(DockerizedDecompiler):
     image = "decbench/retdec:latest"
     dockerfile = "retdec.Dockerfile"
 
-    def _container_decompile(self, binary_path: Path, work_dir: Path) -> str:
+    def _container_decompile(
+        self,
+        binary_path: Path,
+        work_dir: Path,
+    ) -> str | _RetDecAnnotatedSource:
+        image_base = raw_common.elf_min_vaddr(binary_path)
+        json_proc = self._run_docker(
+            args=[
+                f"/in/{binary_path.name}",
+                "-f",
+                "json",
+                "-o",
+                "/work/out.json",
+                "--cleanup",
+            ],
+            binary_path=binary_path,
+            work_dir=work_dir,
+        )
+        out_json = work_dir / "out.json"
+        if out_json.is_file():
+            try:
+                dsm_path = work_dir / "out.dsm"
+                dsm = dsm_path.read_text(errors="replace") if dsm_path.is_file() else ""
+                instructions, ranges = _retdec_dsm_evidence(dsm, image_base)
+                return _parse_retdec_json(
+                    out_json.read_text(errors="replace"),
+                    image_base=image_base,
+                    valid_instruction_addresses=instructions,
+                    function_ranges=ranges,
+                )
+            except (OSError, ValueError) as exc:
+                _l.warning("retdec JSON provenance unavailable for %s: %s", binary_path, exc)
+
         proc = self._run_docker(
             args=[f"/in/{binary_path.name}", "-o", "/work/out.c"],
             binary_path=binary_path,
@@ -500,8 +861,8 @@ class RetDecDecompiler(DockerizedDecompiler):
         if out_c.is_file():
             return out_c.read_text(errors="replace")
         raise RuntimeError(
-            f"retdec produced no out.c (rc={proc.returncode}): "
-            f"{proc.stderr[-500:] if proc.stderr else ''}"
+            f"retdec produced neither annotated JSON (rc={json_proc.returncode}) nor "
+            f"plain C (rc={proc.returncode}): {proc.stderr[-500:] if proc.stderr else ''}"
         )
 
 
