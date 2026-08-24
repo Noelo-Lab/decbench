@@ -12,10 +12,13 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from decbench.decompilers.dockerized import (
+    _DOCKER_DIR,
+    _R2_DRIVER_CONTAINER_PATH,
     DockerizedDecompiler,
     R2DecDecompiler,
     RekoDecompiler,
@@ -89,6 +92,36 @@ def test_r2dec_available_when_native_present() -> None:
 def test_get_version_proxies_image_tag() -> None:
     assert RetDecDecompiler().get_version() == "latest"
     assert RekoDecompiler().get_version() == "latest"
+
+
+def test_run_docker_places_extra_readonly_mount_before_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary = tmp_path / "input.bin"
+    binary.write_bytes(b"binary")
+    driver = tmp_path / "driver.py"
+    driver.write_text("pass\n")
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    dec = R2DecDecompiler()
+    monkeypatch.setattr(dec, "_docker_bin", lambda: "/usr/bin/docker")
+
+    def fake_subprocess_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+    proc = dec._run_docker(
+        args=["/in/input.bin", "/work/out.json"],
+        binary_path=binary,
+        work_dir=work_dir,
+        readonly_mounts=[(driver, "/opt/driver.py")],
+    )
+
+    cmd = proc.args
+    driver_mount = f"{driver.resolve()}:/opt/driver.py:ro"
+    assert driver_mount in cmd
+    assert cmd.index(driver_mount) < cmd.index(dec.image)
+    assert cmd[-3:] == [dec.image, "/in/input.bin", "/work/out.json"]
 
 
 _FAKE_C = """
@@ -726,36 +759,83 @@ def test_r2_docker_payload_populates_native_provenance(
     dec = R2DecDecompiler()
     monkeypatch.setattr(dec, "_image_present", lambda _image: True)
 
-    def fake_run(**kwargs):  # noqa: ANN202
-        payload = [
-            {
-                "addr": 0x1000,
-                "baddr": 0,
-                "name": "fcn.00001000",
-                "code": "int f(int arg1) {\n    return arg1;\n}",
-                "size": 0x10,
-                "line_mappings": [{"line_number": 2, "addresses": [0x1004]}],
-                "variables": [
-                    {
-                        "name": "arg1",
-                        "type": "int",
-                        "kind": "arg",
-                        "arg_index": 0,
-                        "addresses": [0x1004],
-                        "line_numbers": [2],
-                    }
-                ],
-            }
+    def fake_run(**kwargs: Any) -> subprocess.CompletedProcess[str]:
+        work_dir = kwargs["work_dir"]
+        assert kwargs["args"] == ["/in/bin", "/work/out.json", "/work/targets.json"]
+        assert json.loads((work_dir / "targets.json").read_text()) == [0x1000]
+        assert kwargs["readonly_mounts"] == [
+            (_DOCKER_DIR / "r2dec-decompile.py", _R2_DRIVER_CONTAINER_PATH)
         ]
-        (kwargs["work_dir"] / "out.json").write_text(__import__("json").dumps(payload))
+        payload = {
+            "schema_version": 1,
+            "command": "pdd",
+            "functions": [
+                {
+                    "addr": 0x1000,
+                    "baddr": 0,
+                    "name": "fcn.00001000",
+                    "code": "int f(int arg1) {\n    return arg1;\n}",
+                    "size": 0x10,
+                    "line_mappings": [{"line_number": 2, "addresses": [0x1004]}],
+                    "variables": [
+                        {
+                            "name": "arg1",
+                            "type": "int",
+                            "kind": "arg",
+                            "arg_index": 0,
+                            "addresses": [0x1004],
+                            "line_numbers": [2],
+                        }
+                    ],
+                },
+                {
+                    "addr": 0x2000,
+                    "baddr": 0,
+                    "name": "fcn.00002000",
+                    "code": "int unrelated(void) { return 0; }",
+                    "size": 0x10,
+                    "line_mappings": [],
+                    "variables": [],
+                },
+            ],
+        }
+        (work_dir / "out.json").write_text(json.dumps(payload))
         return subprocess.CompletedProcess([], 0, "", "")
 
     monkeypatch.setattr(dec, "_run_docker", fake_run)
     result = dec._decompile_docker(Path("/nonexistent/bin"), None, None, {0x1000}, None)
+    assert {function.address for function in result.functions.values()} == {0x1000}
     function = next(iter(result.functions.values()))
     assert function.line_mappings[0].addresses == [0x1004]
     assert function.variables[0].addresses == [0x1004]
     assert function.variables[0].arg_index == 0
+    assert result.decompiler.extra["command"] == "pdd"
+
+
+def test_r2_docker_rejects_legacy_unversioned_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dec = R2DecDecompiler()
+    monkeypatch.setattr(dec, "_image_present", lambda _image: True)
+
+    def fake_run(**kwargs: Any) -> subprocess.CompletedProcess[str]:
+        legacy_payload = [
+            {
+                "addr": 0x1000,
+                "baddr": 0,
+                "name": "fcn.00001000",
+                "code": "int f(void) { return 0; }",
+            }
+        ]
+        (kwargs["work_dir"] / "out.json").write_text(json.dumps(legacy_payload))
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(dec, "_run_docker", fake_run)
+    result = dec._decompile_docker(Path("/nonexistent/bin"), None, None, {0x1000}, None)
+
+    assert result.functions == {}
+    assert result.decompiler.failed_functions == ["all"]
+    assert "legacy driver payload" in result.decompiler.extra["error"]
 
 
 @pytest.mark.skipif(not _GZIP.is_file(), reason="sample gzip binary not present")

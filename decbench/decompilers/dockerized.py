@@ -631,12 +631,15 @@ class DockerizedDecompiler(Decompiler):
         binary_path: Path,
         work_dir: Path,
         timeout: float | None = None,
+        readonly_mounts: list[tuple[Path, str]] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run ``docker run`` with the binary mounted read-only at ``/in/<name>``
         and ``work_dir`` mounted read-write at ``/work``.
 
         ``args`` are appended after the image name (the container command). Use
         the placeholders ``/in/<binary_name>`` and ``/work`` in ``args``.
+        ``readonly_mounts`` binds host files into exact container paths before
+        the image name.
         """
         docker = self._docker_bin()
         if not docker:
@@ -649,9 +652,13 @@ class DockerizedDecompiler(Decompiler):
             f"{binary_path.resolve()}:/in/{binary_path.name}:ro",
             "-v",
             f"{work_dir.resolve()}:/work",
-            self.image,
-            *args,
         ]
+        for host_path, container_path in readonly_mounts or []:
+            resolved = host_path.resolve()
+            if not resolved.is_file():
+                raise FileNotFoundError(f"Docker bind source not found: {resolved}")
+            cmd.extend(["-v", f"{resolved}:{container_path}:ro"])
+        cmd.extend([self.image, *args])
         _l.debug("docker run: %s", " ".join(cmd))
         return subprocess.run(
             cmd,
@@ -918,6 +925,8 @@ _C_KEYWORDS = frozenset({"if", "while", "for", "switch", "return", "do", "else",
 # ``fcn_00003bed`` from ``pdd``). The parameter list is matched non-greedily so
 # an ``ident (...)`` inside a comment cannot swallow text up to the real ``) {``.
 _R2_DEF_RE = re.compile(r"\b([A-Za-z_][\w.]*)\s*\([^;{}]*?\)\s*\{")
+_R2_DRIVER_SCHEMA_VERSION = 1
+_R2_DRIVER_CONTAINER_PATH = "/opt/r2dec-decompile.py"
 
 
 def _r2_int(value: Any, default: int | None = None) -> int | None:
@@ -1705,6 +1714,7 @@ class R2DecDecompiler(DockerizedDecompiler):
             addr_targets = sorted(ints)
 
         entries: list[dict[str, Any]] = []
+        used_cmd = "pdd"
         error: str | None = None
         timed_out = False
         with tempfile.TemporaryDirectory(prefix=f"decbench_{self.name}_") as td:
@@ -1718,10 +1728,36 @@ class R2DecDecompiler(DockerizedDecompiler):
                     args=[f"/in/{binary_path.name}", "/work/out.json", targets_arg],
                     binary_path=binary_path,
                     work_dir=work_dir,
+                    readonly_mounts=[
+                        (_DOCKER_DIR / "r2dec-decompile.py", _R2_DRIVER_CONTAINER_PATH)
+                    ],
                 )
                 out_json = work_dir / "out.json"
                 if out_json.is_file():
-                    entries = json.loads(out_json.read_text() or "[]")
+                    payload = json.loads(out_json.read_text() or "{}")
+                    if not isinstance(payload, dict):
+                        raise RuntimeError("r2dec container returned a legacy driver payload")
+                    schema_version = payload.get("schema_version")
+                    if (
+                        type(schema_version) is not int
+                        or schema_version != _R2_DRIVER_SCHEMA_VERSION
+                    ):
+                        raise RuntimeError(
+                            "r2dec container driver schema mismatch: "
+                            f"expected {_R2_DRIVER_SCHEMA_VERSION}, got {schema_version}"
+                        )
+                    raw_entries = payload.get("functions")
+                    if not isinstance(raw_entries, list) or not all(
+                        isinstance(entry, dict) for entry in raw_entries
+                    ):
+                        raise RuntimeError("r2dec container returned malformed function records")
+                    driver_command = payload.get("command")
+                    if driver_command not in {"pdd", "pdc"}:
+                        raise RuntimeError(
+                            f"r2dec container returned invalid command: {driver_command}"
+                        )
+                    entries = raw_entries
+                    used_cmd = driver_command
                 else:
                     error = (
                         f"container produced no out.json (rc={proc.returncode}): "
@@ -1782,7 +1818,7 @@ class R2DecDecompiler(DockerizedDecompiler):
             failed,
             time.time() - start,
             "docker",
-            "pdd",
+            used_cmd,
             output_dir,
             timed_out=timed_out,
             error=error,

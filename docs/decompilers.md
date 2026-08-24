@@ -217,7 +217,10 @@ The canonical raw adapters use these native sources:
   `pdcj` annotations provide the same line contract; unavailable JSON commands
   transparently fall back to plain `pdd` / `pdc` text. If `afvj` is unavailable
   but JSON line evidence survives, variables parsed from the emitted C are
-  joined to those native rows by exact identifier occurrence.
+  joined to those native rows by exact identifier occurrence. The container
+  bind-mounts this repository's driver over the image copy and validates its
+  versioned output schema, preventing an older image driver from silently
+  dropping newly added provenance fields.
 - RetDec reconstructs exact C from its annotated JSON token values and validates
   inherited token addresses against DSM instruction starts and function ranges.
   Local identifier tokens carry their LLVM origin address, so the adapter

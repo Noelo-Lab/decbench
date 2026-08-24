@@ -32,6 +32,7 @@ from typing import Any
 import r2pipe
 
 _R2_FLAGS = ["-2", "-e", "bin.relocs.apply=true", "-e", "scr.color=0"]
+_SCHEMA_VERSION = 1
 
 _ENTRY_NAMES = frozenset({"entry0", "entry1", "entry.init0", "entry.fini0", "entry.preinit0"})
 
@@ -304,7 +305,7 @@ def main() -> int:
     r.quit()
 
     with open(out_path, "w") as f:
-        json.dump(out, f)
+        json.dump({"schema_version": _SCHEMA_VERSION, "command": cmd, "functions": out}, f)
     return 0
 
 

@@ -23,10 +23,11 @@ analysis (`aaa` + `aflj`), so it needs no symbol table and works on fully stripp
 binaries.
 
 The tools do not expose stack variables / line mappings uniformly. RetDec fills
-both fields from its annotated JSON and DSM outputs; the other whole-program
-backend leaves them empty. The metrics degrade gracefully when provenance is
-absent: GED still parses the recovered C, byte_match recompiles it, and type_match
-falls back to syntax and usage evidence.
+both fields from its annotated JSON and DSM outputs, r2dec returns best-effort
+native line offsets and variable records, and Reko currently leaves them empty.
+The metrics degrade gracefully when provenance is absent: GED still parses the
+recovered C, byte_match recompiles it, and type_match falls back to type-blind
+syntax and usage evidence.
 
 ## Building an image
 
@@ -92,12 +93,21 @@ the benchmark path: it builds radare2 **from source** so the real r2dec plugin
 compiles. `is_available()` is true if **either** native radare2+r2pipe is
 present **or** the Docker image exists.
 
-The in-container driver `r2dec-decompile.py` is invoked as
+The checked-in `r2dec-decompile.py` driver is bind-mounted read-only over the
+copy baked into the image, so source-side provenance changes cannot silently
+run against an older driver from an existing image. Its output carries a schema
+version that the host validates before accepting any functions. Rebuild the
+image when changing the pinned radare2 or r2dec plugin, but not for Python-only
+driver changes.
+
+The in-container driver is invoked as
 `/in/<bin> /work/out.json [/work/targets.json]`. `targets.json` (optional) is a
 JSON list of ELF-file-space addresses to restrict to (matched Thumb-bit
-tolerant); `out.json` is a JSON list containing `addr`, `baddr`, `name`, `code`,
-and best-effort `line_mappings` / `variables` from `pddj` and `afv*`. Entries
-are keyed by radare2's own analysis addresses, so nothing is split by symbol.
+tolerant); `out.json` is a versioned object containing the selected `pdd`/`pdc`
+command and a `functions` list. Each function contains `addr`, `baddr`, `name`,
+`code`, and best-effort `line_mappings` / `variables` from `pddj` and `afv*`.
+Entries are keyed by radare2's own analysis addresses, so nothing is split by
+symbol.
 
 ### Glaurung
 
