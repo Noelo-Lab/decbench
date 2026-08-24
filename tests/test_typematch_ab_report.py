@@ -109,29 +109,42 @@ def _write_overlay(
     mode: str,
     *,
     drop_auto_f2: bool = False,
+    cache_version: str = "8",
+    omit_entry_provenance: bool = False,
 ) -> None:
     a = {
         "proj::O0::xbin::f1": {
             "value": 0.5 if mode == "address" else 1.0,
             "variable_match_evidence": "native" if mode == "address" else "mixed",
+            "producer_variable_occurrence_policy": "exact",
+            "structured_occurrence_mode": "producer",
         },
         "proj::O2::armbin::f2": {
             "value": 1.0 if mode == "address" else 0.5,
             "variable_match_evidence": ("native" if mode == "address" else "fallback_only"),
+            "producer_variable_occurrence_policy": "unavailable",
+            "structured_occurrence_mode": "producer",
         },
         "proj::O2-noinline::noinlinebin::f3": {
             "value": 1.0,
             "variable_match_evidence": "native",
+            "producer_variable_occurrence_policy": "direct",
+            "structured_occurrence_mode": "producer",
         },
     }
     if drop_auto_f2 and mode == "auto":
         a.pop("proj::O2::armbin::f2")
+    if omit_entry_provenance:
+        a["proj::O0::xbin::f1"].pop("producer_variable_occurrence_policy")
+        a["proj::O0::xbin::f1"].pop("structured_occurrence_mode")
     payload = {
         "a": a,
         "b": {
             "proj::O0::xbin::f1": {
                 "value": 1.0,
                 "variable_match_evidence": "native",
+                "producer_variable_occurrence_policy": "undeclared",
+                "structured_occurrence_mode": "producer",
             }
         },
     }
@@ -139,7 +152,9 @@ def _write_overlay(
         mode=mode,
         resolved_mode="address+usage" if mode == "auto" else mode,
         policy={"min_overlap": 0.1, "address_weight": 0.5},
-        metric_cache_version="8",
+        metric_cache_version=cache_version,
+        structured_occurrence_mode="producer",
+        variable_occurrence_policy_schema="decbench-variable-occurrence-policy-v1",
     )
     write_typematch_overlay_atomic(path, payload, provenance)
 
@@ -313,6 +328,17 @@ def test_report_tracks_regressions_evidence_and_producer_coverage(tmp_path: Path
     assert evidence["producer_variable_addresses_missing"] == 2
     assert evidence["potential_undercount"] == 2
     assert evidence["asterisk_recommended"] is True
+    assert evidence["producer_occurrence_policies"] == {
+        "exact": 1,
+        "direct": 1,
+        "unavailable": 1,
+        "undeclared": 0,
+        "unreported": 0,
+    }
+    assert evidence["structured_occurrence_modes"] == {
+        "producer": 3,
+        "unreported": 0,
+    }
 
 
 def test_coverage_drift_is_reported_and_fails_cli_by_default(tmp_path: Path) -> None:
@@ -349,6 +375,30 @@ def test_coverage_drift_is_reported_and_fails_cli_by_default(tmp_path: Path) -> 
     assert "Shared denominator: **3** of 4 selected functions" in markdown.read_text()
 
 
+def test_v11_report_rejects_missing_entry_occurrence_provenance(tmp_path: Path) -> None:
+    function_data, manifest = _fixture_tree(tmp_path)
+    overlay = tmp_path / "address-v11.json"
+    _write_overlay(
+        overlay,
+        "address",
+        cache_version="11",
+        omit_entry_provenance=True,
+    )
+
+    report = build_report(
+        function_data_path=function_data,
+        results_root=tmp_path,
+        manifest_path=manifest,
+        modes=(("address", overlay),),
+        baseline_mode="address",
+    )
+
+    assert report["validation"]["valid_for_apples_to_apples"] is False
+    assert report["validation"]["errors"] == [
+        "v11 mode 'address' has 1 entries without complete producer occurrence provenance"
+    ]
+
+
 def test_markdown_explains_shared_denominator(tmp_path: Path) -> None:
     markdown = render_markdown(_report(tmp_path))
     assert "Conditional partial mean" in markdown
@@ -356,6 +406,8 @@ def test_markdown_explains_shared_denominator(tmp_path: Path) -> None:
     assert "Potential measurement undercount" not in markdown
     assert "`elf/arm`" in markdown
     assert "## Optimization levels" in markdown
+    assert "## Producer occurrence policy" in markdown
+    assert "| `address` | a | 1 | 1 | 1 | 0 | 0 |" in markdown
     assert "`O0` (1 functions)" in markdown
     assert "`O2` (1 functions)" in markdown
     assert "`O2-noinline` (1 functions)" in markdown

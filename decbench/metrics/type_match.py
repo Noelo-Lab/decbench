@@ -727,13 +727,11 @@ def _parse_param(param: str) -> tuple[str, str] | None:
 def parse_c_variables(code: str, func_name: str) -> list[Any]:
     """Best-effort structured ``VariableInfo`` list from decompiled C text.
 
-    Recovers function ARGUMENTS (with ABI ``arg_index``, name-independent) from
-    ``func_name``'s signature plus local declarations from the body, so a
-    decompiler that emits only C text (the LLM backends) is scored by the same
-    argument-position + name matching as one exposing structured variables —
-    instead of the name-only regex fallback, which never credited arguments (a
-    function whose only variables are its arguments therefore scored 0 despite
-    perfect argument types, e.g. ``wcomment(FILE *fp, int c)``).
+    Recovers function arguments (with ABI ``arg_index``, name-independent) from
+    ``func_name``'s signature plus local declarations from the body. A decompiler
+    that emits only C text therefore gets the same argument-position anchors and
+    usage-feature extraction as one exposing structured variables. This declaration
+    parser never supplies occurrence addresses.
     """
     from decbench.models.decompilation import VariableInfo
 

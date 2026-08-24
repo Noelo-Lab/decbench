@@ -253,6 +253,14 @@ production adapter or metric configuration enables it. This restriction applies 
 to structured occurrence addresses; address-free, type-blind usage features are still
 extracted from the final C for every backend.
 
+TypeMatch v11 overlays retain each scored function's producer occurrence policy as
+`producer_variable_occurrence_policy` and its `structured_occurrence_mode`. Their
+digest-bound manifest also records the policy schema and
+`structured_occurrence_mode="producer"`. The A/B reporter rejects a
+v11 overlay with missing declarations and reports `exact`, `direct`, `unavailable`, and
+legacy `undeclared` counts separately from accepted-evidence categories and the
+measurement-undercount asterisk.
+
 Summarize independently generated modes with the shared-denominator reporter,
 not the re-evaluator's per-mode console mean:
 

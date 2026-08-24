@@ -184,6 +184,8 @@ def _typematch_provenance(**policy: float) -> dict[str, object]:
         resolved_mode="address+usage",
         policy=policy or {"min_overlap": 0.1, "address_weight": 0.5},
         metric_cache_version="7",
+        structured_occurrence_mode="producer",
+        variable_occurrence_policy_schema="decbench-variable-occurrence-policy-v1",
     )
 
 
@@ -221,6 +223,22 @@ def test_scoped_typematch_merge_rejects_mixed_policy() -> None:
         )
 
     assert existing == {"angr": {"p::O0::b::f": {"value": 1.0}}}
+
+
+def test_scoped_typematch_merge_rejects_missing_occurrence_contract() -> None:
+    existing = {"angr": {"p::O0::b::f": {"value": 1.0}}}
+    fresh = {"angr": {"p::O0::b::g": {"value": 0.5}}}
+    legacy = _typematch_provenance()
+    legacy.pop("structured_occurrence_mode")
+    legacy.pop("variable_occurrence_policy_schema")
+
+    with pytest.raises(TypeMatchOverlayError, match="structured_occurrence_mode"):
+        merge_typematch_overlay(
+            existing,
+            fresh,
+            existing_provenance=legacy,
+            fresh_provenance=_typematch_provenance(),
+        )
 
 
 def test_atomic_typematch_write_preserves_sentinels_before_serialization_failure(

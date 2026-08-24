@@ -85,6 +85,11 @@ _TYPEMATCH_PROVENANCE_FIELDS = (
     "policy",
     "metric_cache_version",
 )
+_TYPEMATCH_PROVENANCE_COMPATIBILITY_FIELDS = (
+    *_TYPEMATCH_PROVENANCE_FIELDS,
+    "structured_occurrence_mode",
+    "variable_occurrence_policy_schema",
+)
 
 
 def typematch_overlay_manifest_path(path: Path) -> Path:
@@ -99,6 +104,8 @@ def typematch_overlay_provenance(
     resolved_mode: str,
     policy: Mapping[str, float],
     metric_cache_version: str,
+    structured_occurrence_mode: str,
+    variable_occurrence_policy_schema: str,
 ) -> dict[str, Any]:
     """Build the stable compatibility identity recorded beside an overlay."""
 
@@ -110,6 +117,8 @@ def typematch_overlay_provenance(
         "policy_schema": TYPEMATCH_POLICY_SCHEMA,
         "policy": {str(key): float(value) for key, value in sorted(policy.items())},
         "metric_cache_version": str(metric_cache_version),
+        "structured_occurrence_mode": str(structured_occurrence_mode),
+        "variable_occurrence_policy_schema": str(variable_occurrence_policy_schema),
     }
 
 
@@ -144,6 +153,12 @@ def _validated_typematch_provenance(provenance: Mapping[str, Any]) -> dict[str, 
         "policy_schema": TYPEMATCH_POLICY_SCHEMA,
         "policy": normalized_policy,
         "metric_cache_version": str(provenance["metric_cache_version"]),
+        "structured_occurrence_mode": str(
+            provenance.get("structured_occurrence_mode", "unreported")
+        ),
+        "variable_occurrence_policy_schema": str(
+            provenance.get("variable_occurrence_policy_schema", "unreported")
+        ),
     }
 
 
@@ -492,7 +507,7 @@ def merge_typematch_overlay(
         if existing_identity != fresh_identity:
             changed = [
                 field
-                for field in _TYPEMATCH_PROVENANCE_FIELDS
+                for field in _TYPEMATCH_PROVENANCE_COMPATIBILITY_FIELDS
                 if existing_identity[field] != fresh_identity[field]
             ]
             raise TypeMatchOverlayError(

@@ -65,6 +65,7 @@ from decbench.models.decompilation import (
     FunctionDecompilation,
     LineMapping,
     VariableInfo,
+    VariableOccurrencePolicy,
     with_variable_occurrence_policy,
 )
 from decbench.utils import binfmt
@@ -2100,8 +2101,12 @@ class R2DecDecompiler(DockerizedDecompiler):
                     addresses=addresses,
                 )
             )
-        if not variables and line_mappings:
+        occurrence_policy: VariableOccurrencePolicy = "unavailable"
+        if variables:
+            occurrence_policy = "direct"
+        elif line_mappings:
             variables = _r2_inferred_variables(code, final, line_mappings)
+            occurrence_policy = "exact"
         output_address = file_addr & ~1 if is_thumb else file_addr
         return FunctionDecompilation(
             name=final,
@@ -2110,7 +2115,9 @@ class R2DecDecompiler(DockerizedDecompiler):
             line_count=line_count,
             line_mappings=line_mappings,
             variables=variables,
-            metadata=with_variable_occurrence_policy(raw_common.extract_metrics(code), "exact"),
+            metadata=with_variable_occurrence_policy(
+                raw_common.extract_metrics(code), occurrence_policy
+            ),
         )
 
     def _make_result(

@@ -12,6 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from decbench.models.decompilation import (
+    VARIABLE_OCCURRENCE_POLICIES,
+    VARIABLE_OCCURRENCE_POLICY_SCHEMA,
+)
 from decbench.models.function_data import VARIABLE_MATCH_EVIDENCE
 from decbench.results_store import read_typematch_overlay
 from decbench.utils import binfmt
@@ -22,6 +26,7 @@ ProducerKey = tuple[str, FunctionKey]
 
 SCORE_EPSILON = 1e-9
 REPORT_SCHEMA = "decbench-typematch-ab-report-v2"
+PRODUCER_OCCURRENCE_POLICIES = (*VARIABLE_OCCURRENCE_POLICIES, "undeclared")
 
 
 @dataclass(frozen=True)
@@ -38,6 +43,8 @@ class ScoreEntry:
 
     value: float
     evidence: str
+    producer_occurrence_policy: str = "unreported"
+    structured_occurrence_mode: str = "unreported"
 
 
 @dataclass(frozen=True)
@@ -233,9 +240,13 @@ def load_mode_overlay(name: str, path: Path) -> ModeOverlay:
             if isinstance(raw_entry, Mapping):
                 value = raw_entry.get("value")
                 raw_evidence = raw_entry.get("variable_match_evidence")
+                raw_occurrence_policy = raw_entry.get("producer_variable_occurrence_policy")
+                raw_structured_mode = raw_entry.get("structured_occurrence_mode")
             else:
                 value = raw_entry
                 raw_evidence = None
+                raw_occurrence_policy = None
+                raw_structured_mode = None
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 raise ValueError(f"{path}: non-numeric score at {backend}/{raw_key}")
             number = float(value)
@@ -245,7 +256,17 @@ def load_mode_overlay(name: str, path: Path) -> ModeOverlay:
                 evidence = str(raw_evidence)
             else:
                 evidence = "none" if evidence_reporting else "unreported"
-            normalized[parse_key(raw_key)] = ScoreEntry(number, evidence)
+            occurrence_policy = (
+                str(raw_occurrence_policy)
+                if raw_occurrence_policy in PRODUCER_OCCURRENCE_POLICIES
+                else "unreported"
+            )
+            normalized[parse_key(raw_key)] = ScoreEntry(
+                number,
+                evidence,
+                occurrence_policy,
+                str(raw_structured_mode) if raw_structured_mode == "producer" else "unreported",
+            )
         scores[str(backend)] = normalized
     return ModeOverlay(
         name=name,
@@ -340,6 +361,10 @@ def _evidence_summary(
     producer: Mapping[ProducerKey, ProducerEvidence],
 ) -> dict[str, Any]:
     categories = Counter(entry.evidence for _backend, _key, entry in rows)
+    occurrence_policies = Counter(
+        entry.producer_occurrence_policy for _backend, _key, entry in rows
+    )
+    occurrence_modes = Counter(entry.structured_occurrence_mode for _backend, _key, entry in rows)
     site_caveated = sum(categories[kind] for kind in ("mixed", "fallback_only"))
     producer_unmapped = 0
     producer_unknown = 0
@@ -356,6 +381,13 @@ def _evidence_summary(
             potential.add(identity)
     return {
         "accepted_categories": dict(sorted(categories.items())),
+        "producer_occurrence_policies": {
+            policy: occurrence_policies[policy]
+            for policy in (*PRODUCER_OCCURRENCE_POLICIES, "unreported")
+        },
+        "structured_occurrence_modes": {
+            mode: occurrence_modes[mode] for mode in ("producer", "unreported")
+        },
         "site_caveated": site_caveated,
         "site_caveated_rate_over_measured": site_caveated / len(rows) if rows else None,
         "no_accepted_correspondence": categories["none"],
@@ -621,7 +653,16 @@ def _comparison_stats(
 def _provenance_identity(provenance: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if provenance is None:
         return None
-    return {key: provenance.get(key) for key in ("policy_schema", "policy", "metric_cache_version")}
+    return {
+        key: provenance.get(key)
+        for key in (
+            "policy_schema",
+            "policy",
+            "metric_cache_version",
+            "structured_occurrence_mode",
+            "variable_occurrence_policy_schema",
+        )
+    }
 
 
 def build_report(
@@ -679,6 +720,29 @@ def build_report(
     for overlay in overlays:
         if overlay.provenance is None:
             continue
+        if str(overlay.provenance.get("metric_cache_version")) == "11":
+            if overlay.provenance.get("structured_occurrence_mode") != "producer":
+                validation_errors.append(
+                    f"v11 mode {overlay.name!r} does not declare producer occurrence mode"
+                )
+            if (
+                overlay.provenance.get("variable_occurrence_policy_schema")
+                != VARIABLE_OCCURRENCE_POLICY_SCHEMA
+            ):
+                validation_errors.append(
+                    f"v11 mode {overlay.name!r} does not declare the occurrence-policy schema"
+                )
+            unreported = sum(
+                entry.producer_occurrence_policy == "unreported"
+                or entry.structured_occurrence_mode != "producer"
+                for backend in backends
+                for entry in overlay.scores.get(backend, {}).values()
+            )
+            if unreported:
+                validation_errors.append(
+                    f"v11 mode {overlay.name!r} has {unreported} entries without complete "
+                    "producer occurrence provenance"
+                )
         declared = {
             str(overlay.provenance.get("mode")),
             str(overlay.provenance.get("resolved_mode")),
@@ -1019,6 +1083,26 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                 f"{row['functions_with_line_maps']:,} | "
                 f"{row['functions_with_variable_lines']:,} | "
                 f"{row['functions_with_variable_addresses']:,} |"
+            )
+
+    lines.extend(
+        [
+            "",
+            "## Producer occurrence policy",
+            "",
+            "| Mode | Backend | Exact | Direct | Unavailable | Undeclared | Unreported |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for mode, mode_result in report["modes"].items():
+        for backend in backends:
+            policies = mode_result["overall"]["backends"][backend]["evidence"][
+                "producer_occurrence_policies"
+            ]
+            lines.append(
+                f"| `{mode}` | {backend} | {policies['exact']:,} | "
+                f"{policies['direct']:,} | {policies['unavailable']:,} | "
+                f"{policies['undeclared']:,} | {policies['unreported']:,} |"
             )
 
     lines.extend(["", "## Architecture / format", ""])

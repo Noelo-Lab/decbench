@@ -1420,6 +1420,7 @@ def test_r2_make_function_names_from_code_and_relabels() -> None:
     code = "int foo(int a) {\n    return a;\n}\n"
     fd = R2DecDecompiler._make_function("fcn.00001000", 0x1000, code, None)
     assert fd is not None and fd.name == "foo" and fd.address == 0x1000
+    assert variable_occurrence_policy(fd.metadata) == "unavailable"
     fd2 = R2DecDecompiler._make_function("sym.foo", 0x1000, code, "realname")
     assert fd2 is not None and fd2.name == "realname"
     assert "realname" in fd2.decompiled_code and "foo(" not in fd2.decompiled_code
@@ -1490,6 +1491,7 @@ def test_r2_make_function_rebases_and_filters_thumb_provenance() -> None:
     ]
     assert function.variables[0].line_numbers == [1]
     assert function.variables[0].addresses == [0x9002, 0x9004]
+    assert variable_occurrence_policy(function.metadata) == "direct"
 
 
 def test_r2_make_function_rejects_malformed_variable_fields() -> None:

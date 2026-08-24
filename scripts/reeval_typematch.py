@@ -31,6 +31,7 @@ from typing import TypedDict
 import decbench.decompilers  # noqa: F401 (register backends so pickles load)
 from decbench.decompilers.final_render_provenance import (
     enrich_final_render_variable_provenance,
+    is_frozen_phoenix_render,
 )
 from decbench.decompilers.provenance import (
     NativeProvenanceContext,
@@ -38,7 +39,11 @@ from decbench.decompilers.provenance import (
 )
 from decbench.metrics.base import MetricConfig
 from decbench.metrics.type_match import TypeMatchMetric
-from decbench.models.decompilation import DecompilationResult
+from decbench.models.decompilation import (
+    VARIABLE_OCCURRENCE_POLICIES,
+    VARIABLE_OCCURRENCE_POLICY_SCHEMA,
+    DecompilationResult,
+)
 from decbench.models.function_data import VARIABLE_MATCH_EVIDENCE
 from decbench.results_store import (
     TypeMatchOverlayError,
@@ -52,6 +57,7 @@ from decbench.utils import binfmt
 from decbench.utils.langs import preprocessed_by_stem
 
 MODES = ("auto", "address", "usage", "address+usage")
+PRODUCER_OCCURRENCE_POLICIES = frozenset((*VARIABLE_OCCURRENCE_POLICIES, "undeclared"))
 SampleKey = tuple[str, str, str, str]
 
 
@@ -232,8 +238,7 @@ def _prepare_decompilation(
         context.binary_path,
         context=context,
     )
-    backend = relocated.decompiler.decompiler_name.partition("@")[0]
-    if backend == "phoenix":
+    if is_frozen_phoenix_render(relocated):
         enrich_final_render_variable_provenance(relocated)
     return relocated
 
@@ -301,6 +306,8 @@ def _promotion_provenance(metric: TypeMatchMetric, mode: str) -> dict[str, objec
         resolved_mode=resolved_mode,
         policy=metric.variable_match_policy,
         metric_cache_version=metric.cache_version,
+        structured_occurrence_mode="producer",
+        variable_occurrence_policy_schema=VARIABLE_OCCURRENCE_POLICY_SCHEMA,
     )
 
 
@@ -419,6 +426,27 @@ def main(argv: Sequence[str] | None = None) -> None:
                             evidence = metadata.get("variable_match_evidence")
                             if evidence in VARIABLE_MATCH_EVIDENCE:
                                 entry["variable_match_evidence"] = evidence
+                            occurrence_policy = metadata.get(
+                                "producer_variable_occurrence_policy",
+                                "undeclared",
+                            )
+                            if occurrence_policy not in PRODUCER_OCCURRENCE_POLICIES:
+                                raise ValueError(
+                                    "metric returned an invalid producer variable-occurrence "
+                                    f"policy for {decompiler_name}/{score_key}: "
+                                    f"{occurrence_policy!r}"
+                                )
+                            entry["producer_variable_occurrence_policy"] = occurrence_policy
+                            structured_mode = metadata.get(
+                                "structured_occurrence_mode",
+                                "producer",
+                            )
+                            if structured_mode != "producer":
+                                raise ValueError(
+                                    "metric returned a non-production structured occurrence "
+                                    f"mode for {decompiler_name}/{score_key}: {structured_mode!r}"
+                                )
+                            entry["structured_occurrence_mode"] = structured_mode
                             new_scores.setdefault(decompiler_name, {})[score_key] = entry
                         if key not in old:
                             continue

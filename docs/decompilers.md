@@ -186,10 +186,12 @@ def decompile_binary(
 | `metadata` (e.g. goto/bool counts) | report extras | Optional |
 
 A backend that only fills `decompiled_code` + correct `address` already scores
-on GED and byte_match, and type_match parses its C (signature → ABI-positioned
-args + locals; name-based regex only as a last resort). Variables and line maps
-improve fidelity but are not required. Type_match can use type-blind variable-usage
-evidence either alone or jointly with native address/anchor evidence. Each function
+on GED and byte_match, and type_match parses variable declarations in its C
+(signature → ABI-positioned args + locals). This parsing recovers types and variable
+bindings only; production occurrence addresses are never synthesized with a name
+regex. Variables and line maps improve fidelity but are not required. Type_match can
+use type-blind variable-usage evidence either alone or jointly with native
+address/anchor evidence. Each function
 records whether its correspondence evidence was `native`, `mixed`, or `fallback_only`;
 the site marks mixed/fallback-only Type percentages because conservative heuristic
 abstention may undercount recovery.
@@ -319,13 +321,15 @@ The canonical raw adapters use these native sources:
   benchmarkable functions in that binary.
 
 Each function records a versioned `variable_occurrence_policy` declaration for
-diagnostics. Raw angr, Binary Ninja, Ghidra, IDA, Kuna, r2dec, and annotated RetDec
-declare `exact`; dewolf and Reko declare `direct` because they provide sound variable
-addresses without final render rows. Plain-C RetDec fallback, Glaurung, Manifold,
-LLM/code-agent output, imported eval-kit C, and marker-materialized C declare
-`unavailable`. An empty occurrence field remains authoritative under every policy:
-`exact` describes the producer contract, not a promise that every variable has an
-unambiguous surviving occurrence.
+diagnostics. Raw angr, Binary Ninja, Ghidra, IDA, Kuna, and annotated RetDec declare
+`exact`; dewolf and Reko declare `direct` because they provide sound variable addresses
+without final render rows. r2dec declares `direct` when native variable-access records
+survive, `exact` only for its uniquely bound final-C/render-line join, and `unavailable`
+when neither source exists. Plain-C RetDec fallback, Glaurung, Manifold, LLM/code-agent
+output, imported eval-kit C, and marker-materialized C also declare `unavailable`. An
+empty occurrence field remains authoritative under every policy: `exact` describes the
+producer contract, not a promise that every variable has an unambiguous surviving
+occurrence.
 
 The legacy declib adapters apply a separate fail-closed contract. angr and
 Ghidra expose 1-based rows in the exact returned C; IDA exposes zero-based
@@ -349,7 +353,9 @@ both `codegen.text` and `map_pos_to_addr` from the same angr code-generator
 object. During TypeMatch checkpoint reevaluation only, DecBench first sanitizes
 those saved rows against the selected binary and then joins uniquely bound
 identifiers in that unchanged final C to the surviving rows. The join requires
-one exact function definition, parseable C, a single declaration and structured
+the frozen metadata triplet `decompiler_version="9.2.213"`, `extra.backend="angr"`,
+and `extra.via="raw"`; a Phoenix-like name without that origin marker abstains. It
+also requires one exact function definition, parseable C, a single declaration and structured
 record for the name, unique valid line rows, and at least one mapped occurrence.
 It preserves any existing variable evidence and never rewrites the checkpoint.
 The join reads only the decompiler's final C, structured variable names, and
@@ -838,11 +844,12 @@ sees no symbols — the honest RE setting, identical to what Ghidra/IDA get); th
 backend also hands the agent an anonymized `target.bin` copy, so the filename
 (`grep`, `nuttx`, …) can't tip an LLM off to recall the source from memory. The
 backend labels each function `sub_<addr>`; `run_benchmark._relabel_to_dwarf`
-renames the placeholder to the real symbol for name-based evaluation. Missing
+renames the placeholder to the real symbol for function-level evaluation. Missing
 line-maps and variables are fine — GED parses the C directly, and type_match
-parses the C signature into ABI-positioned arguments plus locals and scores
-them through the structured matcher (name-based text parsing only as a last
-resort). Before publishing, refresh the metric overlays as with any newly added
+parses the C signature into ABI-positioned arguments plus locals and scores them
+through the structured matcher. Missing occurrence provenance remains an explicit
+abstention; address-free usage features provide the correspondence fallback. Before
+publishing, refresh the metric overlays as with any newly added
 decompiler — but note `scripts/reeval_ged.py` and `scripts/reeval_bytematch.py`
 hard-code a `DECOMPILERS` tuple that does **not** include the LLM backends
 (`codex`/`claude-code`/`kimi-code`):

@@ -94,6 +94,7 @@ def _result(*, functions: tuple[str, ...] = ("f",), errors: tuple[str, ...] = ()
                     "fp": 0,
                     "fn": 0,
                     "variable_match_evidence": "native",
+                    "producer_variable_occurrence_policy": "exact",
                 },
             )
             for function in functions
@@ -315,10 +316,16 @@ def test_ab_output_remains_raw_json_with_provenance_companion(
     payload, provenance = read_typematch_overlay(output)
     assert raw == payload
     assert payload["angr"]["proj::O0::bin::f"]["value"] == 1.0
+    assert payload["angr"]["proj::O0::bin::f"]["producer_variable_occurrence_policy"] == "exact"
+    assert payload["angr"]["proj::O0::bin::f"]["structured_occurrence_mode"] == "producer"
     assert provenance is not None
     assert provenance["mode"] == "usage"
     assert provenance["resolved_mode"] == "usage"
     assert provenance["policy"] == {"address_weight": 0.5, "min_overlap": 0.1}
+    assert provenance["structured_occurrence_mode"] == "producer"
+    assert (
+        provenance["variable_occurrence_policy_schema"] == "decbench-variable-occurrence-policy-v1"
+    )
 
 
 def test_successful_canonical_run_replaces_sentinel_with_auto_provenance(

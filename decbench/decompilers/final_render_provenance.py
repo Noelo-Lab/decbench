@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from decbench.models.decompilation import (
@@ -12,6 +13,21 @@ from decbench.models.decompilation import (
 
 FINAL_RENDER_PROVENANCE_KEY = "final_render_variable_provenance"
 FINAL_RENDER_PROVENANCE_SCHEMA = "decbench-final-render-variable-provenance-v1"
+FROZEN_PHOENIX_VERSION = "9.2.213"
+
+
+def is_frozen_phoenix_render(result: DecompilationResult) -> bool:
+    """Whether a checkpoint carries the audited same-render Phoenix contract."""
+
+    metadata = result.decompiler
+    extra = metadata.extra
+    return (
+        metadata.decompiler_name.partition("@")[0] == "phoenix"
+        and metadata.decompiler_version == FROZEN_PHOENIX_VERSION
+        and isinstance(extra, Mapping)
+        and extra.get("backend") == "angr"
+        and extra.get("via") == "raw"
+    )
 
 
 @dataclass
@@ -81,6 +97,9 @@ def enrich_final_render_variable_provenance(
     types are not inputs. The established function label is used only to reject
     a mismatched final definition.
     """
+
+    if not is_frozen_phoenix_render(result):
+        raise ValueError("final-render recovery requires the frozen Phoenix origin contract")
 
     from decbench.metrics.variable_features import variable_occurrence_lines
 

@@ -11,6 +11,11 @@ from pydantic import BaseModel, Field
 VARIABLE_OCCURRENCE_POLICY_METADATA_KEY = "variable_occurrence_policy"
 VARIABLE_OCCURRENCE_POLICY_SCHEMA = "decbench-variable-occurrence-policy-v1"
 VariableOccurrencePolicy = Literal["exact", "direct", "unavailable"]
+VARIABLE_OCCURRENCE_POLICIES: tuple[VariableOccurrencePolicy, ...] = (
+    "exact",
+    "direct",
+    "unavailable",
+)
 
 
 def with_variable_occurrence_policy(

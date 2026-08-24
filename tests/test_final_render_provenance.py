@@ -7,6 +7,7 @@ import pytest
 from decbench.decompilers.final_render_provenance import (
     FINAL_RENDER_PROVENANCE_KEY,
     FINAL_RENDER_PROVENANCE_SCHEMA,
+    FROZEN_PHOENIX_VERSION,
     enrich_final_render_variable_provenance,
 )
 from decbench.decompilers.provenance import NativeProvenanceContext
@@ -29,11 +30,19 @@ def _result(
     *,
     name: str = "f",
     backend: str = "phoenix",
+    version: str | None = FROZEN_PHOENIX_VERSION,
+    extra: dict[str, str] | None = None,
 ) -> DecompilationResult:
+    if extra is None:
+        extra = {"backend": "angr", "via": "raw"}
     return DecompilationResult(
         binary_path=Path("bin"),
         binary_name="bin",
-        decompiler=DecompilerMetadata(decompiler_name=backend),
+        decompiler=DecompilerMetadata(
+            decompiler_name=backend,
+            decompiler_version=version,
+            extra=extra,
+        ),
         functions={
             name: FunctionDecompilation(
                 name=name,
@@ -183,14 +192,36 @@ def test_exact_final_render_abstention_disables_generic_regex_address_fallback()
     assert evidence.variables[0].addresses == frozenset()
 
 
+def test_final_render_join_rejects_missing_frozen_origin_contract() -> None:
+    result = _result(
+        "int f(int value) { return value; }\n",
+        [LineMapping(line_number=1, addresses=[0x1000])],
+        [VariableInfo(name="value", type="int")],
+        extra={},
+    )
+
+    with pytest.raises(ValueError, match="frozen Phoenix origin"):
+        enrich_final_render_variable_provenance(result)
+
+
 @pytest.mark.parametrize(
-    ("backend", "enriched"),
-    [("phoenix", True), ("phoenix@9.2", True), ("angr", False)],
+    ("backend", "version", "extra", "enriched"),
+    [
+        ("phoenix", FROZEN_PHOENIX_VERSION, {"backend": "angr", "via": "raw"}, True),
+        ("phoenix@9.2", FROZEN_PHOENIX_VERSION, {"backend": "angr", "via": "raw"}, True),
+        ("phoenix", None, {"backend": "angr", "via": "raw"}, False),
+        ("phoenix", "future", {"backend": "angr", "via": "raw"}, False),
+        ("phoenix", FROZEN_PHOENIX_VERSION, {}, False),
+        ("phoenix", FROZEN_PHOENIX_VERSION, {"backend": "angr", "via": "docker"}, False),
+        ("angr", FROZEN_PHOENIX_VERSION, {"backend": "angr", "via": "raw"}, False),
+    ],
 )
 def test_reevaluation_enriches_only_retired_phoenix_copies(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     backend: str,
+    version: str | None,
+    extra: dict[str, str],
     enriched: bool,
 ) -> None:
     binary = (tmp_path / "bin").resolve()
@@ -199,6 +230,8 @@ def test_reevaluation_enriches_only_retired_phoenix_copies(
         [LineMapping(line_number=1, addresses=[0x1000])],
         [VariableInfo(name="value", type="int")],
         backend=backend,
+        version=version,
+        extra=extra,
     )
     monkeypatch.setattr(
         reeval_typematch,
