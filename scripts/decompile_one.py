@@ -44,6 +44,7 @@ def main() -> int:
         Path(out_dir),
         function_names=target_addrs,
         progress_path=Path(pkl_out),
+        defer_provenance_validation=True,
     )
     Path(pkl_out).write_bytes(pickle.dumps(result))
     return 0

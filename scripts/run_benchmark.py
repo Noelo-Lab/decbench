@@ -38,6 +38,7 @@ if multiprocessing.get_start_method(allow_none=True) != "spawn":
     multiprocessing.set_start_method("spawn", force=True)
 
 import decbench.metrics  # noqa: F401,E402
+from decbench.decompilers.provenance import sanitize_native_provenance  # noqa: E402
 from decbench.models.decompilation import DecompilationResult, DecompilerMetadata  # noqa: E402
 from decbench.models.project import OptimizationLevel, Project  # noqa: E402
 from decbench.pipeline.evaluate import evaluate_project  # noqa: E402
@@ -368,6 +369,22 @@ def _relabel_to_dwarf(
         }
 
 
+def _decompilation_outcome(result: DecompilationResult) -> str:
+    """Classify a completed driver task for its aggregate progress counters."""
+
+    extra = result.decompiler.extra or {}
+    failure = extra.get("failure") or extra.get("error") or ""
+    if extra.get("recovered_partial"):
+        return "partial"
+    if (
+        result.decompiler.timeout_occurred
+        or extra.get("timed_out")
+        or str(failure).startswith("timeout")
+    ):
+        return "timeout"
+    return "error" if failure else "ok"
+
+
 def _timed_decompile(
     binary: Path, dec_name: str, out_dir: Path, names_file: str
 ) -> DecompilationResult:
@@ -517,19 +534,11 @@ def decompile_project_timed(
                         _relabel_to_dwarf(res, amap, orig)
                     else:
                         res.binary_path = orig
+                    sanitize_native_provenance(res, orig)
                     with contextlib.suppress(Exception):
                         res.to_c_file(dec_out / f"{dec_name}_{stem}.c")
                 results[stem][dec_name] = res
-                extra = res.decompiler.extra or {}
-                failure = extra.get("failure", "")
-                if not failure:
-                    stats["ok"] += 1
-                elif extra.get("recovered_partial"):
-                    stats["partial"] += 1
-                elif failure.startswith("timeout"):
-                    stats["timeout"] += 1
-                else:
-                    stats["error"] += 1
+                stats[_decompilation_outcome(res)] += 1
     finally:
         shutil.rmtree(names_dir, ignore_errors=True)
     return results, stats

@@ -14,6 +14,7 @@ from decbench.models.decompilation import (
 )
 from scripts.run_benchmark import (
     DECOMPILER_TIMEOUT,
+    _decompilation_outcome,
     _load_sampleset_manifest,
     _relabel_to_dwarf,
     _timed_decompile,
@@ -95,6 +96,36 @@ def test_timed_decompile_marks_recovered_partial_as_timed_out(
 
     assert result.decompiler.timeout_occurred is True
     assert result.decompiler.extra["recovered_partial"] is True
+
+
+@pytest.mark.parametrize(
+    ("extra", "timeout", "expected"),
+    [
+        ({}, False, "ok"),
+        ({"error": "process exited -11"}, False, "error"),
+        ({"failure": "backend failed"}, False, "error"),
+        ({"error": "process exited -11", "timed_out": True}, False, "timeout"),
+        ({"failure": "timeout>60s"}, False, "timeout"),
+        ({"failure": "timeout>60s", "recovered_partial": True}, True, "partial"),
+    ],
+)
+def test_driver_outcome_counts_adapter_error_metadata(
+    tmp_path: Path,
+    extra: dict[str, object],
+    timeout: bool,
+    expected: str,
+) -> None:
+    result = DecompilationResult(
+        binary_path=tmp_path / "binary",
+        binary_name="binary",
+        decompiler=DecompilerMetadata(
+            decompiler_name="test",
+            timeout_occurred=timeout,
+            extra=extra,
+        ),
+    )
+
+    assert _decompilation_outcome(result) == expected
 
 
 @pytest.mark.parametrize(
