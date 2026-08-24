@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import struct
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -20,18 +21,21 @@ from decbench.decompilers.dockerized import (
     _DOCKER_DIR,
     _R2_DRIVER_CONTAINER_PATH,
     _REKO_PROVENANCE_SCHEMA,
+    _REKO_STATUS_SCHEMA,
     DockerizedDecompiler,
     R2DecDecompiler,
     RekoDecompiler,
     RetDecDecompiler,
     _func_ident_in_code,
     _load_reko_provenance,
+    _load_reko_status,
     _parse_retdec_json,
     _r2_bare_name,
     _r2_is_import,
     _r2_json_annotations,
     _r2_json_lines,
     _r2_variable_records,
+    _reko_architecture_mode,
     _retdec_dsm_evidence,
     _retdec_variables,
     elf_function_symbols,
@@ -98,6 +102,14 @@ def test_r2dec_available_when_native_present() -> None:
 def test_get_version_proxies_image_tag() -> None:
     assert RetDecDecompiler().get_version() == "latest"
     assert RekoDecompiler().get_version() == "latest"
+
+
+def test_reko_image_can_be_overridden_for_isolated_ab(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DECBENCH_REKO_IMAGE", "decbench/reko:test-candidate")
+    assert RekoDecompiler().image == "decbench/reko:test-candidate"
+    assert RekoDecompiler().get_version() == "test-candidate"
 
 
 def test_run_docker_places_extra_readonly_mount_before_image(
@@ -850,7 +862,7 @@ def test_reko_container_collects_native_sidecar(
     dec = RekoDecompiler()
 
     def fake_run(**kwargs):  # noqa: ANN202
-        assert kwargs["args"][-1] == "/work/native-provenance.json"
+        assert kwargs["args"][-2:] == ["/work/native-provenance.json", "auto"]
         (kwargs["work_dir"] / "out.c").write_text("int fn1000(void) { return 0; }\n")
         (kwargs["work_dir"] / "native-provenance.json").write_text(
             json.dumps(
@@ -866,6 +878,130 @@ def test_reko_container_collects_native_sidecar(
     code = dec._container_decompile(Path("/nonexistent/bin"), tmp_path)
     assert "fn1000" in code
     assert dec._native_provenance[0x1000]["name"] == "fn1000"
+
+
+def test_reko_container_retains_partial_output_but_reports_cli_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    dec = RekoDecompiler()
+
+    def fake_run(**kwargs):  # noqa: ANN202
+        (kwargs["work_dir"] / "out.c").write_text("int fn1000(void) { return 0; }\n")
+        (kwargs["work_dir"] / "reko.log").write_text("fatal loader failure\n")
+        (kwargs["work_dir"] / "reko-status.json").write_text(
+            json.dumps(
+                {
+                    "schema": _REKO_STATUS_SCHEMA,
+                    "mode": "auto",
+                    "cli_succeeded": False,
+                    "primary_returncode": 1,
+                    "legacy_returncode": 1,
+                    "wrapper_returncode": 4,
+                }
+            )
+        )
+        return subprocess.CompletedProcess([], 4, "", "wrapper failed")
+
+    monkeypatch.setattr(dec, "_run_docker", fake_run)
+    code = dec._container_decompile(Path("/nonexistent/bin"), tmp_path)
+    result = dec._build_result(
+        binary_path=Path("/nonexistent/bin"),
+        combined_c=code,
+        functions=[("fn1000", 0x1000)],
+        function_names=None,
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+
+    assert result.functions
+    assert "fatal loader failure" in result.decompiler.extra["error"]
+    assert result.decompiler.extra["container_status"]["wrapper_returncode"] == 4
+
+
+def test_reko_container_rejects_status_mode_mismatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    dec = RekoDecompiler()
+
+    def fake_run(**kwargs):  # noqa: ANN202
+        assert kwargs["args"][-1] == "auto"
+        (kwargs["work_dir"] / "out.c").write_text("int fn1000(void) { return 0; }\n")
+        (kwargs["work_dir"] / "reko-status.json").write_text(
+            json.dumps(
+                {
+                    "schema": _REKO_STATUS_SCHEMA,
+                    "mode": "thumb",
+                    "cli_succeeded": True,
+                    "primary_returncode": 0,
+                    "legacy_returncode": None,
+                    "wrapper_returncode": 0,
+                }
+            )
+        )
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(dec, "_run_docker", fake_run)
+    code = dec._container_decompile(Path("/nonexistent/bin"), tmp_path)
+    result = dec._build_result(
+        binary_path=Path("/nonexistent/bin"),
+        combined_c=code,
+        functions=[("fn1000", 0x1000)],
+        function_names=None,
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+
+    assert result.functions
+    assert "status mode='thumb', requested mode='auto'" in result.decompiler.extra["error"]
+
+
+def test_reko_status_loader_rejects_wrong_schema(tmp_path: Path) -> None:
+    status = tmp_path / "status.json"
+    status.write_text(json.dumps({"schema": _REKO_STATUS_SCHEMA, "cli_succeeded": True}))
+    assert _load_reko_status(status)["cli_succeeded"] is True
+
+    status.write_text(json.dumps({"schema": "unknown", "cli_succeeded": True}))
+    assert _load_reko_status(status) == {}
+
+
+def _minimal_arm_elf(path: Path, entry: int) -> Path:
+    identification = b"\x7fELF" + bytes([1, 1, 1, 0, 0]) + bytes(7)
+    header = struct.pack(
+        "<HHIIIIIHHHHHH",
+        2,
+        40,
+        1,
+        entry,
+        0,
+        0,
+        0,
+        52,
+        32,
+        0,
+        40,
+        0,
+        0,
+    )
+    path.write_bytes(identification + header)
+    return path
+
+
+def test_reko_architecture_mode_separates_entry_and_profile_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    odd = _minimal_arm_elf(tmp_path / "odd.elf", 0x08000101)
+    even = _minimal_arm_elf(tmp_path / "even.elf", 0x08000100)
+
+    monkeypatch.setattr("decbench.decompilers.dockerized.binfmt.elf_is_arm_mclass", lambda _: True)
+    assert _reko_architecture_mode(odd) == ("auto", "elf-arm-entry-thumb-bit")
+    assert _reko_architecture_mode(even) == ("thumb", "elf-arm-attributes-m-profile")
+
+    monkeypatch.setattr("decbench.decompilers.dockerized.binfmt.elf_is_arm_mclass", lambda _: False)
+    assert _reko_architecture_mode(even) == ("auto", "elf-arm-default")
 
 
 def test_reko_build_result_binds_names_and_native_variable_addresses(
@@ -914,6 +1050,39 @@ def test_reko_build_result_binds_names_and_native_variable_addresses(
     assert variables["arg0"].addresses == [0x1000, 0x1004]
     assert variables["local"].addresses == [0x1004, 0x1008]
     assert result.decompiler.extra["native_provenance_variables"] == 2
+    assert result.decompiler.extra["requested_target_addresses"] == 1
+    assert result.decompiler.extra["native_target_matches"] == 1
+    assert result.decompiler.extra["returned_target_matches"] == 1
+    assert result.decompiler.extra["target_match_status"] == "complete"
+
+
+def test_reko_target_coverage_deduplicates_thumb_addresses_and_reports_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dec = RekoDecompiler()
+    dec._native_provenance = {0x1000: {"name": "fn1000", "address": 0x1000, "variables": {}}}
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized._reko_executable_regions", lambda _path: ()
+    )
+
+    result = dec._build_result(
+        binary_path=Path("/nonexistent/bin"),
+        combined_c=(
+            "int32_t first(void) {\n    return 1;\n}\n" "int32_t second(void) {\n    return 2;\n}\n"
+        ),
+        functions=[("first", 0x1000), ("second", 0x1001)],
+        function_names={0x1000, 0x1001, 0x2000},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+
+    assert set(result.functions) == {"first", "second"}
+    assert result.decompiler.extra["requested_target_addresses"] == 2
+    assert result.decompiler.extra["native_target_matches"] == 1
+    assert result.decompiler.extra["returned_target_matches"] == 1
+    assert result.decompiler.extra["target_match_status"] == "partial"
 
 
 def test_reko_build_result_discovers_requested_address_in_stripped_binary(
@@ -940,6 +1109,129 @@ def test_reko_build_result_discovers_requested_address_in_stripped_binary(
     assert set(result.functions) == {"fn1000"}
     assert result.functions["fn1000"].address == 0x1000
     assert result.decompiler.failed_functions == []
+
+
+def test_reko_build_result_binds_duplicate_thumb_target_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dec = RekoDecompiler()
+    dec._native_provenance = {0x1000: {"name": "fn1000", "address": 0x1000, "variables": {}}}
+    monkeypatch.setattr("decbench.decompilers.dockerized.elf_function_symbols", lambda _path: [])
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized._reko_executable_regions", lambda _path: ()
+    )
+
+    result = dec._build_result(
+        binary_path=Path("/nonexistent/stripped"),
+        combined_c="int32_t fn1000(void) {\n    return 0;\n}\n",
+        functions=None,
+        function_names={0x1000, 0x1001},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+
+    assert set(result.functions) == {"fn1000"}
+    assert result.functions["fn1000"].address == 0x1000
+    assert result.decompiler.failed_functions == []
+    assert result.decompiler.extra["requested_target_addresses"] == 1
+    assert result.decompiler.extra["native_target_matches"] == 1
+    assert result.decompiler.extra["returned_target_matches"] == 1
+    assert result.decompiler.extra["target_match_status"] == "complete"
+
+
+def test_reko_zero_requested_target_matches_is_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dec = RekoDecompiler()
+    monkeypatch.setattr("decbench.decompilers.dockerized.elf_function_symbols", lambda _path: [])
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized._reko_executable_regions", lambda _path: ()
+    )
+
+    result = dec._build_result(
+        binary_path=Path("/nonexistent/stripped"),
+        combined_c="int32_t fn2000(void) {\n    return 0;\n}\n",
+        functions=None,
+        function_names={0x1000},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+
+    assert result.functions == {}
+    assert result.decompiler.failed_functions == ["all"]
+    assert result.decompiler.extra["native_target_matches"] == 0
+    assert result.decompiler.extra["returned_target_matches"] == 0
+    assert result.decompiler.extra["target_match_status"] == "none"
+    assert "0 of 1 requested target" in result.decompiler.extra["error"]
+
+
+def test_reko_normalizes_and_binds_define_dialect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dec = RekoDecompiler()
+    dec._native_provenance = {0x1000: {"name": "fn1000", "address": 0x1000, "variables": {}}}
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized._reko_executable_regions", lambda _path: ()
+    )
+    result = dec._build_result(
+        binary_path=Path("/nonexistent/stripped"),
+        combined_c=("define fn1000\n" "{\n" "    ptr32 %continuation;\n" "    return;\n" "}\n"),
+        functions=None,
+        function_names={0x1000},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+
+    assert set(result.functions) == {"fn1000"}
+    assert result.decompiler.extra["target_match_status"] == "complete"
+    assert result.functions["fn1000"].decompiled_code.startswith("void fn1000(void)")
+    assert "%continuation" not in result.functions["fn1000"].decompiled_code
+
+
+def test_reko_dialect_normalization_preserves_c_literals_comments_and_modulo() -> None:
+    source = (
+        "define fn1000\n"
+        "{\n"
+        "    ptr32 %continuation;\n"
+        "    word32 %value;\n"
+        '    char *text = "%continuation and left%right";\n'
+        "    char marker = '%';\n"
+        "    // %continuation and left%right\n"
+        "    /* %value\n"
+        "       define commented */\n"
+        "    word32 remainder = left%right;\n"
+        "    %value = %continuation;\n"
+        "}\n"
+    )
+
+    normalized = RekoDecompiler()._normalize_code(source)
+
+    assert normalized.startswith("void fn1000(void)\n")
+    assert "ptr32 continuation;" in normalized
+    assert "word32 value;" in normalized
+    assert "value = continuation;" in normalized
+    assert '"%continuation and left%right"' in normalized
+    assert "char marker = '%';" in normalized
+    assert "// %continuation and left%right" in normalized
+    assert "/* %value\n       define commented */" in normalized
+    assert "word32 remainder = left%right;" in normalized
+
+
+def test_reko_wrapper_and_pinned_patch_contracts() -> None:
+    wrapper = _DOCKER_DIR / "reko-decompile.sh"
+    dockerfile = (_DOCKER_DIR / "reko.Dockerfile").read_text()
+    patch = (_DOCKER_DIR / "reko-arm-thumb.patch").read_text()
+
+    subprocess.run(["bash", "-n", str(wrapper)], check=True)
+    assert "reko-arm-thumb.patch" in dockerfile
+    assert "DECBENCH_REKO_FORCE_THUMB" in patch
+    assert "AdjustImageSymbol(ImageSymbol.Procedure" in patch
 
 
 class _FakeR2:

@@ -300,9 +300,17 @@ The canonical raw adapters use these native sources:
   intersects them with the identifiers that survive into the final Absyn tree.
   Synthetic def/use/phi/alias statements are excluded and duplicate final names
   abstain. The resulting sidecar carries direct variable addresses and binds
-  stripped Reko function names to requested targets by exact entry address. Reko's
-  renderer has no stable token-to-line callback, so it deliberately emits no line
-  map; older images retain the text/usage fallback.
+  stripped Reko function names to requested targets by exact entry address. For
+  ARM ELF, Reko preserves an odd `e_entry` until its Thumb architecture is
+  attached. Even entries use Thumb only when `.ARM.attributes` declares the M
+  profile; unknown and A-profile inputs retain Reko's A32 default. The wrapper's
+  structured status distinguishes successful output from failed CLI attempts;
+  DecBench rejects a status whose mode differs from the host-selected mode.
+  Requested-address coverage is counted over unique Thumb-bit-normalized entries,
+  and a run that recovers none of those entries is an explicit error.
+  Reko's renderer has no stable token-to-line callback, so it deliberately emits
+  no line map; older images retain the text/usage fallback. Candidate images can
+  be selected with `DECBENCH_REKO_IMAGE` for isolated A/B runs.
 - Kuna accepts additive `line_mappings` entries (`line_number`, `addresses`)
   and variable `line_numbers`/`addresses` in `decompile-all --json`. Missing
   fields remain empty for compatibility with older Kuna builds. When the

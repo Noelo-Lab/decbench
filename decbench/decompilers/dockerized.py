@@ -66,6 +66,7 @@ from decbench.models.decompilation import (
     LineMapping,
     VariableInfo,
 )
+from decbench.utils import binfmt
 from decbench.utils.docker_task import docker_task_label_args
 
 _l = logging.getLogger(__name__)
@@ -1034,32 +1035,65 @@ class RekoDecompiler(DockerizedDecompiler):
 
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
+        self.image = os.environ.get("DECBENCH_REKO_IMAGE") or self.image
         self._native_provenance: dict[int, dict[str, Any]] = {}
+        self._container_status: dict[str, Any] = {}
+        self._container_error: str | None = None
+        self._architecture_mode = "auto"
+        self._architecture_evidence = "uninspected"
 
     def _container_decompile(self, binary_path: Path, work_dir: Path) -> str:
         self._native_provenance = {}
+        self._container_status = {}
+        self._container_error = None
+        self._architecture_mode, self._architecture_evidence = _reko_architecture_mode(binary_path)
         proc = self._run_docker(
             args=[
                 f"/in/{binary_path.name}",
                 "/work/out.c",
                 "/work/native-provenance.json",
+                self._architecture_mode,
             ],
             binary_path=binary_path,
             work_dir=work_dir,
         )
         out_c = work_dir / "out.c"
+        self._container_status = _load_reko_status(work_dir / "reko-status.json")
+        log_tail = _reko_log_tail(work_dir / "reko.log")
+        cli_failed = self._container_status.get("cli_succeeded") is False
+        status_mode = self._container_status.get("mode")
+        mode_mismatch = bool(self._container_status) and status_mode != self._architecture_mode
+        if proc.returncode != 0 or cli_failed or mode_mismatch:
+            details = [f"container rc={proc.returncode}"]
+            if self._container_status:
+                details.append(
+                    "primary rc="
+                    f"{self._container_status.get('primary_returncode')}, legacy rc="
+                    f"{self._container_status.get('legacy_returncode')}"
+                )
+            if mode_mismatch:
+                details.append(
+                    f"status mode={status_mode!r}, requested mode={self._architecture_mode!r}"
+                )
+            diagnostic = log_tail or (proc.stderr[-500:] if proc.stderr else "")
+            if diagnostic:
+                details.append(diagnostic)
+            self._container_error = "reko container failure: " + "; ".join(details)
         if out_c.is_file():
             self._native_provenance = _load_reko_provenance(work_dir / "native-provenance.json")
             return out_c.read_text(errors="replace")
         raise RuntimeError(
-            f"reko produced no out.c (rc={proc.returncode}): "
-            f"{proc.stderr[-500:] if proc.stderr else ''}"
+            self._container_error
+            or (
+                f"reko produced no out.c (rc={proc.returncode}): "
+                f"{proc.stderr[-500:] if proc.stderr else ''}"
+            )
         )
 
     def _build_result(
         self,
         binary_path: Path,
-        combined_c: str,
+        combined_c: str | _RetDecAnnotatedSource,
         functions: list[tuple[str, int]] | None,
         function_names: set[int] | set[str] | None,
         elapsed: float,
@@ -1068,7 +1102,9 @@ class RekoDecompiler(DockerizedDecompiler):
         output_dir: Path | None,
     ) -> DecompilationResult:
         """Bind Reko's stripped names and native variables by exact entry address."""
-        address_targets = _addr_targets_of(function_names)
+        if isinstance(combined_c, _RetDecAnnotatedSource):
+            combined_c = combined_c.text
+        address_targets = {address & ~1 for address in _addr_targets_of(function_names)}
         if functions is not None:
             name_to_addr = {name: address for name, address in functions}
         else:
@@ -1087,7 +1123,7 @@ class RekoDecompiler(DockerizedDecompiler):
                 or (address_targets and raw_common._addr_matches(address, address_targets))
             }
 
-        snippets = split_c_functions(combined_c) if combined_c else {}
+        snippets = split_c_functions(self._normalize_code(combined_c)) if combined_c else {}
         executable_regions = _reko_executable_regions(binary_path)
         decompiled: dict[str, FunctionDecompilation] = {}
         failed: list[str] = []
@@ -1125,12 +1161,47 @@ class RekoDecompiler(DockerizedDecompiler):
         extra: dict[str, object] = {
             "via": "docker",
             "image": self.image,
+            "architecture_mode": self._architecture_mode,
+            "architecture_evidence": self._architecture_evidence,
+            "container_status": self._container_status,
             "native_provenance_schema": _REKO_PROVENANCE_SCHEMA,
             "native_provenance_functions": len(self._native_provenance),
             "native_provenance_variables": native_variables,
         }
-        if error:
-            extra["error"] = error
+        native_matched_targets = {
+            address
+            for address in address_targets
+            if _reko_record_at(self._native_provenance, address) is not None
+        }
+        returned_addresses = {
+            function.address & ~1
+            for function in decompiled.values()
+            if function.address is not None
+        }
+        returned_matched_targets = address_targets & returned_addresses
+        if address_targets:
+            if len(returned_matched_targets) == len(address_targets):
+                target_match_status = "complete"
+            elif returned_matched_targets:
+                target_match_status = "partial"
+            else:
+                target_match_status = "none"
+        else:
+            target_match_status = "not_requested"
+        extra.update(
+            {
+                "requested_target_addresses": len(address_targets),
+                "native_target_matches": len(native_matched_targets),
+                "returned_target_matches": len(returned_matched_targets),
+                "target_match_status": target_match_status,
+            }
+        )
+        errors = [message for message in (error, self._container_error) if message]
+        if address_targets and not returned_matched_targets:
+            errors.append(f"reko recovered 0 of {len(address_targets)} requested target addresses")
+            failed = ["all"]
+        if errors:
+            extra["error"] = "; ".join(dict.fromkeys(errors))
         if not combined_c:
             failed = list(name_to_addr.keys()) or ["all"]
 
@@ -1150,8 +1221,148 @@ class RekoDecompiler(DockerizedDecompiler):
             output_dir=output_dir,
         )
 
+    def _normalize_code(self, code: str) -> str:
+        return _normalize_reko_dialect(code)
+
 
 _REKO_PROVENANCE_SCHEMA = "decbench-reko-native-provenance-v1"
+_REKO_STATUS_SCHEMA = "decbench-reko-status-v1"
+_REKO_DEFINE_HEADER_RE = re.compile(r"(?m)^([ \t]*)define[ \t]+([A-Za-z_]\w*)[ \t]*$")
+_REKO_PERCENT_DECL_RE = re.compile(
+    r"(?m)^[ \t]*(?:(?:struct|union)[ \t]+[A-Za-z_]\w*[ \t]*\*?"
+    r"|[A-Za-z_]\w*[ \t]*\*?)[ \t]+%([A-Za-z_]\w*)\b"
+)
+
+
+def _reko_code_view(source: str) -> str:
+    """Return source with C literals and comments hidden but offsets preserved."""
+    view = list(source)
+    state = "code"
+    quote = ""
+    index = 0
+
+    def hide(position: int) -> None:
+        if view[position] != "\n":
+            view[position] = " "
+
+    while index < len(source):
+        current = source[index]
+        following = source[index + 1] if index + 1 < len(source) else ""
+        if state == "code":
+            if current == "/" and following == "/":
+                hide(index)
+                hide(index + 1)
+                index += 2
+                state = "line_comment"
+                continue
+            if current == "/" and following == "*":
+                hide(index)
+                hide(index + 1)
+                index += 2
+                state = "block_comment"
+                continue
+            if current in {'"', "'"}:
+                quote = current
+                hide(index)
+                index += 1
+                state = "literal"
+                continue
+            index += 1
+            continue
+        if state == "line_comment":
+            if current == "\n":
+                state = "code"
+            else:
+                hide(index)
+            index += 1
+            continue
+        if state == "block_comment":
+            hide(index)
+            if current == "*" and following == "/":
+                hide(index + 1)
+                index += 2
+                state = "code"
+            else:
+                index += 1
+            continue
+        hide(index)
+        if current == "\\" and following:
+            hide(index + 1)
+            index += 2
+        else:
+            index += 1
+            if current == quote:
+                state = "code"
+
+    return "".join(view)
+
+
+def _normalize_reko_dialect(source: str) -> str:
+    """Normalize Reko declarations without rewriting valid C tokens."""
+    code_view = _reko_code_view(source)
+    replacements = [
+        (match.start(), match.end(), f"{match.group(1)}void {match.group(2)}(void)")
+        for match in _REKO_DEFINE_HEADER_RE.finditer(code_view)
+    ]
+    for start, end, replacement in reversed(replacements):
+        source = source[:start] + replacement + source[end:]
+
+    code_view = _reko_code_view(source)
+    percent_names = {match.group(1) for match in _REKO_PERCENT_DECL_RE.finditer(code_view)}
+    if not percent_names:
+        return source
+
+    normalized: list[str] = []
+    index = 0
+    while index < len(source):
+        if code_view[index] != "%":
+            normalized.append(source[index])
+            index += 1
+            continue
+        match = re.match(r"%([A-Za-z_]\w*)", code_view[index:])
+        if match is None or match.group(1) not in percent_names:
+            normalized.append(source[index])
+            index += 1
+            continue
+        normalized.append(match.group(1))
+        index += len(match.group(0))
+    return "".join(normalized)
+
+
+def _reko_architecture_mode(binary_path: Path) -> tuple[str, str]:
+    """Choose Reko's ARM decode mode from ELF entry and profile evidence."""
+    info = binfmt.detect(binary_path)
+    if info is None or info.fmt != "elf" or info.arch != "arm":
+        return "auto", "default"
+    try:
+        from elftools.elf.elffile import ELFFile
+
+        with binary_path.open("rb") as stream:
+            entry = int(ELFFile(stream).header["e_entry"])
+    except Exception:  # noqa: BLE001
+        return "auto", "elf-arm-unreadable-entry"
+    if entry & 1:
+        return "auto", "elf-arm-entry-thumb-bit"
+    if binfmt.elf_is_arm_mclass(binary_path):
+        return "thumb", "elf-arm-attributes-m-profile"
+    return "auto", "elf-arm-default"
+
+
+def _load_reko_status(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(payload, dict) or payload.get("schema") != _REKO_STATUS_SCHEMA:
+        return {}
+    return payload
+
+
+def _reko_log_tail(path: Path, limit: int = 500) -> str:
+    try:
+        return path.read_text(errors="replace")[-limit:].strip()
+    except OSError:
+        return ""
 
 
 def _reko_int(value: Any) -> int | None:
@@ -1230,7 +1441,7 @@ def _reko_target_bindings(
 ) -> dict[str, int]:
     """Bind requested stripped-binary entries to unique final Reko names."""
     candidates: dict[str, list[int]] = {}
-    for address in sorted(address_targets):
+    for address in sorted({target & ~1 for target in address_targets}):
         record = _reko_record_at(provenance, address)
         name = str(record.get("name") or "") if record else ""
         if re.fullmatch(r"[A-Za-z_]\w*", name):

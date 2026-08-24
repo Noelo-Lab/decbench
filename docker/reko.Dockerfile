@@ -35,7 +35,9 @@ RUN git init /src/reko \
 
 COPY reko-native-provenance.cs /src/reko/src/Decompiler/NativeVariableProvenance.cs
 COPY reko-native-provenance.patch /tmp/reko-native-provenance.patch
-RUN git -C /src/reko apply /tmp/reko-native-provenance.patch
+COPY reko-arm-thumb.patch /tmp/reko-arm-thumb.patch
+RUN git -C /src/reko apply /tmp/reko-native-provenance.patch \
+    && git -C /src/reko apply /tmp/reko-arm-thumb.patch
 
 WORKDIR /src/reko/src
 # Reko's managed projects invoke c2xml during their builds without declaring it
@@ -68,5 +70,5 @@ RUN chmod +x /opt/reko/decompile.sh
 
 WORKDIR /work
 
-# Args: <input binary> <output .c path> [native provenance JSON path]
+# Args: <input binary> <output .c path> [native provenance JSON path] [auto|thumb]
 ENTRYPOINT ["/opt/reko/decompile.sh"]

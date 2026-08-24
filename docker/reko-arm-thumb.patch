@@ -1,0 +1,46 @@
+diff --git a/src/ImageLoaders/Elf/ElfLoader.cs b/src/ImageLoaders/Elf/ElfLoader.cs
+--- a/src/ImageLoaders/Elf/ElfLoader.cs
++++ b/src/ImageLoaders/Elf/ElfLoader.cs
+@@ -233,7 +233,11 @@ namespace Reko.ImageLoaders.Elf
+             case ElfMachine.EM_68K: arch = "m68k"; break;
+             case ElfMachine.EM_88K: arch = "m88k"; break;
+             case ElfMachine.EM_PPC: arch = "ppc-be-32"; break;
+-            case ElfMachine.EM_ARM: arch = "arm"; break;
++            case ElfMachine.EM_ARM:
++                arch = Environment.GetEnvironmentVariable("DECBENCH_REKO_FORCE_THUMB") == "1"
++                    ? "arm-thumb"
++                    : "arm";
++                break;
+             case ElfMachine.EM_AARCH64: arch = "arm-64"; break;
+             case ElfMachine.EM_XTENSA: arch = "xtensa"; break;
+             case ElfMachine.EM_AVR: arch = "avr8"; break;
+@@ -899,12 +903,26 @@ namespace Reko.ImageLoaders.Elf
+             var (ae, estate) = GetEntryPointAddress(addrLoad, program);
+             if (ae is not null)
+             {
+-                var addrEntry = relocator.AdjustAddress(ae.Value);
+-                var symEntry = EnsureEntryPoint(arch, entryPoints, symbols, addrEntry, estate);
++                var entry = relocator.AdjustImageSymbol(ImageSymbol.Procedure(
++                    arch,
++                    ae.Value,
++                    state: estate ?? arch.CreateProcessorState()));
++                var addrEntry = entry.Address;
++                var symEntry = EnsureEntryPoint(
++                    entry.Architecture,
++                    entryPoints,
++                    symbols,
++                    addrEntry,
++                    entry.ProcessorState);
+                 var addrMain = relocator.FindMainFunction(program, addrEntry);
+                 if (addrMain is not null)
+                 {
+-                    EnsureEntryPoint(arch, entryPoints, symbols, addrMain.Value, estate);
++                    var main = relocator.AdjustImageSymbol(ImageSymbol.Procedure(
++                        symEntry.Architecture,
++                        addrMain.Value,
++                        state: symEntry.ProcessorState));
++                    EnsureEntryPoint(
++                        main.Architecture, entryPoints, symbols, main.Address, main.ProcessorState);
+                 }
+                 var addrGlobalPtr = program.Platform.FindGlobalPointerValue(program, addrEntry);
+                 if (addrGlobalPtr is not null)

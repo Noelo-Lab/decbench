@@ -13,21 +13,20 @@ This directory is decbench's single Docker home. Four images package
 Unlike the canonical raw backends (angr/ghidra/ida/binja — declib-free drivers
 of each tool's own API, `decbench/decompilers/raw/`), these ship as standalone
 CLIs, so decbench runs them in a container. **RetDec and Reko** emit whole-
-program C that decbench splits into per-function snippets. Reko obtains function
-names and addresses from the binary's ELF symbol table. RetDec additionally uses
-its annotated token stream to retain function identities and native addresses,
-including for stripped ELF and PE inputs. All stored addresses use the binary's
-linked ELF/PE address space and match DWARF. **r2dec** is different: its container
-driver returns address-keyed per-function JSON straight from radare2's **own**
-analysis (`aaa` + `aflj`), so it needs no symbol table and works on fully stripped
-binaries.
+program C that decbench splits into per-function snippets. Reko's native sidecar
+retains exact function entry addresses and final-variable identities, including
+for stripped inputs. RetDec uses its annotated token stream to retain function
+identities and native addresses. All stored addresses use the binary's linked
+ELF/PE address space and match DWARF. **r2dec** is different: its container driver
+returns address-keyed per-function JSON straight from radare2's **own** analysis
+(`aaa` + `aflj`), so it needs no symbol table and works on fully stripped binaries.
 
 The tools do not expose stack variables / line mappings uniformly. RetDec fills
 both fields from its annotated JSON and DSM outputs, r2dec returns best-effort
-native line offsets and variable records, and Reko currently leaves them empty.
-The metrics degrade gracefully when provenance is absent: GED still parses the
-recovered C, byte_match recompiles it, and type_match falls back to type-blind
-syntax and usage evidence.
+native line offsets and variable records, and Reko supplies direct variable
+addresses but no stable rendered line map. The metrics degrade gracefully when
+provenance is absent: GED still parses the recovered C, byte_match recompiles it,
+and type_match falls back to type-blind syntax and usage evidence.
 
 ## Building an image
 
@@ -76,15 +75,23 @@ RetDec **v5.0** Linux release tarball (`avast/retdec`).
 ### Reko
 
 The image ships `/opt/reko/decompile.sh` (`reko-decompile.sh` in this dir),
-invoked as `/in/<bin> /work/out.c /work/native-provenance.json`; it runs Reko's
-headless CmdLine driver and concatenates every emitted `*.c` into `/work/out.c`.
+invoked as `/in/<bin> /work/out.c /work/native-provenance.json <auto|thumb>`; it
+runs Reko's headless CmdLine driver and concatenates every emitted `*.c` into
+`/work/out.c`. ARM ELFs with an odd entry stay in `auto` mode so Reko consumes
+the ABI Thumb bit before normalizing the address. An even-entry ELF is forced to
+Thumb only when `.ARM.attributes` authoritatively declares the M profile; an
+A-profile binary such as U-Boot remains in A32 mode.
 The pinned build also emits a sidecar by retaining exact final-identifier object
 identity across Reko's lower IR and structured AST. DecBench uses its direct
 instruction addresses for variable correspondence and exact function entry
 addresses to bind stripped names. Ambiguous names are omitted. Reko is built
 from source with the **.NET 8 SDK** (multi-stage build →
 `mcr.microsoft.com/dotnet/runtime:8.0` runtime). Heavy build (clones + `dotnet
-publish`).
+publish`). The wrapper also writes `reko-status.json` and `reko.log`; failed CLI
+invocations, a reported mode that disagrees with the host-selected mode, and zero
+recovered unique Thumb-bit-normalized requested addresses are recorded as
+benchmark errors instead of plain successful tasks. Set `DECBENCH_REKO_IMAGE` to
+exercise an isolated candidate tag without replacing `decbench/reko:latest`.
 
 ### r2dec
 
@@ -163,7 +170,8 @@ manually (no `decompiler-build` hook); see `docs/decompilers.md`.
 - On the dev machine, the native r2dec plugin **cannot** build (no radare2 dev
   headers, no sudo), so `_select_path` lands on the Docker image — there the
   image, not native `pdc`, is the benchmark path.
-- Reko / RetDec CLI flags vary slightly across versions; the helper scripts run
-  permissively and gather any `*.c` output. Bump `RETDEC_VERSION`/`REKO_REF` args
-  and retag the image to change versions (the dockerized backends do not read
+- Reko / RetDec CLI flags vary slightly across versions. The Reko wrapper tries
+  both supported forms, preserves any partial `*.c` output, and reports failure
+  if neither invocation succeeds. Bump `RETDEC_VERSION`/`REKO_REF` args and
+  retag the image to change versions (the dockerized backends do not read
   per-version settings from `decompilers.toml`).
