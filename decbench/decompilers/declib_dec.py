@@ -18,6 +18,8 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections import defaultdict
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -109,6 +111,7 @@ class DeclibDecompiler(Decompiler):
     display_name = "declib"
     force_decompiler: str = ""
     _uses_project_dir: bool = False
+    _line_map_style: str | None = None
 
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
@@ -343,17 +346,16 @@ class DeclibDecompiler(Decompiler):
 
         code = self._normalize_code(dec.text)
 
-        line_mappings: list[LineMapping] = []
-        if dec.line_map:
-            for line_num, addrs in sorted(dec.line_map.items()):
-                line_mappings.append(
-                    LineMapping(
-                        line_number=int(line_num),
-                        addresses=sorted(int(a) + elf_base for a in addrs),
-                    )
-                )
-
+        function_size = self._function_size(deci, lifted_addr)
+        line_mappings = self._extract_line_mappings(
+            dec.line_map,
+            code,
+            lifted_addr,
+            elf_base,
+            function_size,
+        )
         variables = self._extract_variables(deci, lifted_addr)
+        self._add_variable_evidence(variables, func_name, code, line_mappings)
         metadata = self._extract_metrics(code)
 
         return FunctionDecompilation(
@@ -365,6 +367,104 @@ class DeclibDecompiler(Decompiler):
             variables=variables,
             metadata=metadata,
         )
+
+    @staticmethod
+    def _function_size(deci: DecompilerInterface, lifted_addr: int) -> int | None:
+        try:
+            value = deci.functions[lifted_addr].size
+        except Exception as e:
+            _l.debug("No function size at %#x: %s", lifted_addr, e)
+            return None
+        if isinstance(value, bool):
+            return None
+        try:
+            size = int(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return size if size > 0 else None
+
+    def _extract_line_mappings(
+        self,
+        raw_line_map: Any,
+        code: str,
+        lifted_addr: int,
+        elf_base: int,
+        function_size: int | None,
+    ) -> list[LineMapping]:
+        """Validate a backend's declib line contract and normalize it to 1-based rows."""
+        if self._line_map_style not in {"one_based", "ida_zero_based"}:
+            return []
+        if not isinstance(raw_line_map, Mapping) or function_size is None:
+            return []
+
+        line_count = code.count("\n") + 1
+        function_end = lifted_addr + function_size
+        line_addresses: dict[int, set[int]] = defaultdict(set)
+        ida_entry = False
+        for raw_line, raw_addresses in raw_line_map.items():
+            if isinstance(raw_line, bool) or not isinstance(raw_line, int):
+                continue
+            line_number = raw_line if self._line_map_style == "one_based" else raw_line + 1
+            if not 1 <= line_number <= line_count:
+                continue
+            if isinstance(raw_addresses, (str, bytes, Mapping)):
+                continue
+            try:
+                addresses = list(raw_addresses)
+            except TypeError:
+                continue
+            for address in addresses:
+                if isinstance(address, bool) or not isinstance(address, int):
+                    continue
+                if not lifted_addr <= address < function_end:
+                    continue
+                if (
+                    self._line_map_style == "ida_zero_based"
+                    and raw_line == 1
+                    and address == lifted_addr
+                ):
+                    ida_entry = True
+                    continue
+                line_addresses[line_number].add(address + elf_base)
+
+        if ida_entry:
+            line_addresses[1].add(lifted_addr + elf_base)
+        return [
+            LineMapping(line_number=line, addresses=sorted(addresses))
+            for line, addresses in sorted(line_addresses.items())
+            if addresses
+        ]
+
+    @staticmethod
+    def _add_variable_evidence(
+        variables: list[VariableInfo],
+        function_name: str,
+        code: str,
+        line_mappings: list[LineMapping],
+    ) -> None:
+        if not variables or not line_mappings:
+            return
+        try:
+            from decbench.metrics.variable_features import variable_occurrence_lines
+
+            occurrence_lines = variable_occurrence_lines(
+                code,
+                function_name,
+                (variable.name for variable in variables),
+            )
+        except Exception as e:
+            _l.debug("Could not join declib variable occurrences in %s: %s", function_name, e)
+            return
+
+        line_addresses = {mapping.line_number: set(mapping.addresses) for mapping in line_mappings}
+        for variable in variables:
+            lines = list(occurrence_lines.get(variable.name, ()))
+            if not lines:
+                continue
+            variable.line_numbers = lines
+            variable.addresses = sorted(
+                {address for line in lines for address in line_addresses.get(line, set())}
+            )
 
     @staticmethod
     def _extract_variables(deci: DecompilerInterface, lifted_addr: int) -> list[VariableInfo]:
@@ -431,6 +531,7 @@ class IDADeclibDecompiler(DeclibDecompiler):
     display_name = "IDA Pro (declib)"
     force_decompiler = "ida"
     _uses_project_dir = True
+    _line_map_style = "ida_zero_based"
 
     _CODE_REPLACEMENTS = (
         ("unsigned __int64", "unsigned long long"),
@@ -492,6 +593,7 @@ class GhidraDeclibDecompiler(DeclibDecompiler):
     display_name = "Ghidra (declib)"
     force_decompiler = "ghidra"
     _uses_project_dir = True
+    _line_map_style = "one_based"
 
     def is_available(self) -> bool:
         if os.environ.get("GHIDRA_INSTALL_DIR") is None:
@@ -552,6 +654,7 @@ class AngrDeclibDecompiler(DeclibDecompiler):
     name = "angr-declib"
     display_name = "angr (declib)"
     force_decompiler = "angr"
+    _line_map_style = "one_based"
 
     def is_available(self) -> bool:
         try:

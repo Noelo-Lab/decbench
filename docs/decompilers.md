@@ -230,6 +230,17 @@ The canonical raw adapters use these native sources:
   and variable `line_numbers`/`addresses` in `decompile-all --json`. Missing
   fields remain empty for compatibility with older Kuna builds.
 
+The legacy declib adapters apply a separate fail-closed contract. angr and
+Ghidra expose 1-based rows in the exact returned C; IDA exposes zero-based
+Hex-Rays coordinates, which DecBench shifts while preserving declib's synthetic
+function-entry row. For those three backends, exact parsed identifier bindings
+join uniquely named structured variables to validated rows. Duplicate or
+shadowed names, C parse errors, malformed rows, addresses outside the function,
+and lines outside the rendered text all abstain. Binary Ninja's declib renderer
+counts skipped `LinearView` header/warning rows in its map, so its offsets can
+drift within a function; `binja-declib` deliberately emits neither line nor
+variable-occurrence provenance until declib supplies an exact-row map.
+
 ##### Glaurung and Manifold: final-AST lineage blockers
 
 An address attached to an early IR statement is not native evidence for a

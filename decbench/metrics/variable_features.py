@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from bisect import bisect_right
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -561,6 +562,51 @@ def analyze_c_function(
         function.has_error,
         tuple(sorted(ambiguous)),
     )
+
+
+def variable_occurrence_lines(
+    code: str,
+    function_name: str,
+    variable_names: Iterable[str],
+) -> dict[str, tuple[int, ...]]:
+    """Locate unambiguous local-variable identifiers in exact rendered C."""
+
+    source = code.encode("utf-8", "replace")
+    tree = _parser().parse(source)
+    function = _select_function(tree.root_node, source, function_name)
+    if function is None or function.has_error:
+        return {}
+
+    discovered, declaration_nodes, binding_ranges = _discover_variables(function, source)
+    requested = list(variable_names)
+    requested_counts = Counter(requested)
+    discovered_counts = Counter(variable.name for variable in discovered)
+    target_names = {
+        name
+        for name, count in requested_counts.items()
+        if name and count == 1 and discovered_counts.get(name) == 1
+    }
+    if not target_names:
+        return {}
+
+    line_starts = [0]
+    line_starts.extend(index + 1 for index, byte in enumerate(source) if byte == ord("\n"))
+    occurrences: dict[str, set[int]] = defaultdict(set)
+    for node in _walk(function):
+        if node.type != "identifier":
+            continue
+        name = _text(node, source)
+        if name not in target_names:
+            continue
+        if node not in declaration_nodes:
+            ranges = binding_ranges.get(name)
+            if ranges and not any(start <= node.start_byte < end for start, end in ranges):
+                continue
+        if _field_name(node) in {"field", "label"}:
+            continue
+        occurrences[name].add(bisect_right(line_starts, node.start_byte))
+
+    return {name: tuple(sorted(lines)) for name, lines in sorted(occurrences.items())}
 
 
 def is_context_feature(feature: str) -> bool:
