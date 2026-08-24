@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import struct
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -12,9 +14,26 @@ from decbench.decompilers.declib_dec import (
     DeclibDecompiler,
     GhidraDeclibDecompiler,
     IDADeclibDecompiler,
+    _pe_file_space_origins,
 )
 from decbench.metrics.variable_features import variable_occurrence_lines
 from decbench.models.decompilation import LineMapping, VariableInfo
+
+
+def _write_minimal_pe(path: Path) -> None:
+    image_base = 0x400000
+    data = bytearray(0x400)
+    data[:2] = b"MZ"
+    struct.pack_into("<I", data, 0x3C, 0x80)
+    data[0x80:0x84] = b"PE\x00\x00"
+    struct.pack_into("<HHIIIHH", data, 0x84, 0x14C, 2, 0, 0, 0, 0xE0, 0x0102)
+    optional = 0x98
+    struct.pack_into("<H", data, optional, 0x10B)
+    struct.pack_into("<I", data, optional + 28, image_base)
+    for index, virtual_address in enumerate((0x1000, 0x3000)):
+        section = 0x178 + index * 40
+        struct.pack_into("<III", data, section + 8, 0x1000, virtual_address, 0x200)
+    path.write_bytes(data)
 
 
 @pytest.mark.parametrize("backend", [AngrDeclibDecompiler(), GhidraDeclibDecompiler()])
@@ -104,6 +123,73 @@ def test_angr_line_map_offsets_include_the_runtime_load_base() -> None:
         0x400000,
     )
     assert backend._line_map_address_offsets(SimpleNamespace(binary_base_addr=True)) == (0,)
+
+
+@pytest.mark.parametrize(
+    "backend",
+    [
+        AngrDeclibDecompiler(),
+        GhidraDeclibDecompiler(),
+        BinjaDeclibDecompiler(),
+        IDADeclibDecompiler(),
+    ],
+)
+def test_declib_pe_uses_the_backend_lift_origin(backend: DeclibDecompiler, tmp_path: Path) -> None:
+    binary = tmp_path / "sample.exe"
+    _write_minimal_pe(binary)
+
+    assert (
+        backend._file_space_base(
+            SimpleNamespace(binary_base_addr=0x401000),
+            binary,
+            header_base=0x400000,
+        )
+        == 0x401000
+    )
+
+
+def test_declib_pe_origins_come_from_the_preferred_image(tmp_path: Path) -> None:
+    binary = tmp_path / "sample.exe"
+    _write_minimal_pe(binary)
+
+    assert _pe_file_space_origins(binary, 0x400000) == frozenset({0x400000, 0x401000, 0x403000})
+
+
+def test_declib_pe_rejects_an_arbitrary_backend_rebase(tmp_path: Path) -> None:
+    binary = tmp_path / "sample.exe"
+    _write_minimal_pe(binary)
+
+    with pytest.raises(RuntimeError, match="non-canonical PE backend base 0x500000"):
+        IDADeclibDecompiler()._file_space_base(
+            SimpleNamespace(binary_base_addr=0x500000),
+            binary,
+            header_base=0x400000,
+        )
+
+
+def test_declib_pe_rejects_a_mismatched_header_base(tmp_path: Path) -> None:
+    binary = tmp_path / "sample.exe"
+    _write_minimal_pe(binary)
+
+    with pytest.raises(ValueError, match="header ImageBase 0x400000 does not match 0x500000"):
+        _pe_file_space_origins(binary, 0x500000)
+
+
+def test_declib_elf_keeps_the_file_header_base(tmp_path: Path) -> None:
+    binary = tmp_path / "sample"
+    data = bytearray(20)
+    data[:4] = b"\x7fELF"
+    struct.pack_into("<H", data, 18, 0x3E)
+    binary.write_bytes(data)
+
+    assert (
+        IDADeclibDecompiler()._file_space_base(
+            SimpleNamespace(binary_base_addr=0x400000),
+            binary,
+            header_base=0,
+        )
+        == 0
+    )
 
 
 def test_ida_zero_based_rows_are_normalized_without_shifting_the_synthetic_entry() -> None:

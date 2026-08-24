@@ -6,9 +6,9 @@ project management, decompilation, and artifact (variable/type) extraction.
 
 Notes:
     - declib returns "lifted" addresses (rebased so the binary's first
-      segment starts at 0). DecBench stores addresses in the ELF file's own
-      address space (the same space DWARF uses), computed as
-      ``lifted + min(PT_LOAD vaddr)``.
+      segment starts at 0). DecBench stores addresses in the binary's linked
+      address space (the same space DWARF uses). ELF uses its lowest PT_LOAD
+      address; PE uses the backend's canonical ImageBase-or-section origin.
     - ``DecompilerConfig.function_timeout_seconds`` is advisory only:
       declib does not expose per-function decompilation timeouts.
 """
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import struct
 import time
 from collections import defaultdict
 from collections.abc import Mapping
@@ -33,6 +34,7 @@ from decbench.models.decompilation import (
     LineMapping,
     VariableInfo,
 )
+from decbench.utils import binfmt
 
 if TYPE_CHECKING:
     from declib.api import DecompilerInterface
@@ -42,6 +44,62 @@ _l = logging.getLogger(__name__)
 
 def _address_matches(address: int, targets: set[int]) -> bool:
     return address in targets or (address & ~1) in targets or (address | 1) in targets
+
+
+def _pe_file_space_origins(binary_path: Path, image_base: int) -> frozenset[int]:
+    """Return canonical PE addresses a fresh backend may use as its lifted zero."""
+    try:
+        with binary_path.open("rb") as stream:
+            header = stream.read(0x40)
+            if len(header) != 0x40 or header[:2] != b"MZ":
+                raise ValueError("missing DOS header")
+
+            pe_offset = struct.unpack_from("<I", header, 0x3C)[0]
+            stream.seek(pe_offset)
+            if stream.read(4) != b"PE\x00\x00":
+                raise ValueError("missing PE signature")
+
+            coff_header = stream.read(20)
+            if len(coff_header) != 20:
+                raise ValueError("truncated COFF header")
+            section_count = struct.unpack_from("<H", coff_header, 2)[0]
+            optional_size = struct.unpack_from("<H", coff_header, 16)[0]
+            optional_header = stream.read(optional_size)
+            if len(optional_header) != optional_size:
+                raise ValueError("truncated optional header")
+
+            magic = struct.unpack_from("<H", optional_header, 0)[0]
+            if magic == 0x10B:
+                image_base_offset, image_base_size = 28, 4
+            elif magic == 0x20B:
+                image_base_offset, image_base_size = 24, 8
+            else:
+                raise ValueError(f"unsupported optional-header magic {magic:#x}")
+            if len(optional_header) < image_base_offset + image_base_size:
+                raise ValueError("optional header has no ImageBase")
+
+            encoded_image_base = int.from_bytes(
+                optional_header[image_base_offset : image_base_offset + image_base_size],
+                "little",
+            )
+            if encoded_image_base != image_base:
+                raise ValueError(
+                    f"header ImageBase {encoded_image_base:#x} does not match {image_base:#x}"
+                )
+
+            origins = {image_base}
+            for _ in range(section_count):
+                section_header = stream.read(40)
+                if len(section_header) != 40:
+                    raise ValueError("truncated section table")
+                virtual_size, virtual_address, raw_size = struct.unpack_from(
+                    "<III", section_header, 8
+                )
+                if virtual_size or raw_size:
+                    origins.add(image_base + virtual_address)
+    except (OSError, struct.error, ValueError) as e:
+        raise ValueError(f"could not validate PE file-space origins: {e}") from e
+    return frozenset(origins)
 
 
 class DeclibDecompiler(Decompiler):
@@ -88,7 +146,7 @@ class DeclibDecompiler(Decompiler):
             raise RuntimeError(f"Decompiler '{self.name}' is not available")
 
         start_time = time.time()
-        elf_base = raw_common.elf_min_vaddr(binary_path)
+        header_base = raw_common.elf_min_vaddr(binary_path)
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
         failed_functions: list[str] = []
@@ -96,11 +154,12 @@ class DeclibDecompiler(Decompiler):
         deci = None
         try:
             deci = self._make_deci(binary_path, self._project_dir_for(binary_path, output_dir))
+            file_base = self._file_space_base(deci, binary_path, header_base)
 
             if functions is not None:
-                target_funcs = [(name, addr - elf_base) for name, addr in functions]
+                target_funcs = [(name, addr - file_base) for name, addr in functions]
             else:
-                target_funcs = self._enumerate_functions(deci, binary_path, elf_base)
+                target_funcs = self._enumerate_functions(deci, binary_path, file_base)
 
             if function_names:
                 address_targets = {
@@ -113,7 +172,7 @@ class DeclibDecompiler(Decompiler):
                     (name, lifted_addr)
                     for name, lifted_addr in target_funcs
                     if name in name_targets
-                    or _address_matches(lifted_addr + elf_base, address_targets)
+                    or _address_matches(lifted_addr + file_base, address_targets)
                 ]
                 if filtered:
                     _l.debug(
@@ -160,7 +219,7 @@ class DeclibDecompiler(Decompiler):
 
             for func_name, lifted_addr in target_funcs:
                 try:
-                    func_result = self._decompile_one(deci, func_name, lifted_addr, elf_base)
+                    func_result = self._decompile_one(deci, func_name, lifted_addr, file_base)
                 except Exception as e:
                     _l.debug("Failed to decompile %s: %s", func_name, e)
                     func_result = None
@@ -234,6 +293,33 @@ class DeclibDecompiler(Decompiler):
         # Ghidra forbids path elements starting with '.'.
         base = output_dir if output_dir is not None else binary_path.parent
         return base / f"declib_{self.name}_projects" / binary_path.stem
+
+    def _file_space_base(
+        self,
+        deci: DecompilerInterface,
+        binary_path: Path,
+        header_base: int,
+    ) -> int:
+        """Return the file-space origin corresponding to declib's lifted zero."""
+        info = binfmt.detect(binary_path)
+        if info is None or info.fmt != "pe":
+            return header_base
+        try:
+            backend_base = deci.binary_base_addr
+        except Exception as e:
+            raise RuntimeError(f"declib/{self.name} could not read the PE backend base: {e}") from e
+        if isinstance(backend_base, bool) or not isinstance(backend_base, int) or backend_base < 0:
+            raise RuntimeError(
+                f"declib/{self.name} reported invalid PE backend base {backend_base!r}"
+            )
+        origins = _pe_file_space_origins(binary_path, header_base)
+        if backend_base not in origins:
+            allowed = ", ".join(f"{origin:#x}" for origin in sorted(origins))
+            raise RuntimeError(
+                f"declib/{self.name} reported non-canonical PE backend base "
+                f"{backend_base:#x}; expected one of {allowed}"
+            )
+        return backend_base
 
     @staticmethod
     def _shutdown(deci: DecompilerInterface | None) -> None:
