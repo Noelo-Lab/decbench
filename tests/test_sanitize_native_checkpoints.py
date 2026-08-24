@@ -62,7 +62,7 @@ def test_copy_is_atomic_fail_closed_and_preserves_raw_checkpoint(tmp_path: Path)
     assert function.decompiled_code == "int target(int x) { return x; }"
     assert function.line_mappings == []
     assert function.variables[0].addresses == []
-    assert function.variables[0].line_numbers == [1]
+    assert function.variables[0].line_numbers == []
     metadata = result.decompiler.extra["native_provenance_sanitizer"]
     assert metadata["status"] == "fail_closed"
     assert "address_drop_samples" not in metadata

@@ -162,9 +162,10 @@ def test_sanitizer_fails_closed_per_function_without_discarding_code_or_variable
     assert function.line_mappings == []
     assert len(function.variables) == 1
     assert function.variables[0].addresses == []
-    assert function.variables[0].line_numbers == [1]
+    assert function.variables[0].line_numbers == []
     assert metadata["status"] == "partial_fail_closed"
     assert metadata["functions_unresolved"] == 1
+    assert metadata["variable_line_numbers_dropped"] == 2
     assert metadata["function_failure_reasons"] == {"dwarf_function_ambiguous": 1}
 
 
@@ -216,7 +217,8 @@ def test_final_unavailable_binary_clears_claims_and_records_aggregate_reasons(
     assert metadata["status"] == "fail_closed"
     assert function.line_mappings == []
     assert function.variables[0].addresses == []
-    assert function.variables[0].line_numbers == [1]
+    assert function.variables[0].line_numbers == []
+    assert metadata["variable_line_numbers_dropped"] == 2
     assert metadata["address_drop_reasons"] == {"binary_validation_unavailable": 128}
     assert "address_drop_samples" not in metadata
 
@@ -292,7 +294,7 @@ def test_explicit_context_reuses_one_binary_index_across_results(
     assert created == [Path("tool").resolve()]
 
 
-def test_sanitizer_does_not_resolve_line_only_declaration_evidence(
+def test_sanitizer_drops_line_only_evidence_without_resolving_binary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     function = FunctionDecompilation(
@@ -310,8 +312,11 @@ def test_sanitizer_does_not_resolve_line_only_declaration_evidence(
 
     metadata = sanitize_native_provenance(result)
 
-    assert metadata["status"] == "no_address_provenance"
-    assert function.variables[0].line_numbers == [1]
+    assert metadata["status"] == "sanitized"
+    assert metadata["functions_with_address_provenance"] == 0
+    assert metadata["functions_modified"] == 1
+    assert metadata["variable_line_numbers_dropped"] == 1
+    assert function.variables[0].line_numbers == []
 
 
 def test_native_resolver_uses_entry_pc_and_indexes_dwarf_once(

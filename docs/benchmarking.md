@@ -454,7 +454,9 @@ Line numbers are checked against the precise
 `FunctionDecompilation.decompiled_code` string, and direct variable addresses
 must agree with the selected mapped rows when both forms are present. Dewolf
 and Reko's direct-only variable provenance is valid without a line map after
-the same instruction check.
+the same instruction check. Variable line numbers are not independently useful
+without a validated function line map, so the sanitizer drops them whenever no
+mapped row survives; direct addresses and recovered variable records remain.
 
 `--manifest` is a strict allowlist, not a post-hoc filter: any selected-backend
 function outside it makes the audit fail. This is deliberate—it catches a

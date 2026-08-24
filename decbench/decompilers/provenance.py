@@ -11,7 +11,7 @@ from decbench.models.decompilation import DecompilationResult, FunctionDecompila
 from decbench.utils.native_code import FunctionCode, NativeCodeResolver
 
 SANITIZER_METADATA_KEY = "native_provenance_sanitizer"
-SANITIZER_SCHEMA = "decbench-native-provenance-sanitizer-v1"
+SANITIZER_SCHEMA = "decbench-native-provenance-sanitizer-v2"
 
 _COUNT_NAMES = (
     "functions_seen",
@@ -191,13 +191,17 @@ def _sanitize_function(
         if addresses != variable.addresses:
             modified = True
             variable.addresses = addresses
-        if lost_mapped_lines:
+        if not surviving_mapped_lines:
+            lines = []
+        elif lost_mapped_lines:
             lines = [line for line in variable.line_numbers if line not in lost_mapped_lines]
+        else:
+            lines = variable.line_numbers
+        if lines != variable.line_numbers:
             removed = len(variable.line_numbers) - len(lines)
-            if removed:
-                modified = True
-                report.increment("variable_line_numbers_dropped", removed)
-                variable.line_numbers = lines
+            modified = True
+            report.increment("variable_line_numbers_dropped", removed)
+            variable.line_numbers = lines
     return modified
 
 
@@ -231,12 +235,23 @@ def sanitize_native_provenance(
 
     report = _SanitizerReport()
     report.counts["functions_seen"] = len(result.functions)
+    line_only = [
+        function
+        for function in result.functions.values()
+        if not _has_address_provenance(function)
+        and any(variable.line_numbers for variable in function.variables)
+    ]
+    for function in line_only:
+        if _sanitize_function(function, None, "no_address_provenance", report):
+            report.increment("functions_modified")
+
     candidates = [
         function for function in result.functions.values() if _has_address_provenance(function)
     ]
     report.counts["functions_with_address_provenance"] = len(candidates)
     if not candidates:
-        return _store_report(result, report, "no_address_provenance")
+        status = "sanitized" if report.counts["functions_modified"] else "no_address_provenance"
+        return _store_report(result, report, status)
 
     path = Path(binary_path if binary_path is not None else result.binary_path)
     try:
