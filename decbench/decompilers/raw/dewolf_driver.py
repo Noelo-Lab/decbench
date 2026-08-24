@@ -14,7 +14,8 @@ every function — dewolf's own ``Decompiler.from_raw`` wraps it), which is far
 cheaper than the per-function subprocess the ``decompile.py`` CLI would cost.
 
 Protocol (all on stdout, one JSON object per line):
-  {"type": "meta", "load_base": <int>, "count": <int>}          # first line
+  {"type": "meta", "load_base": <int>, "count": <int>,          # first line
+   "worker_threads": <int>}
   {"type": "func", "name": str, "addr": <elf-file-space int>,
    "code": str, "seconds": float, "variables": [                 # per success
      {"name": str, "type": str, "size": int | null,

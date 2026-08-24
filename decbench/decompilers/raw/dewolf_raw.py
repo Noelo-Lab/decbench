@@ -214,6 +214,7 @@ class RawDewolfDecompiler(Decompiler):
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
         failed_functions: list[str] = []
+        driver_worker_threads: set[int] = set()
         lock = threading.Lock()
 
         target_addrs = sorted(
@@ -227,6 +228,10 @@ class RawDewolfDecompiler(Decompiler):
             if error:
                 extra["error"] = error
                 extra["failure"] = error
+            if len(driver_worker_threads) == 1:
+                extra["worker_threads_per_driver"] = next(iter(driver_worker_threads))
+            elif driver_worker_threads:
+                extra["worker_threads_per_driver"] = sorted(driver_worker_threads)
             return DecompilerMetadata(
                 decompiler_name=self.id,
                 decompiler_version=self.get_version(),
@@ -279,7 +284,16 @@ class RawDewolfDecompiler(Decompiler):
                     except json.JSONDecodeError:
                         continue
                     kind = obj.get("type")
-                    if kind == "func":
+                    if kind == "meta":
+                        worker_threads = obj.get("worker_threads")
+                        if (
+                            isinstance(worker_threads, int)
+                            and not isinstance(worker_threads, bool)
+                            and worker_threads > 0
+                        ):
+                            with lock:
+                                driver_worker_threads.add(worker_threads)
+                    elif kind == "func":
                         name = str(obj.get("name") or "")
                         code = obj.get("code") or ""
                         if not name or not code:

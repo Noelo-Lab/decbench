@@ -67,7 +67,7 @@ def test_driver_caps_binary_ninja_workers(monkeypatch) -> None:
 _FAKE_DRIVER = """\
 import json, sys
 def e(o): sys.stdout.write(json.dumps(o) + "\\n")
-e({"type": "meta", "load_base": 4194304, "count": 2})
+e({"type": "meta", "load_base": 4194304, "count": 2, "worker_threads": 2})
 e({"type": "func", "name": "alpha", "addr": 4096, "code": "int alpha(){return 1;}",
    "variables": [{"name": "renamed", "type": "int", "size": 4,
                   "kind": "arg", "arg_index": 0,
@@ -109,6 +109,7 @@ def test_decompile_binary_parses_driver_stream(monkeypatch, tmp_path: Path) -> N
     }
     assert result.functions["gamma"].line_count == 1
     assert "beta" in result.decompiler.failed_functions
+    assert result.decompiler.extra["worker_threads_per_driver"] == 2
     assert (out / "dewolf_bin.c").exists()
 
 
