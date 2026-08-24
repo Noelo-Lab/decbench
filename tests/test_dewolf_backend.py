@@ -15,7 +15,11 @@ from types import SimpleNamespace
 from typing import Any
 
 import decbench.decompilers  # noqa: F401  (registers the raw backends)
-from decbench.decompilers.raw.dewolf_driver import _native_addresses_for_origins
+from decbench.decompilers.raw.dewolf_driver import (
+    _native_addresses_for_origins,
+    _resolve_ssa_origins,
+    _ssa_address_index,
+)
 from decbench.decompilers.raw.dewolf_raw import RawDewolfDecompiler
 from decbench.decompilers.registry import DecompilerRegistry
 
@@ -165,13 +169,13 @@ class _Mlil(list):
 
 
 class _SSA:
-    def __init__(self, name: str, version: int) -> None:
-        self.var = SimpleNamespace(name=name)
+    def __init__(self, name: str, version: int, identifier: int) -> None:
+        self.var = SimpleNamespace(name=name, identifier=identifier)
         self.version = version
 
 
-def _ssa(name: str, version: int) -> _SSA:
-    return _SSA(name, version)
+def _ssa(name: str, version: int, identifier: int) -> _SSA:
+    return _SSA(name, version, identifier)
 
 
 def _instruction(
@@ -191,11 +195,11 @@ def _instruction(
     )
 
 
-def test_native_ssa_provenance_follows_phi_and_eliminated_copies() -> None:
-    first = _ssa("value", 1)
-    loop = _ssa("value", 2)
-    updated = _ssa("value", 3)
-    temporary = _ssa("rax", 1)
+def test_native_ssa_provenance_follows_same_identifier_phi_versions() -> None:
+    first = _ssa("value", 1, 7)
+    loop = _ssa("value", 2, 7)
+    updated = _ssa("value", 3, 7)
+    temporary = _ssa("rax", 1, 9)
     first_definition = _instruction("MLIL_SET_VAR_SSA", 0x1010, writes=[first])
     phi = _instruction(
         "MLIL_VAR_PHI",
@@ -234,23 +238,75 @@ def test_native_ssa_provenance_follows_phi_and_eliminated_copies() -> None:
         },
     )
     variables = {
-        ("value", 1): first,
-        ("value", 2): loop,
-        ("value", 3): updated,
-        ("rax", 1): temporary,
+        (7, 1): first,
+        (7, 2): loop,
+        (7, 3): updated,
+        (9, 1): temporary,
     }
     starts = {0x1010, 0x1020, 0x1030, 0x1040, 0x1050}
 
-    assert _native_addresses_for_origins(mlil, variables, {("value", 2)}, starts) == {
+    assert _native_addresses_for_origins(mlil, variables, {(7, 2)}, starts) == {
         0x1010,
         0x1030,
         0x1040,
-        0x1050,
     }
     assert _native_addresses_for_origins(
         mlil,
         variables,
-        {("value", 2)},
+        {(7, 2)},
         starts,
-        blocked_origins={("rax", 1)},
+        blocked_origins={(9, 1)},
     ) == {0x1010, 0x1030, 0x1040}
+
+
+def test_native_ssa_provenance_does_not_cross_identifier_copy() -> None:
+    source = _ssa("source", 1, 11)
+    destination = _ssa("destination", 1, 12)
+    source_definition = _instruction("MLIL_SET_VAR_SSA", 0x2010, writes=[source])
+    copy = _instruction(
+        "MLIL_SET_VAR_SSA",
+        0x2020,
+        reads=[source],
+        writes=[destination],
+        source_operation="MLIL_VAR_SSA",
+    )
+    destination_use = _instruction("MLIL_CALL", 0x2030, reads=[destination])
+    mlil = _Mlil(
+        [source_definition, copy, destination_use],
+        {source: source_definition, destination: copy},
+        {source: [copy], destination: [destination_use]},
+    )
+    variables = {(11, 1): source, (12, 1): destination}
+    starts = {0x2010, 0x2020, 0x2030}
+
+    assert _native_addresses_for_origins(mlil, variables, {(11, 1)}, starts) == {
+        0x2010,
+        0x2020,
+    }
+    assert _native_addresses_for_origins(mlil, variables, {(12, 1)}, starts) == {
+        0x2020,
+        0x2030,
+    }
+
+
+def test_name_version_collision_abstains_from_ssa_join() -> None:
+    first = _ssa("value", 1, 21)
+    collision = _ssa("value", 1, 22)
+    first_definition = _instruction("MLIL_SET_VAR_SSA", 0x3010, writes=[first])
+    collision_definition = _instruction("MLIL_SET_VAR_SSA", 0x3020, writes=[collision])
+    mlil = _Mlil(
+        [first_definition, collision_definition],
+        {first: first_definition, collision: collision_definition},
+        {},
+    )
+    function = SimpleNamespace(
+        medium_level_il=SimpleNamespace(ssa_form=mlil),
+        instructions=[(b"first", 0x3010), (b"collision", 0x3020)],
+    )
+
+    _, variables, display_keys, starts = _ssa_address_index(function)
+
+    assert set(variables) == {(21, 1), (22, 1)}
+    assert display_keys[("value", 1)] == {(21, 1), (22, 1)}
+    assert _resolve_ssa_origins({("value", 1)}, display_keys) == set()
+    assert starts == {0x3010, 0x3020}

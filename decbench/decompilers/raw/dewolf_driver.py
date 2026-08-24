@@ -45,8 +45,25 @@ def _emit(obj: dict[str, Any]) -> None:
     sys.stdout.flush()
 
 
-def _ssa_key(variable: Any) -> tuple[str, int] | None:
-    """Return the Binary Ninja/pseudo SSA identity carried by ``variable``."""
+SSAKey = tuple[int, int]
+SSADisplayKey = tuple[str, int]
+
+
+def _ssa_key(variable: Any) -> SSAKey | None:
+    """Return a Binary Ninja SSA identity, including its stable variable ID."""
+    source = getattr(variable, "var", None)
+    version = getattr(variable, "version", None)
+    identifier = getattr(source, "identifier", None)
+    if identifier is None or version is None or isinstance(identifier, bool):
+        return None
+    try:
+        return int(identifier), int(version)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _ssa_display_key(variable: Any) -> SSADisplayKey | None:
+    """Return the name/version pair retained in dewolf's pseudo variables."""
     source = getattr(variable, "var", None)
     version = getattr(variable, "version", None)
     if source is not None and version is not None:
@@ -101,16 +118,21 @@ def _iter_mlil_instructions(mlil: Any) -> Iterable[Any]:
         return
 
 
-def _ssa_address_index(function: Any) -> tuple[Any, dict[tuple[str, int], Any], set[int]]:
+def _ssa_address_index(
+    function: Any,
+) -> tuple[Any, dict[SSAKey, Any], dict[SSADisplayKey, set[SSAKey]], set[int]]:
     """Index SSA variables and real instruction starts for one Binary Ninja function."""
     mlil = function.medium_level_il.ssa_form
-    variables: dict[tuple[str, int], Any] = {}
+    variables: dict[SSAKey, Any] = {}
+    display_keys: dict[SSADisplayKey, set[SSAKey]] = defaultdict(set)
     for instruction in _iter_mlil_instructions(mlil):
         for variable in list(getattr(instruction, "vars_read", ()) or ()) + list(
             getattr(instruction, "vars_written", ()) or ()
         ):
             if (key := _ssa_key(variable)) is not None:
                 variables.setdefault(key, variable)
+                if (display_key := _ssa_display_key(variable)) is not None:
+                    display_keys[display_key].add(key)
 
     instruction_starts: set[int] = set()
     try:
@@ -123,23 +145,38 @@ def _ssa_address_index(function: Any) -> tuple[Any, dict[tuple[str, int], Any], 
                 continue
     except (TypeError, AttributeError):
         pass
-    return mlil, variables, instruction_starts
+    return mlil, variables, display_keys, instruction_starts
+
+
+def _resolve_ssa_origins(
+    origins: set[SSADisplayKey],
+    display_keys: dict[SSADisplayKey, set[SSAKey]],
+) -> set[SSAKey]:
+    """Resolve dewolf's name/version origins only when Binary Ninja makes them unique."""
+    resolved: set[SSAKey] = set()
+    for origin in origins:
+        candidates = display_keys.get(origin, set())
+        if len(candidates) == 1:
+            resolved.update(candidates)
+    return resolved
 
 
 def _native_addresses_for_origins(
     mlil: Any,
-    ssa_variables: dict[tuple[str, int], Any],
-    origins: set[tuple[str, int]],
+    ssa_variables: dict[SSAKey, Any],
+    origins: set[SSAKey],
     instruction_starts: set[int],
-    blocked_origins: set[tuple[str, int]] | None = None,
+    blocked_origins: set[SSAKey] | None = None,
 ) -> set[int]:
     """Resolve final dewolf variable origins to native instruction starts.
 
     dewolf retains a Binary Ninja SSA variable in each final pseudo variable's
     ``ssa_name``. Binary Ninja then provides the native MLIL definition/use
     instruction for that identity. Phi nodes are not rendered C occurrences,
-    so they contribute no address themselves; their inputs are followed to the
-    real definitions and uses that survived into the final variable.
+    so they contribute no address themselves; versions of the same Binary
+    Ninja variable are followed to their real definitions and uses. Copies to
+    a different Binary Ninja variable are uses, not identity evidence, so the
+    destination is never followed.
     """
     if not instruction_starts:
         return set()
@@ -165,8 +202,10 @@ def _native_addresses_for_origins(
             if _is_phi(definition):
                 for operand in getattr(definition, "vars_read", ()) or ():
                     if (
-                        operand_key := _ssa_key(operand)
-                    ) is not None and operand_key not in blocked_origins:
+                        (operand_key := _ssa_key(operand)) is not None
+                        and operand_key[0] == key[0]
+                        and operand_key not in blocked_origins
+                    ):
                         pending.append(operand_key)
             else:
                 with contextlib.suppress(TypeError, ValueError, OverflowError):
@@ -176,8 +215,10 @@ def _native_addresses_for_origins(
                 if _is_ssa_copy(definition):
                     for source in getattr(definition, "vars_read", ()) or ():
                         if (
-                            source_key := _ssa_key(source)
-                        ) is not None and source_key not in blocked_origins:
+                            (source_key := _ssa_key(source)) is not None
+                            and source_key[0] == key[0]
+                            and source_key not in blocked_origins
+                        ):
                             pending.append(source_key)
 
         try:
@@ -194,8 +235,10 @@ def _native_addresses_for_origins(
                 )
                 for phi_variable in phi_variables:
                     if (
-                        phi_key := _ssa_key(phi_variable)
-                    ) is not None and phi_key not in blocked_origins:
+                        (phi_key := _ssa_key(phi_variable)) is not None
+                        and phi_key[0] == key[0]
+                        and phi_key not in blocked_origins
+                    ):
                         pending.append(phi_key)
                 continue
             with contextlib.suppress(TypeError, ValueError, OverflowError):
@@ -205,8 +248,10 @@ def _native_addresses_for_origins(
             if _is_ssa_copy(instruction):
                 for destination in getattr(instruction, "vars_written", ()) or ():
                     if (
-                        destination_key := _ssa_key(destination)
-                    ) is not None and destination_key not in blocked_origins:
+                        (destination_key := _ssa_key(destination)) is not None
+                        and destination_key[0] == key[0]
+                        and destination_key not in blocked_origins
+                    ):
                         pending.append(destination_key)
     return addresses
 
@@ -235,7 +280,7 @@ def _variable_records(
         if getattr(parameter, "name", None)
     }
     by_name: dict[str, dict[str, Any]] = {}
-    origins: dict[str, set[tuple[str, int]]] = defaultdict(set)
+    origin_displays: dict[str, set[SSADisplayKey]] = defaultdict(set)
 
     def add(variable: Any) -> None:
         if not isinstance(variable, Variable) or isinstance(variable, GlobalVariable):
@@ -261,8 +306,8 @@ def _variable_records(
             entry["size"] = _type_size_bytes(variable_type)
 
         origin = getattr(variable, "ssa_name", None)
-        if (key := _ssa_key(origin) or _ssa_key(variable)) is not None:
-            origins[name].add(key)
+        if (display_key := _ssa_display_key(origin) or _ssa_display_key(variable)) is not None:
+            origin_displays[name].add(display_key)
 
     for parameter in parameters:
         add(parameter)
@@ -273,7 +318,11 @@ def _variable_records(
                 for expression in obj.subexpressions():
                     add(expression)
 
-    mlil, ssa_variables, instruction_starts = _ssa_address_index(function)
+    mlil, ssa_variables, display_keys, instruction_starts = _ssa_address_index(function)
+    origins = {
+        name: _resolve_ssa_origins(displays, display_keys)
+        for name, displays in origin_displays.items()
+    }
     all_origins = {origin for variable_origins in origins.values() for origin in variable_origins}
     for name, entry in by_name.items():
         blocked_origins = all_origins - origins.get(name, set())
