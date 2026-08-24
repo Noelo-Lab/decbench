@@ -470,9 +470,9 @@ an explicit derived copy instead:
 
 ```bash
 python scripts/sanitize_native_checkpoints.py \
-  results/full_run /tmp/full-run-sanitized-checkpoints
+  results/full_run /tmp/base-passwd-sanitized-checkpoints base-passwd
 python scripts/audit_native_provenance.py results/full_run \
-  --checkpoint /tmp/full-run-sanitized-checkpoints/sailr.pkl \
+  --checkpoint /tmp/base-passwd-sanitized-checkpoints/base-passwd.pkl \
   --output /tmp/sanitized-native-audit.json
 ```
 
