@@ -412,6 +412,94 @@ def test_kuna_additive_provenance_is_validated_and_rebased() -> None:
     assert no_evidence.variables[0].addresses == []
 
 
+def test_kuna_command_passes_sorted_unique_target_addresses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decompiler = RawKunaDecompiler()
+    monkeypatch.setattr(decompiler, "_kuna_bin", lambda: "/opt/kuna")
+
+    command = decompiler._build_command(Path("/tmp/program"), [0x2000, 0x1000, 0x2000])
+    unfiltered = decompiler._build_command(Path("/tmp/program"))
+
+    assert command[:4] == ["/opt/kuna", "decompile-all", "/tmp/program", "--json"]
+    assert command[4:8] == ["--addr", "0x1000", "--addr", "0x2000"]
+    assert "--addr" not in unfiltered
+
+
+def test_kuna_decompile_forwards_source_target_addresses(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "program"
+    binary.write_bytes(b"binary")
+    decompiler = RawKunaDecompiler()
+    selections: list[set[int] | None] = []
+    payload = {
+        "functions": [
+            {
+                "name": "sub_1000",
+                "address": 0x1000,
+                "size": 4,
+                "code": "void sub_1000(void) {}",
+            }
+        ]
+    }
+
+    monkeypatch.setattr(decompiler, "_kuna_bin", lambda: "/opt/kuna")
+    monkeypatch.setattr(decompiler, "get_version", lambda: "test")
+    monkeypatch.setattr(
+        decompiler,
+        "_run_decompile_all",
+        lambda _path, targets: selections.append(set(targets) if targets else None) or payload,
+    )
+    monkeypatch.setattr(
+        "decbench.decompilers.raw.kuna_raw.common.executable_code_ranges",
+        lambda _path: ((0x1000, 0x2000),),
+    )
+
+    result = decompiler.decompile_binary(
+        binary,
+        functions=[("sub_1000", 0x1000), ("missing", 0x1100)],
+        function_names={0x1000},
+    )
+
+    assert selections == [{0x1000, 0x1100}]
+    assert list(result.functions) == ["sub_1000"]
+
+
+def test_kuna_payload_cache_is_scoped_to_target_addresses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decompiler = RawKunaDecompiler()
+    commands: list[list[str]] = []
+
+    class Process:
+        returncode = 0
+        pid = 1
+
+        def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+            return '{"functions": []}', ""
+
+        def poll(self) -> int:
+            return 0
+
+    monkeypatch.setattr(
+        decompiler,
+        "_build_command",
+        lambda path, targets: commands.append([str(path), *(hex(address) for address in targets)])
+        or ["kuna"],
+    )
+    monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: Process())
+
+    assert decompiler._run_decompile_all(Path("program"), {0x2000, 0x1000}) == {"functions": []}
+    assert decompiler._run_decompile_all(Path("program"), {0x1000, 0x2000}) == {"functions": []}
+    assert decompiler._run_decompile_all(Path("program"), {0x3000}) == {"functions": []}
+    assert commands == [
+        ["program", "0x1000", "0x2000"],
+        ["program", "0x3000"],
+    ]
+
+
 @pytest.mark.skipif(
     os.environ.get("DECBENCH_LIVE_LINE_MAPS") != "1",
     reason="set DECBENCH_LIVE_LINE_MAPS=1 to exercise licensed/native decompilers",

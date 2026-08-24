@@ -284,7 +284,10 @@ The canonical raw adapters use these native sources:
   map; older images retain the text/usage fallback.
 - Kuna accepts additive `line_mappings` entries (`line_number`, `addresses`)
   and variable `line_numbers`/`addresses` in `decompile-all --json`. Missing
-  fields remain empty for compatibility with older Kuna builds.
+  fields remain empty for compatibility with older Kuna builds. When the
+  benchmark driver supplies its linked source-function addresses, the backend
+  forwards them as sorted `--addr` selections so Kuna analyzes only the
+  benchmarkable functions in that binary.
 
 The legacy declib adapters apply a separate fail-closed contract. angr and
 Ghidra expose 1-based rows in the exact returned C; IDA exposes zero-based

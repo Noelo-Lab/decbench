@@ -46,6 +46,7 @@ import shutil
 import signal
 import subprocess
 import time
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -71,7 +72,7 @@ class RawKunaDecompiler(Decompiler):
 
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
-        self._payload_cache: dict[str, Any] = {}
+        self._payload_cache: dict[tuple[str, tuple[int, ...]], Any] = {}
 
     @staticmethod
     def _kuna_bin() -> str | None:
@@ -147,8 +148,12 @@ class RawKunaDecompiler(Decompiler):
                 ),
             )
 
+        target_addresses = set(function_names or ())
+        if functions is not None:
+            target_addresses.update(address for _name, address in functions)
+
         try:
-            payload = self._run_decompile_all(binary_path)
+            payload = self._run_decompile_all(binary_path, target_addresses or None)
         except subprocess.TimeoutExpired as e:
             timed_out = True
             _l.warning("kuna-raw timed out on %s: %s", binary_path, e)
@@ -198,10 +203,16 @@ class RawKunaDecompiler(Decompiler):
             result.to_toml(output_dir / f"{self.name}_{binary_path.stem}.toml")
         return result
 
-    def _build_command(self, binary_path: Path) -> list[str]:
+    def _build_command(
+        self,
+        binary_path: Path,
+        target_addresses: Collection[int] | None = None,
+    ) -> list[str]:
         kuna = self._kuna_bin()
         assert kuna is not None
         cmd = [kuna, "decompile-all", str(binary_path), "--json"]
+        for address in sorted(set(target_addresses or ())):
+            cmd += ["--addr", hex(address)]
         # Per-function watchdog. kuna emits its JSON only at the very end, so without a
         # per-function cap one hanging function stalls the binary until the wall-clock
         # SIGKILL loses EVERY function. '0' disables.
@@ -242,16 +253,20 @@ class RawKunaDecompiler(Decompiler):
                 _l.warning("ignoring non-integer DECBENCH_KUNA_TIMEOUT=%r", env)
         return self.config.binary_timeout_seconds
 
-    def _run_decompile_all(self, binary_path: Path) -> Any:
+    def _run_decompile_all(
+        self,
+        binary_path: Path,
+        target_addresses: Collection[int] | None = None,
+    ) -> Any:
         """Run ``kuna decompile-all --json`` and parse the JSON document.
 
-        Cached per (resolved) binary path so ``discover_functions`` followed by
-        ``decompile_binary`` does not pay for two full loads.
+        Cached per binary path and exact address selection.
         """
-        key = str(binary_path)
+        selected = tuple(sorted(set(target_addresses or ())))
+        key = (str(binary_path), selected)
         if key in self._payload_cache:
             return self._payload_cache[key]
-        cmd = self._build_command(binary_path)
+        cmd = self._build_command(binary_path, selected)
         _l.debug("kuna run: %s", " ".join(cmd))
         # kuna leads its own process group, so an outer harness killpg can no longer
         # reach it — this backend must own the kill on every exit path.
