@@ -29,7 +29,13 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
   natively if an executable resolves (`MANIFOLD_BIN` / config / `$PATH`),
   otherwise in the `decbench/manifold` image (`docker/manifold.Dockerfile`,
   built by `decbench decompiler-build manifold`), so a host that only has
-  Docker needs nothing else installed.
+  Docker needs nothing else installed. For x86-64 ELF executables importing
+  `__libc_start_main`, the same temporary run requests manifold's Clight JSON
+  sidecar and consumes only its exact literal-`main` address relation, so that
+  function remains addressable after stripping. The sidecar's
+  variables are deliberately ignored: they predate final C transformations and
+  are not final-variable provenance, so type matching still uses the C/usage
+  fallback and reports no native line map.
 - **Native or containerized Glaurung** (`raw/glaurung_raw.py`: `glaurung`):
   invokes Glaurung's address-scoped JSON CLI natively when `GLAURUNG_BIN`, the
   decompiler config, or `$PATH` resolves it. Otherwise it runs the immutable
