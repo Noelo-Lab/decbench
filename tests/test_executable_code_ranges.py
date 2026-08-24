@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from decbench.decompilers import llm_dec
 from decbench.decompilers.declib_dec import DeclibDecompiler
 from decbench.decompilers.dockerized import elf_function_symbols
 from decbench.decompilers.raw import common
@@ -143,6 +144,14 @@ def test_elf_split_text_sections_are_included_without_spanning_data(
     assert not common.in_executable_code(marker, ranges)
     assert dict(elf_function_symbols(split_text_elf))["worker"] == worker
     assert not common.in_executable_code(worker_end, ranges)
+
+
+def test_llm_disassembly_hint_reads_split_executable_section(split_text_elf: Path) -> None:
+    worker = _elf_symbol_address(split_text_elf, "worker")
+
+    hint = llm_dec._disasm_hint(split_text_elf, worker)
+
+    assert f"0x{worker:x}" in hint
 
 
 def test_pe_executable_sections_are_disjoint_and_data_is_rejected(tmp_path: Path) -> None:

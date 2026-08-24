@@ -357,8 +357,9 @@ DECBENCH_SMALL_DECOMPILERS="angr,ida,ghidra@12.0,ghidra@12.1" python scripts/run
 ### Why the run driver isn't just `decbench run`
 
 Key scaling facts: angr's decompiler is ~15-20 s/function (Ghidra
-~0.5 s/func) and decbench decompiles *all* `.text` functions, ~99% of which
-are bundled gnulib in some binaries. So the driver (a) filters decompilation
+~0.5 s/func) and an ungated backend can discover functions across every
+file-backed executable section, ~99% of which are bundled gnulib in some
+binaries. So the driver (a) filters decompilation
 to the project's own source functions via DWARF `decl_file`
 (`project_source_functions`), (b) imposes a hard per-binary timeout via
 killable subprocess, (c) recovers partial results on timeout

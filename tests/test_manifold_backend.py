@@ -176,8 +176,6 @@ def test_decompile_binary_maps_fun_names_to_addresses(
     monkeypatch, tiny_binary: Path, tmp_path: Path
 ) -> None:
     """A fake manifold emits a TU; the backend must key it by ELF-space address."""
-    # Use the fixture's own function addresses so the .text-range filter (which
-    # correctly drops anything outside .text) sees real targets.
     add_nums = _func_address(tiny_binary, "add_nums")
     main = _func_address(tiny_binary, "main")
     tu = SAMPLE_TU.replace("FUN_401136", f"FUN_{add_nums:x}").replace("FUN_4011a0", f"FUN_{main:x}")

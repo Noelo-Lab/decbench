@@ -185,29 +185,11 @@ def _rename_func(code: str, target: str) -> str:
 def _disasm_hint(binary_path: Path, addr: int, max_bytes: int = 640) -> str:
     """A short linear disassembly starting at ``addr`` to seed the prompt.
 
-    Reads raw ``.text`` bytes at the function's virtual address (the binary is
-    stripped, so there is no symbol/DWARF range) and linearly disassembles with
-    capstone, stopping at a ``ret`` followed by padding or after ~max_bytes. This
-    is a *hint*; the agent is expected to run objdump itself for the full picture.
-    Returns an empty string on any failure (arch not supported, capstone absent).
+    Reads the file-backed executable region containing the function address and
+    linearly disassembles with capstone, stopping at a return or after
+    ``max_bytes``. This is a hint; the agent is expected to run objdump itself
+    for the full picture. Returns an empty string on any failure.
     """
-    try:
-        from elftools.elf.elffile import ELFFile
-
-        with open(binary_path, "rb") as f:
-            elf = ELFFile(f)
-            text = elf.get_section_by_name(".text")
-            if text is None:
-                return ""
-            sh_addr = text["sh_addr"]
-            data = text.data()
-        off = addr - sh_addr
-        if off < 0 or off >= len(data):
-            return ""
-        blob = data[off : off + max_bytes]
-    except Exception:  # noqa: BLE001
-        return ""
-
     try:
         import capstone
 
@@ -216,14 +198,26 @@ def _disasm_hint(binary_path: Path, addr: int, max_bytes: int = 640) -> str:
         fmt = binfmt.detect(binary_path)
         if fmt is None:
             return ""
-        # An odd DWARF low_pc is a Thumb entry (T-bit set), not a byte offset.
         thumb = fmt.arch == "arm" and bool(addr & 1)
-        am = binfmt.capstone_arch_mode(fmt, thumb=thumb)
+        decode_addr = addr & ~1 if thumb else addr
+        blob = b""
+        for region_addr, region_data in binfmt.executable_regions(binary_path):
+            offset = decode_addr - region_addr
+            if 0 <= offset < len(region_data):
+                blob = region_data[offset : offset + max_bytes]
+                break
+        if not blob:
+            return ""
+        am = binfmt.capstone_arch_mode(
+            fmt,
+            thumb=thumb,
+            mclass=thumb and fmt.fmt == "elf" and binfmt.elf_is_arm_mclass(binary_path),
+        )
         if am is None:
             return ""
         md = capstone.Cs(*am)
         lines: list[str] = []
-        for insn in md.disasm(blob, addr & ~1 if thumb else addr):
+        for insn in md.disasm(blob, decode_addr):
             lines.append(f"  0x{insn.address:x}: {insn.mnemonic} {insn.op_str}".rstrip())
             if insn.mnemonic in ("ret", "retq", "bx", "pop") and len(lines) > 3:
                 break
