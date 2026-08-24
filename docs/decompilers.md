@@ -32,10 +32,14 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
   Docker needs nothing else installed. For x86-64 ELF executables importing
   `__libc_start_main`, the same temporary run requests manifold's Clight JSON
   sidecar and consumes only its exact literal-`main` address relation, so that
-  function remains addressable after stripping. The sidecar's
-  variables are deliberately ignored: they predate final C transformations and
-  are not final-variable provenance, so type matching still uses the C/usage
-  fallback and reports no native line map.
+  function remains addressable after stripping. PE inputs request the same
+  sidecar and consume every unique exact final-function name/address relation;
+  addresses must lie in an executable PE section, and duplicate names or
+  addresses are omitted. This joins two outputs from the same producer rather
+  than matching against source names. The sidecar's variables are deliberately
+  ignored: they predate final C transformations and are not final-variable
+  provenance, so type matching still uses the C/usage fallback and reports no
+  native line map.
 - **Native or containerized Glaurung** (`raw/glaurung_raw.py`: `glaurung`):
   invokes Glaurung's address-scoped JSON CLI natively when `GLAURUNG_BIN`, the
   decompiler config, or `$PATH` resolves it. Otherwise it runs the immutable

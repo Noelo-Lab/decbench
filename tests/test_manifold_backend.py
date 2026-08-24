@@ -145,6 +145,19 @@ def tiny_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return binary
 
 
+@pytest.fixture
+def minimal_pe(tmp_path: Path) -> Path:
+    data = bytearray(0x100)
+    pe_offset = 0x80
+    data[:2] = b"MZ"
+    data[0x3C:0x40] = pe_offset.to_bytes(4, "little")
+    data[pe_offset : pe_offset + 4] = b"PE\x00\x00"
+    data[pe_offset + 4 : pe_offset + 6] = (0x14C).to_bytes(2, "little")
+    binary = tmp_path / "tiny.dll"
+    binary.write_bytes(data)
+    return binary
+
+
 def _func_address(binary: Path, name: str) -> int:
     """The ELF-file-space entry address of ``name`` from the symbol table."""
     from elftools.elf.elffile import ELFFile
@@ -256,11 +269,102 @@ def test_decompile_binary_maps_literal_main_from_clight_sidecar(
     assert argv_log.read_text().splitlines()[-1] == "--dump-clight-json"
 
 
+def test_decompile_binary_maps_pe_names_from_clight_sidecar(
+    monkeypatch, minimal_pe: Path, tmp_path: Path
+) -> None:
+    import decbench.decompilers.raw.manifold_raw as manifold_raw
+
+    region_start = 0x400000
+    partial_crc = region_start + 0x120
+    full_crc = region_start + 0x180
+    tu = tmp_path / "tu.c"
+    tu.write_text(
+        "int PartialCRC(int p0);\n"
+        "int FullCRC(int p0);\n\n"
+        "int PartialCRC(int p0)\n{\n    return p0 + 1;\n}\n\n"
+        "int FullCRC(int p0)\n{\n    return p0 + 2;\n}\n"
+    )
+    sidecar = tmp_path / "tu.clight.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "compcert_clight": True,
+                "functions": [
+                    {"name": "PartialCRC", "address": f"0x{partial_crc:x}", "temps": [1]},
+                    {"name": "FullCRC", "address": f"0x{full_crc:x}", "temps": [2]},
+                ],
+            }
+        )
+    )
+    argv_log = tmp_path / "argv.log"
+    fake = tmp_path / "manifold"
+    fake.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib, shutil, sys\n"
+        "out = pathlib.Path(sys.argv[2])\n"
+        f"shutil.copyfile({str(tu)!r}, out)\n"
+        f"shutil.copyfile({str(sidecar)!r}, out.with_suffix('.clight.json'))\n"
+        f"pathlib.Path({str(argv_log)!r}).write_text('\\n'.join(sys.argv[1:]))\n"
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("MANIFOLD_BIN", str(fake))
+    monkeypatch.setattr(
+        manifold_raw.binfmt,
+        "executable_regions",
+        lambda _binary: ((region_start, bytes(0x1000)),),
+    )
+
+    result = ManifoldDecompiler().decompile_binary(
+        minimal_pe,
+        function_names={partial_crc},
+    )
+
+    assert list(result.functions) == ["PartialCRC"]
+    function = result.functions["PartialCRC"]
+    assert function.address == partial_crc
+    assert function.variables == []
+    assert function.line_mappings == []
+    assert result.decompiler.failed_functions == []
+    assert result.decompiler.extra["clight_function_addresses"] == 2
+    assert argv_log.read_text().splitlines()[-1] == "--dump-clight-json"
+
+
+def test_clight_function_addresses_accept_all_unique_relations(tmp_path: Path) -> None:
+    sidecar = tmp_path / "all.clight.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "compcert_clight": True,
+                "functions": [
+                    {"name": "PartialCRC", "address": "0x1120"},
+                    {"name": "FullCRC", "address": "0x1180"},
+                    {"name": "outside", "address": "0x2000"},
+                ],
+            }
+        )
+    )
+
+    assert _clight_function_addresses(
+        sidecar,
+        ((0x1000, 0x1200),),
+        accepted_name=None,
+    ) == {"PartialCRC": 0x1120, "FullCRC": 0x1180}
+    assert (
+        _clight_function_addresses(
+            sidecar,
+            ((0x1000, 0x1200),),
+            accepted_name="main",
+        )
+        == {}
+    )
+
+
 def test_clight_function_addresses_fail_closed(tiny_binary: Path, tmp_path: Path) -> None:
     from decbench.decompilers.raw import common
 
     text_range = common.elf_text_range(tiny_binary)
     assert text_range is not None
+    executable_ranges = (text_range,)
     main = _func_address(tiny_binary, "main")
     documents = [
         "not json",
@@ -283,6 +387,15 @@ def test_clight_function_addresses_fail_closed(tiny_binary: Path, tmp_path: Path
         json.dumps(
             {
                 "compcert_clight": True,
+                "functions": [
+                    {"name": "main", "address": f"0x{main:x}"},
+                    {"name": "alias", "address": f"0x{main:x}"},
+                ],
+            }
+        ),
+        json.dumps(
+            {
+                "compcert_clight": True,
                 "functions": [{"name": "main", "address": f"0x{text_range[1]:x}"}],
             }
         ),
@@ -290,15 +403,27 @@ def test_clight_function_addresses_fail_closed(tiny_binary: Path, tmp_path: Path
     for index, document in enumerate(documents):
         path = tmp_path / f"bad-{index}.clight.json"
         path.write_text(document)
-        assert "main" not in _clight_function_addresses(path, text_range)
-    assert _clight_function_addresses(tmp_path / "missing.clight.json", text_range) == {}
-    assert _clight_function_addresses(sidecar_path=tmp_path, text_range=None) == {}
+        assert "main" not in _clight_function_addresses(
+            path,
+            executable_ranges,
+            accepted_name=None,
+        )
+    assert (
+        _clight_function_addresses(
+            tmp_path / "missing.clight.json",
+            executable_ranges,
+            accepted_name=None,
+        )
+        == {}
+    )
+    assert _clight_function_addresses(tmp_path, (), accepted_name=None) == {}
 
 
-def test_clight_sidecar_is_requested_only_for_x86_libc_entry(
-    tiny_binary: Path, tmp_path: Path
+def test_clight_sidecar_is_requested_for_pe_and_x86_libc_entry(
+    tiny_binary: Path, minimal_pe: Path, tmp_path: Path
 ) -> None:
     assert _needs_clight_function_addresses(tiny_binary) is True
+    assert _needs_clight_function_addresses(minimal_pe) is True
     arm_header = tmp_path / "tiny-arm"
     arm_bytes = bytearray(tiny_binary.read_bytes())
     elf_em_arm = 40

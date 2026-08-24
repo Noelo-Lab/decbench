@@ -12,9 +12,10 @@ This backend therefore:
 * splits the emitted translation unit into per-function definitions with a
   brace/string-aware scanner, and
 * recovers each function's address from the ``FUN_<hex>`` names manifold gives
-  functions in a stripped binary, plus the exact ``main`` / address relation in
-  manifold's Clight JSON sidecar (falling back to the ELF symbol table when the
-  binary still carries symbols).
+  functions in a stripped binary, plus exact final-function name/address
+  relations from manifold's Clight JSON sidecar for PE and for recovered ELF
+  ``main`` (falling back to the ELF symbol table when the binary still carries
+  symbols).
 
 That single run happens over one of two paths, tried in this order:
 
@@ -29,9 +30,9 @@ Both paths write the same whole-program ``.c``, so everything downstream of the
 run is shared. Native wins when both exist: it avoids the container round-trip
 and lets a developer benchmark a working tree.
 
-Addresses are reported in **ELF-file space**, matching the other raw backends:
-manifold reads the ELF's own virtual addresses, so its addresses are already in
-that space and need no rebasing.
+Addresses are reported in the binary's linked address space, matching DWARF and
+the other raw backends. Manifold reads ELF virtual addresses directly; its PE
+sidecar reports ImageBase-plus-RVA addresses. Neither form needs rebasing.
 
 Native line and variable evidence is deliberately left unset. The Clight JSON
 sidecar carries IR variables, but manifold's address-keyed Clight nodes lose
@@ -67,6 +68,7 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
 )
+from decbench.utils import binfmt
 from decbench.utils.docker_task import docker_task_label_args
 
 _l = logging.getLogger(__name__)
@@ -435,20 +437,26 @@ def _symbol_addresses(binary_path: Path) -> dict[str, int]:
 
 
 def _needs_clight_function_addresses(binary_path: Path) -> bool:
-    """Whether manifold can recover a stripped literal ``main`` on this input.
+    """Whether manifold can emit otherwise-unaddressed exact function names.
 
-    Upstream's current recovery recognizes the x86-64 ELF startup convention.
-    Requiring the corresponding dynamic symbol keeps the relatively expensive
-    Clight export off ARM firmware, PE files, shared libraries, and older/static
-    startup shapes where it cannot supply the missing relation.
+    PE recovery names internal functions without preserving their addresses in
+    the printed C, so every PE requests the sidecar. For ELF, upstream's current
+    recovery recognizes only the x86-64 ``__libc_start_main`` convention; the
+    narrower gate keeps the relatively expensive export off ARM firmware,
+    shared libraries, and older/static startup shapes.
     """
+    info = binfmt.detect(binary_path)
+    if info is not None and info.fmt == "pe":
+        return True
+    if info is None or info.fmt != "elf" or info.arch != "x86-64":
+        return False
     try:
         from elftools.elf.elffile import ELFFile
         from elftools.elf.sections import SymbolTableSection
 
         with open(binary_path, "rb") as f:
             elf = ELFFile(f)
-            if elf.elfclass != 64 or elf["e_machine"] != "EM_X86_64" or not elf["e_entry"]:
+            if not elf["e_entry"]:
                 return False
             for sec in elf.iter_sections():
                 if not isinstance(sec, SymbolTableSection):
@@ -464,17 +472,18 @@ def _needs_clight_function_addresses(binary_path: Path) -> bool:
 
 def _clight_function_addresses(
     sidecar_path: Path,
-    text_range: tuple[int, int] | None,
+    executable_ranges: tuple[tuple[int, int], ...],
+    *,
+    accepted_name: str | None,
 ) -> dict[str, int]:
-    """Read manifold's exact final-function address for literal ``main``.
+    """Read exact final-function name/address relations from manifold.
 
-    The relation recovers names such as literal ``main``, which otherwise lose
-    the address encoded by a ``FUN_<hex>`` spelling. Everything else in the
-    Clight export, including its pre-final-AST variables and other names, is
-    ignored. The record is accepted only when its schema is exact, ``main`` is
-    unique, and its address lies inside the binary's ``.text`` section.
+    ``accepted_name`` restricts ELF recovery to literal ``main``; ``None``
+    accepts every PE producer relation. The sidecar's pre-final-AST variables
+    remain ignored. Names and addresses must each be unique, and every address
+    must lie in a verified executable range from the binary itself.
     """
-    if text_range is None or not sidecar_path.is_file():
+    if not executable_ranges or not sidecar_path.is_file():
         return {}
     try:
         document = json.loads(sidecar_path.read_text())
@@ -487,33 +496,34 @@ def _clight_function_addresses(
     if not isinstance(rows, list):
         return {}
 
-    addresses: dict[str, int] = {}
-    ambiguous: set[str] = set()
-    seen: set[str] = set()
+    candidates: list[tuple[str, int]] = []
+    name_counts: dict[str, int] = {}
+    address_counts: dict[int, int] = {}
     for row in rows:
         if not isinstance(row, dict):
             continue
         name = row.get("name")
         encoded = row.get("address")
-        if name != "main":
+        if not isinstance(name, str) or not name:
             continue
-        if name in seen:
-            ambiguous.add(name)
-            addresses.pop(name, None)
+        if accepted_name is not None and name != accepted_name:
             continue
-        seen.add(name)
+        name_counts[name] = name_counts.get(name, 0) + 1
         if not isinstance(encoded, str):
             continue
         match = _CLIGHT_ADDRESS.fullmatch(encoded)
         if match is None:
             continue
         address = int(match.group(1), 16)
-        if not common.in_text(address, text_range):
+        address_counts[address] = address_counts.get(address, 0) + 1
+        if not any(start <= address < end for start, end in executable_ranges):
             continue
-        addresses[name] = address
-    for name in ambiguous:
-        addresses.pop(name, None)
-    return addresses
+        candidates.append((name, address))
+    return {
+        name: address
+        for name, address in candidates
+        if name_counts[name] == 1 and address_counts[address] == 1
+    }
 
 
 @register_decompiler("manifold")
@@ -720,6 +730,8 @@ class ManifoldDecompiler(Decompiler):
         start_time = time.time()
         elf_base = common.elf_min_vaddr(binary_path)
         text_range = common.elf_text_range(binary_path)
+        binary_info = binfmt.detect(binary_path)
+        is_pe = binary_info is not None and binary_info.fmt == "pe"
         timeout_s = self.config.binary_timeout_seconds
 
         def _meta(failed: list[str], extra: dict[str, Any]) -> DecompilerMetadata:
@@ -775,11 +787,21 @@ class ManifoldDecompiler(Decompiler):
                 tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-5:]
                 return _error(f"no output (exit {proc.returncode}): {' | '.join(tail)}")
             text = out_c.read_text(errors="replace")
-            clight_addresses = (
-                _clight_function_addresses(out_c.with_suffix(".clight.json"), text_range)
-                if needs_clight_addresses
-                else {}
+            executable_ranges = (
+                tuple(
+                    (start, start + len(data))
+                    for start, data in binfmt.executable_regions(binary_path)
+                )
+                if is_pe
+                else ((text_range,) if text_range is not None else ())
             )
+            clight_addresses = {}
+            if needs_clight_addresses:
+                clight_addresses = _clight_function_addresses(
+                    out_c.with_suffix(".clight.json"),
+                    executable_ranges,
+                    accepted_name=None if is_pe else "main",
+                )
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
         unaddressed: list[str] = []
