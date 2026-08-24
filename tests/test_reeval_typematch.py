@@ -134,6 +134,32 @@ def _set_checkpoint_binary_path(root: Path, binary_path: Path) -> None:
         pickle.dump(data, file)
 
 
+def _add_measurable_function(root: Path, name: str) -> None:
+    function_data_path = root / "function_results.json"
+    payload = json.loads(function_data_path.read_text())
+    payload["groups"][0]["functions"].append(
+        {
+            "function": name,
+            "values": {"angr": {"type_match": 0.5}},
+        }
+    )
+    function_data_path.write_text(json.dumps(payload))
+
+
+def _add_checkpoint_function(root: Path, name: str) -> None:
+    checkpoint = root / "checkpoints" / "proj.pkl"
+    with checkpoint.open("rb") as file:
+        data = pickle.load(file)
+    result = data["decompile"]["O0"]["bin"]["angr"]
+    result.functions[name] = FunctionDecompilation(
+        name=name,
+        address=len(result.functions) + 1,
+        decompiled_code="",
+    )
+    with checkpoint.open("wb") as file:
+        pickle.dump(data, file)
+
+
 @pytest.mark.parametrize("recorded_path", ["relative", "stale-absolute", "current"])
 def test_reevaluation_rebinds_checkpoint_binary_to_selected_tree(
     tmp_path: Path,
@@ -274,10 +300,83 @@ def test_full_canonical_run_does_not_treat_missing_checkpoint_tree_as_empty_scop
     canonical = tmp_path / "type_match_new.json"
     canonical.write_bytes(b"canonical sentinel\n")
 
-    with pytest.raises(reeval_typematch.CanonicalPromotionError, match="coverage mismatch"):
+    with pytest.raises(reeval_typematch.CanonicalPromotionError, match="missing checkpoint"):
         reeval_typematch.main([str(tmp_path), "--emit"])
 
     assert canonical.read_bytes() == b"canonical sentinel\n"
+
+
+@pytest.mark.parametrize("failure", ["exception", "metric_errors", "coverage"])
+def test_ab_failure_preserves_existing_overlay_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Literal["exception", "metric_errors", "coverage"],
+) -> None:
+    _make_results_tree(tmp_path)
+    output = tmp_path / "address-ab.json"
+    manifest = typematch_overlay_manifest_path(output)
+    output.write_bytes(b"A/B sentinel\n")
+    manifest.write_bytes(b"manifest sentinel\n")
+    if failure == "exception":
+        outcome: MetricResult | Exception = RuntimeError("scoring exploded")
+    elif failure == "metric_errors":
+        outcome = _result(errors=("f: inner failure",))
+    else:
+        outcome = _result(functions=())
+    _install_metric(monkeypatch, outcome)
+
+    with pytest.raises(TypeMatchOverlayError):
+        reeval_typematch.main([str(tmp_path), "--mode", "address", "--output", str(output)])
+
+    assert output.read_bytes() == b"A/B sentinel\n"
+    assert manifest.read_bytes() == b"manifest sentinel\n"
+
+
+def test_ab_missing_checkpoint_preserves_existing_overlay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_results_tree(tmp_path)
+    (tmp_path / "checkpoints" / "proj.pkl").unlink()
+    output = tmp_path / "address-ab.json"
+    output.write_bytes(b"A/B sentinel\n")
+    _install_metric(monkeypatch, _result())
+
+    with pytest.raises(TypeMatchOverlayError, match="missing checkpoint"):
+        reeval_typematch.main([str(tmp_path), "--mode", "address", "--output", str(output)])
+
+    assert output.read_bytes() == b"A/B sentinel\n"
+
+
+def test_written_overlay_requires_every_measurable_checkpoint_function(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_results_tree(tmp_path)
+    _add_measurable_function(tmp_path, "g")
+    _add_checkpoint_function(tmp_path, "g")
+    output = tmp_path / "address-ab.json"
+    _install_metric(monkeypatch, _result(functions=("f",)))
+
+    with pytest.raises(TypeMatchOverlayError, match=r"missing 1 .*proj::O0::bin::g::angr"):
+        reeval_typematch.main([str(tmp_path), "--mode", "address", "--output", str(output)])
+
+    assert not output.exists()
+
+
+def test_written_overlay_allows_measurable_function_absent_from_producer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_results_tree(tmp_path)
+    _add_measurable_function(tmp_path, "g")
+    output = tmp_path / "address-ab.json"
+    _install_metric(monkeypatch, _result(functions=("f",)))
+
+    reeval_typematch.main([str(tmp_path), "--mode", "address", "--output", str(output)])
+
+    payload, _provenance = read_typematch_overlay(output)
+    assert set(payload["angr"]) == {"proj::O0::bin::f"}
 
 
 @pytest.mark.parametrize("alias_kind", ["lexical", "symlink", "hardlink"])

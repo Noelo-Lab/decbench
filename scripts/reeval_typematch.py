@@ -21,10 +21,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import pickle
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TypedDict
 
@@ -59,6 +60,7 @@ from decbench.utils.langs import preprocessed_by_stem
 MODES = ("auto", "address", "usage", "address+usage")
 PRODUCER_OCCURRENCE_POLICIES = frozenset((*VARIABLE_OCCURRENCE_POLICIES, "undeclared"))
 SampleKey = tuple[str, str, str, str]
+ScoreKey = tuple[str, str, str, str, str]
 
 
 class AggregateRow(TypedDict):
@@ -243,29 +245,52 @@ def _prepare_decompilation(
     return relocated
 
 
-def _old_scores(root: Path) -> dict[tuple[str, str, str, str, str], float]:
+def _function_data_scope(
+    root: Path,
+) -> tuple[dict[ScoreKey, float], set[SampleKey], set[SampleKey]]:
+    """Load historical scores and the frozen global TypeMatch denominator once."""
+
     with open(root / "function_results.json") as file:
         function_data = json.load(file)
-    old: dict[tuple[str, str, str, str, str], float] = {}
-    for group in function_data["groups"]:
-        for function in group["functions"]:
-            for decompiler, values in (function.get("values") or {}).items():
-                if values and values.get("type_match") is not None:
-                    key = (
-                        group["project"],
-                        group["opt_level"],
-                        group["binary"],
-                        function["function"],
-                        decompiler,
+    old: dict[ScoreKey, float] = {}
+    selected: set[SampleKey] = set()
+    measurable: set[SampleKey] = set()
+    try:
+        groups = function_data["groups"]
+        for group in groups:
+            function_prefix = (
+                str(group["project"]),
+                str(group["opt_level"]),
+                str(group["binary"]),
+            )
+            for function in group["functions"]:
+                function_key = (*function_prefix, str(function["function"]))
+                if function_key in selected:
+                    raise ValueError(
+                        "function data contains duplicate function key: " + "::".join(function_key)
                     )
-                    old[key] = float(values["type_match"])
-    return old
+                selected.add(function_key)
+                for decompiler, values in (function.get("values") or {}).items():
+                    if not isinstance(values, Mapping):
+                        continue
+                    raw_value = values.get("type_match")
+                    if (
+                        not isinstance(raw_value, (int, float))
+                        or isinstance(raw_value, bool)
+                        or not math.isfinite(float(raw_value))
+                    ):
+                        continue
+                    measurable.add(function_key)
+                    old[(*function_key, str(decompiler))] = float(raw_value)
+    except (KeyError, TypeError) as exc:
+        raise ValueError(f"invalid function data {root / 'function_results.json'}: {exc}") from exc
+    return old, selected, measurable
 
 
 def _score_keys(
     scores: dict[str, dict[str, dict[str, float | int | str]]],
-) -> set[tuple[str, str, str, str, str]]:
-    keys: set[tuple[str, str, str, str, str]] = set()
+) -> set[ScoreKey]:
+    keys: set[ScoreKey] = set()
     for decompiler, per_decompiler in scores.items():
         for score_key in per_decompiler:
             project, optimization, binary, function = score_key.split("::", 3)
@@ -274,23 +299,20 @@ def _score_keys(
 
 
 def _coverage_failure(
-    old: dict[tuple[str, str, str, str, str], float],
+    expected: set[ScoreKey],
     new_scores: dict[str, dict[str, dict[str, float | int | str]]],
-    projects: Sequence[str] | None,
 ) -> str | None:
-    scope = set(projects) if projects is not None else None
-    expected = {key for key in old if scope is None or key[0] in scope}
     actual = _score_keys(new_scores)
     missing = sorted(expected - actual)
     unexpected = sorted(actual - expected)
     if not missing and not unexpected:
         return None
 
-    def samples(keys: list[tuple[str, str, str, str, str]]) -> str:
+    def samples(keys: list[ScoreKey]) -> str:
         return ", ".join("::".join(key) for key in keys[:3])
 
     details = [
-        f"canonical coverage mismatch: expected {len(expected)} entries, got {len(actual)}",
+        f"overlay coverage mismatch: expected {len(expected)} entries, got {len(actual)}",
     ]
     if missing:
         details.append(f"missing {len(missing)} ({samples(missing)})")
@@ -314,24 +336,31 @@ def _promotion_provenance(metric: TypeMatchMetric, mode: str) -> dict[str, objec
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     root: Path = args.results_dir.resolve()
-    old = _old_scores(root)
+    old, function_keys, measurable_keys = _function_data_scope(root)
     checkpoint_dir = root / "checkpoints"
     sample_keys = _sample_keys(args.manifest) if args.manifest is not None else None
+    if sample_keys is not None:
+        missing_manifest_keys = sorted(sample_keys - function_keys)
+        if missing_manifest_keys:
+            samples = ", ".join("::".join(key) for key in missing_manifest_keys[:3])
+            raise ValueError(
+                f"sample-set manifest has {len(missing_manifest_keys)} functions absent from "
+                f"function data ({samples})"
+            )
     manifest_projects = sorted({key[0] for key in sample_keys}) if sample_keys is not None else []
-    projects = list(
-        dict.fromkeys(
-            args.projects
-            or manifest_projects
-            or sorted(path.stem for path in checkpoint_dir.glob("*.pkl"))
-        )
+    measurable_projects = sorted(
+        {key[0] for key in measurable_keys if sample_keys is None or key in sample_keys}
     )
+    projects = list(dict.fromkeys(args.projects or manifest_projects or measurable_projects))
     metric = TypeMatchMetric(MetricConfig(extra_options={"variable_match_mode": args.mode}))
     provenance = _promotion_provenance(metric, args.mode)
     aggregate: defaultdict[str, AggregateRow] = defaultdict(
         lambda: {"o": 0.0, "n": 0.0, "c": 0, "imp": 0, "wor": 0}
     )
     new_scores: dict[str, dict[str, dict[str, float | int | str]]] = {}
-    promotion_failures: list[str] = []
+    write_requested = args.emit or args.output is not None
+    write_failures: list[str] = []
+    expected_score_keys: set[ScoreKey] = set()
     requested_backends = set(args.backend)
     scored_backends: set[str] = set()
 
@@ -340,8 +369,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         if not checkpoint_path.is_file():
             message = f"missing checkpoint: {checkpoint_path}"
             print(f"  ! {message}")
-            if args.emit:
-                promotion_failures.append(message)
+            if write_requested:
+                write_failures.append(message)
             continue
         with open(checkpoint_path, "rb") as file:
             data = pickle.load(file)
@@ -373,8 +402,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 except BinaryRelocationError as exc:
                     context = f"{project}/{opt_name}/{binary_name}"
                     print(f"  ! {context}: {exc}")
-                    if args.emit:
-                        promotion_failures.append(f"binary relocation failed for {context}: {exc}")
+                    if write_requested:
+                        write_failures.append(f"binary relocation failed for {context}: {exc}")
                         continue
                     raise
                 native_context = NativeProvenanceContext(binary_path)
@@ -382,19 +411,32 @@ def main(argv: Sequence[str] | None = None) -> None:
                     if requested_backends and decompiler_name not in requested_backends:
                         continue
                     try:
+                        prepared = _prepare_decompilation(
+                            decompilation,
+                            selected_functions,
+                            native_context,
+                        )
+                        expected_score_keys.update(
+                            (
+                                project,
+                                opt_name,
+                                binary_name,
+                                str(function_name),
+                                str(decompiler_name),
+                            )
+                            for function_name in prepared.functions
+                            if (project, opt_name, binary_name, str(function_name))
+                            in measurable_keys
+                        )
                         result = metric.compute_for_binary(
-                            _prepare_decompilation(
-                                decompilation,
-                                selected_functions,
-                                native_context,
-                            ),
+                            prepared,
                             preprocessed_sources=sources,
                         )
                     except Exception as exc:  # noqa: BLE001
                         context = f"{project}/{opt_name}/{binary_name}/{decompiler_name}"
                         print(f"  ! {context}: {exc}")
-                        if args.emit:
-                            promotion_failures.append(
+                        if write_requested:
+                            write_failures.append(
                                 f"metric exception for {context}: {type(exc).__name__}: {exc}"
                             )
                         continue
@@ -402,8 +444,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                         context = f"{project}/{opt_name}/{binary_name}/{decompiler_name}"
                         for error in result.errors:
                             print(f"  ! {context}: {error}")
-                        if args.emit:
-                            promotion_failures.append(
+                        if write_requested:
+                            write_failures.append(
                                 f"metric reported {len(result.errors)} error(s) for {context}"
                             )
                     for function_name, value in result.function_results.items():
@@ -479,19 +521,16 @@ def main(argv: Sequence[str] | None = None) -> None:
             f"{int(row['wor']):>7}"
         )
 
-    if args.emit:
-        coverage_failure = _coverage_failure(
-            old,
-            new_scores,
-            projects if args.projects else None,
-        )
+    if write_requested:
+        coverage_failure = _coverage_failure(expected_score_keys, new_scores)
         if coverage_failure is not None:
-            promotion_failures.append(coverage_failure)
-        if promotion_failures:
-            detail = "\n  - ".join(promotion_failures)
-            raise CanonicalPromotionError(
-                "canonical type-match overlay was not changed:\n  - " + detail
-            )
+            write_failures.append(coverage_failure)
+        if write_failures:
+            detail = "\n  - ".join(write_failures)
+            message = "type-match overlay was not changed:\n  - " + detail
+            if args.emit:
+                raise CanonicalPromotionError(message)
+            raise TypeMatchOverlayError(message)
 
     output_path = root / "type_match_new.json" if args.emit else args.output
     if output_path is None:

@@ -221,9 +221,16 @@ misleading empty overlay. Written overlays retain the legacy raw score-map
 shape and gain a digest-bound `.meta.json` companion containing the requested and
 resolved modes, complete policy values, policy/manifest schemas, and metric cache
 version. Scoped updates require compatible provenance and refuse legacy or mixed-policy
-merges. Canonical promotion is transactional: any scoring exception, reported metric
-error, or exact function/decompiler coverage mismatch leaves the existing overlay
-unchanged. Explicit A/B outputs remain usable for partial experiments.
+merges. Every overlay write is transactional, including explicitly named A/B
+outputs. A missing checkpoint, binary-relocation failure, scoring exception,
+reported metric error, or coverage mismatch leaves the existing overlay and companion
+unchanged. Coverage is exact for the invocation: required rows are the functions
+actually present in each selected producer checkpoint intersected with the frozen
+global TypeMatch-measurable denominator in `function_results.json`. This permits a
+real decompiler omission while rejecting a silently dropped metric row, even when
+every A/B mode would otherwise drop the same row. Explicit A/B outputs remain usable
+for partial experiments through a sample manifest or project scope, with that same
+fail-closed check applied before a scoped merge.
 
 Before scoring each checkpoint result, the re-evaluator resolves the binary in
 the selected results tree, deep-copies and relocates the result, and applies the
