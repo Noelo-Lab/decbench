@@ -606,8 +606,10 @@ deterministic least-loaded policy. `manifest_index.json` binds the source and pe
 digests and refuses overlap, missing/unexpected keys, or split binary groups. Give one
 generated manifest to each `reeval_typematch.py` worker and use a fresh cache root when
 replacing an older function-sharded run; cached per-function values can otherwise retain
-the old calibration context. Preserve a rejected run separately as a control rather than
-merging its overlays into corrected output.
+the old calibration context. The shard count cannot exceed the number of selected binary
+groups; `--force` replaces the indexed set and removes stale generated shard manifests while
+leaving other files alone. Preserve a rejected run separately as a control rather than merging
+its overlays into corrected output.
 
 The canonical rebuild is `scripts/finalize_results.py <tree>` (also what
 `run_benchmark.py`'s finalize calls): ALL checkpoints (never scoped — a

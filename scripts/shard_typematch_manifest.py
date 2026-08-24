@@ -54,6 +54,19 @@ def _function_row(key: tuple[str, str, str, str]) -> dict[str, str]:
     }
 
 
+def _generated_shard_files(directory: Path) -> list[Path]:
+    if not directory.is_dir():
+        return []
+    return sorted(
+        path
+        for path in directory.iterdir()
+        if path.name.startswith("shard")
+        and path.name.endswith(".json")
+        and path.name[5:-5].isdigit()
+        and (path.is_file() or path.is_symlink())
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.shards < 1:
@@ -68,17 +81,21 @@ def main(argv: list[str] | None = None) -> int:
 
     output_dir = args.output_dir.resolve()
     manifests_dir = output_dir / "manifests"
-    targets = [manifests_dir / f"shard{index:02d}.json" for index in range(1, args.shards + 1)]
-    targets.append(output_dir / "manifest_index.json")
-    existing = [path for path in targets if path.exists()]
+    shard_targets = [
+        manifests_dir / f"shard{index:02d}.json" for index in range(1, args.shards + 1)
+    ]
+    index_target = output_dir / "manifest_index.json"
+    existing = sorted(
+        set(_generated_shard_files(manifests_dir))
+        | {path for path in (*shard_targets, index_target) if path.exists()}
+    )
     if existing and not args.force:
         names = ", ".join(str(path) for path in existing[:3])
         raise SystemExit(f"error: generated files already exist ({names}); pass --force to replace")
 
     source_sha256 = file_sha256(source)
     shard_rows: list[dict[str, object]] = []
-    for index, keys in enumerate(partition, start=1):
-        path = manifests_dir / f"shard{index:02d}.json"
+    for index, (path, keys) in enumerate(zip(shard_targets, partition, strict=True), start=1):
         payload = {
             "binary_count": len({binary_key(key) for key in keys}),
             "functions": [_function_row(key) for key in keys],
@@ -100,13 +117,19 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
 
+    if args.force:
+        expected_targets = set(shard_targets)
+        for path in _generated_shard_files(manifests_dir):
+            if path not in expected_targets:
+                path.unlink()
+
     index_payload = {
         **audit.to_dict(),
         "shards": shard_rows,
         "source_manifest": str(source),
         "source_manifest_sha256": source_sha256,
     }
-    _write_json_atomic(output_dir / "manifest_index.json", index_payload)
+    _write_json_atomic(index_target, index_payload)
     print(
         f"wrote {args.shards} whole-binary shards: {audit.function_count} functions, "
         f"{audit.binary_count} binaries, key_sha256={audit.selected_key_sha256}"

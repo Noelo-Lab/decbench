@@ -76,6 +76,8 @@ def partition_manifest_by_binary(
     groups: dict[BinaryKey, list[FunctionKey]] = defaultdict(list)
     for key in unique:
         groups[binary_key(key)].append(key)
+    if shard_count > len(groups):
+        raise ValueError(f"shard_count ({shard_count}) exceeds binary group count ({len(groups)})")
 
     shards: list[list[FunctionKey]] = [[] for _ in range(shard_count)]
     loads = [0] * shard_count

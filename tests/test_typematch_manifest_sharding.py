@@ -69,6 +69,8 @@ def test_partition_rejects_empty_duplicate_and_invalid_shard_inputs() -> None:
         partition_manifest_by_binary([key, key], 2)
     with pytest.raises(ValueError, match="positive"):
         partition_manifest_by_binary([key], 0)
+    with pytest.raises(ValueError, match="exceeds binary group count"):
+        partition_manifest_by_binary(_keys(), 5)
 
 
 def test_cli_writes_self_auditing_whole_binary_manifests(tmp_path: Path) -> None:
@@ -84,4 +86,35 @@ def test_cli_writes_self_auditing_whole_binary_manifests(tmp_path: Path) -> None
     assert index["valid"] is True
     assert index["binary_split_count"] == 0
     assert index["selected_key_sha256"] == keyset_sha256(keys)
+    assert audit_manifest_shards(keys, shards).valid
+
+
+def test_cli_rejects_empty_shards_before_writing(tmp_path: Path) -> None:
+    source = tmp_path / "selected.json"
+    output = tmp_path / "partition"
+    _write_manifest(source, _keys())
+
+    with pytest.raises(ValueError, match="exceeds binary group count"):
+        main([str(source), str(output), "--shards", "5"])
+
+    assert not output.exists()
+
+
+def test_cli_force_removes_only_stale_generated_shards(tmp_path: Path) -> None:
+    source = tmp_path / "selected.json"
+    output = tmp_path / "partition"
+    keys = _keys()
+    _write_manifest(source, keys)
+    assert main([str(source), str(output), "--shards", "4"]) == 0
+    unrelated = output / "manifests" / "shard-notes.json"
+    unrelated.write_text("keep me")
+
+    assert main([str(source), str(output), "--shards", "2", "--force"]) == 0
+
+    generated = sorted(path.name for path in (output / "manifests").glob("shard[0-9]*.json"))
+    assert generated == ["shard01.json", "shard02.json"]
+    assert unrelated.read_text() == "keep me"
+    index = json.loads((output / "manifest_index.json").read_text())
+    assert len(index["shards"]) == 2
+    shards = [load_manifest(output / row["manifest"]) for row in index["shards"]]
     assert audit_manifest_shards(keys, shards).valid
