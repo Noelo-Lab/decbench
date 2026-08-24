@@ -11,11 +11,17 @@ from decbench.models.decompilation import (
     FunctionDecompilation,
 )
 from scripts.run_benchmark import (
+    DECOMPILER_TIMEOUT,
     _load_sampleset_manifest,
     _relabel_to_dwarf,
     needs_source_cfgs,
     skip_finalize,
 )
+
+
+def test_whole_program_docker_backends_have_explicit_time_budgets() -> None:
+    assert DECOMPILER_TIMEOUT["retdec"] == 1800
+    assert DECOMPILER_TIMEOUT["reko"] == 1800
 
 
 @pytest.mark.parametrize(

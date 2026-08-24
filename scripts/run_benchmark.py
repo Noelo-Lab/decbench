@@ -88,6 +88,8 @@ DECOMPILER_TIMEOUT = {
     "binja": int(os.environ.get("DECBENCH_BINJA_TIMEOUT") or "1800"),
     "dewolf": int(os.environ.get("DECBENCH_DEWOLF_TIMEOUT") or "1200"),
     "r2dec": int(os.environ.get("DECBENCH_R2DEC_TIMEOUT") or "1800"),
+    "retdec": int(os.environ.get("DECBENCH_RETDEC_TIMEOUT") or "1800"),
+    "reko": int(os.environ.get("DECBENCH_REKO_TIMEOUT") or "1800"),
     "codex": int(os.environ.get("DECBENCH_CODEX_TIMEOUT") or "3600"),
     "claude-code": int(os.environ.get("DECBENCH_CLAUDE_CODE_TIMEOUT") or "3600"),
     "kimi-code": int(os.environ.get("DECBENCH_KIMI_CODE_TIMEOUT") or "3600"),
