@@ -84,8 +84,12 @@ DECOMPILE_TIMEOUT = int(os.environ.get("DECBENCH_DECOMPILE_TIMEOUT") or "300")
 DECOMPILER_TIMEOUT = {
     "kuna": int(os.environ.get("DECBENCH_KUNA_TIMEOUT") or "900"),
     "angr": int(os.environ.get("DECBENCH_ANGR_TIMEOUT") or "3600"),
+    "angr-declib": int(os.environ.get("DECBENCH_ANGR_DECLIB_TIMEOUT") or "3600"),
     "ghidra": int(os.environ.get("DECBENCH_GHIDRA_TIMEOUT") or "1800"),
+    "ghidra-declib": int(os.environ.get("DECBENCH_GHIDRA_DECLIB_TIMEOUT") or "1800"),
     "binja": int(os.environ.get("DECBENCH_BINJA_TIMEOUT") or "1800"),
+    "binja-declib": int(os.environ.get("DECBENCH_BINJA_DECLIB_TIMEOUT") or "1800"),
+    "ida-declib": int(os.environ.get("DECBENCH_IDA_DECLIB_TIMEOUT") or "1800"),
     "dewolf": int(os.environ.get("DECBENCH_DEWOLF_TIMEOUT") or "1200"),
     "r2dec": int(os.environ.get("DECBENCH_R2DEC_TIMEOUT") or "1800"),
     "retdec": int(os.environ.get("DECBENCH_RETDEC_TIMEOUT") or "1800"),

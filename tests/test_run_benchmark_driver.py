@@ -31,6 +31,13 @@ def test_whole_program_docker_backends_have_explicit_time_budgets() -> None:
     assert format_decompiler_timeouts(["retdec", "angr@9.2"]) == ("retdec=1800s, angr@9.2=3600s")
 
 
+def test_declib_backends_have_explicit_time_budgets() -> None:
+    assert decompiler_timeout("angr-declib") == 3600
+    assert decompiler_timeout("ghidra-declib") == 1800
+    assert decompiler_timeout("ida-declib") == 1800
+    assert decompiler_timeout("binja-declib") == 1800
+
+
 class _TimedOutProcess:
     pid = 123
 
