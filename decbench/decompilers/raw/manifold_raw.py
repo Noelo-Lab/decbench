@@ -729,7 +729,7 @@ class ManifoldDecompiler(Decompiler):
 
         start_time = time.time()
         elf_base = common.elf_min_vaddr(binary_path)
-        text_range = common.elf_text_range(binary_path)
+        code_ranges = common.executable_code_ranges(binary_path)
         binary_info = binfmt.detect(binary_path)
         is_pe = binary_info is not None and binary_info.fmt == "pe"
         timeout_s = self.config.binary_timeout_seconds
@@ -787,19 +787,11 @@ class ManifoldDecompiler(Decompiler):
                 tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-5:]
                 return _error(f"no output (exit {proc.returncode}): {' | '.join(tail)}")
             text = out_c.read_text(errors="replace")
-            executable_ranges = (
-                tuple(
-                    (start, start + len(data))
-                    for start, data in binfmt.executable_regions(binary_path)
-                )
-                if is_pe
-                else ((text_range,) if text_range is not None else ())
-            )
             clight_addresses = {}
             if needs_clight_addresses:
                 clight_addresses = _clight_function_addresses(
                     out_c.with_suffix(".clight.json"),
-                    executable_ranges,
+                    code_ranges,
                     accepted_name=None if is_pe else "main",
                 )
 
@@ -822,7 +814,7 @@ class ManifoldDecompiler(Decompiler):
                         unaddressed.append(name)
                         continue
                 file_addr = addr
-            if common.should_skip_function(name, file_addr, text_range):
+            if common.should_skip_function(name, file_addr, code_ranges):
                 continue
             decompiled_functions[name] = FunctionDecompilation(
                 name=name,

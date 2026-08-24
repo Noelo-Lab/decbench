@@ -311,9 +311,9 @@ class RawGlaurungDecompiler(Decompiler):
         except Exception as e:  # noqa: BLE001
             _l.error("glaurung-raw: discover failed on %s: %s", binary_path, e)
             return []
-        text_range = common.elf_text_range(binary_path)
+        code_ranges = common.executable_code_ranges(binary_path)
         out = [(str(r.get("name") or ""), int(r.get("entry_va") or 0)) for r in records]
-        out = [(n, a) for (n, a) in out if not common.should_skip_function(n, a, text_range)]
+        out = [(n, a) for (n, a) in out if not common.should_skip_function(n, a, code_ranges)]
         return sorted(out, key=lambda x: x[1])
 
     def decompile_binary(
@@ -334,7 +334,7 @@ class RawGlaurungDecompiler(Decompiler):
             )
 
         start = time.time()
-        text_range = common.elf_text_range(binary_path)
+        code_ranges = common.executable_code_ranges(binary_path)
         decompiled: dict[str, FunctionDecompilation] = {}
         failed: list[str] = []
         timed_out = False
@@ -385,12 +385,11 @@ class RawGlaurungDecompiler(Decompiler):
 
         # 2. Index by name, filter to the benchmarkable + source-narrowed set.
         by_name = {str(r.get("name") or ""): r for r in records}
-        filter_range = text_range if function_names is None else None
         enumerated = sorted(
             (
                 (n, int(r.get("entry_va") or 0))
                 for n, r in by_name.items()
-                if not common.should_skip_function(n, int(r.get("entry_va") or 0), filter_range)
+                if not common.should_skip_function(n, int(r.get("entry_va") or 0), code_ranges)
             ),
             key=lambda x: x[1],
         )

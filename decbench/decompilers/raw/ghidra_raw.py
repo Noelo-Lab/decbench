@@ -225,7 +225,7 @@ class RawGhidraDecompiler(Decompiler):
 
         start_time = time.time()
         elf_base = common.elf_min_vaddr(binary_path)
-        text_range = common.elf_text_range(binary_path)
+        code_ranges = common.executable_code_ranges(binary_path)
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
         failed_functions: list[str] = []
@@ -265,7 +265,7 @@ class RawGhidraDecompiler(Decompiler):
 
                 requested = {n for (n, _a) in functions} if functions is not None else None
 
-                enumerated = self._enumerate(program, elf_base, text_range)
+                enumerated = self._enumerate(program, elf_base, code_ranges)
                 if requested is not None:
                     enumerated = [(n, a) for (n, a) in enumerated if n in requested]
 
@@ -344,7 +344,7 @@ class RawGhidraDecompiler(Decompiler):
         self,
         program: Any,
         elf_base: int,
-        text_range: tuple[int, int] | None,
+        code_ranges: common.CodeRangeFilter,
     ) -> list[tuple[str, int]]:
         """Enumerate (name, ELF-space addr) for benchmarkable functions.
 
@@ -362,7 +362,7 @@ class RawGhidraDecompiler(Decompiler):
             name = g_func.getName() or ""
             offset = int(g_func.getEntryPoint().getOffset())
             file_addr = (offset - image_base) + elf_base
-            if common.should_skip_function(name, file_addr, text_range):
+            if common.should_skip_function(name, file_addr, code_ranges):
                 continue
             out.append((name, file_addr))
         return sorted(out, key=lambda x: x[1])

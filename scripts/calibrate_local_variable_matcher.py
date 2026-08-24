@@ -517,14 +517,14 @@ def _decompile_exact_ida(
     import idapro
 
     elf_base = common.elf_min_vaddr(binary_path)
-    text_range = common.elf_text_range(binary_path)
+    code_ranges = common.executable_code_ranges(binary_path)
     output: dict[int, FunctionDecompilation] = {}
     errors: dict[int, str] = {}
     idapro.open_database(str(binary_path), run_auto_analysis=True)
     try:
         if not ida_hexrays.init_hexrays_plugin():
             raise RuntimeError("Hex-Rays decompiler is unavailable")
-        enumerated = decompiler._enumerate(elf_base, text_range)
+        enumerated = decompiler._enumerate(elf_base, code_ranges)
         for target in sorted(targets):
             matches = [
                 (name, address)

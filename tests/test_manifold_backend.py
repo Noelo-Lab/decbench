@@ -362,9 +362,9 @@ def test_clight_function_addresses_accept_all_unique_relations(tmp_path: Path) -
 def test_clight_function_addresses_fail_closed(tiny_binary: Path, tmp_path: Path) -> None:
     from decbench.decompilers.raw import common
 
-    text_range = common.elf_text_range(tiny_binary)
-    assert text_range is not None
-    executable_ranges = (text_range,)
+    executable_ranges = common.executable_code_ranges(tiny_binary)
+    assert executable_ranges
+    outside = max(end for _start, end in executable_ranges)
     main = _func_address(tiny_binary, "main")
     documents = [
         "not json",
@@ -396,7 +396,7 @@ def test_clight_function_addresses_fail_closed(tiny_binary: Path, tmp_path: Path
         json.dumps(
             {
                 "compcert_clight": True,
-                "functions": [{"name": "main", "address": f"0x{text_range[1]:x}"}],
+                "functions": [{"name": "main", "address": f"0x{outside:x}"}],
             }
         ),
     ]

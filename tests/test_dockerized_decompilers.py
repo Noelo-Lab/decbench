@@ -676,7 +676,7 @@ def test_r2_discover_normalizes_and_filters() -> None:
         {"name": "sym.outside", "addr": 0x9500},
     ]
     r = _FakeR2(aflj, baddr=0)
-    out = R2DecDecompiler._discover(r, elf_base=0, text_range=(0x1000, 0x9000), baddr=0)
+    out = R2DecDecompiler._discover(r, elf_base=0, code_ranges=((0x1000, 0x9000),), baddr=0)
     assert out == [("fcn.00002000", 0x2000, 0x2000), ("sym.main", 0x3000, 0x3000)]
 
 
@@ -684,7 +684,10 @@ def test_r2_discover_rebases_when_baddr_differs() -> None:
     aflj = [{"name": "fcn.08002000", "addr": 0x8002000}]
     r = _FakeR2(aflj, baddr=0x8000000)
     out = R2DecDecompiler._discover(
-        r, elf_base=0x8000000, text_range=(0x8000000, 0x8010000), baddr=0x8000000
+        r,
+        elf_base=0x8000000,
+        code_ranges=((0x8000000, 0x8010000),),
+        baddr=0x8000000,
     )
     assert out == [("fcn.08002000", 0x8002000, 0x8002000)]
 
@@ -840,6 +843,10 @@ def test_r2_decompile_native_int_filter_mocked(monkeypatch: pytest.MonkeyPatch) 
         {"name": "fcn.00003000", "addr": 0x3000},
     ]
     monkeypatch.setattr(r2pipe, "open", lambda *a, **k: _FakeR2(aflj, baddr=0))
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.raw_common.executable_code_ranges",
+        lambda _path: ((0x1000, 0x3000),),
+    )
     dec = R2DecDecompiler()
     result = dec._decompile_native(Path("/nonexistent/bin"), None, None, {0x1000, 0x2000}, None)
     got = {fd.address for fd in result.functions.values()}
@@ -957,6 +964,10 @@ def test_r2_docker_payload_populates_native_provenance(
         return subprocess.CompletedProcess([], 0, "", "")
 
     monkeypatch.setattr(dec, "_run_docker", fake_run)
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.raw_common.executable_code_ranges",
+        lambda _path: ((0x1000, 0x1010),),
+    )
     result = dec._decompile_docker(Path("/nonexistent/bin"), None, None, {0x1000}, None)
     assert {function.address for function in result.functions.values()} == {0x1000}
     function = next(iter(result.functions.values()))

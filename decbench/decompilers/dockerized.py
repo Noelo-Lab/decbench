@@ -73,51 +73,14 @@ _l = logging.getLogger(__name__)
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DOCKER_DIR = _REPO_ROOT / "docker"
 
-_SKIP_NAMES = frozenset(
-    {
-        "_start",
-        "__libc_start_main",
-        "__libc_csu_init",
-        "__libc_csu_fini",
-        "_init",
-        "_fini",
-        "__do_global_dtors_aux",
-        "register_tm_clones",
-        "deregister_tm_clones",
-        "frame_dummy",
-        "__libc_start_call_main",
-        "_dl_relocate_static_pie",
-        "__gmon_start__",
-        "__stack_chk_fail",
-    }
-)
-
-_SKIP_PREFIXES = ("thunk_", "j_", "__imp_", ".plt", "_dl_")
-
-
-def _elf_text_range(binary_path: Path) -> tuple[int, int] | None:
-    """[start, end) virtual-address range of the ``.text`` section, or None."""
-    try:
-        from elftools.elf.elffile import ELFFile
-
-        with open(binary_path, "rb") as f:
-            elf = ELFFile(f)
-            text = elf.get_section_by_name(".text")
-            if text is None:
-                return None
-            start = text["sh_addr"]
-            return (start, start + text["sh_size"])
-    except Exception as e:  # noqa: BLE001
-        _l.debug("Failed to read .text range for %s: %s", binary_path, e)
-        return None
-
 
 def elf_function_symbols(binary_path: Path) -> list[tuple[str, int]]:
     """Enumerate ``(name, address)`` for benchmarkable functions via ELF symbols.
 
     Addresses are in **ELF file space** (``st_value``), which matches DWARF and
     the declib-backed decompilers. CRT/compiler helpers, import thunks, and
-    anything outside ``.text`` are filtered out. Returned sorted by address.
+    anything outside file-backed executable sections are filtered out. Returned
+    sorted by address.
     """
     try:
         from elftools.elf.elffile import ELFFile
@@ -126,7 +89,7 @@ def elf_function_symbols(binary_path: Path) -> list[tuple[str, int]]:
         _l.debug("pyelftools unavailable: %s", e)
         return []
 
-    text_range = _elf_text_range(binary_path)
+    code_ranges = raw_common.executable_code_ranges(binary_path)
     out: dict[str, int] = {}
     try:
         with open(binary_path, "rb") as f:
@@ -141,12 +104,7 @@ def elf_function_symbols(binary_path: Path) -> list[tuple[str, int]]:
                     name = sym.name or ""
                     if not addr or not name:
                         continue
-                    if name in _SKIP_NAMES:
-                        continue
-                    if text_range is not None:
-                        if not (text_range[0] <= addr < text_range[1]):
-                            continue
-                    elif name.startswith(_SKIP_PREFIXES):
+                    if raw_common.should_skip_function(name, addr, code_ranges):
                         continue
                     out.setdefault(name, addr)
     except Exception as e:  # noqa: BLE001
@@ -1410,23 +1368,11 @@ def _addr_targets_of(function_names: set[int] | set[str] | None) -> set[int]:
 def _skip_r2_function(
     bare_name: str,
     file_addr: int,
-    text_range: tuple[int, int] | None,
-    addr_targets: set[int] | None,
+    code_ranges: raw_common.CodeRangeFilter,
 ) -> bool:
-    """Whether to drop an r2-discovered function, honouring the source targets.
+    """Whether to drop an r2-discovered function outside executable code."""
 
-    A function whose address is one of ``addr_targets`` (the DWARF ``low_pc``
-    source functions the driver asked for) is a VERIFIED real function and is
-    always kept: the ``.text`` heuristic behind :func:`should_skip_function`
-    misfires on binaries with the code split across multiple executable
-    sections (e.g. u-boot's tiny ``.text`` + 486 KB ``.text_rest``, freertos),
-    where the real functions live outside the one detected ``.text`` and would
-    otherwise be dropped — the exact reason r2dec scored 0 on those ARM targets.
-    Non-target functions still go through the normal filter.
-    """
-    if addr_targets and raw_common._addr_matches(file_addr, addr_targets):
-        return False
-    return raw_common.should_skip_function(bare_name, file_addr, text_range)
+    return raw_common.should_skip_function(bare_name, file_addr, code_ranges)
 
 
 def _func_ident_in_code(code: str) -> str | None:
@@ -1583,18 +1529,15 @@ class R2DecDecompiler(DockerizedDecompiler):
     def _discover(
         r: Any,
         elf_base: int,
-        text_range: tuple[int, int] | None,
+        code_ranges: raw_common.CodeRangeFilter,
         baddr: int,
-        addr_targets: set[int] | None = None,
     ) -> list[tuple[str, int, int]]:
         """``(r2_flag_name, file_addr, r2_addr)`` for benchmarkable functions.
 
         Uses radare2's ``aflj`` (function list). ``file_addr`` is ELF-file space
         (``r2_addr - baddr + elf_base``). Imports/PLT/reloc stubs, the entrypoint
-        alias, CRT helpers, and anything outside ``.text`` are dropped — EXCEPT a
-        function whose address is one of ``addr_targets`` (the driver's DWARF
-        ``low_pc`` source set), which is a verified real function and is kept
-        regardless of the ``.text`` heuristic (see :func:`_skip_r2_function`).
+        alias, CRT helpers, and anything outside a file-backed executable
+        section are dropped.
         """
         funcs = r.cmdj("aflj") or []
         out: list[tuple[str, int, int]] = []
@@ -1609,7 +1552,7 @@ class R2DecDecompiler(DockerizedDecompiler):
                 continue
             raw = int(raw)
             file_addr = raw - baddr + elf_base
-            if _skip_r2_function(_r2_bare_name(name), file_addr, text_range, addr_targets):
+            if _skip_r2_function(_r2_bare_name(name), file_addr, code_ranges):
                 continue
             out.append((name, file_addr, raw))
         out.sort(key=lambda t: t[1])
@@ -1847,7 +1790,7 @@ class R2DecDecompiler(DockerizedDecompiler):
 
         start = time.time()
         elf_base = raw_common.elf_min_vaddr(binary_path)
-        text_range = raw_common.elf_text_range(binary_path)
+        code_ranges = raw_common.executable_code_ranges(binary_path)
         decompiled: dict[str, FunctionDecompilation] = {}
         failed: list[str] = []
         used_cmd = "pdc"
@@ -1880,9 +1823,7 @@ class R2DecDecompiler(DockerizedDecompiler):
                     targets.append((name, int(fa), raw, name))
             else:
                 targets = self._narrow(
-                    self._discover(
-                        r, elf_base, text_range, baddr, _addr_targets_of(function_names)
-                    ),
+                    self._discover(r, elf_base, code_ranges, baddr),
                     function_names,
                     binary_path.name,
                 )
@@ -1937,7 +1878,7 @@ class R2DecDecompiler(DockerizedDecompiler):
             )
         start = time.time()
         elf_base = raw_common.elf_min_vaddr(binary_path)
-        text_range = raw_common.elf_text_range(binary_path)
+        code_ranges = raw_common.executable_code_ranges(binary_path)
 
         addr_targets: list[int] | None = None
         ints: set[int] = set()
@@ -2010,7 +1951,6 @@ class R2DecDecompiler(DockerizedDecompiler):
 
         by_addr: dict[int, tuple[str, dict[str, Any]]] = {}
         discovered: list[tuple[str, int, int]] = []
-        addr_targets = _addr_targets_of(function_names)
         for entry in entries:
             raw = entry.get("addr")
             if raw is None:
@@ -2020,7 +1960,7 @@ class R2DecDecompiler(DockerizedDecompiler):
             nm = entry.get("name") or ""
             if _r2_is_import(nm) or nm in _R2_ENTRY_NAMES:
                 continue
-            if _skip_r2_function(_r2_bare_name(nm), file_addr, text_range, addr_targets):
+            if _skip_r2_function(_r2_bare_name(nm), file_addr, code_ranges):
                 continue
             by_addr[file_addr] = (nm, entry)
             discovered.append((nm, file_addr, int(raw)))

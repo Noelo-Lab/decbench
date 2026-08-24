@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from decbench.decompilers.base import Decompiler, DecompilerConfig
+from decbench.decompilers.raw import common as raw_common
 from decbench.decompilers.registry import register_decompiler
 from decbench.models.decompilation import (
     DecompilationResult,
@@ -38,70 +39,9 @@ if TYPE_CHECKING:
 
 _l = logging.getLogger(__name__)
 
-_SKIP_NAMES = frozenset(
-    {
-        "_start",
-        "__libc_start_main",
-        "__libc_csu_init",
-        "__libc_csu_fini",
-        "_init",
-        "_fini",
-        "__do_global_dtors_aux",
-        "register_tm_clones",
-        "deregister_tm_clones",
-        "frame_dummy",
-        "__libc_start_call_main",
-        "_dl_relocate_static_pie",
-        "__gmon_start__",
-        "__stack_chk_fail",
-    }
-)
-
-_SKIP_PREFIXES = ("thunk_", "j_", "__imp_", ".plt", "_dl_")
-
 
 def _address_matches(address: int, targets: set[int]) -> bool:
     return address in targets or (address & ~1) in targets or (address | 1) in targets
-
-
-def _elf_min_vaddr(binary_path: Path) -> int:
-    """Get the lowest PT_LOAD virtual address of an ELF file.
-
-    Adding this to declib's lifted (0-based) addresses yields addresses in
-    the ELF file's own address space, matching DWARF debug info regardless
-    of where each decompiler chose to load the binary.
-    """
-    try:
-        from elftools.elf.elffile import ELFFile
-
-        with open(binary_path, "rb") as f:
-            elf = ELFFile(f)
-            vaddrs = [seg["p_vaddr"] for seg in elf.iter_segments() if seg["p_type"] == "PT_LOAD"]
-            return min(vaddrs) if vaddrs else 0
-    except Exception as e:
-        _l.debug("Failed to read ELF min vaddr for %s: %s", binary_path, e)
-        return 0
-
-
-def _elf_text_range(binary_path: Path) -> tuple[int, int] | None:
-    """Get the [start, end) virtual address range of the .text section.
-
-    Used to exclude PLT stubs and import thunks, which live in their own
-    sections (.plt, .plt.sec) outside .text.
-    """
-    try:
-        from elftools.elf.elffile import ELFFile
-
-        with open(binary_path, "rb") as f:
-            elf = ELFFile(f)
-            text = elf.get_section_by_name(".text")
-            if text is None:
-                return None
-            start = text["sh_addr"]
-            return (start, start + text["sh_size"])
-    except Exception as e:
-        _l.debug("Failed to read .text range for %s: %s", binary_path, e)
-        return None
 
 
 class DeclibDecompiler(Decompiler):
@@ -148,7 +88,7 @@ class DeclibDecompiler(Decompiler):
             raise RuntimeError(f"Decompiler '{self.name}' is not available")
 
         start_time = time.time()
-        elf_base = _elf_min_vaddr(binary_path)
+        elf_base = raw_common.elf_min_vaddr(binary_path)
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
         failed_functions: list[str] = []
@@ -312,20 +252,15 @@ class DeclibDecompiler(Decompiler):
     ) -> list[tuple[str, int]]:
         """Enumerate (name, lifted_addr) for benchmarkable functions.
 
-        Filters CRT/compiler helpers by name and anything outside the ELF
-        .text section (PLT stubs, import thunks, simprocedures).
+        Filters CRT/compiler helpers by name and anything outside file-backed
+        executable ELF/PE sections.
         """
-        text_range = _elf_text_range(binary_path)
+        code_ranges = raw_common.executable_code_ranges(binary_path)
         out: list[tuple[str, int]] = []
         for lifted_addr, light_func in deci.functions.items():
             name = light_func.name or ""
-            if not name or name in _SKIP_NAMES:
-                continue
-            if text_range is not None:
-                file_addr = int(lifted_addr) + elf_base
-                if not (text_range[0] <= file_addr < text_range[1]):
-                    continue
-            elif name.startswith(_SKIP_PREFIXES):
+            file_addr = int(lifted_addr) + elf_base
+            if raw_common.should_skip_function(name, file_addr, code_ranges):
                 continue
             out.append((name, int(lifted_addr)))
         return sorted(out, key=lambda x: x[1])

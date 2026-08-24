@@ -19,7 +19,8 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
   `binja_raw.py`, plus `kuna_raw.py` and `dewolf_raw.py` +
   `dewolf_driver.py`, an out-of-process backend running in its own venv):
   drive the tools' own APIs directly, **no declib**. `raw/common.py`
-  centralises the ELF bookkeeping (`elf_min_vaddr`, `.text` range,
+  centralises the linked-binary bookkeeping (`elf_min_vaddr`, disjoint ELF/PE
+  executable code ranges,
   CRT/PLT/thunk skip sets, `narrow_to_source` function filter, atomic
   `dump_progress` checkpoint, line-mapping helpers). This is the path
   benchmark runs use now.
@@ -63,7 +64,8 @@ Key conventions (all families):
 - Addresses are stored in **ELF-file-space** (`lifted + min PT_LOAD vaddr`) so
   they match DWARF; raw backends normalise per-tool load bases (angr
   `0x400000`, Ghidra `0x100000`, IDA `0x0`) for PIE binaries.
-- Functions outside `.text` (PLT/thunks) and CRT helpers are skipped.
+- Functions outside file-backed executable sections, plus PLT/thunks and CRT
+  helpers, are skipped.
 - `FunctionDecompilation.variables` (`VariableInfo`) carries stack vars/args
   for the type metric. The canonical angr, Binary Ninja, Ghidra, and IDA
   adapters also attach native, 1-based per-function line/address evidence;
@@ -159,8 +161,10 @@ def decompile_binary(
   Helpers live in `decbench/decompilers/raw/common.py`.
 - **Skip non-source functions.** Drop PLT stubs/thunks and CRT helpers
   (`_start`, `__libc_csu_init`, `register_tm_clones`, …) and anything outside
-  `.text`. `common.py` provides `SKIP_NAMES`, `SKIP_PREFIXES`, and a `.text`
-  range check.
+  the binary's disjoint file-backed executable ELF/PE sections. Do not replace
+  those ranges with one min/max envelope: gaps and intervening data are not
+  code. `common.py` provides `SKIP_NAMES`, `SKIP_PREFIXES`, and the shared
+  executable-range check.
 - **Set `decompiler_name = self.id`.** The `id` property is your registered
   name, or `name@version` when a version is pinned (see §4). Using `self.id`
   keeps versioned runs as distinct, comparable columns everywhere downstream.
@@ -419,20 +423,20 @@ class MyDecompiler(Decompiler):
     def decompile_binary(self, binary_path, functions=None, output_dir=None,
                          function_names=None, progress_path=None):
         from decbench.decompilers.raw.common import (
-            elf_min_vaddr, elf_text_range, should_skip_function,
+            elf_min_vaddr, executable_code_ranges, should_skip_function,
             narrow_to_source, dump_progress,
         )
         import mydec, time
 
         elf_base = elf_min_vaddr(binary_path)           # add to lifted -> ELF-space
-        text_range = elf_text_range(binary_path)
+        code_ranges = executable_code_ranges(binary_path)
         proj = mydec.open(str(binary_path))
 
         # Discover functions, drop CRT/PLT/thunks, narrow to the source targets.
         targets = []
         for name, lifted in proj.functions():           # however your tool enumerates
             file_addr = lifted + elf_base
-            if should_skip_function(name, file_addr, text_range):
+            if should_skip_function(name, file_addr, code_ranges):
                 continue
             targets.append((name, file_addr))           # ELF-space, for narrowing
         targets = narrow_to_source(                     # matches by ADDRESS
@@ -477,7 +481,8 @@ class MyDecompiler(Decompiler):
 it to `dump_progress` (see `decbench/decompilers/raw/angr_raw.py` for the real
 pattern). The shared helpers in `decbench/decompilers/raw/common.py` include
 `elf_min_vaddr` (format-aware: returns the PE ImageBase for MZ binaries, so PE
-addresses line up with DWARF too), `elf_text_range`, `should_skip_function`,
+addresses line up with DWARF too), `executable_code_ranges`,
+`should_skip_function`,
 `narrow_to_source`, `dump_progress`, and line-mapping utilities.
 
 That is the whole integration. Run it:

@@ -456,11 +456,11 @@ class _AgentDecompiler(Decompiler):
         try:
             from decbench.decompilers.dockerized import elf_function_symbols
 
-            text_range = common.elf_text_range(binary_path)
+            code_ranges = common.executable_code_ranges(binary_path)
             syms = [
                 (n, a)
                 for n, a in elf_function_symbols(binary_path)
-                if not common.should_skip_function(n, a, text_range)
+                if not common.should_skip_function(n, a, code_ranges)
             ]
             return syms
         except Exception:  # noqa: BLE001

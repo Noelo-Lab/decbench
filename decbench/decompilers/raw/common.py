@@ -7,13 +7,12 @@ its output contract exactly *without* depending on declib:
 * ``elf_min_vaddr`` — lowest ``PT_LOAD`` virtual address; adding it to a
   decompiler's lifted (0-based / image-base-relative) address yields the
   ELF-file-space address that DWARF uses.
-* ``elf_text_range`` — ``[start, end)`` of the ``.text`` section, used to
-  drop PLT stubs / import thunks that live in their own sections.
+* ``executable_code_ranges`` — the disjoint file-backed executable section
+  ranges in an ELF or PE binary.
 * ``SKIP_NAMES`` / ``SKIP_PREFIXES`` — CRT/compiler-generated functions and
   thunk/import name prefixes that are never benchmarked.
-* ``should_skip_function`` / ``in_text`` — the name + section filter that
-  ``declib_dec._enumerate_functions`` applies. Address comparisons tolerate the
-  ARM Thumb T-bit (DWARF ``low_pc`` is even; angr reports Thumb entries odd).
+* ``should_skip_function`` / ``in_executable_code`` — the shared name and
+  executable-section filter.
 * ``narrow_to_source`` — the optional ``function_names`` restriction, applied
   fail-closed so an address mismatch cannot broaden a requested subset.
 * ``dump_progress`` — the atomic partial-result pickle used by the run driver
@@ -30,13 +29,21 @@ import logging
 import pickle
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
+
+from decbench.utils import binfmt
 
 if TYPE_CHECKING:
     from decbench.models.decompilation import DecompilationResult
 
 _l = logging.getLogger(__name__)
 _PROGRESS_DUMP_TIMES: dict[Path, float] = {}
+
+AddressRange: TypeAlias = tuple[int, int]
+ExecutableCodeRanges: TypeAlias = tuple[AddressRange, ...]
+CodeRangeFilter: TypeAlias = ExecutableCodeRanges | AddressRange | None
+
+_NON_SOURCE_ELF_EXECUTABLE_SECTIONS = frozenset({".init", ".fini", ".iplt"})
 
 SKIP_NAMES = frozenset(
     {
@@ -124,42 +131,104 @@ def elf_min_vaddr(binary_path: Path) -> int:
         return 0
 
 
-def elf_text_range(binary_path: Path) -> tuple[int, int] | None:
-    """Get the ``[start, end)`` virtual-address range of the ``.text`` section.
+def executable_code_ranges(binary_path: Path) -> ExecutableCodeRanges:
+    """Return the disjoint file-backed executable ranges of an ELF or PE binary.
 
-    Used to exclude PLT stubs and import thunks, which live in their own
-    sections (``.plt`` / ``.plt.sec``) outside ``.text``.
+    ELF linkage scaffolding (``.init``, ``.fini``, and ``.plt*``) is excluded,
+    preserving the old literal-``.text`` filter's treatment of those sections
+    while accepting real code layouts such as ``.text.*``, ``.text_rest``,
+    ``ER_ROM1``, and ``.efi_runtime``.
+
+    An empty result is fail-closed: callers must not treat an unreadable or
+    unsupported binary as though every address were code.
     """
+
+    info = binfmt.detect(binary_path)
+    if info is not None and info.fmt == "elf":
+        try:
+            from elftools.elf.elffile import ELFFile
+
+            with binary_path.open("rb") as stream:
+                elf = ELFFile(stream)
+                regions = tuple(
+                    (int(section["sh_addr"]), section.data())
+                    for section in elf.iter_sections()
+                    if int(section["sh_flags"]) & 0x4
+                    and section.header["sh_type"] != "SHT_NOBITS"
+                    and int(section["sh_size"]) > 0
+                    and section.name not in _NON_SOURCE_ELF_EXECUTABLE_SECTIONS
+                    and not section.name.startswith(".plt")
+                )
+        except Exception:  # noqa: BLE001
+            regions = ()
+    else:
+        regions = binfmt.executable_regions(binary_path)
+
+    ranges = sorted((start, start + len(data)) for start, data in regions if data)
+    merged: list[AddressRange] = []
+    for start, end in ranges:
+        if end <= start:
+            continue
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return tuple(merged)
+
+
+def elf_text_range(binary_path: Path) -> AddressRange | None:
+    """Return the literal ELF ``.text`` range for compatibility.
+
+    New backend code must use :func:`executable_code_ranges`; this helper keeps
+    the old return shape for callers that have not migrated yet.
+    """
+
     try:
         from elftools.elf.elffile import ELFFile
 
-        with open(binary_path, "rb") as f:
-            elf = ELFFile(f)
-            text = elf.get_section_by_name(".text")
-            if text is None:
+        with binary_path.open("rb") as stream:
+            section = ELFFile(stream).get_section_by_name(".text")
+            if section is None:
                 return None
-            start = text["sh_addr"]
-            return (start, start + text["sh_size"])
-    except Exception as e:  # noqa: BLE001
-        _l.debug("Failed to read .text range for %s: %s", binary_path, e)
+            start = int(section["sh_addr"])
+            return start, start + int(section["sh_size"])
+    except Exception as error:  # noqa: BLE001
+        _l.debug("Failed to read .text range for %s: %s", binary_path, error)
         return None
 
 
-def in_text(file_addr: int, text_range: tuple[int, int] | None) -> bool:
-    """Whether an ELF-file-space address falls inside ``.text``.
+def _coerce_code_ranges(code_ranges: CodeRangeFilter) -> ExecutableCodeRanges | None:
+    if code_ranges is None:
+        return None
+    if len(code_ranges) == 2 and all(type(value) is int for value in code_ranges):
+        return (cast(AddressRange, code_ranges),)
+    return cast(ExecutableCodeRanges, code_ranges)
 
-    When the ``.text`` range is unknown, everything is treated as "in text"
-    (the name-prefix filter is the fallback in that case).
+
+def in_executable_code(file_addr: int, code_ranges: CodeRangeFilter) -> bool:
+    """Whether a linked address belongs to one exact executable section range.
+
+    ``None`` retains the legacy unknown-range behavior for compatibility. The
+    new range reader returns an empty collection on failure, which rejects every
+    address.
     """
-    if text_range is None:
+
+    ranges = _coerce_code_ranges(code_ranges)
+    if ranges is None:
         return True
-    return text_range[0] <= file_addr < text_range[1]
+    return any(start <= file_addr < end for start, end in ranges)
+
+
+def in_text(file_addr: int, text_range: CodeRangeFilter) -> bool:
+    """Compatibility name for :func:`in_executable_code`."""
+
+    return in_executable_code(file_addr, text_range)
 
 
 def should_skip_function(
     name: str,
     file_addr: int,
-    text_range: tuple[int, int] | None,
+    code_ranges: CodeRangeFilter,
 ) -> bool:
     """Replicate ``declib_dec._enumerate_functions`` filtering for one function.
 
@@ -167,17 +236,16 @@ def should_skip_function(
         name: function name (already non-empty checks happen here too).
         file_addr: function start address in ELF-file space
             (``lifted + elf_base``).
-        text_range: ``.text`` ``[start, end)`` or ``None``.
+        code_ranges: Executable section ranges, one legacy single range, or
+            ``None`` for the legacy name-prefix fallback.
 
     Returns:
         ``True`` if the function should be excluded from benchmarking.
     """
     if not name or name in SKIP_NAMES:
         return True
-    if text_range is not None:
-        # Inside .text, trust the section filter and never drop by name prefix — a user
-        # function may legitimately be called e.g. "j_compress".
-        if not in_text(file_addr, text_range):
+    if code_ranges is not None:
+        if not in_executable_code(file_addr, code_ranges):
             return True
     elif name.startswith(SKIP_PREFIXES):
         return True
