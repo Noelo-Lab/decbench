@@ -47,6 +47,11 @@ from decbench.results_store import PROJECT_DIRS  # noqa: F401,E402
 from decbench.results_store import gather_project_tomls as gather_tomls
 from decbench.utils import binfmt  # noqa: E402
 from decbench.utils.cfg import extract_cfgs_from_source
+from decbench.utils.docker_task import (
+    DOCKER_TASK_TOKEN_ENV,
+    new_docker_task_token,
+    remove_docker_task_containers,
+)
 from decbench.utils.langs import build_stem_index, strip_source_ext  # noqa: E402
 
 OPT_LEVELS = [
@@ -408,7 +413,11 @@ def _timed_decompile(
     timeout_s = decompiler_timeout(dec_name)
     failure = ""
     timed_out = False
+    cleanup_needed = False
     proc = None
+    task_token = new_docker_task_token()
+    child_env = os.environ.copy()
+    child_env[DOCKER_TASK_TOKEN_ENV] = task_token
     try:
         # The worker leads its own process group so a timeout can kill the WHOLE group
         # (worker plus the kuna/JVM/IDA process it spawned).
@@ -417,6 +426,7 @@ def _timed_decompile(
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=child_env,
         )
         try:
             rc = proc.wait(timeout=timeout_s)
@@ -430,6 +440,14 @@ def _timed_decompile(
                 try:
                     result = pickle.loads(pkl.read_bytes())
                     pkl.unlink(missing_ok=True)
+                    extra = result.decompiler.extra or {}
+                    cleanup_needed = bool(
+                        result.decompiler.timeout_occurred
+                        or extra.get("error")
+                        or extra.get("failure")
+                        or extra.get("timeout")
+                        or extra.get("timed_out")
+                    )
                     return result
                 except Exception as e:  # noqa: BLE001
                     failure = f"unpickle: {e}"
@@ -440,6 +458,14 @@ def _timed_decompile(
     finally:
         if proc is not None and proc.poll() is None:
             _kill_process_group(proc)
+        if failure or cleanup_needed:
+            removed = remove_docker_task_containers(task_token)
+            if removed:
+                print(
+                    f"[docker-cleanup] removed {len(removed)} container(s) "
+                    f"for failed task {dec_name}/{binary.name}",
+                    flush=True,
+                )
 
     partial = None
     if pkl.exists():

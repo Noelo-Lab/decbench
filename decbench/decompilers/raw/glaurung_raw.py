@@ -70,6 +70,7 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
 )
+from decbench.utils.docker_task import docker_task_label_args
 
 _l = logging.getLogger(__name__)
 
@@ -283,6 +284,7 @@ class RawGlaurungDecompiler(Decompiler):
                         docker,
                         "run",
                         "--rm",
+                        *docker_task_label_args(),
                         "--network",
                         "none",
                         "--entrypoint",
@@ -442,6 +444,7 @@ class RawGlaurungDecompiler(Decompiler):
                 docker,
                 "run",
                 "--rm",
+                *docker_task_label_args(),
                 "--user",
                 f"{os.getuid()}:{os.getgid()}",
                 "--network",

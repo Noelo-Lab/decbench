@@ -66,6 +66,7 @@ from decbench.models.decompilation import (
     LineMapping,
     VariableInfo,
 )
+from decbench.utils.docker_task import docker_task_label_args
 
 _l = logging.getLogger(__name__)
 
@@ -650,6 +651,7 @@ class DockerizedDecompiler(Decompiler):
             docker,
             "run",
             "--rm",
+            *docker_task_label_args(),
             "-v",
             f"{binary_path.resolve()}:/in/{binary_path.name}:ro",
             "-v",

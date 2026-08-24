@@ -324,6 +324,13 @@ big targets (bash, openssh, coreutils, the large ARM firmware).
 | `dewolf` | 1200 s | A z3/sympy simplification pipeline that blows up per function. Capped lower than angr because the cap bounds *hangs*, not a slow-but-progressing decompile. |
 | `codex` / `claude-code` / `kimi-code` | 3600 s | One agentic CLI call per function (~minutes). The backend checkpoints after each function, so a large budget bounds a stuck call while still crediting finished ones. |
 
+Each timed child receives a unique 128-bit task token. Docker-backed decompile
+and version-probe containers carry that token as an exact label. After an outer
+timeout or worker error, the driver lists containers by that label, validates
+full container IDs and the exact label value, then force-removes only those
+verified matches. Killing the local ``docker run`` client alone does not stop
+the daemon-side container.
+
 Resume MERGES per project AND per decompiler:
 `DECBENCH_DECOMPILERS=r2dec python scripts/run_benchmark.py results/full_run`
 ADDS r2dec (or dewolf) to every project's checkpoint without re-running the

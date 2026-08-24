@@ -67,6 +67,7 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
 )
+from decbench.utils.docker_task import docker_task_label_args
 
 _l = logging.getLogger(__name__)
 
@@ -631,7 +632,16 @@ class ManifoldDecompiler(Decompiler):
         if docker:
             try:
                 proc = subprocess.run(
-                    [docker, "run", "--rm", "--entrypoint", "cat", image, _IMAGE_REV_FILE],
+                    [
+                        docker,
+                        "run",
+                        "--rm",
+                        *docker_task_label_args(),
+                        "--entrypoint",
+                        "cat",
+                        image,
+                        _IMAGE_REV_FILE,
+                    ],
                     capture_output=True,
                     text=True,
                     timeout=120,
@@ -663,6 +673,7 @@ class ManifoldDecompiler(Decompiler):
             docker,
             "run",
             "--rm",
+            *docker_task_label_args(),
             "-v",
             f"{binary_path.resolve()}:/in/{binary_path.name}:ro",
             "-v",
