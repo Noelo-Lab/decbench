@@ -98,6 +98,19 @@ _HERE = Path(__file__).resolve().parent
 _DECOMPILE_ONE = _HERE / "decompile_one.py"
 
 
+def decompiler_timeout(name: str) -> int:
+    """Return the configured per-binary timeout for a decompiler spec."""
+    return DECOMPILER_TIMEOUT.get(
+        name,
+        DECOMPILER_TIMEOUT.get(name.split("@", 1)[0], DECOMPILE_TIMEOUT),
+    )
+
+
+def format_decompiler_timeouts(names: list[str]) -> str:
+    """Format the effective timeout shown in benchmark progress output."""
+    return ", ".join(f"{name}={decompiler_timeout(name)}s" for name in names)
+
+
 def _load_sampleset_manifest() -> dict[tuple[str, str, str], set[str]] | None:
     """Load the ``DECBENCH_SAMPLESET_MANIFEST`` gate, or ``None`` if unset.
 
@@ -355,8 +368,9 @@ def _timed_decompile(
     """Decompile one binary via a timed, killable subprocess.
 
     Returns the unpickled DecompilationResult, or a 'timeout'/'error' result if
-    the subprocess overran DECOMPILE_TIMEOUT or failed. ``names_file`` is a JSON
-    list of source-function addresses to restrict to ("NONE" = all functions).
+    the subprocess overran its resolved per-backend budget or failed.
+    ``names_file`` is a JSON list of source-function addresses to restrict to
+    ("NONE" = all functions).
     """
     pkl = out_dir / f"{dec_name}_{binary.stem}.result.pkl"
     cmd = [
@@ -368,9 +382,7 @@ def _timed_decompile(
         str(pkl),
         names_file,
     ]
-    timeout_s = DECOMPILER_TIMEOUT.get(
-        dec_name, DECOMPILER_TIMEOUT.get(dec_name.split("@", 1)[0], DECOMPILE_TIMEOUT)
-    )
+    timeout_s = decompiler_timeout(dec_name)
     failure = ""
     timed_out = False
     proc = None
@@ -662,7 +674,7 @@ def main() -> int:
             td = time.time()
             print(
                 f"[{name}/{opt.value}] decompiling {n} binaries x {to_run} "
-                f"(timeout {DECOMPILE_TIMEOUT}s)...",
+                f"(timeouts {format_decompiler_timeouts(to_run)})...",
                 flush=True,
             )
             try:
