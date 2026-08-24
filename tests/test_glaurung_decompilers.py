@@ -261,6 +261,7 @@ class TestDockerInstall:
                 ]
             ),
         )
+        monkeypatch.setattr(common, "elf_text_range", lambda _binary: (target + 2, target + 4))
 
         result = RawGlaurungDecompiler().decompile_binary(tiny_binary, function_names={target})
 

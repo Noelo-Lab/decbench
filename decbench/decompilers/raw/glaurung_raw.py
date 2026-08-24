@@ -383,11 +383,12 @@ class RawGlaurungDecompiler(Decompiler):
 
         # 2. Index by name, filter to the benchmarkable + source-narrowed set.
         by_name = {str(r.get("name") or ""): r for r in records}
+        filter_range = text_range if function_names is None else None
         enumerated = sorted(
             (
                 (n, int(r.get("entry_va") or 0))
                 for n, r in by_name.items()
-                if not common.should_skip_function(n, int(r.get("entry_va") or 0), text_range)
+                if not common.should_skip_function(n, int(r.get("entry_va") or 0), filter_range)
             ),
             key=lambda x: x[1],
         )
