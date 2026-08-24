@@ -579,19 +579,6 @@ def audit_function(
                     "variable_lines_without_map",
                     f"variables[{index}] carries line numbers but the function has no line map",
                 )
-            else:
-                unmapped_lines = sorted(
-                    line for line in usable_lines if not line_addresses.get(line)
-                )
-                if unmapped_lines:
-                    _add_function_finding(
-                        state,
-                        key,
-                        backend,
-                        "variable_line_unmapped",
-                        f"variables[{index}] references unmapped row(s): "
-                        + ", ".join(str(line) for line in unmapped_lines[:5]),
-                    )
             disagreeing_lines = sorted(
                 line
                 for line in usable_lines

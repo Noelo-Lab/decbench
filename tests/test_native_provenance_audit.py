@@ -182,19 +182,33 @@ def test_variable_lines_without_line_map_are_invalid_but_direct_only_is_not() ->
     assert state.finding_counts == {"variable_lines_without_map": 1}
 
 
-def test_variable_line_must_resolve_to_a_nonempty_mapping_row() -> None:
+def test_variable_lines_may_include_unmapped_declaration_rows() -> None:
     state = AuditState(max_findings=20)
     function = FunctionDecompilation(
         name="bad",
         address=0x1000,
-        decompiled_code="int bad(void) {\n return 0;\n}",
-        line_mappings=[LineMapping(line_number=1, addresses=[0x1000])],
-        variables=[VariableInfo(name="x", line_numbers=[2])],
+        decompiled_code=(
+            "int bad(int x) {\n" " int result;\n" " result = x;\n" " return result;\n" "}"
+        ),
+        line_mappings=[
+            LineMapping(line_number=3, addresses=[0x1000]),
+            LineMapping(line_number=4, addresses=[0x1004]),
+        ],
+        variables=[
+            VariableInfo(name="x", line_numbers=[1, 3]),
+            VariableInfo(name="result", line_numbers=[2, 3, 4]),
+        ],
     )
 
-    audit_function(state, ("p", "O0", "tool", "bad"), "ida", function, _code(0x1000))
+    audit_function(
+        state,
+        ("p", "O0", "tool", "bad"),
+        "ida",
+        function,
+        _code(0x1000, 0x1004),
+    )
 
-    assert state.finding_counts == {"variable_line_unmapped": 1}
+    assert state.error_count == 0
 
 
 def test_malformed_nonempty_variable_evidence_cannot_bypass_audit() -> None:
