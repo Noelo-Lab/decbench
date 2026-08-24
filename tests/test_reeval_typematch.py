@@ -473,6 +473,31 @@ def test_scoped_ab_merge_rejects_incompatible_mode_and_preserves_output(
     assert manifest.read_bytes() == manifest_before
 
 
+def test_scoped_ab_merge_removes_stale_rows_from_evaluated_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_results_tree(tmp_path)
+    _add_measurable_function(tmp_path, "g")
+    _add_checkpoint_function(tmp_path, "g")
+    output = tmp_path / "ab.json"
+    _install_metric(monkeypatch, _result(functions=("f", "g")))
+    reeval_typematch.main([str(tmp_path), "--mode", "address", "--output", str(output)])
+
+    checkpoint = tmp_path / "checkpoints" / "proj.pkl"
+    with checkpoint.open("rb") as file:
+        data = pickle.load(file)
+    del data["decompile"]["O0"]["bin"]["angr"].functions["g"]
+    with checkpoint.open("wb") as file:
+        pickle.dump(data, file)
+    _install_metric(monkeypatch, _result(functions=("f",)))
+
+    reeval_typematch.main([str(tmp_path), "proj", "--mode", "address", "--output", str(output)])
+
+    payload, _provenance = read_typematch_overlay(output)
+    assert set(payload["angr"]) == {"proj::O0::bin::f"}
+
+
 def test_sample_manifest_filters_before_metric_evaluation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

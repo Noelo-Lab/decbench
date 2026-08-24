@@ -298,11 +298,42 @@ def _score_keys(
     return keys
 
 
+def _without_scoped_scores(
+    existing: dict[str, dict[str, object]],
+    *,
+    function_scope: set[SampleKey],
+    backend_scope: set[str] | None,
+) -> dict[str, dict[str, object]]:
+    """Drop the evaluated scope before an additive, provenance-checked merge."""
+
+    retained: dict[str, dict[str, object]] = {}
+    for decompiler, per_decompiler in existing.items():
+        if backend_scope is not None and decompiler not in backend_scope:
+            retained[decompiler] = dict(per_decompiler)
+            continue
+        kept: dict[str, object] = {}
+        for raw_key, entry in per_decompiler.items():
+            parts = raw_key.split("::", 3)
+            if len(parts) != 4 or any(not part for part in parts):
+                raise TypeMatchOverlayError(
+                    f"existing type-match overlay has an invalid function key: {raw_key!r}"
+                )
+            function_key = (parts[0], parts[1], parts[2], parts[3])
+            if function_key not in function_scope:
+                kept[raw_key] = entry
+        if kept:
+            retained[decompiler] = kept
+    return retained
+
+
 def _coverage_failure(
     expected: set[ScoreKey],
     new_scores: dict[str, dict[str, dict[str, float | int | str]]],
 ) -> str | None:
-    actual = _score_keys(new_scores)
+    return _coverage_difference(expected, _score_keys(new_scores))
+
+
+def _coverage_difference(expected: set[ScoreKey], actual: set[ScoreKey]) -> str | None:
     missing = sorted(expected - actual)
     unexpected = sorted(actual - expected)
     if not missing and not unexpected:
@@ -543,12 +574,35 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "scoped type-match merges require an existing provenance manifest; "
                     "run an unscoped reevaluation first"
                 )
-            new_scores = merge_typematch_overlay(
+            project_scope = set(args.projects)
+            function_scope = {
+                key
+                for key in function_keys
+                if key[0] in project_scope and (sample_keys is None or key in sample_keys)
+            }
+            retained = _without_scoped_scores(
                 existing,
+                function_scope=function_scope,
+                backend_scope=requested_backends or None,
+            )
+            new_scores = merge_typematch_overlay(
+                retained,
                 new_scores,
                 existing_provenance=existing_provenance,
                 fresh_provenance=provenance,
             )
+            final_scope_keys = {
+                key
+                for key in _score_keys(new_scores)
+                if key[:4] in function_scope
+                and (not requested_backends or key[4] in requested_backends)
+            }
+            if final_scope_keys != expected_score_keys:
+                failure = _coverage_difference(expected_score_keys, final_scope_keys)
+                raise TypeMatchOverlayError(
+                    "scoped type-match overlay was not changed: "
+                    + (failure or "final scoped coverage mismatch")
+                )
         elif args.emit:
             raise CanonicalPromotionError(
                 "a scoped canonical promotion requires an existing full overlay; "
