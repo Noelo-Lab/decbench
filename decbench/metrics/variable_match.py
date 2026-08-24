@@ -182,6 +182,13 @@ class SourceBinaryEvidenceContext:
         int,
         tuple[tuple[int, ...], tuple[tuple[str, int] | None, ...]],
     ] = field(default_factory=dict)
+    binary_path: Path | None = None
+    binary_info: Any = None
+    code_regions: tuple[tuple[int, bytes], ...] = ()
+
+    def close(self) -> None:
+        if self.stream is not None:
+            self.stream.close()
 
 
 def _size_compatible(
@@ -776,16 +783,37 @@ def _die_ranges(
 
 
 def open_source_binary_context(binary_path: Path) -> SourceBinaryEvidenceContext:
-    from elftools.elf.elffile import ELFFile
+    from decbench.utils import binfmt
 
-    stream = binary_path.open("rb")
+    binary_path = binary_path.resolve()
+    binary_info = binfmt.detect(binary_path)
+    if binary_info is None:
+        raise ValueError(f"unsupported binary format: {binary_path}")
+
+    stream = None
+    elf = None
+    text_address = None
+    text_data = None
+    if binary_info.fmt == "elf":
+        from elftools.elf.elffile import ELFFile
+
+        stream = binary_path.open("rb")
+        try:
+            elf = ELFFile(stream)
+            dwarfinfo = elf.get_dwarf_info()
+            text = elf.get_section_by_name(".text")
+            text_address = int(text["sh_addr"]) if text is not None else None
+            text_data = text.data() if text is not None else None
+        except Exception:
+            stream.close()
+            raise
+    else:
+        dwarfinfo = binfmt.dwarf_info(binary_path)
+        if dwarfinfo is None:
+            raise ValueError(f"binary has no DWARF information: {binary_path}")
+
+    functions: dict[tuple[str, int], tuple[Any, Any]] = {}
     try:
-        elf = ELFFile(stream)
-        dwarfinfo = elf.get_dwarf_info()
-        text = elf.get_section_by_name(".text")
-        text_address = int(text["sh_addr"]) if text is not None else None
-        text_data = text.data() if text is not None else None
-        functions: dict[tuple[str, int], tuple[Any, Any]] = {}
         for cu in dwarfinfo.iter_CUs():
             for die in cu.iter_DIEs():
                 if die.tag != "DW_TAG_subprogram":
@@ -796,16 +824,20 @@ def open_source_binary_context(binary_path: Path) -> SourceBinaryEvidenceContext
                 for begin, _end in _die_ranges(die, dwarfinfo):
                     functions.setdefault((name, begin), (cu, die))
     except Exception:
-        stream.close()
+        if stream is not None:
+            stream.close()
         raise
     return SourceBinaryEvidenceContext(
-        stream,
-        elf,
-        dwarfinfo,
-        functions,
-        elf["e_machine"],
-        text_address,
-        text_data,
+        stream=stream,
+        elf=elf,
+        dwarfinfo=dwarfinfo,
+        functions=functions,
+        machine=elf["e_machine"] if elf is not None else binary_info.arch,
+        text_address=text_address,
+        text_data=text_data,
+        binary_path=binary_path,
+        binary_info=binary_info,
+        code_regions=binfmt.executable_regions(binary_path),
     )
 
 
@@ -867,7 +899,8 @@ def _decl_location(die: Any, line_program: Any) -> tuple[str | None, int | None]
         return None, int(line_attr.value) if line_attr is not None else None
     entries = line_program.header["file_entry"]
     index = int(file_attr.value)
-    actual = index if die.cu["version"] >= 5 else index - 1
+    version = int(line_program.header.get("version", die.cu["version"]))
+    actual = index if version >= 5 else index - 1
     if not 0 <= actual < len(entries):
         return None, int(line_attr.value) if line_attr is not None else None
     raw_name = entries[actual].name
@@ -881,11 +914,12 @@ def _line_program_rows(
 ) -> tuple[tuple[int, ...], tuple[tuple[str, int] | None, ...]]:
     rows: dict[int, tuple[str, int] | None] = {}
     entries = line_program.header["file_entry"]
+    version = int(line_program.header.get("version", cu["version"]))
     for entry in line_program.get_entries():
         state = entry.state
         if state is None or state.end_sequence:
             continue
-        actual = int(state.file) if cu["version"] >= 5 else int(state.file) - 1
+        actual = int(state.file) if version >= 5 else int(state.file) - 1
         location: tuple[str, int] | None = None
         if 0 <= actual < len(entries) and state.line is not None:
             raw_name = entries[actual].name
@@ -962,33 +996,65 @@ def load_source_lines(
 
 
 def instruction_addresses(
-    elf: Any,
+    elf: Any | None,
     start: int,
     end: int,
     binary_context: SourceBinaryEvidenceContext | None = None,
+    function_name: str | None = None,
 ) -> list[int]:
-    from capstone import CS_ARCH_X86, CS_MODE_32, CS_MODE_64, Cs
+    from capstone import Cs
 
-    machine = binary_context.machine if binary_context is not None else elf["e_machine"]
-    if machine != "EM_X86_64" and machine != "EM_386":
-        raise ValueError(f"unsupported demo architecture {machine}")
+    from decbench.utils import binfmt
+
     if binary_context is None:
+        if elf is None:
+            return []
+        machine = elf["e_machine"]
+        info = {
+            "EM_X86_64": binfmt.BinInfo("elf", "x86-64", 64),
+            "EM_386": binfmt.BinInfo("elf", "x86", 32),
+            "EM_ARM": binfmt.BinInfo("elf", "arm", 32),
+            "EM_AARCH64": binfmt.BinInfo("elf", "aarch64", 64),
+        }.get(machine)
+        if info is None:
+            raise ValueError(f"unsupported architecture {machine}")
         text = elf.get_section_by_name(".text")
         if text is None:
             return []
-        text_address = int(text["sh_addr"])
-        text_data = text.data()
+        regions = ((int(text["sh_addr"]), text.data()),)
     else:
-        context_address = binary_context.text_address
-        context_data = binary_context.text_data
-        if context_address is None or context_data is None:
+        info = binary_context.binary_info
+        regions = binary_context.code_regions
+        if info is None:
             return []
-        text_address = context_address
-        text_data = context_data
-    offset = start - text_address
-    code = text_data[offset : offset + (end - start)]
-    mode = CS_MODE_64 if machine == "EM_X86_64" else CS_MODE_32
-    return [instruction.address for instruction in Cs(CS_ARCH_X86, mode).disasm(code, start)]
+
+    decode_start = start
+    thumb = False
+    if info.arch == "arm":
+        thumb = bool(start & 1)
+        decode_start &= ~1
+        if (
+            binary_context is not None
+            and binary_context.binary_path is not None
+            and info.fmt == "elf"
+        ):
+            thumb = thumb or binfmt.elf_function_is_thumb(
+                binary_context.binary_path,
+                function_name or "",
+                decode_start,
+            )
+    arch_mode = binfmt.capstone_arch_mode(info, thumb=thumb)
+    if arch_mode is None:
+        raise ValueError(f"unsupported architecture {info.arch}")
+
+    size = max(0, end - decode_start)
+    code = b""
+    for region_address, region_data in regions:
+        offset = decode_start - region_address
+        if 0 <= offset < len(region_data):
+            code = region_data[offset : offset + size]
+            break
+    return [instruction.address for instruction in Cs(*arch_mode).disasm(code, decode_start)]
 
 
 def extract_source_evidence(
@@ -1003,8 +1069,6 @@ def extract_source_evidence(
     feature_code: str | None = None,
     binary_context: SourceBinaryEvidenceContext | None = None,
 ) -> FunctionEvidence:
-    from elftools.elf.elffile import ELFFile
-
     source_text = (
         source_lines
         if source_lines is not None
@@ -1012,12 +1076,10 @@ def extract_source_evidence(
     )
     with contextlib.ExitStack() as stack:
         if binary_context is None:
-            stream = stack.enter_context(binary_path.open("rb"))
-            elf = ELFFile(stream)
-            dwarfinfo = elf.get_dwarf_info()
-        else:
-            elf = binary_context.elf
-            dwarfinfo = binary_context.dwarfinfo
+            binary_context = open_source_binary_context(binary_path)
+            stack.callback(binary_context.close)
+        elf = binary_context.elf
+        dwarfinfo = binary_context.dwarfinfo
         found = (
             binary_context.functions.get((function_name, function_address))
             if binary_context is not None and function_address is not None
@@ -1048,7 +1110,13 @@ def extract_source_evidence(
             raise ValueError(f"DWARF function {function_name!r} has no address range")
         start = min(begin for begin, _end in function_ranges)
         end = max(finish for _begin, finish in function_ranges)
-        instructions = instruction_addresses(elf, start, end, binary_context)
+        instructions = instruction_addresses(
+            elf,
+            start,
+            end,
+            binary_context,
+            function_name=function_name,
+        )
         inline_ranges: list[tuple[int, int]] = []
 
         def collect_inline_ranges(parent: Any) -> None:

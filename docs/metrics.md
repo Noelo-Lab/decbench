@@ -109,8 +109,9 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="8"`, bumped for the production correspondence invariants,
-address-pinned source selection, and backend-correct decompiler evidence.
+Current `cache_version="9"`, bumped when native source evidence expanded from x86
+ELF to cross-format x86, ARM/Thumb, and AArch64 executable regions and line-table
+file indexes began following the line program's own DWARF version.
 The per-function key covers the requested/resolved mode, matcher policy,
 redacted address/usage/anchor evidence, the stack shift, decompiled types used
 for grading, and DWARF ground truth. It does NOT cover `normalize_type`, so a
@@ -164,11 +165,16 @@ or usage-extraction failures retain every DWARF variable in the denominator and
 fall back to the remaining evidence channels. The decompiler side
 uses `VariableInfo.addresses` directly, or derives them from
 `VariableInfo.line_numbers` plus `FunctionDecompilation.line_mappings`.
-The current source-side instruction-address adapter supports x86 ELF binaries;
-PE and non-x86 inputs transparently continue with strict C usage evidence and
-argument/stack anchors, and their accepted-stage evidence marker reflects that
-fallback. This limitation is in source evidence construction, not in a
-decompiler's ability to report its own line map.
+The source-side instruction-address adapter reads executable regions and the
+Capstone architecture through `utils/binfmt.py`. It supports x86/x86-64,
+ARM/Thumb, and AArch64 code in ELF and PE; ARM ELF function symbols select
+Thumb mode. Source instructions therefore use the same virtual/file-space
+coordinates as decompiler line maps instead of assuming an x86 `.text`
+section. DWARF file indexes follow the line table's own version because an
+object may pair a DWARF v5 compilation unit with a pre-v5 line program.
+Unsupported formats or architectures transparently continue with
+strict C usage evidence and argument/stack anchors, and their accepted-stage
+evidence marker reflects that fallback.
 Backends and old checkpoints without those fields remain scorable: C-like text
 is parsed for strict usage evidence, with ABI argument positions and explicit
 stack offsets as the final anchors. Exact variable names are never a matching
@@ -347,7 +353,8 @@ Detects ELF/PE + arch, picks the matching recompiler + capstone arch, reads
 DWARF from ELF *or* PE (PE: `.debug_*` sections via objdump file offsets →
 pyelftools, since LIEF's community build has no DWARF reader and PE COFF
 truncates section names), and extracts function bytes from a final ELF/PE or
-a recompiled ELF/COFF object. Both type_match and byte_match use it, so they
+a recompiled ELF/COFF object. It also exposes executable virtual-address regions
+for source-variable provenance. Both type_match and byte_match use it, so they
 work on the PE (MinGW) malware targets.
 
 ## Metric caching

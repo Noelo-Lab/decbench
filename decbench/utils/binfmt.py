@@ -181,6 +181,44 @@ def capstone_arch_mode(info: BinInfo, thumb: bool = False):
     return None
 
 
+def executable_regions(path: Path) -> tuple[tuple[int, bytes], ...]:
+    """Return executable virtual-address regions from an ELF or PE binary."""
+    info = detect(path)
+    if info is None:
+        return ()
+    if info.fmt == "elf":
+        try:
+            from elftools.elf.elffile import ELFFile
+
+            with path.open("rb") as stream:
+                elf = ELFFile(stream)
+                regions = [
+                    (int(section["sh_addr"]), section.data())
+                    for section in elf.iter_sections()
+                    if int(section["sh_flags"]) & 0x4 and int(section["sh_size"]) > 0
+                ]
+            return tuple(sorted(regions))
+        except Exception:
+            return ()
+    if info.fmt == "pe":
+        try:
+            import lief
+
+            binary = lief.parse(str(path))
+            if binary is None:
+                return ()
+            image_base = int(binary.optional_header.imagebase)
+            regions = [
+                (image_base + int(section.virtual_address), bytes(section.content))
+                for section in binary.sections
+                if int(section.characteristics) & 0x20000000 and section.content
+            ]
+            return tuple(sorted(regions))
+        except Exception:
+            return ()
+    return ()
+
+
 def elf_function_is_thumb(path: Path, func_name: str, address: int) -> bool:
     """Return whether an ARM ELF function symbol selects Thumb encoding.
 
@@ -290,7 +328,12 @@ def pe_dwarf_info(path: Path):
         return None
     info = detect(path)
     addr_size = 8 if (info and info.bits == 64) else 4
-    march = "x64" if addr_size == 8 else "x86"
+    march = {
+        "x86": "x86",
+        "x86-64": "x64",
+        "arm": "ARM",
+        "aarch64": "AArch64",
+    }.get(info.arch if info is not None else "", "x64" if addr_size == 8 else "x86")
     return _build_dwarfinfo(secs, little_endian=True, addr_size=addr_size, march=march)
 
 

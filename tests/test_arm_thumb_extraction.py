@@ -56,6 +56,7 @@ def thumb_artifacts(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Pat
             "arm-none-eabi-gcc",
             "-mcpu=cortex-m4",
             "-mthumb",
+            "-g",
             "-O1",
             "-c",
             str(source),
@@ -93,6 +94,7 @@ def arm_elf(tmp_path_factory: pytest.TempPathFactory) -> Path:
             "arm-none-eabi-gcc",
             "-march=armv7-a",
             "-marm",
+            "-g",
             "-O1",
             "-nostdlib",
             "-Wl,--entry=lcd_add",
@@ -166,6 +168,49 @@ def test_thumb_functions_decode_in_thumb_mode(
 
 def test_a32_function_is_not_classified_as_thumb(arm_elf: Path) -> None:
     assert binfmt.elf_function_is_thumb(arm_elf, "lcd_add", _TEXT_BASE) is False
+
+
+@pytest.mark.parametrize("name", sorted(_EXPECTED))
+def test_source_instruction_addresses_select_thumb_mode(
+    thumb_artifacts: tuple[Path, Path],
+    name: str,
+) -> None:
+    from decbench.metrics.variable_match import (
+        _die_ranges,
+        instruction_addresses,
+        open_source_binary_context,
+    )
+
+    elf_path = thumb_artifacts[1]
+    context = open_source_binary_context(elf_path)
+    try:
+        ((_identity, (_cu, die)),) = [
+            item for item in context.functions.items() if item[0][0] == name
+        ]
+        ranges = _die_ranges(die, context.dwarfinfo)
+        start = min(begin for begin, _end in ranges)
+        end = max(finish for _begin, finish in ranges)
+
+        addresses = instruction_addresses(
+            context.elf,
+            start,
+            end,
+            context,
+            function_name=name,
+        )
+    finally:
+        context.close()
+
+    expected_bytes, _expected_asm = _EXPECTED[name]
+    assert addresses[0] == start
+    assert addresses[-1] < end
+    assert len(addresses) == len(
+        _disassemble_bytes(
+            expected_bytes,
+            start,
+            binfmt.capstone_arch_mode(binfmt.BinInfo("elf", "arm", 32), thumb=True),
+        )
+    )
 
 
 def test_wrong_mode_is_silently_not_instruction_equivalent(
