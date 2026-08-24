@@ -19,8 +19,12 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
+import tempfile
 import time
 from collections import defaultdict
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +40,102 @@ from decbench.models.decompilation import (
 )
 
 _l = logging.getLogger(__name__)
+
+
+def _runtime_reloc_data_header(binary_path: Path) -> tuple[int, bytes] | None:
+    """Find one stripped ARM copy-down section that ELF mislabeled as relocations.
+
+    Some embedded linker scripts call their initialized RAM data output section
+    ``.relocate``. GNU ld then gives that section ``SHT_REL`` even though its bytes
+    are ordinary copy-down data. Once ``strip --strip-all`` removes ``.symtab``,
+    CLE tries to parse those bytes as relocations and rejects the binary. Match
+    only the exact invalid, allocated data layout and return the section-header
+    type field plus its ``SHT_PROGBITS`` replacement.
+    """
+    try:
+        from elftools.elf.elffile import ELFFile
+
+        with binary_path.open("rb") as stream:
+            elf = ELFFile(stream)
+            if (
+                elf.elfclass != 32
+                or not elf.little_endian
+                or elf.header["e_type"] != "ET_EXEC"
+                or elf.header["e_machine"] != "EM_ARM"
+            ):
+                return None
+            sections = list(elf.iter_sections())
+            if any(section.header["sh_type"] == "SHT_SYMTAB" for section in sections):
+                return None
+            data_segments = [
+                segment
+                for segment in elf.iter_segments()
+                if segment.header["p_type"] == "PT_LOAD"
+                and int(segment.header["p_flags"]) == 0x6
+                and int(segment.header["p_filesz"]) > 0
+                and int(segment.header["p_paddr"]) != int(segment.header["p_vaddr"])
+            ]
+            candidates: list[int] = []
+            for index, section in enumerate(sections):
+                header = section.header
+                if (
+                    section.name != ".relocate"
+                    or header["sh_type"] != "SHT_REL"
+                    or int(header["sh_flags"]) != 0x3
+                    or int(header["sh_link"]) != 0
+                    or int(header["sh_info"]) != 0
+                    or int(header["sh_entsize"]) != 8
+                    or int(header["sh_size"]) == 0
+                    or int(header["sh_size"]) % 8
+                ):
+                    continue
+                section_offset = int(header["sh_offset"])
+                section_address = int(header["sh_addr"])
+                section_size = int(header["sh_size"])
+                if not any(
+                    section_offset == int(segment.header["p_offset"])
+                    and section_address == int(segment.header["p_vaddr"])
+                    and section_offset + section_size
+                    <= int(segment.header["p_offset"]) + int(segment.header["p_filesz"])
+                    and section_address + section_size
+                    <= int(segment.header["p_vaddr"]) + int(segment.header["p_memsz"])
+                    for segment in data_segments
+                ):
+                    continue
+                candidates.append(
+                    int(elf.header["e_shoff"]) + index * int(elf.header["e_shentsize"]) + 4
+                )
+    except Exception as error:  # noqa: BLE001
+        _l.debug("angr-raw: could not inspect ELF section metadata for %s: %s", binary_path, error)
+        return None
+    if len(candidates) != 1:
+        return None
+    return candidates[0], (1).to_bytes(4, byteorder="little")
+
+
+@contextmanager
+def _angr_input_binary(binary_path: Path) -> Iterator[tuple[Path, int]]:
+    """Yield an angr-loadable path without ever changing the benchmark artifact."""
+    patch = _runtime_reloc_data_header(binary_path)
+    if patch is None:
+        yield binary_path, 0
+        return
+
+    with tempfile.TemporaryDirectory(prefix="decbench-angr-elf-") as temp_dir:
+        analysis_path = Path(temp_dir) / binary_path.name
+        shutil.copy2(binary_path, analysis_path)
+        offset, replacement = patch
+        with analysis_path.open("r+b") as stream:
+            stream.seek(offset)
+            if stream.read(len(replacement)) != (9).to_bytes(4, byteorder="little"):
+                raise ValueError("ELF section type changed while preparing angr input")
+            stream.seek(offset)
+            stream.write(replacement)
+        _l.warning(
+            "angr-raw: treating malformed allocated .relocate as data in a temporary " "copy of %s",
+            binary_path,
+        )
+        yield analysis_path, 1
 
 
 @register_decompiler("angr")
@@ -88,12 +188,15 @@ class RawAngrDecompiler(Decompiler):
         start_time = time.time()
         elf_base = common.elf_min_vaddr(binary_path)
         code_ranges = common.executable_code_ranges(binary_path)
+        input_repair_count = 0
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
         failed_functions: list[str] = []
 
         def _meta(partial: bool) -> DecompilerMetadata:
             extra: dict[str, Any] = {"backend": "angr", "via": "raw"}
+            if input_repair_count:
+                extra["elf_runtime_data_section_retyped"] = input_repair_count
             if partial:
                 extra["partial"] = True
             return DecompilerMetadata(
@@ -117,38 +220,47 @@ class RawAngrDecompiler(Decompiler):
             common.dump_progress(progress_path, partial)
 
         try:
-            proj = angr.Project(str(binary_path), auto_load_libs=False)
-            cfg = proj.analyses.CFGFast(normalize=True)
+            with _angr_input_binary(binary_path) as (analysis_path, repair_count):
+                input_repair_count = repair_count
+                proj = angr.Project(str(analysis_path), auto_load_libs=False)
+                cfg = proj.analyses.CFGFast(normalize=True)
 
-            if functions is not None:
-                # angr keys functions by loaded address, which equals the caller's ELF-space
-                # address for a non-PIE static ELF.
-                target_funcs = [(n, a) for (n, a) in functions]
-            else:
-                target_funcs = self._enumerate(proj, elf_base, code_ranges)
-
-            target_funcs = common.narrow_to_source(
-                target_funcs,
-                function_names,
-                backend="angr",
-                binary_name=binary_path.name,
-            )
-
-            for func_name, file_addr in target_funcs:
-                func_result = None
-                try:
-                    func_result = self._decompile_one(proj, cfg, func_name, file_addr, elf_base)
-                except Exception as e:  # noqa: BLE001
-                    _l.debug("angr-raw: failed to decompile %s: %s", func_name, e)
-
-                if func_result is not None:
-                    decompiled_functions[func_name] = func_result
+                if functions is not None:
+                    # angr keys functions by loaded address, which equals the caller's ELF-space
+                    # address for a non-PIE static ELF.
+                    target_funcs = [(n, a) for (n, a) in functions]
                 else:
-                    failed_functions.append(func_name)
-                _dump()
+                    target_funcs = self._enumerate(proj, elf_base, code_ranges)
+
+                target_funcs = common.narrow_to_source(
+                    target_funcs,
+                    function_names,
+                    backend="angr",
+                    binary_name=binary_path.name,
+                )
+
+                for func_name, file_addr in target_funcs:
+                    func_result = None
+                    try:
+                        func_result = self._decompile_one(proj, cfg, func_name, file_addr, elf_base)
+                    except Exception as e:  # noqa: BLE001
+                        _l.debug("angr-raw: failed to decompile %s: %s", func_name, e)
+
+                    if func_result is not None:
+                        decompiled_functions[func_name] = func_result
+                    else:
+                        failed_functions.append(func_name)
+                    _dump()
 
         except Exception as e:  # noqa: BLE001
             _l.error("angr-raw failed on %s: %s", binary_path, e)
+            extra: dict[str, Any] = {
+                "error": str(e),
+                "backend": "angr",
+                "via": "raw",
+            }
+            if input_repair_count:
+                extra["elf_runtime_data_section_retyped"] = input_repair_count
             return DecompilationResult(
                 binary_path=binary_path,
                 binary_name=binary_path.stem,
@@ -157,7 +269,7 @@ class RawAngrDecompiler(Decompiler):
                     decompiler_version=self.get_version(),
                     total_time_seconds=time.time() - start_time,
                     failed_functions=["all"],
-                    extra={"error": str(e), "backend": "angr", "via": "raw"},
+                    extra=extra,
                 ),
             )
 

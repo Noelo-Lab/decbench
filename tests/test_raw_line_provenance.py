@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -11,7 +12,11 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 import decbench.decompilers  # noqa: F401
-from decbench.decompilers.raw.angr_raw import RawAngrDecompiler
+from decbench.decompilers.raw.angr_raw import (
+    RawAngrDecompiler,
+    _angr_input_binary,
+    _runtime_reloc_data_header,
+)
 from decbench.decompilers.raw.binja_raw import RawBinjaDecompiler
 from decbench.decompilers.raw.ghidra_raw import RawGhidraDecompiler
 from decbench.decompilers.raw.ida_raw import RawIDADecompiler
@@ -36,6 +41,127 @@ def live_tiny_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
         check=True,
     )
     return binary
+
+
+def _runtime_reloc_elf(*, sh_link: int = 0, physical_address: int = 0x08000000) -> bytes:
+    section_headers = 0x200
+    section_names = b"\0.relocate\0.shstrtab\0"
+    contents = bytearray(section_headers + 3 * 40)
+    ident = b"\x7fELF" + bytes([1, 1, 1, 0]) + bytes(8)
+    contents[:52] = struct.pack(
+        "<16sHHIIIIIHHHHHH",
+        ident,
+        2,
+        40,
+        1,
+        0x20000001,
+        52,
+        section_headers,
+        0x5000400,
+        52,
+        32,
+        1,
+        40,
+        3,
+        2,
+    )
+    contents[52:84] = struct.pack(
+        "<IIIIIIII",
+        1,
+        0x100,
+        0x20000000,
+        physical_address,
+        8,
+        8,
+        0x6,
+        0x1000,
+    )
+    contents[0x100:0x108] = struct.pack("<II", 0x20000004, 0x101)
+    contents[0x108 : 0x108 + len(section_names)] = section_names
+    contents[section_headers + 40 : section_headers + 80] = struct.pack(
+        "<IIIIIIIIII",
+        1,
+        9,
+        0x3,
+        0x20000000,
+        0x100,
+        8,
+        sh_link,
+        0,
+        4,
+        8,
+    )
+    contents[section_headers + 80 : section_headers + 120] = struct.pack(
+        "<IIIIIIIIII",
+        11,
+        3,
+        0,
+        0,
+        0x108,
+        len(section_names),
+        0,
+        0,
+        1,
+        0,
+    )
+    return bytes(contents)
+
+
+def test_angr_retypes_only_a_temporary_copy_of_runtime_reloc_data(tmp_path: Path) -> None:
+    binary = tmp_path / "firmware.elf"
+    original = _runtime_reloc_elf()
+    binary.write_bytes(original)
+
+    patch = _runtime_reloc_data_header(binary)
+    assert patch == (0x22C, b"\x01\0\0\0")
+
+    with _angr_input_binary(binary) as (analysis_path, repair_count):
+        patched = analysis_path.read_bytes()
+        assert analysis_path != binary
+        assert repair_count == 1
+        assert patched[0x22C:0x230] == b"\x01\0\0\0"
+        assert patched[:0x22C] == original[:0x22C]
+        assert patched[0x230:] == original[0x230:]
+        assert patched[0x100:0x108] == original[0x100:0x108]
+        assert binary.read_bytes() == original
+
+    assert analysis_path is not None
+    assert not analysis_path.exists()
+    assert binary.read_bytes() == original
+
+
+def test_angr_loads_the_retyped_runtime_data_section(tmp_path: Path) -> None:
+    angr = pytest.importorskip("angr")
+    binary = tmp_path / "firmware.elf"
+    binary.write_bytes(_runtime_reloc_elf())
+
+    with _angr_input_binary(binary) as (analysis_path, repair_count):
+        project = angr.Project(str(analysis_path), auto_load_libs=False)
+
+    assert repair_count == 1
+    assert project.arch.name.startswith("ARM")
+    assert project.arch.bits == 32
+    assert project.loader.main_object.min_addr == 0x20000000
+    assert project.loader.memory.load(0x20000000, 8) == struct.pack("<II", 0x20000004, 0x101)
+    assert binary.read_bytes() == _runtime_reloc_elf()
+
+
+@pytest.mark.parametrize(
+    "contents",
+    [
+        _runtime_reloc_elf(sh_link=2),
+        _runtime_reloc_elf(physical_address=0x20000000),
+    ],
+)
+def test_angr_runtime_reloc_repair_fails_closed(contents: bytes, tmp_path: Path) -> None:
+    binary = tmp_path / "firmware.elf"
+    binary.write_bytes(contents)
+
+    assert _runtime_reloc_data_header(binary) is None
+    with _angr_input_binary(binary) as (analysis_path, repair_count):
+        assert analysis_path == binary
+        assert repair_count == 0
+        assert analysis_path.read_bytes() == contents
 
 
 class _Token:

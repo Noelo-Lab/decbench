@@ -236,7 +236,12 @@ The canonical raw adapters use these native sources:
 - angr joins `map_ast_to_pos` variable identities to the line-level
   `map_pos_to_addr` evidence, expanding AIL statement addresses to their VEX
   instruction starts. When the identity map is unavailable it uses exact,
-  unique C identifiers and abstains on duplicate names.
+  unique C identifiers and abstains on duplicate names. For stripped ARM
+  firmware only, the adapter also recognizes the invalid GNU-ld copy-down
+  layout where a writable, allocated `.relocate` section has `SHT_REL` but no
+  linked symbol table. It retypes that section as ordinary data in an ephemeral
+  angr-only copy, preserving the benchmark artifact, section bytes, addresses,
+  and the no-symbols invariant; every other ELF layout fails closed unchanged.
 - Binary Ninja renders token text and collects row/token expression addresses
   in one Pseudo-C `LinearViewCursor` walk. Structural and warning rows are
   excluded before assigning the global 1-based output line.
