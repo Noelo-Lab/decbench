@@ -24,6 +24,10 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
   CRT/PLT/thunk skip sets, `narrow_to_source` function filter, atomic
   `dump_progress` checkpoint, line-mapping helpers). This is the path
   benchmark runs use now.
+  Dewolf's independent Binary Ninja sessions are bounded by
+  `DECBENCH_DEWOLF_SHARDS` and `DECBENCH_DEWOLF_THREADS` (default 8 × 2) so
+  process-level sharding does not multiply Binary Ninja's worker pool without
+  limit.
 - **Whole-binary** (`raw/manifold_raw.py`: `manifold`): a tool with no
   per-function entry point — one call per binary emits one C translation unit,
   which the backend splits into per-function definitions. It runs manifold

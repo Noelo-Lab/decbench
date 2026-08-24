@@ -16,6 +16,7 @@ from typing import Any
 
 import decbench.decompilers  # noqa: F401  (registers the raw backends)
 from decbench.decompilers.raw.dewolf_driver import (
+    _configure_worker_threads,
     _native_addresses_for_origins,
     _resolve_ssa_origins,
     _ssa_address_index,
@@ -48,6 +49,19 @@ def test_child_env_prepends_repo_and_astyle(monkeypatch, tmp_path: Path) -> None
     assert env["PYTHONPATH"].split(":")[0] == "/opt/dewolf"
     assert "/existing" in env["PYTHONPATH"]
     assert env["PATH"].split(":")[0] == "/opt/astyle/bin"
+
+
+def test_driver_caps_binary_ninja_workers(monkeypatch) -> None:
+    binaryninja = SimpleNamespace(set_worker_thread_count=lambda count: calls.append(count))
+    calls: list[int] = []
+
+    monkeypatch.delenv("DECBENCH_DEWOLF_THREADS", raising=False)
+    assert _configure_worker_threads(binaryninja) == 2
+    monkeypatch.setenv("DECBENCH_DEWOLF_THREADS", "3")
+    assert _configure_worker_threads(binaryninja) == 3
+    monkeypatch.setenv("DECBENCH_DEWOLF_THREADS", "invalid")
+    assert _configure_worker_threads(binaryninja) == 2
+    assert calls == [2, 3, 2]
 
 
 _FAKE_DRIVER = """\

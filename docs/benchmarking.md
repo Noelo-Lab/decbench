@@ -536,8 +536,10 @@ DECBENCH_WORKERS=40 \
 Notes:
 
 - dewolf is slow + BN-based; for it, prefer several concurrent instances on
-  disjoint project groups + `DECBENCH_DEWOLF_SHARDS` to saturate cores — see
-  the dewolf backend notes. r2dec runs via its Docker image. Resume is
+  disjoint project groups + `DECBENCH_DEWOLF_SHARDS` to saturate cores. Each
+  driver limits Binary Ninja to `DECBENCH_DEWOLF_THREADS` workers (default 2),
+  avoiding nested oversubscription — see the dewolf backend notes. r2dec runs
+  via its Docker image. Resume is
   per-project AND per-decompiler, so a full run can be assembled
   decompiler-by-decompiler.
 - byte_match ABSTAINS (no result, not 0) for ARM/PE on the host (no

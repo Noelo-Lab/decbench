@@ -22,6 +22,7 @@ or the environment):
   ``PYTHONPATH`` so ``import decompile`` resolves).
 * ``astyle_path`` / ``DECBENCH_DEWOLF_ASTYLE`` — optional dir prepended to
   ``PATH`` so dewolf finds ``astyle`` for output indentation.
+* ``DECBENCH_DEWOLF_THREADS`` — Binary Ninja workers per driver (default 2).
 
 Like the other raw backends it drives a fully-stripped binary and filters to the
 project's source functions BY ADDRESS (``function_names`` is a set of ints), with
@@ -34,10 +35,12 @@ single core for a long time. Because Binary Ninja parallelizes across PROCESSES
 (verified: concurrent headless sessions run in parallel, the single-seat license
 notwithstanding), :meth:`decompile_binary` splits the target addresses into up to
 ``DECBENCH_DEWOLF_SHARDS`` (default 8) shards and runs one driver per shard
-concurrently, each its own BN session on a disjoint subset, then merges. Sharding
-kicks in only when there are enough functions to amortize each shard's BN-load
-cost. The shard drivers inherit the decompile task's process group, so the run
-driver's per-binary-timeout killpg reaps them together.
+concurrently, each its own BN session on a disjoint subset, then merges. Each
+driver caps Binary Ninja's worker pool with ``DECBENCH_DEWOLF_THREADS`` so the
+two levels of parallelism do not oversubscribe the host. Sharding kicks in only
+when there are enough functions to amortize each shard's BN-load cost. The shard
+drivers inherit the decompile task's process group, so the run driver's
+per-binary-timeout killpg reaps them together.
 """
 
 from __future__ import annotations
