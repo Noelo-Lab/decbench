@@ -591,6 +591,24 @@ Repeatable `--backend NAME` selectors are available only for explicitly named A/
 outputs; canonical `--emit` rejects them so its whole-tree coverage guard cannot be
 bypassed.
 
+TypeMatch offset calibration is binary-wide. A scalable re-evaluation must therefore
+never hash individual functions into shards: filtering half of a binary before scoring
+can select a different stack-offset shift and silently change every function in that
+binary. Build deterministic whole-binary manifests instead:
+
+```bash
+python scripts/shard_typematch_manifest.py \
+  results/full_run/full_selected_manifest.json /tmp/typematch-shards --shards 8
+```
+
+The partitioner assigns each `(project, optimization, binary)` group atomically with a
+deterministic least-loaded policy. `manifest_index.json` binds the source and per-shard
+digests and refuses overlap, missing/unexpected keys, or split binary groups. Give one
+generated manifest to each `reeval_typematch.py` worker and use a fresh cache root when
+replacing an older function-sharded run; cached per-function values can otherwise retain
+the old calibration context. Preserve a rejected run separately as a control rather than
+merging its overlays into corrected output.
+
 The canonical rebuild is `scripts/finalize_results.py <tree>` (also what
 `run_benchmark.py`'s finalize calls): ALL checkpoints (never scoped — a
 `-- project` resume finalizes the whole tree and writes a full
