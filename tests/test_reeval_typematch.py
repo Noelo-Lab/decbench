@@ -13,6 +13,7 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    LineMapping,
 )
 from decbench.models.metrics import MetricResult, MetricValue
 from decbench.results_store import (
@@ -422,3 +423,44 @@ def test_sample_manifest_cannot_promote_canonical_overlay(tmp_path: Path) -> Non
 
     with pytest.raises(SystemExit):
         reeval_typematch.parse_args([str(tmp_path), "--manifest", str(manifest), "--emit"])
+
+
+def test_reevaluation_sanitizes_relocated_copy_without_rewriting_checkpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_results_tree(tmp_path)
+    checkpoint = tmp_path / "checkpoints" / "proj.pkl"
+    stale = tmp_path / "old-tree" / "bin"
+    decompilation = DecompilationResult(
+        binary_path=stale,
+        binary_name="bin",
+        decompiler=DecompilerMetadata(decompiler_name="angr"),
+        functions={
+            "f": FunctionDecompilation(
+                name="f",
+                address=0x1000,
+                decompiled_code="int f(void) { return 0; }",
+                line_mappings=[LineMapping(line_number=1, addresses=[0x1000])],
+            )
+        },
+    )
+    checkpoint.write_bytes(pickle.dumps({"decompile": {"O0": {"bin": {"angr": decompilation}}}}))
+    before = checkpoint.read_bytes()
+    relocated = tmp_path / "O0" / "proj" / "compiled" / "bin"
+    seen: list[tuple[Path, Path]] = []
+
+    def sanitize(result: DecompilationResult, binary: Path) -> dict[str, object]:
+        seen.append((result.binary_path, binary))
+        result.functions["f"].line_mappings = []
+        return {"status": "sanitized"}
+
+    monkeypatch.setattr(reeval_typematch, "sanitize_native_provenance", sanitize)
+    _install_metric(monkeypatch, _result())
+
+    reeval_typematch.main(
+        [str(tmp_path), "--mode", "address", "--output", str(tmp_path / "address.json")]
+    )
+
+    assert seen == [(relocated, relocated)]
+    assert checkpoint.read_bytes() == before

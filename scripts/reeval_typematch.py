@@ -29,8 +29,10 @@ from pathlib import Path
 from typing import TypedDict
 
 import decbench.decompilers  # noqa: F401 (register backends so pickles load)
+from decbench.decompilers.provenance import sanitize_native_provenance
 from decbench.metrics.base import MetricConfig
 from decbench.metrics.type_match import TypeMatchMetric
+from decbench.models.decompilation import DecompilationResult
 from decbench.models.function_data import VARIABLE_MATCH_EVIDENCE
 from decbench.results_store import (
     TypeMatchOverlayError,
@@ -188,11 +190,28 @@ def _relocate_decompilation(decompilation: object, binary_path: Path) -> object:
     model_copy = getattr(decompilation, "model_copy", None)
     if not callable(model_copy):
         raise BinaryRelocationError(f"checkpoint decompilation cannot be rebound to {binary_path}")
-    relocated = model_copy(update={"binary_path": binary_path})
+    relocated = model_copy(deep=True, update={"binary_path": binary_path})
     if Path(getattr(relocated, "binary_path", "")) != binary_path:
         raise BinaryRelocationError(
             f"checkpoint decompilation did not accept binary path {binary_path}"
         )
+    return relocated
+
+
+def _prepare_decompilation(
+    decompilation: object,
+    functions: set[str] | None,
+    binary_path: Path,
+) -> object:
+    selected = (
+        _limit_decompilation(decompilation, functions) if functions is not None else decompilation
+    )
+    relocated = _relocate_decompilation(selected, binary_path)
+    if not isinstance(relocated, DecompilationResult):
+        raise BinaryRelocationError(
+            f"checkpoint decompilation is not a DecompilationResult for {binary_path}"
+        )
+    sanitize_native_provenance(relocated, binary_path)
     return relocated
 
 
@@ -328,12 +347,11 @@ def main(argv: Sequence[str] | None = None) -> None:
                     raise
                 for decompiler_name, decompilation in decompilers.items():
                     try:
-                        relocated = _relocate_decompilation(decompilation, binary_path)
                         result = metric.compute_for_binary(
-                            (
-                                _limit_decompilation(relocated, selected_functions)
-                                if selected_functions is not None
-                                else relocated
+                            _prepare_decompilation(
+                                decompilation,
+                                selected_functions,
+                                binary_path,
                             ),
                             preprocessed_sources=sources,
                         )

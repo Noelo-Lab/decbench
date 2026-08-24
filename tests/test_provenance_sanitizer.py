@@ -14,6 +14,7 @@ from decbench.models.decompilation import (
     LineMapping,
     VariableInfo,
 )
+from decbench.pipeline import decompile as pipeline_decompile
 from decbench.utils import binfmt, native_code
 from decbench.utils.native_code import FunctionCode, NativeCodeResolver
 
@@ -308,3 +309,51 @@ def test_native_resolver_uses_entry_pc_and_indexes_dwarf_once(
     with pytest.raises(ValueError, match="no DWARF function matches"):
         resolver.resolve("first", 0x2640)
     assert calls == {"dwarf": 1, "regions": 1}
+
+
+def test_pipeline_sanitizes_adapter_result_with_explicit_deferral(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "stripped"
+    result = _result(
+        FunctionDecompilation(
+            name="sub_1000",
+            address=0x1000,
+            decompiled_code="void sub_1000(void) {}",
+        )
+    )
+    calls: list[tuple[DecompilationResult, Path, bool]] = []
+
+    class Decompiler:
+        def is_available(self) -> bool:
+            return True
+
+        def decompile_binary(self, _path: Path, **_kwargs: object) -> DecompilationResult:
+            return result
+
+    monkeypatch.setattr(
+        pipeline_decompile,
+        "DecompilerRegistry",
+        SimpleNamespace(get=lambda _name, _config: Decompiler()),
+    )
+
+    def sanitize(
+        value: DecompilationResult,
+        path: Path,
+        *,
+        defer_unavailable: bool,
+    ) -> dict[str, object]:
+        calls.append((value, path, defer_unavailable))
+        return {"status": "deferred"}
+
+    monkeypatch.setattr(pipeline_decompile, "sanitize_native_provenance", sanitize)
+
+    returned = pipeline_decompile.decompile_binary(
+        binary,
+        "test",
+        defer_provenance_validation=True,
+    )
+
+    assert returned is result
+    assert calls == [(result, binary, True)]
