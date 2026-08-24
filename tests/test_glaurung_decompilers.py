@@ -277,6 +277,7 @@ class TestDockerInstall:
             if call[0] == "run" and "--entrypoint" not in call
         )
         assert "--network" in run and "none" in run
+        assert run[run.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
         assert f"{tiny_binary.resolve()}:/in/{tiny_binary.name}:ro" in run
         assert "decbench/glaurung:latest" in run
         assert run[-2:] == ["--vas", hex(target)]

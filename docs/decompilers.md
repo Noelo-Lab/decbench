@@ -518,7 +518,9 @@ at `/opt/glaurung.rev`, so results report the code actually executed. An
 invalid explicit `GLAURUNG_BIN` is treated as a configuration error and never
 silently falls through to another executable. The default ref is the exact
 Glaurung revision used for the submitted sample-set evaluation; set
-`GLAURUNG_REF` explicitly to benchmark a different revision.
+`GLAURUNG_REF` explicitly to benchmark a different revision. Container runs
+use the invoking user's UID and GID so caller-readable binaries remain readable
+when their mode is more restrictive than `0644`.
 
 ## 6. Testing your backend
 

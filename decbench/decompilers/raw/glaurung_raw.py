@@ -441,6 +441,8 @@ class RawGlaurungDecompiler(Decompiler):
                 docker,
                 "run",
                 "--rm",
+                "--user",
+                f"{os.getuid()}:{os.getgid()}",
                 "--network",
                 "none",
                 "--read-only",
@@ -522,7 +524,7 @@ class RawGlaurungDecompiler(Decompiler):
             if p.poll() is None:
                 self._kill_group(p)
         if p.returncode != 0:
-            tail = (stderr or "")[-500:]
+            tail = (stderr or stdout or "")[-500:]
             raise RuntimeError(f"glaurung exited {p.returncode}: {tail}")
         records = self._parse_records(stdout)
         self._payload_cache[key] = records
