@@ -519,6 +519,32 @@ def test_reko_build_result_binds_names_and_native_variable_addresses(
     assert result.decompiler.extra["native_provenance_variables"] == 2
 
 
+def test_reko_build_result_discovers_requested_address_in_stripped_binary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dec = RekoDecompiler()
+    dec._native_provenance = {0x1000: {"name": "fn1000", "address": 0x1000, "variables": {}}}
+    monkeypatch.setattr("decbench.decompilers.dockerized.elf_function_symbols", lambda _path: [])
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized._reko_executable_regions", lambda _path: ()
+    )
+
+    result = dec._build_result(
+        binary_path=Path("/nonexistent/stripped"),
+        combined_c="int32_t fn1000(void) {\n    return 0;\n}\n",
+        functions=None,
+        function_names={0x1000},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+
+    assert set(result.functions) == {"fn1000"}
+    assert result.functions["fn1000"].address == 0x1000
+    assert result.decompiler.failed_functions == []
+
+
 class _FakeR2:
     """Minimal r2pipe stand-in returning canned ``ij`` / ``aflj`` / ``pdd``."""
 

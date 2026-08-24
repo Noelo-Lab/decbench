@@ -940,13 +940,17 @@ class RekoDecompiler(DockerizedDecompiler):
         output_dir: Path | None,
     ) -> DecompilationResult:
         """Bind Reko's stripped names and native variables by exact entry address."""
+        address_targets = _addr_targets_of(function_names)
         if functions is not None:
             name_to_addr = {name: address for name, address in functions}
         else:
             name_to_addr = dict(elf_function_symbols(binary_path))
+            for name, address in _reko_target_bindings(
+                self._native_provenance, address_targets
+            ).items():
+                name_to_addr.setdefault(name, address)
 
         if function_names:
-            address_targets = _addr_targets_of(function_names)
             name_targets = {value for value in function_names if isinstance(value, str)}
             name_to_addr = {
                 name: address
@@ -1091,6 +1095,19 @@ def _reko_record_at(provenance: dict[int, dict[str, Any]], address: int) -> dict
         if raw_common._addr_matches(address, {record_address})
     ]
     return matches[0] if len(matches) == 1 else None
+
+
+def _reko_target_bindings(
+    provenance: dict[int, dict[str, Any]], address_targets: set[int]
+) -> dict[str, int]:
+    """Bind requested stripped-binary entries to unique final Reko names."""
+    candidates: dict[str, list[int]] = {}
+    for address in sorted(address_targets):
+        record = _reko_record_at(provenance, address)
+        name = str(record.get("name") or "") if record else ""
+        if re.fullmatch(r"[A-Za-z_]\w*", name):
+            candidates.setdefault(name, []).append(address)
+    return {name: addresses[0] for name, addresses in candidates.items() if len(addresses) == 1}
 
 
 def _reko_executable_regions(binary_path: Path) -> tuple[tuple[int, int], ...]:
