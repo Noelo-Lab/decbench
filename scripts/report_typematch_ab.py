@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Report TypeMatch mode A/B scores with the benchmark's shared denominator."""
+"""Report TypeMatch mode A/B scores with shared and optimization-level denominators."""
 
 from __future__ import annotations
 

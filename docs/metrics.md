@@ -155,6 +155,18 @@ are:
    to `address+usage` so native line maps are used when present and usage
    evidence fills genuine gaps.
 
+`address+usage` is a fused policy, not an address pass followed only by extra
+fallback matches. When both variables expose address and usage evidence, the
+combined score and threshold replace the address-only score and threshold.
+Usage evidence can therefore rerank an address candidate, make it ambiguous,
+or move it below the combined threshold. Match count and final TypeMatch score
+are intentionally not monotonic relative to `address`. Guaranteeing score
+monotonicity would require either consulting recovered/ground-truth types while
+selecting correspondence, which is forbidden, or freezing every accepted
+address match, which would prevent usage evidence from correcting a false
+native pairing. Paired regressions remain explicit in A/B reports so this
+tradeoff can be reviewed rather than hidden.
+
 C source evidence is selected by the function address's DWARF compilation unit
 and its path-qualified preprocessor line marker, then joined to DWARF variables
 by stable DIE identity. Each C translation unit's exact-name function index is
@@ -230,12 +242,17 @@ statistics deliberately: the conditional partial mean uses only finite scores,
 while the published Type percentage counts perfect functions over the shared set
 where any backend measured TypeMatch. A backend's missing score is therefore a
 not-perfect miss in the latter. Coverage gains/losses, paired regressions, evidence
-category transitions, and architecture/format strata remain explicit. Passing
-`--checkpoint-dir` additionally audits actual function line maps and variable-line /
-variable-address fields; a line map without variable occurrence addresses is not
-claimed as usable correspondence evidence. The JSON is canonical; Markdown contains
-only the review headline. Invalid scope or provenance still writes the diagnostic
-report but exits nonzero unless `--allow-invalid` is requested.
+category transitions, architecture/format strata, and optimization-level strata
+remain explicit. The schema-v2 JSON records full score, comparison, and producer
+evidence summaries for each optimization level. The concise Markdown shows each
+backend's baseline-to-candidate published perfect rate and percentage-point delta
+separately for `O0`, `O2`, and `O2-noinline`, so a conditional mean across
+optimization levels cannot be mistaken for the published unoptimized percentage.
+Passing `--checkpoint-dir` additionally audits actual function line maps and
+variable-line / variable-address fields; a line map without variable occurrence
+addresses is not claimed as usable correspondence evidence. The JSON is canonical;
+Markdown contains only the review headline. Invalid scope or provenance still writes
+the diagnostic report but exits nonzero unless `--allow-invalid` is requested.
 
 The reporting path accepts
 `MetricValue.metadata["variable_match_evidence"]` as `native`, `mixed`, or

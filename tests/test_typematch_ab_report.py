@@ -13,7 +13,7 @@ from decbench.models.decompilation import (
     VariableInfo,
 )
 from decbench.results_store import typematch_overlay_provenance, write_typematch_overlay_atomic
-from decbench.scoring.typematch_ab import build_report, render_markdown
+from decbench.scoring.typematch_ab import build_report, json_payload, render_markdown
 from scripts.report_typematch_ab import main
 
 
@@ -28,6 +28,7 @@ def _elf(path: Path, machine: int) -> None:
 def _fixture_tree(tmp_path: Path) -> tuple[Path, Path]:
     _elf(tmp_path / "O0/proj/compiled/xbin", 0x3E)
     _elf(tmp_path / "O2/proj/compiled/armbin", 0x28)
+    _elf(tmp_path / "O2-noinline/proj/compiled/noinlinebin", 0x3E)
     function_data = tmp_path / "function_results.json"
     function_data.write_text(
         json.dumps(
@@ -57,6 +58,17 @@ def _fixture_tree(tmp_path: Path) -> tuple[Path, Path]:
                             }
                         ],
                     },
+                    {
+                        "project": "proj",
+                        "opt_level": "O2-noinline",
+                        "binary": "noinlinebin",
+                        "functions": [
+                            {
+                                "function": "f3",
+                                "values": {"a": {"type_match": 1.0}},
+                            }
+                        ],
+                    },
                 ],
             }
         )
@@ -79,6 +91,12 @@ def _fixture_tree(tmp_path: Path) -> tuple[Path, Path]:
                         "binary": "armbin",
                         "function": "f2",
                     },
+                    {
+                        "project": "proj",
+                        "opt": "O2-noinline",
+                        "binary": "noinlinebin",
+                        "function": "f3",
+                    },
                 ]
             }
         )
@@ -100,6 +118,10 @@ def _write_overlay(
         "proj::O2::armbin::f2": {
             "value": 1.0 if mode == "address" else 0.5,
             "variable_match_evidence": ("native" if mode == "address" else "fallback_only"),
+        },
+        "proj::O2-noinline::noinlinebin::f3": {
+            "value": 1.0,
+            "variable_match_evidence": "native",
         },
     }
     if drop_auto_f2 and mode == "auto":
@@ -143,6 +165,7 @@ def _write_checkpoints(path: Path) -> None:
         decompiled_code="int f2(void) { return 2; }",
         variables=[VariableInfo(name="local", type="int")],
     )
+    unmapped_noinline = unmapped.model_copy(update={"name": "f3"})
 
     def result(binary: str, function: FunctionDecompilation) -> DecompilationResult:
         return DecompilationResult(
@@ -159,6 +182,7 @@ def _write_checkpoints(path: Path) -> None:
                 "decompile": {
                     "O0": {"xbin": {"a": result("xbin", mapped)}},
                     "O2": {"armbin": {"a": result("armbin", unmapped)}},
+                    "O2-noinline": {"noinlinebin": {"a": result("noinlinebin", unmapped_noinline)}},
                 }
             },
             stream,
@@ -186,34 +210,61 @@ def _report(tmp_path: Path, *, drift: bool = False) -> dict[str, object]:
 def test_report_separates_partial_mean_from_shared_perfect_rate(tmp_path: Path) -> None:
     report = _report(tmp_path)
 
+    assert report["schema"] == "decbench-typematch-ab-report-v2"
     assert report["validation"]["valid_for_apples_to_apples"] is True
-    assert report["scope"]["selected_functions"] == 3
-    assert report["scope"]["globally_type_measurable_functions"] == 2
-    assert report["scope"]["strata"] == {"elf/arm": 1, "elf/x86-64": 1}
+    assert report["scope"]["selected_functions"] == 4
+    assert report["scope"]["globally_type_measurable_functions"] == 3
+    assert report["scope"]["strata"] == {"elf/arm": 1, "elf/x86-64": 2}
+    assert report["scope"]["optimization_levels"] == {
+        "O0": 1,
+        "O2": 1,
+        "O2-noinline": 1,
+    }
 
     address_a = report["modes"]["address"]["overall"]["backends"]["a"]
     assert address_a["coverage"] == {
-        "measured": 2,
+        "measured": 3,
         "missing": 0,
-        "shared_denominator": 2,
+        "shared_denominator": 3,
     }
-    assert address_a["conditional_partial"]["mean"] == 0.75
+    assert address_a["conditional_partial"]["mean"] == 2.5 / 3
     assert address_a["published_perfect"] == {
-        "count": 1,
-        "denominator": 2,
-        "rate": 0.5,
+        "count": 2,
+        "denominator": 3,
+        "rate": 2 / 3,
     }
 
     address_b = report["modes"]["address"]["overall"]["backends"]["b"]
     assert address_b["conditional_partial"]["mean"] == 1.0
-    assert address_b["shared_partial"]["zero_filled_mean"] == 0.5
-    assert address_b["published_perfect"]["rate"] == 0.5
+    assert address_b["shared_partial"]["zero_filled_mean"] == 1 / 3
+    assert address_b["published_perfect"]["rate"] == 1 / 3
 
     combined = report["modes"]["address"]["overall"]["all_backends"]
-    assert combined["coverage"]["shared_denominator"] == 4
-    assert combined["coverage"]["measured"] == 3
-    assert combined["conditional_partial"]["mean"] == 2.5 / 3
-    assert combined["shared_partial"]["zero_filled_mean"] == 2.5 / 4
+    assert combined["coverage"]["shared_denominator"] == 6
+    assert combined["coverage"]["measured"] == 4
+    assert combined["conditional_partial"]["mean"] == 3.5 / 4
+    assert combined["shared_partial"]["zero_filled_mean"] == 3.5 / 6
+
+    address_o0 = report["modes"]["address"]["optimization_levels"]["O0"]
+    assert address_o0["backends"]["a"]["published_perfect"]["rate"] == 0.0
+    assert address_o0["backends"]["b"]["published_perfect"]["rate"] == 1.0
+    comparison = report["comparisons"]["auto_minus_address"]["optimization_levels"]
+    assert comparison["O0"]["backends"]["a"]["published_perfect"] == {
+        "baseline_count": 0,
+        "candidate_count": 1,
+        "gained": 1,
+        "lost": 0,
+        "baseline_rate": 0.0,
+        "candidate_rate": 1.0,
+        "delta_percentage_points": 100.0,
+    }
+    assert (
+        comparison["O2"]["backends"]["a"]["published_perfect"]["delta_percentage_points"] == -100.0
+    )
+    assert (
+        comparison["O2-noinline"]["backends"]["a"]["published_perfect"]["delta_percentage_points"]
+        == 0.0
+    )
 
 
 def test_report_tracks_regressions_evidence_and_producer_coverage(tmp_path: Path) -> None:
@@ -222,11 +273,13 @@ def test_report_tracks_regressions_evidence_and_producer_coverage(tmp_path: Path
 
     assert comparison["paired_partial"]["improved"] == 1
     assert comparison["paired_partial"]["regressed"] == 1
+    assert comparison["paired_partial"]["unchanged"] == 1
     assert comparison["published_perfect"]["gained"] == 1
     assert comparison["published_perfect"]["lost"] == 1
     assert comparison["evidence_transitions"] == {
         "native->fallback_only": 1,
         "native->mixed": 1,
+        "native->native": 1,
     }
     assert comparison["regression_examples"] == [
         {
@@ -240,13 +293,25 @@ def test_report_tracks_regressions_evidence_and_producer_coverage(tmp_path: Path
     ]
 
     producer = report["producer_evidence"]["overall"]["a"]
-    assert producer["functions_found"] == 2
+    assert producer["functions_found"] == 3
     assert producer["functions_with_line_maps"] == 1
     assert producer["functions_with_variable_addresses"] == 1
+    assert (
+        report["producer_evidence"]["optimization_levels"]["O0"]["a"][
+            "functions_with_variable_addresses"
+        ]
+        == 1
+    )
+    assert (
+        report["producer_evidence"]["optimization_levels"]["O2"]["a"][
+            "functions_with_variable_addresses"
+        ]
+        == 0
+    )
     evidence = report["modes"]["address"]["overall"]["backends"]["a"]["evidence"]
     assert evidence["site_caveated"] == 0
-    assert evidence["producer_variable_addresses_missing"] == 1
-    assert evidence["potential_undercount"] == 1
+    assert evidence["producer_variable_addresses_missing"] == 2
+    assert evidence["potential_undercount"] == 2
     assert evidence["asterisk_recommended"] is True
 
 
@@ -281,7 +346,7 @@ def test_coverage_drift_is_reported_and_fails_cli_by_default(tmp_path: Path) -> 
     )
     assert exit_code == 1
     assert json.loads(output.read_text())["validation"]["valid_for_apples_to_apples"] is False
-    assert "Shared denominator: **2** of 3 selected functions" in markdown.read_text()
+    assert "Shared denominator: **3** of 4 selected functions" in markdown.read_text()
 
 
 def test_markdown_explains_shared_denominator(tmp_path: Path) -> None:
@@ -290,3 +355,26 @@ def test_markdown_explains_shared_denominator(tmp_path: Path) -> None:
     assert "Perfect / shared" in markdown
     assert "Potential measurement undercount" not in markdown
     assert "`elf/arm`" in markdown
+    assert "## Optimization levels" in markdown
+    assert "`O0` (1 functions)" in markdown
+    assert "`O2` (1 functions)" in markdown
+    assert "`O2-noinline` (1 functions)" in markdown
+    assert (
+        "| a | 0.00% → 100.00% (+100.00 pp) | "
+        "100.00% → 0.00% (-100.00 pp) | "
+        "100.00% → 100.00% (+0.00 pp) |"
+    ) in markdown
+
+
+def test_report_json_is_deterministic_with_optimization_levels(tmp_path: Path) -> None:
+    report = _report(tmp_path)
+
+    first = json_payload(report)
+    second = json_payload(report)
+
+    assert first == second
+    assert json.loads(first)["scope"]["optimization_levels"] == {
+        "O0": 1,
+        "O2": 1,
+        "O2-noinline": 1,
+    }

@@ -21,7 +21,7 @@ FunctionKey = tuple[str, str, str, str]
 ProducerKey = tuple[str, FunctionKey]
 
 SCORE_EPSILON = 1e-9
-REPORT_SCHEMA = "decbench-typematch-ab-report-v1"
+REPORT_SCHEMA = "decbench-typematch-ab-report-v2"
 
 
 @dataclass(frozen=True)
@@ -710,6 +710,9 @@ def build_report(
     strata: defaultdict[str, set[FunctionKey]] = defaultdict(set)
     for key, fact in universe.measurable.items():
         strata[fact.stratum].add(key)
+    optimization_levels: defaultdict[str, set[FunctionKey]] = defaultdict(set)
+    for key in universe.measurable:
+        optimization_levels[key[1]].add(key)
     unknown_strata = sum(len(keys) for name, keys in strata.items() if "unknown" in name)
     if unknown_strata:
         warnings.append(
@@ -735,6 +738,16 @@ def build_report(
                     producer,
                 )
                 for stratum, keys in sorted(strata.items())
+            },
+            "optimization_levels": {
+                optimization: _score_stats(
+                    overlay,
+                    keys,
+                    backends,
+                    universe.perfect_value,
+                    producer,
+                )
+                for optimization, keys in sorted(optimization_levels.items())
             },
         }
 
@@ -766,6 +779,18 @@ def build_report(
                     include_examples=False,
                 )
                 for stratum, keys in sorted(strata.items())
+            },
+            "optimization_levels": {
+                optimization: _comparison_stats(
+                    baseline,
+                    candidate,
+                    keys,
+                    backends,
+                    universe.perfect_value,
+                    regression_limit=0,
+                    include_examples=False,
+                )
+                for optimization, keys in sorted(optimization_levels.items())
             },
         }
 
@@ -812,6 +837,9 @@ def build_report(
                 "perfect scores divided by the shared function denominator; missing scores "
                 "are not-perfect misses"
             ),
+            "optimization_level_strata": (
+                "the shared function denominator partitioned by recorded optimization level"
+            ),
             "evidence_caveat": (
                 "site_caveated counts accepted mixed/fallback_only evidence; potential_undercount "
                 "also includes no accepted correspondence and checkpointed functions without "
@@ -827,6 +855,9 @@ def build_report(
             "shared_denominator_key_sha256": keyset_sha256(denominator_keys),
             "backends": backends,
             "strata": {name: len(keys) for name, keys in sorted(strata.items())},
+            "optimization_levels": {
+                name: len(keys) for name, keys in sorted(optimization_levels.items())
+            },
             "missing_manifest_keys": [key_text(key) for key in universe.missing_manifest_keys],
         },
         "producer_evidence": {
@@ -835,6 +866,10 @@ def build_report(
             "strata": {
                 stratum: _producer_stats(keys, backends, producer)
                 for stratum, keys in sorted(strata.items())
+            },
+            "optimization_levels": {
+                optimization: _producer_stats(keys, backends, producer)
+                for optimization, keys in sorted(optimization_levels.items())
             },
         },
         "modes": mode_report,
@@ -854,6 +889,15 @@ def _percentage(value: float | None) -> str:
 
 def _points(value: float | None) -> str:
     return "n/a" if value is None else f"{value:+.2f} pp"
+
+
+def _perfect_transition(row: Mapping[str, Any]) -> str:
+    perfect = row["published_perfect"]
+    return (
+        f"{_percentage(perfect['baseline_rate'])} → "
+        f"{_percentage(perfect['candidate_rate'])} "
+        f"({_points(perfect['delta_percentage_points'])})"
+    )
 
 
 def render_markdown(report: Mapping[str, Any]) -> str:
@@ -919,6 +963,44 @@ def render_markdown(report: Mapping[str, Any]) -> str:
                 f"{_points(partial['delta_percentage_points'])} | "
                 f"{_points(perfect['delta_percentage_points'])} |"
             )
+
+    optimization_levels = list(scope["optimization_levels"])
+    if optimization_levels and report["comparisons"]:
+        lines.extend(
+            [
+                "",
+                "## Optimization levels",
+                "",
+                "Each cell is the baseline → candidate published perfect rate and its "
+                "percentage-point delta over that optimization level's shared function set.",
+            ]
+        )
+        for name, comparison in report["comparisons"].items():
+            headers = " | ".join(
+                f"`{optimization}` ({scope['optimization_levels'][optimization]:,} functions)"
+                for optimization in optimization_levels
+            )
+            lines.extend(
+                [
+                    "",
+                    f"### `{name}`",
+                    "",
+                    f"| Backend | {headers} |",
+                    f"| --- | {' | '.join('---:' for _ in optimization_levels)} |",
+                ]
+            )
+            optimization_backends = ["ALL (micro)", *backends]
+            for backend in optimization_backends:
+                cells: list[str] = []
+                for optimization in optimization_levels:
+                    scoped = comparison["optimization_levels"][optimization]
+                    row = (
+                        scoped["all_backends"]
+                        if backend == "ALL (micro)"
+                        else scoped["backends"][backend]
+                    )
+                    cells.append(_perfect_transition(row))
+                lines.append(f"| {backend} | {' | '.join(cells)} |")
 
     lines.extend(["", "## Producer evidence", ""])
     if report["producer_evidence"]["status"] == "not_provided":
