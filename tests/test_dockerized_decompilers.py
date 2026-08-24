@@ -376,6 +376,49 @@ def test_r2_make_function_rebases_and_filters_thumb_provenance() -> None:
     assert function.variables[0].addresses == [0x9002, 0x9004]
 
 
+def test_r2_make_function_rejects_malformed_variable_fields() -> None:
+    provenance = {
+        "addr": 0x1000,
+        "size": 0x10,
+        "variables": [
+            {
+                "name": "",
+                "addresses": [0x1004],
+            },
+            {
+                "name": "local",
+                "size": 0,
+                "kind": "stack",
+                "arg_index": 2,
+                "line_numbers": [-1, 0, 1, 99],
+                "addresses": [0x1004],
+            },
+            {
+                "name": "arg1",
+                "size": -4,
+                "kind": "arg",
+                "arg_index": -1,
+                "addresses": [0x1008],
+            },
+        ],
+    }
+    function = R2DecDecompiler._make_function(
+        "fcn.1000",
+        0x1000,
+        "int f(int arg1) {\n    int local = arg1;\n    return local;\n}",
+        None,
+        provenance,
+        r2_addr=0x1000,
+    )
+    assert function is not None
+    assert [variable.name for variable in function.variables] == ["local", "arg1"]
+    assert function.variables[0].size is None
+    assert function.variables[0].arg_index is None
+    assert function.variables[0].line_numbers == [1]
+    assert function.variables[1].size is None
+    assert function.variables[1].arg_index is None
+
+
 def test_r2_decompile_native_int_filter_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
     """The int-address filter path end-to-end, with r2pipe mocked (no binary)."""
     import r2pipe

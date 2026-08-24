@@ -1107,11 +1107,14 @@ class R2DecDecompiler(DockerizedDecompiler):
         for record in provenance.get("variables") or []:
             if not isinstance(record, dict):
                 continue
+            name = str(record.get("name") or "")
+            if not name:
+                continue
             line_numbers = sorted(
                 {
                     line_number
                     for value in record.get("line_numbers") or []
-                    if (line_number := (_r2_int(value, 0) or 0)) and line_number <= line_count
+                    if 1 <= (line_number := (_r2_int(value, 0) or 0)) <= line_count
                 }
             )
             addresses = sorted(
@@ -1121,14 +1124,19 @@ class R2DecDecompiler(DockerizedDecompiler):
                     if (address := _evidence_address(value)) is not None
                 }
             )
+            raw_size = _r2_int(record.get("size"))
+            size = raw_size if raw_size is not None and raw_size > 0 else None
+            raw_arg_index = _r2_int(record.get("arg_index"))
+            arg_index = raw_arg_index if raw_arg_index is not None and raw_arg_index >= 0 else None
+            kind = "arg" if record.get("kind") == "arg" else "stack"
             variables.append(
                 VariableInfo(
-                    name=str(record.get("name") or ""),
+                    name=name,
                     type=str(record.get("type") or ""),
                     stack_offset=_r2_int(record.get("stack_offset")),
-                    size=_r2_int(record.get("size")),
-                    kind="arg" if record.get("kind") == "arg" else "stack",
-                    arg_index=_r2_int(record.get("arg_index")),
+                    size=size,
+                    kind=kind,
+                    arg_index=arg_index if kind == "arg" else None,
                     line_numbers=line_numbers,
                     addresses=addresses,
                 )
