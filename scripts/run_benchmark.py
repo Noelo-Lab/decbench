@@ -17,6 +17,7 @@ Env:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import multiprocessing
 import os
@@ -101,6 +102,8 @@ def _load_sampleset_manifest() -> dict[tuple[str, str, str], set[str]] | None:
     Restricts the whole run to the frozen ``sample-set`` slice (see
     ``scripts/export_sample_set.py``): a decompiler is only ever asked to
     decompile the listed function *names*, per ``(project, opt, binary_stem)``.
+    A configured gate is a hard scope boundary, so malformed or empty input
+    aborts the run instead of silently expanding it to the full corpus.
     This is the cost gate for the LLM backends — with it set,
     codex/claude-code/kimi-code run on ~250 functions instead of the whole corpus.
     """
@@ -110,14 +113,28 @@ def _load_sampleset_manifest() -> dict[tuple[str, str, str], set[str]] | None:
     try:
         data = json.loads(Path(path).read_text())
     except Exception as e:  # noqa: BLE001
-        print(f"[sampleset] WARNING: could not read {path}: {e}; gate DISABLED", flush=True)
-        return None
+        raise RuntimeError(f"could not read sample-set manifest {path}: {e}") from e
+    rows = data.get("functions") if isinstance(data, dict) else None
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError(f"sample-set manifest {path} has no function rows")
     gate: dict[tuple[str, str, str], set[str]] = {}
-    for e in data.get("functions", []):
-        gate.setdefault((e["project"], e["opt"], e["binary"]), set()).add(e["function"])
+    for index, entry in enumerate(rows):
+        try:
+            project, opt, binary, function = (
+                str(entry[key]).strip() for key in ("project", "opt", "binary", "function")
+            )
+        except (KeyError, TypeError) as exc:
+            raise RuntimeError(
+                f"sample-set manifest {path} has an invalid function row at index {index}"
+            ) from exc
+        if not all((project, opt, binary, function)):
+            raise RuntimeError(
+                f"sample-set manifest {path} has an empty field at function row {index}"
+            )
+        gate.setdefault((project, opt, binary), set()).add(function)
     if multiprocessing.current_process().name == "MainProcess":
         print(
-            f"[sampleset] gate ACTIVE: {len(data.get('functions', []))} functions "
+            f"[sampleset] gate ACTIVE: {len(rows)} functions "
             f"across {len(gate)} binaries from {path}",
             flush=True,
         )
@@ -140,14 +157,10 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except (ProcessLookupError, PermissionError, OSError):
-        try:
+        with contextlib.suppress(Exception):
             proc.kill()
-        except Exception:  # noqa: BLE001
-            pass
-    try:
+    with contextlib.suppress(Exception):
         proc.wait(timeout=15)
-    except Exception:  # noqa: BLE001
-        pass
 
 
 def project_source_functions(
@@ -305,6 +318,7 @@ def _relabel_to_dwarf(
     # DWARF key. Harmless for ELF, where the base is already folded into fd.address.
     base = common.elf_min_vaddr(unstripped)
     new_funcs: dict[str, object] = {}
+    dropped = 0
     for fd in list(result.functions.values()):
         addr = int(fd.address)
         dn = (
@@ -313,6 +327,9 @@ def _relabel_to_dwarf(
             or addr2name.get(addr + base)
             or addr2name.get((addr + base) & ~1)
         )
+        if dn is None:
+            dropped += 1
+            continue
         if dn and dn != fd.name:
             fd.decompiled_code = re.sub(r"\b" + re.escape(fd.name) + r"\b", dn, fd.decompiled_code)
             fd.name = dn
@@ -323,6 +340,11 @@ def _relabel_to_dwarf(
             new_funcs[fd.name] = fd
     result.functions = new_funcs  # type: ignore[assignment]
     result.binary_path = unstripped
+    if dropped:
+        result.decompiler.extra = {
+            **(result.decompiler.extra or {}),
+            "source_filter_unmatched_dropped": dropped,
+        }
 
 
 def _timed_decompile(
@@ -332,7 +354,7 @@ def _timed_decompile(
 
     Returns the unpickled DecompilationResult, or a 'timeout'/'error' result if
     the subprocess overran DECOMPILE_TIMEOUT or failed. ``names_file`` is a JSON
-    list of source function names to restrict to ("NONE" = all functions).
+    list of source-function addresses to restrict to ("NONE" = all functions).
     """
     pkl = out_dir / f"{dec_name}_{binary.stem}.result.pkl"
     cmd = [
@@ -473,10 +495,8 @@ def decompile_project_timed(
                         _relabel_to_dwarf(res, amap, orig)
                     else:
                         res.binary_path = orig
-                    try:
+                    with contextlib.suppress(Exception):
                         res.to_c_file(dec_out / f"{dec_name}_{stem}.c")
-                    except Exception:  # noqa: BLE001
-                        pass
                 results[stem][dec_name] = res
                 extra = res.decompiler.extra or {}
                 failure = extra.get("failure", "")

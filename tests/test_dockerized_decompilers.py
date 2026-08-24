@@ -292,12 +292,12 @@ def test_r2_narrow_int_thumb_tolerant() -> None:
     assert [t[1] for t in out] == [0x8001]
 
 
-def test_r2_narrow_by_str_name_and_fallback() -> None:
+def test_r2_narrow_by_str_name_and_fails_closed() -> None:
     discovered = [("sym.foo", 0x1000, 0x1000), ("fcn.00002000", 0x2000, 0x2000)]
     out = R2DecDecompiler._narrow(discovered, {"foo"}, "bin")
     assert len(out) == 1 and out[0][0] == "foo" and out[0][1] == 0x1000
     out2 = R2DecDecompiler._narrow(discovered, {0xDEAD}, "bin")
-    assert {t[1] for t in out2} == {0x1000, 0x2000}
+    assert out2 == []
 
 
 def test_r2_make_function_names_from_code_and_relabels() -> None:

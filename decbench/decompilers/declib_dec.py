@@ -36,14 +36,30 @@ if TYPE_CHECKING:
 
 _l = logging.getLogger(__name__)
 
-_SKIP_NAMES = frozenset({
-    "_start", "__libc_start_main", "__libc_csu_init", "__libc_csu_fini",
-    "_init", "_fini", "__do_global_dtors_aux", "register_tm_clones",
-    "deregister_tm_clones", "frame_dummy", "__libc_start_call_main",
-    "_dl_relocate_static_pie", "__gmon_start__", "__stack_chk_fail",
-})
+_SKIP_NAMES = frozenset(
+    {
+        "_start",
+        "__libc_start_main",
+        "__libc_csu_init",
+        "__libc_csu_fini",
+        "_init",
+        "_fini",
+        "__do_global_dtors_aux",
+        "register_tm_clones",
+        "deregister_tm_clones",
+        "frame_dummy",
+        "__libc_start_call_main",
+        "_dl_relocate_static_pie",
+        "__gmon_start__",
+        "__stack_chk_fail",
+    }
+)
 
 _SKIP_PREFIXES = ("thunk_", "j_", "__imp_", ".plt", "_dl_")
+
+
+def _address_matches(address: int, targets: set[int]) -> bool:
+    return address in targets or (address & ~1) in targets or (address | 1) in targets
 
 
 def _elf_min_vaddr(binary_path: Path) -> int:
@@ -58,11 +74,7 @@ def _elf_min_vaddr(binary_path: Path) -> int:
 
         with open(binary_path, "rb") as f:
             elf = ELFFile(f)
-            vaddrs = [
-                seg["p_vaddr"]
-                for seg in elf.iter_segments()
-                if seg["p_type"] == "PT_LOAD"
-            ]
+            vaddrs = [seg["p_vaddr"] for seg in elf.iter_segments() if seg["p_type"] == "PT_LOAD"]
             return min(vaddrs) if vaddrs else 0
     except Exception as e:
         _l.debug("Failed to read ELF min vaddr for %s: %s", binary_path, e)
@@ -112,24 +124,23 @@ class DeclibDecompiler(Decompiler):
         binary_path: Path,
         functions: list[tuple[str, int]] | None = None,
         output_dir: Path | None = None,
-        function_names: set[str] | None = None,
+        function_names: set[int] | set[str] | None = None,
         progress_path: Path | None = None,
     ) -> DecompilationResult:
         """Decompile a binary through declib.
 
         Args:
-            function_names: If given, only functions whose name is in this set
-                are decompiled. This restricts work to the project's own source
-                functions (skipping bundled gnulib/static filler that no metric
-                scores), which is a large speedup for slow decompilers. Names
-                not found in the binary are silently ignored; an empty/None set
-                means "all enumerated functions".
+            function_names: If given, only functions whose ELF-file-space
+                address or legacy name is in this set are decompiled. An
+                explicit filter is fail-closed; an empty/None set means all
+                enumerated functions.
             progress_path: If given, the partial result is pickled here after
                 each function so a hard external timeout-kill still preserves the
                 functions decompiled so far (important for slow backends like
                 angr on large binaries).
         """
         import pickle as _pickle
+
         if not self.is_available():
             raise RuntimeError(f"Decompiler '{self.name}' is not available")
 
@@ -141,31 +152,41 @@ class DeclibDecompiler(Decompiler):
 
         deci = None
         try:
-            deci = self._make_deci(
-                binary_path, self._project_dir_for(binary_path, output_dir)
-            )
+            deci = self._make_deci(binary_path, self._project_dir_for(binary_path, output_dir))
 
             if functions is not None:
-                target_funcs = [
-                    (name, addr - elf_base) for name, addr in functions
-                ]
+                target_funcs = [(name, addr - elf_base) for name, addr in functions]
             else:
-                target_funcs = self._enumerate_functions(
-                    deci, binary_path, elf_base
-                )
+                target_funcs = self._enumerate_functions(deci, binary_path, elf_base)
 
             if function_names:
+                address_targets = {
+                    int(value)
+                    for value in function_names
+                    if isinstance(value, int) and not isinstance(value, bool)
+                }
+                name_targets = {value for value in function_names if isinstance(value, str)}
                 filtered = [
-                    (n, a) for (n, a) in target_funcs if n in function_names
+                    (name, lifted_addr)
+                    for name, lifted_addr in target_funcs
+                    if name in name_targets
+                    or _address_matches(lifted_addr + elf_base, address_targets)
                 ]
-                # Apply the filter only if it matched: when decompiler names don't line up with
-                # source names, decompiling everything beats producing an empty result.
                 if filtered:
                     _l.debug(
                         "declib/%s: filtered %d/%d functions to source set for %s",
-                        self.name, len(filtered), len(target_funcs), binary_path.name,
+                        self.name,
+                        len(filtered),
+                        len(target_funcs),
+                        binary_path.name,
                     )
-                    target_funcs = filtered
+                else:
+                    _l.warning(
+                        "declib/%s: no function matched the requested source set for %s",
+                        self.name,
+                        binary_path.name,
+                    )
+                target_funcs = filtered
 
             def _dump_progress() -> None:
                 if progress_path is None:
@@ -196,9 +217,7 @@ class DeclibDecompiler(Decompiler):
 
             for func_name, lifted_addr in target_funcs:
                 try:
-                    func_result = self._decompile_one(
-                        deci, func_name, lifted_addr, elf_base
-                    )
+                    func_result = self._decompile_one(deci, func_name, lifted_addr, elf_base)
                 except Exception as e:
                     _l.debug("Failed to decompile %s: %s", func_name, e)
                     func_result = None
@@ -211,9 +230,7 @@ class DeclibDecompiler(Decompiler):
                 _dump_progress()
 
         except Exception as e:
-            _l.error(
-                "declib/%s failed on %s: %s", self.name, binary_path, e
-            )
+            _l.error("declib/%s failed on %s: %s", self.name, binary_path, e)
             return DecompilationResult(
                 binary_path=binary_path,
                 binary_name=binary_path.stem,
@@ -249,9 +266,7 @@ class DeclibDecompiler(Decompiler):
 
         return result
 
-    def _make_deci(
-        self, binary_path: Path, project_dir: Path | None
-    ) -> DecompilerInterface:
+    def _make_deci(self, binary_path: Path, project_dir: Path | None) -> DecompilerInterface:
         """Create a headless declib interface for the binary."""
         from declib.api import DecompilerInterface
 
@@ -266,14 +281,10 @@ class DeclibDecompiler(Decompiler):
 
         deci = DecompilerInterface.discover(**kwargs)
         if deci is None:
-            raise RuntimeError(
-                f"declib could not create a '{self.force_decompiler}' interface"
-            )
+            raise RuntimeError(f"declib could not create a '{self.force_decompiler}' interface")
         return deci
 
-    def _project_dir_for(
-        self, binary_path: Path, output_dir: Path | None
-    ) -> Path | None:
+    def _project_dir_for(self, binary_path: Path, output_dir: Path | None) -> Path | None:
         """Per-(binary, backend) cache dir; avoids project lock collisions."""
         if not self._uses_project_dir:
             return None
@@ -324,9 +335,7 @@ class DeclibDecompiler(Decompiler):
         elf_base: int,
     ) -> FunctionDecompilation | None:
         """Decompile a single function and collect text/lines/variables."""
-        dec = deci.decompile(
-            lifted_addr, map_lines=self.config.dump_line_mappings
-        )
+        dec = deci.decompile(lifted_addr, map_lines=self.config.dump_line_mappings)
         if (dec is None or not dec.text) and self.config.dump_line_mappings:
             dec = deci.decompile(lifted_addr, map_lines=False)
         if dec is None or not dec.text:
@@ -358,9 +367,7 @@ class DeclibDecompiler(Decompiler):
         )
 
     @staticmethod
-    def _extract_variables(
-        deci: DecompilerInterface, lifted_addr: int
-    ) -> list[VariableInfo]:
+    def _extract_variables(deci: DecompilerInterface, lifted_addr: int) -> list[VariableInfo]:
         """Pull stack variables and arguments from the full declib Function."""
         try:
             full_func = deci.functions[lifted_addr]

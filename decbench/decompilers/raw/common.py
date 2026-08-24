@@ -14,8 +14,8 @@ its output contract exactly *without* depending on declib:
 * ``should_skip_function`` / ``in_text`` — the name + section filter that
   ``declib_dec._enumerate_functions`` applies. Address comparisons tolerate the
   ARM Thumb T-bit (DWARF ``low_pc`` is even; angr reports Thumb entries odd).
-* ``narrow_to_source`` — the optional ``function_names`` restriction (with the
-  same "fall back to everything if nothing matched" behaviour as declib_dec).
+* ``narrow_to_source`` — the optional ``function_names`` restriction, applied
+  fail-closed so an address mismatch cannot broaden a requested subset.
 * ``dump_progress`` — the atomic partial-result pickle used by the run driver
   to recover a process that is killed by a hard timeout.
 * ``extract_metrics`` — the gotos/bools structure counts.
@@ -196,9 +196,9 @@ def narrow_to_source(
     The decompiler is given a fully-stripped binary (no symbols), so it knows
     functions only by address; ``target_addrs`` is the set of DWARF low_pc
     addresses (ELF-file space) for the project's source functions. We keep the
-    enumerated functions whose address is in that set. If nothing matches (an
-    unexpected address-space mismatch) we fall back to the full list rather than
-    silently producing an empty result.
+    enumerated functions whose address is in that set. An explicit filter is a
+    hard scope boundary: if nothing matches, return an empty list rather than
+    silently decompiling unrelated functions.
     """
     if not target_addrs:
         return target_funcs
@@ -211,8 +211,13 @@ def narrow_to_source(
             len(target_funcs),
             binary_name,
         )
-        return filtered
-    return target_funcs
+    else:
+        _l.warning(
+            "raw/%s: no enumerated address matched the requested source set for %s",
+            backend,
+            binary_name,
+        )
+    return filtered
 
 
 def _addr_matches(addr: int, target_addrs: set[int]) -> bool:

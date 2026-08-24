@@ -343,7 +343,7 @@ class DockerizedDecompiler(Decompiler):
         binary_path: Path,
         functions: list[tuple[str, int]] | None = None,
         output_dir: Path | None = None,
-        function_names: set[str] | None = None,
+        function_names: set[int] | set[str] | None = None,
         progress_path: Path | None = None,
     ) -> DecompilationResult:
         """Decompile a binary inside the container and split into functions.
@@ -351,8 +351,8 @@ class DockerizedDecompiler(Decompiler):
         Args:
             functions: optional ``(name, address)`` allowlist (addresses in ELF
                 space). When None, all ELF-symbol functions are considered.
-            function_names: optional name filter (restricts to a project's own
-                source functions, like declib_dec).
+            function_names: optional ELF-file-space address filter, with legacy
+                string-name support.
             output_dir / progress_path: parity with the declib path; outputs are
                 written to ``output_dir`` if given. ``progress_path`` is accepted
                 for driver compatibility (whole-program tools run atomically, so
@@ -406,7 +406,7 @@ class DockerizedDecompiler(Decompiler):
         binary_path: Path,
         combined_c: str,
         functions: list[tuple[str, int]] | None,
-        function_names: set[str] | None,
+        function_names: set[int] | set[str] | None,
         elapsed: float,
         timed_out: bool,
         error: str | None,
@@ -419,9 +419,14 @@ class DockerizedDecompiler(Decompiler):
             name_to_addr = dict(elf_function_symbols(binary_path))
 
         if function_names:
-            filtered = {n: a for n, a in name_to_addr.items() if n in function_names}
-            if filtered:
-                name_to_addr = filtered
+            address_targets = _addr_targets_of(function_names)
+            name_targets = {value for value in function_names if isinstance(value, str)}
+            name_to_addr = {
+                name: address
+                for name, address in name_to_addr.items()
+                if name in name_targets
+                or (address_targets and raw_common._addr_matches(address, address_targets))
+            }
 
         snippets = split_c_functions(combined_c) if combined_c else {}
 
@@ -1000,9 +1005,9 @@ class R2DecDecompiler(DockerizedDecompiler):
         DWARF ``low_pc`` filter, matched Thumb-bit tolerant) or NAMES (strs,
         legacy). Returns ``(label, file_addr, r2_addr, r2_flag)`` tuples where
         ``label`` is the requested name for the str path (so the result keys by
-        it) and ``None`` otherwise (the code identifier becomes the key). Falls
-        back to everything if nothing matched, so a filter mismatch never yields
-        an empty result.
+        it) and ``None`` otherwise (the code identifier becomes the key). An
+        explicit filter is fail-closed, so a mismatch yields an empty result
+        instead of broadening the requested benchmark subset.
         """
         all_targets: list[tuple[str | None, int, int, str]] = [
             (None, fa, raw, nm) for (nm, fa, raw) in discovered
@@ -1026,8 +1031,12 @@ class R2DecDecompiler(DockerizedDecompiler):
                     len(discovered),
                     binary_name,
                 )
-                return kept
-            return all_targets
+            else:
+                _l.warning(
+                    "r2dec: no discovered address matched the requested source set for %s",
+                    binary_name,
+                )
+            return kept
         if name_targets:
             named: list[tuple[str | None, int, int, str]] = []
             for nm, fa, raw in discovered:
@@ -1035,8 +1044,8 @@ class R2DecDecompiler(DockerizedDecompiler):
                 match = nm if nm in name_targets else (bare if bare in name_targets else None)
                 if match is not None:
                     named.append((match, fa, raw, nm))
-            return named or all_targets
-        return all_targets
+            return named
+        return []
 
     @staticmethod
     def _make_function(

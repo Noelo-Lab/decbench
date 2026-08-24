@@ -130,9 +130,10 @@ def decompile_binary(
   project's own source functions; see `scripts/decompile_one.py`). The driver
   hands your backend a *stripped* copy of the binary, so functions are known
   only by address; filter with `narrow_to_source`, which matches by address
-  (tolerating the ARM Thumb bit) and falls back to *all* functions if nothing
-  matches. The driver uses this to skip bundled libc/gnulib and speed up slow
-  decompilers. Only the dockerized whole-program backends additionally honor
+  (tolerating the ARM Thumb bit) and fails closed if nothing matches. The parent
+  driver also drops any returned function outside the requested address set, so
+  a backend mismatch cannot expand a sample or source-only run to unrelated
+  functions. Only the dockerized whole-program backends additionally honor
   string names here.
 - **`progress_path`** — when set, **atomically pickle a partial
   `DecompilationResult` after each function** so a killed process is still
