@@ -286,6 +286,15 @@ def test_variable_occurrences_are_binding_aware_and_shadow_safe() -> None:
     }
     assert variable_occurrence_lines(code, "f", ["a", "a"]) == {}
     assert variable_occurrence_lines("int f(int a) { return a;", "f", ["a"]) == {}
+    assert (
+        variable_occurrence_lines(
+            "int other(int a) { return a; }",
+            "f",
+            ["a"],
+            require_exact_function_name=True,
+        )
+        == {}
+    )
 
 
 def test_declib_variable_lines_join_only_valid_native_rows() -> None:

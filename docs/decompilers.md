@@ -333,6 +333,23 @@ map, so its offsets can drift within a function; `binja-declib` deliberately
 emits neither line nor variable-occurrence provenance until declib supplies an
 exact-row map.
 
+Phoenix is retired and is not a registered backend, but its frozen angr 9.2.213
+checkpoints remain reproducible inputs. The former raw Phoenix adapter obtained
+both `codegen.text` and `map_pos_to_addr` from the same angr code-generator
+object. During TypeMatch checkpoint reevaluation only, DecBench first sanitizes
+those saved rows against the selected binary and then joins uniquely bound
+identifiers in that unchanged final C to the surviving rows. The join requires
+one exact function definition, parseable C, a single declaration and structured
+record for the name, unique valid line rows, and at least one mapped occurrence.
+It preserves any existing variable evidence and never rewrites the checkpoint.
+The join reads only the decompiler's final C, structured variable names, and
+sanitized native rows; source/DWARF variable names and recovered or ground-truth
+types are not inputs. The established function label is used only to reject a
+mismatched final definition. Its explicit exact-occurrence marker prevents the metric's
+generic text fallback from undoing an intentional parse or ambiguity abstention.
+This historical exception does not restore Phoenix as a producer and is not
+applied to another backend merely because it has C text and line-like metadata.
+
 DecLib's lifted zero for PE is backend-dependent: a fresh import may use the
 PE ImageBase/header mapping or the start of an encoded section. The adapters
 therefore read `deci.binary_base_addr` only after opening the project, require
@@ -364,6 +381,11 @@ retain that information:
   `ForLoopPass`, `VarReducePass`, and `GotoElidePass` run afterward;
   `VarReducePass` applies and discards a local-name coalescing map. The coverage
   audit tracks exact syntax persistence, not node-to-final-variable lineage.
+
+The same blockers remain in the audited upstream heads: Glaurung
+`5e16879802d4f1594bf9e8c8286ae420cf3ae869` adds a MIR `source_va`, but its
+final `Expr`/`Stmt` nodes and JSON renderer still carry no origin; Manifold's
+upstream head is still the pinned `b63daf30ccfbcc3a88d7ead117df17e41127f499`.
 
 Their DecBench adapters deliberately emit no native occurrence addresses or
 line maps. Final-name-to-earlier-IR joins would be heuristic, so local-variable

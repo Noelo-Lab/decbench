@@ -29,6 +29,9 @@ from pathlib import Path
 from typing import TypedDict
 
 import decbench.decompilers  # noqa: F401 (register backends so pickles load)
+from decbench.decompilers.final_render_provenance import (
+    enrich_final_render_variable_provenance,
+)
 from decbench.decompilers.provenance import (
     NativeProvenanceContext,
     sanitize_native_provenance,
@@ -229,6 +232,9 @@ def _prepare_decompilation(
         context.binary_path,
         context=context,
     )
+    backend = relocated.decompiler.decompiler_name.partition("@")[0]
+    if backend == "phoenix":
+        enrich_final_render_variable_provenance(relocated)
     return relocated
 
 

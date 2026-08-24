@@ -1358,7 +1358,11 @@ def extract_decompiler_evidence(
     include_unnamed: bool = False,
     infer_code_variables: bool = True,
 ) -> FunctionEvidence:
-    from decbench.metrics.variable_features import analyze_c_function
+    from decbench.metrics.variable_features import (
+        EXACT_VARIABLE_OCCURRENCE_METADATA_KEY,
+        EXACT_VARIABLE_OCCURRENCE_SCHEMA,
+        analyze_c_function,
+    )
 
     base_backend = backend.split("@", 1)[0]
     evidence_prefix = backend if identity_prefix is None else identity_prefix
@@ -1368,6 +1372,12 @@ def extract_decompiler_evidence(
     }
     code_lines = function.decompiled_code.splitlines()
     structured = list(getattr(function, "variables", []) or [])
+    function_metadata = getattr(function, "metadata", {})
+    exact_occurrence_evidence = (
+        isinstance(function_metadata, Mapping)
+        and function_metadata.get(EXACT_VARIABLE_OCCURRENCE_METADATA_KEY)
+        == EXACT_VARIABLE_OCCURRENCE_SCHEMA
+    )
     analysis = analyze_c_function(
         function.decompiled_code,
         function.name,
@@ -1379,7 +1389,12 @@ def extract_decompiler_evidence(
             if not variable.name and not include_unnamed:
                 continue
             lines = {int(line) for line in getattr(variable, "line_numbers", [])}
-            if variable.name and not lines and base_backend not in {"ida", "ghidra"}:
+            if (
+                variable.name
+                and not lines
+                and base_backend not in {"ida", "ghidra"}
+                and not exact_occurrence_evidence
+            ):
                 token = re.compile(r"\b" + re.escape(variable.name) + r"\b")
                 lines = {
                     line_number

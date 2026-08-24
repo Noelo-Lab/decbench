@@ -43,6 +43,9 @@ _INTEGER_SUFFIX = re.compile(r"(?i)(?:u|l)+$")
 _GENERIC_FEATURES = frozenset({"use:read", "use:write", "use:readwrite"})
 _COMMUTATIVE_OPERATORS = frozenset({"+", "*", "&", "|", "^", "==", "!=", "&&", "||"})
 
+EXACT_VARIABLE_OCCURRENCE_METADATA_KEY = "exact_variable_occurrence_evidence"
+EXACT_VARIABLE_OCCURRENCE_SCHEMA = "decbench-exact-variable-occurrences-v1"
+
 
 @dataclass(frozen=True)
 class DiscoveredVariable:
@@ -568,12 +571,22 @@ def variable_occurrence_lines(
     code: str,
     function_name: str,
     variable_names: Iterable[str],
+    *,
+    require_exact_function_name: bool = False,
 ) -> dict[str, tuple[int, ...]]:
     """Locate unambiguous local-variable identifiers in exact rendered C."""
 
     source = code.encode("utf-8", "replace")
     tree = _parser().parse(source)
-    function = _select_function(tree.root_node, source, function_name)
+    if require_exact_function_name:
+        exact = [
+            node
+            for node in _walk(tree.root_node)
+            if node.type == "function_definition" and _function_name(node, source) == function_name
+        ]
+        function = exact[0] if len(exact) == 1 else None
+    else:
+        function = _select_function(tree.root_node, source, function_name)
     if function is None or function.has_error:
         return {}
 

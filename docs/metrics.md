@@ -230,7 +230,14 @@ cross-function, padding, or instruction-interior claims. This is in-memory only:
 the raw checkpoint pickle is never rewritten. Pickles created before additive
 variable-line/address fields existed are hydrated with empty lists at this boundary;
 the sanitizer records the number of hydrated fields and never treats schema repair as
-native evidence.
+native evidence. Retired Phoenix checkpoints receive one additional in-memory step:
+because their saved C and native position map came from the same angr code-generator
+object, exact unique final identifiers are joined to surviving sanitized rows. Parse
+errors, stale or duplicate rows, name shadowing, a mismatched function definition, and
+variables without a mapped occurrence all abstain. No other legacy backend receives
+this repair without an equivalent same-render producer contract. The in-memory result
+marks those exact occurrences as authoritative, so the generic identifier-text line
+fallback cannot turn an explicit abstention back into address evidence.
 
 Summarize independently generated modes with the shared-denominator reporter,
 not the re-evaluator's per-mode console mean:
