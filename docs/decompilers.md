@@ -282,6 +282,16 @@ The canonical raw adapters use these native sources:
   Local identifier tokens carry their LLVM origin address, so the adapter
   recognizes RetDec's validated origin push/pop sequence and attributes each
   occurrence to its enclosing statement address instead.
+  If a definition has no usable function-token address, the adapter accepts only
+  one exact `function_<hex>` definition whose suffix is a unique DSM function-range
+  start and decoded instruction address. Malformed, duplicate, ambiguous, or
+  conflicting exact token/name bindings remain unscored; a stray token address
+  that is not itself a DSM function entry is treated as missing. Unique annotated
+  addresses are merged before the stripped binary's dynamic-symbol filter;
+  unrelated dynamic symbols cannot hide them, while name/address conflicts and
+  duplicate normalized addresses abstain. The shared native-provenance sanitizer
+  still verifies the relabeled DWARF function range and every retained line or
+  variable address.
   Its exact snippet supplies recovered types and ABI argument positions; duplicate
   or shadowed identifiers abstain from variable-occurrence evidence. Missing or
   malformed annotated output falls back to the older plain-C path.

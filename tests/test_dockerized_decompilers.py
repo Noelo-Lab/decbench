@@ -44,6 +44,10 @@ _GZIP_CANDIDATES = [
     Path("/home/mahaloz/github/decbench/results/sailr_full/O0/gzip/compiled/gzip"),
 ]
 _GZIP = next((p for p in _GZIP_CANDIDATES if p.is_file()), _GZIP_CANDIDATES[0])
+_RETDEC_BASH_STRIPPED = Path(
+    "/home/mahaloz/github/decbench/results/typematch_native_all/"
+    "full_retdec_v10/O0/bash/stripped/bash"
+)
 
 
 def test_backends_register() -> None:
@@ -321,6 +325,399 @@ def test_retdec_dsm_parser_accepts_only_instruction_rows_and_rebases_rva() -> No
 
     assert instructions == frozenset({0x401000, 0x401001})
     assert ranges == ((0x401000, 0x401010),)
+
+
+def _retdec_definition_tokens(
+    name: str,
+    *,
+    function_token_address: int | None = None,
+    body_address: int | None = None,
+) -> list[dict[str, str]]:
+    tokens = [
+        {"addr": hex(function_token_address) if function_token_address is not None else ""},
+        {"kind": "type", "val": "int32_t"},
+        {"kind": "ws", "val": " "},
+        {"kind": "i_fnc", "val": name},
+        {"kind": "punc", "val": "("},
+        {"kind": "type", "val": "void"},
+        {"kind": "punc", "val": ")"},
+        {"kind": "ws", "val": " "},
+        {"kind": "punc", "val": "{"},
+        {"kind": "nl", "val": "\n"},
+    ]
+    if body_address is not None:
+        tokens.append({"addr": hex(body_address)})
+    tokens.extend(
+        [
+            {"kind": "ws", "val": "    "},
+            {"kind": "keyw", "val": "return"},
+            {"kind": "ws", "val": " "},
+            {"kind": "l_int", "val": "1"},
+            {"kind": "punc", "val": ";"},
+            {"kind": "nl", "val": "\n"},
+            {"addr": ""},
+            {"kind": "punc", "val": "}"},
+            {"kind": "nl", "val": "\n"},
+        ]
+    )
+    return tokens
+
+
+def test_retdec_synthetic_definition_recovers_missing_function_token_address() -> None:
+    parsed = _parse_retdec_json(
+        json.dumps(
+            {
+                "language": "C",
+                "tokens": _retdec_definition_tokens("function_1010", body_address=0x1014),
+            }
+        ),
+        valid_instruction_addresses=frozenset({0x1010, 0x1014}),
+        function_ranges=((0x1010, 0x1020),),
+    )
+
+    function = parsed.functions["function_1010"]
+    assert function.address == 0x1010
+    assert [(row.line_number, row.addresses) for row in function.line_mappings] == [
+        (1, [0x1010]),
+        (2, [0x1014]),
+    ]
+
+    result = RetDecDecompiler()._build_result(
+        binary_path=Path("/nonexistent/bin"),
+        combined_c=parsed,
+        functions=None,
+        function_names={0x1010},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+    assert set(result.functions) == {"function_1010"}
+    assert result.functions["function_1010"].address == 0x1010
+
+
+def test_retdec_synthetic_definition_recovers_partial_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parsed = _parse_retdec_json(
+        json.dumps(
+            {
+                "language": "C",
+                "tokens": [
+                    *_retdec_definition_tokens(
+                        "function_1000",
+                        function_token_address=0x1000,
+                        body_address=0x1004,
+                    ),
+                    *_retdec_definition_tokens("function_1010", body_address=0x1014),
+                ],
+            }
+        ),
+        valid_instruction_addresses=frozenset({0x1000, 0x1004, 0x1010, 0x1014}),
+        function_ranges=((0x1000, 0x1010), (0x1010, 0x1020)),
+    )
+
+    assert {function.address for function in parsed.functions.values()} == {0x1000, 0x1010}
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.elf_function_symbols",
+        lambda _path: [("exported", 0x1000), ("unrelated", 0x9000)],
+    )
+
+    result = RetDecDecompiler()._build_result(
+        binary_path=Path("/nonexistent/bin"),
+        combined_c=parsed,
+        functions=None,
+        function_names={0x1000, 0x1010},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+    assert {function.address for function in result.functions.values()} == {0x1000, 0x1010}
+    assert set(result.functions) == {"function_1000", "function_1010"}
+
+
+def test_retdec_synthetic_definition_merges_with_unrelated_symbol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parsed = _parse_retdec_json(
+        json.dumps(
+            {
+                "language": "C",
+                "tokens": _retdec_definition_tokens("function_1010", body_address=0x1014),
+            }
+        ),
+        valid_instruction_addresses=frozenset({0x1010, 0x1014}),
+        function_ranges=((0x1010, 0x1020),),
+    )
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.elf_function_symbols",
+        lambda _path: [("unrelated", 0x9000)],
+    )
+
+    result = RetDecDecompiler()._build_result(
+        binary_path=Path("/nonexistent/bin"),
+        combined_c=parsed,
+        functions=None,
+        function_names={0x1010},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+
+    assert set(result.functions) == {"function_1010"}
+
+
+def test_retdec_annotation_symbol_name_conflict_abstains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parsed = _parse_retdec_json(
+        json.dumps(
+            {
+                "language": "C",
+                "tokens": _retdec_definition_tokens("function_1010", body_address=0x1014),
+            }
+        ),
+        valid_instruction_addresses=frozenset({0x1010, 0x1014}),
+        function_ranges=((0x1010, 0x1020),),
+    )
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.elf_function_symbols",
+        lambda _path: [("function_1010", 0x2020), ("unrelated", 0x9000)],
+    )
+
+    result = RetDecDecompiler()._build_result(
+        binary_path=Path("/nonexistent/bin"),
+        combined_c=parsed,
+        functions=None,
+        function_names={0x1010, 0x2020},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+
+    assert result.functions == {}
+
+
+def test_retdec_ambiguous_annotation_address_abstains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parsed = _parse_retdec_json(
+        json.dumps(
+            {
+                "language": "C",
+                "tokens": [
+                    *_retdec_definition_tokens("first", function_token_address=0x1010),
+                    *_retdec_definition_tokens("second", function_token_address=0x1010),
+                ],
+            }
+        ),
+        valid_instruction_addresses=frozenset({0x1010}),
+        function_ranges=((0x1010, 0x1020),),
+    )
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.elf_function_symbols",
+        lambda _path: [("exported", 0x1010)],
+    )
+
+    result = RetDecDecompiler()._build_result(
+        binary_path=Path("/nonexistent/bin"),
+        combined_c=parsed,
+        functions=None,
+        function_names={0x1010},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+
+    assert result.functions == {}
+
+
+def test_retdec_duplicate_synthetic_annotation_abstains_with_symbol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parsed = _parse_retdec_json(
+        json.dumps(
+            {
+                "language": "C",
+                "tokens": [
+                    *_retdec_definition_tokens("function_1010"),
+                    *_retdec_definition_tokens("function_1010"),
+                ],
+            }
+        ),
+        valid_instruction_addresses=frozenset({0x1010}),
+        function_ranges=((0x1010, 0x1020),),
+    )
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.elf_function_symbols",
+        lambda _path: [("function_1010", 0x1010)],
+    )
+
+    result = RetDecDecompiler()._build_result(
+        binary_path=Path("/nonexistent/bin"),
+        combined_c=parsed,
+        functions=None,
+        function_names={0x1010},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+
+    assert result.functions == {}
+
+
+@pytest.mark.skipif(not _RETDEC_BASH_STRIPPED.is_file(), reason="frozen RetDec bash absent")
+def test_retdec_real_stripped_bash_symbols_do_not_hide_synthetic_entry() -> None:
+    assert elf_function_symbols(_RETDEC_BASH_STRIPPED)
+    parsed = _parse_retdec_json(
+        json.dumps(
+            {
+                "language": "C",
+                "tokens": _retdec_definition_tokens("function_32890", body_address=0x32894),
+            }
+        ),
+        valid_instruction_addresses=frozenset({0x32890, 0x32894}),
+        function_ranges=((0x32890, 0x328A0),),
+    )
+
+    result = RetDecDecompiler()._build_result(
+        binary_path=_RETDEC_BASH_STRIPPED,
+        combined_c=parsed,
+        functions=None,
+        function_names={0x32890},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+
+    assert {function.address for function in result.functions.values()} == {0x32890}
+
+
+def test_retdec_synthetic_definition_rebases_rva() -> None:
+    parsed = _parse_retdec_json(
+        json.dumps(
+            {
+                "language": "C",
+                "tokens": _retdec_definition_tokens("function_1000", body_address=0x1004),
+            }
+        ),
+        image_base=0x400000,
+        valid_instruction_addresses=frozenset({0x401000, 0x401004}),
+        function_ranges=((0x401000, 0x401010),),
+    )
+
+    assert parsed.functions["function_1000"].address == 0x401000
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["function_0x1010", "function_1010_extra", "Function_1010"],
+)
+def test_retdec_synthetic_definition_rejects_malformed_names(name: str) -> None:
+    parsed = _parse_retdec_json(
+        json.dumps({"language": "C", "tokens": _retdec_definition_tokens(name)}),
+        valid_instruction_addresses=frozenset({0x1010}),
+        function_ranges=((0x1010, 0x1020),),
+    )
+
+    assert parsed.functions[name].address is None
+
+
+@pytest.mark.parametrize(
+    "instructions,ranges",
+    [
+        (frozenset({0x1014}), ((0x1010, 0x1020),)),
+        (frozenset({0x1010}), ((0x1000, 0x1020),)),
+        (frozenset({0x1010}), ((0x1010, 0x1020), (0x1010, 0x1030))),
+        (frozenset({0x1010}), None),
+    ],
+)
+def test_retdec_synthetic_definition_requires_exact_dsm_evidence(
+    instructions: frozenset[int],
+    ranges: tuple[tuple[int, int], ...] | None,
+) -> None:
+    parsed = _parse_retdec_json(
+        json.dumps({"language": "C", "tokens": _retdec_definition_tokens("function_1010")}),
+        valid_instruction_addresses=instructions,
+        function_ranges=ranges,
+    )
+
+    assert parsed.functions["function_1010"].address is None
+
+
+def test_retdec_synthetic_definition_rejects_duplicate_definition() -> None:
+    tokens = [
+        *_retdec_definition_tokens("function_1010", function_token_address=0x1010),
+        *_retdec_definition_tokens("function_1010", function_token_address=0x1010),
+    ]
+    parsed = _parse_retdec_json(
+        json.dumps({"language": "C", "tokens": tokens}),
+        valid_instruction_addresses=frozenset({0x1010}),
+        function_ranges=((0x1010, 0x1020),),
+    )
+
+    assert parsed.functions["function_1010"].address is None
+
+
+def test_retdec_synthetic_definition_rejects_ambiguous_address() -> None:
+    tokens = [
+        *_retdec_definition_tokens("function_1010", function_token_address=0x1010),
+        *_retdec_definition_tokens("function_01010", function_token_address=0x1010),
+    ]
+    parsed = _parse_retdec_json(
+        json.dumps({"language": "C", "tokens": tokens}),
+        valid_instruction_addresses=frozenset({0x1010}),
+        function_ranges=((0x1010, 0x1020),),
+    )
+
+    assert parsed.functions["function_1010"].address is None
+    assert parsed.functions["function_01010"].address is None
+
+
+def test_retdec_synthetic_definition_rejects_token_name_mismatch() -> None:
+    parsed = _parse_retdec_json(
+        json.dumps(
+            {
+                "language": "C",
+                "tokens": _retdec_definition_tokens(
+                    "function_1010",
+                    function_token_address=0x1020,
+                    body_address=0x1024,
+                ),
+            }
+        ),
+        valid_instruction_addresses=frozenset({0x1010, 0x1020, 0x1024}),
+        function_ranges=((0x1010, 0x1018), (0x1020, 0x1030)),
+    )
+
+    assert parsed.functions["function_1010"].address is None
+
+
+def test_retdec_synthetic_definition_recovers_misaligned_nonentry_token() -> None:
+    parsed = _parse_retdec_json(
+        json.dumps(
+            {
+                "language": "C",
+                "tokens": _retdec_definition_tokens(
+                    "function_1010",
+                    function_token_address=0x1014,
+                    body_address=0x1018,
+                ),
+            }
+        ),
+        valid_instruction_addresses=frozenset({0x1010, 0x1014, 0x1018}),
+        function_ranges=((0x1010, 0x1020),),
+    )
+
+    function = parsed.functions["function_1010"]
+    assert function.address == 0x1010
+    assert function.line_mappings[0].addresses == [0x1010]
 
 
 def test_retdec_duplicate_shadow_names_abstain_from_occurrence_evidence() -> None:

@@ -200,8 +200,17 @@ class _RetDecAnnotatedSource:
     functions: dict[str, _RetDecFunction]
 
 
+@dataclass(frozen=True)
+class _RetDecBindingIndex:
+    by_name: dict[str, _RetDecFunction]
+    by_address: dict[int, _RetDecFunction]
+    blocked_names: frozenset[str]
+    blocked_addresses: frozenset[int]
+
+
 _RETDEC_VARIABLE_KINDS = frozenset({"i_arg", "i_lvar", "i_var"})
 _RETDEC_ORIGIN_IDENTIFIER_KINDS = _RETDEC_VARIABLE_KINDS | {"i_gvar"}
+_RETDEC_SYNTHETIC_FUNCTION_RE = re.compile(r"function_([0-9a-fA-F]+)\Z")
 
 
 def _retdec_address(value: object, image_base: int) -> int | None:
@@ -339,6 +348,117 @@ def _retdec_accepts_address(
     return True
 
 
+def _retdec_synthetic_address(name: str, image_base: int) -> int | None:
+    match = _RETDEC_SYNTHETIC_FUNCTION_RE.fullmatch(name)
+    if match is None:
+        return None
+    return _retdec_address(f"0x{match.group(1)}", image_base)
+
+
+def _retdec_synthetic_entry(
+    name: str,
+    image_base: int,
+    valid_instruction_addresses: frozenset[int] | None,
+    function_range_start_counts: Counter[int] | None,
+    name_count: int,
+    address_count: int,
+) -> int | None:
+    address = _retdec_synthetic_address(name, image_base)
+    if address is None or name_count != 1 or address_count != 1:
+        return None
+    return (
+        address
+        if _retdec_has_exact_dsm_entry(
+            address,
+            valid_instruction_addresses,
+            function_range_start_counts,
+        )
+        else None
+    )
+
+
+def _retdec_has_exact_dsm_entry(
+    address: int,
+    valid_instruction_addresses: frozenset[int] | None,
+    function_range_start_counts: Counter[int] | None,
+) -> bool:
+    return (
+        valid_instruction_addresses is not None
+        and address in valid_instruction_addresses
+        and function_range_start_counts is not None
+        and function_range_start_counts[address] == 1
+    )
+
+
+def _retdec_binding_index(
+    annotated: _RetDecAnnotatedSource,
+    base_bindings: dict[str, int],
+) -> _RetDecBindingIndex:
+    address_groups: dict[int, list[_RetDecFunction]] = defaultdict(list)
+    blocked_names: set[str] = set()
+    blocked_addresses: set[int] = set()
+    for key, function in annotated.functions.items():
+        if key != function.name:
+            blocked_names.update((key, function.name))
+        if function.address is None:
+            if _retdec_synthetic_address(function.name, 0) is not None:
+                blocked_names.add(function.name)
+            continue
+        address_groups[function.address & ~1].append(function)
+
+    for address, functions in address_groups.items():
+        if len(functions) != 1:
+            blocked_addresses.add(address)
+            blocked_names.update(function.name for function in functions)
+
+    for address, functions in address_groups.items():
+        if len(functions) != 1:
+            continue
+        function = functions[0]
+        bound_address = base_bindings.get(function.name)
+        if bound_address is not None and (bound_address & ~1) != address:
+            blocked_names.add(function.name)
+            blocked_addresses.update((address, bound_address & ~1))
+
+    for address in blocked_addresses:
+        blocked_names.update(function.name for function in address_groups.get(address, ()))
+
+    by_name: dict[str, _RetDecFunction] = {}
+    by_address: dict[int, _RetDecFunction] = {}
+    for address, functions in address_groups.items():
+        if address in blocked_addresses or len(functions) != 1:
+            continue
+        function = functions[0]
+        if function.name in blocked_names:
+            continue
+        by_name[function.name] = function
+        by_address[address] = function
+    return _RetDecBindingIndex(
+        by_name=by_name,
+        by_address=by_address,
+        blocked_names=frozenset(blocked_names),
+        blocked_addresses=frozenset(blocked_addresses),
+    )
+
+
+def _retdec_merge_bindings(
+    base_bindings: dict[str, int],
+    index: _RetDecBindingIndex,
+) -> dict[str, int]:
+    annotated_addresses = frozenset(index.by_address)
+    merged = {
+        name: address
+        for name, address in base_bindings.items()
+        if name not in index.blocked_names
+        and (address & ~1) not in index.blocked_addresses
+        and (address & ~1) not in annotated_addresses
+    }
+    for function in index.by_address.values():
+        if function.address is not None:
+            merged[function.name] = function.address
+    return merged
+
+
 def _parse_retdec_json(
     raw_json: str,
     *,
@@ -393,35 +513,82 @@ def _parse_retdec_json(
         address_changed = False
 
     text = "".join(parts)
+    spans = _c_function_spans(text)
+    span_name_counts = Counter(name for name, _start, _end in spans)
+    synthetic_addresses = [
+        address
+        for name, _start, _end in spans
+        if (address := _retdec_synthetic_address(name, image_base)) is not None
+    ]
+    synthetic_address_counts = Counter(synthetic_addresses)
+    function_range_start_counts = (
+        Counter(start for start, _end in function_ranges) if function_ranges is not None else None
+    )
     functions: dict[str, _RetDecFunction] = {}
-    for name, start, end in _c_function_spans(text):
+    for name, start, end in spans:
         code = text[start:end]
         opening = code.find("{")
         header_end = end if opening < 0 else start + opening
         function_tokens = [token for token in tokens if start <= token.start < end]
-        entry = next(
-            (
-                token.occurrence_address
-                for token in function_tokens
-                if token.start < header_end and token.kind == "i_fnc" and token.value == name
-            ),
-            None,
+        token_entries = {
+            token.occurrence_address
+            for token in function_tokens
+            if token.start < header_end
+            and token.kind == "i_fnc"
+            and token.value == name
+            and token.occurrence_address is not None
+        }
+        synthetic_address = _retdec_synthetic_address(name, image_base)
+        synthetic_entry = False
+        fallback_entry = _retdec_synthetic_entry(
+            name,
+            image_base,
+            valid_instruction_addresses,
+            function_range_start_counts,
+            span_name_counts[name],
+            synthetic_address_counts[synthetic_address] if synthetic_address is not None else 0,
         )
+        synthetic_conflict = synthetic_address is not None and (
+            span_name_counts[name] != 1 or synthetic_address_counts[synthetic_address] != 1
+        )
+        if synthetic_conflict:
+            entry = None
+        elif len(token_entries) == 1:
+            entry = next(iter(token_entries))
+            if synthetic_address is not None and entry != synthetic_address:
+                if _retdec_has_exact_dsm_entry(
+                    entry,
+                    valid_instruction_addresses,
+                    function_range_start_counts,
+                ):
+                    entry = None
+                else:
+                    entry = fallback_entry
+                    synthetic_entry = entry is not None
+        elif token_entries:
+            entry = None
+        else:
+            entry = fallback_entry
+            synthetic_entry = entry is not None
         function_range = _retdec_function_range(entry, function_ranges)
 
         starts = raw_common.line_starts(code)
         line_addresses: dict[int, set[int]] = defaultdict(set)
+        if synthetic_entry and entry is not None:
+            line_addresses[1].add(entry)
         variable_lines: dict[str, set[int]] = defaultdict(set)
         variable_addresses: dict[str, set[int]] = defaultdict(set)
         for token in function_tokens:
             if not token.value:
                 continue
             line = raw_common.pos_to_line(token.start - start, starts)
-            accepted = _retdec_accepts_address(
-                token.occurrence_address,
-                valid_instruction_addresses,
-                function_range,
-                function_ranges is not None,
+            accepted = not (synthetic_entry and line == 1) and (
+                _retdec_accepts_address(
+                    token.occurrence_address,
+                    valid_instruction_addresses,
+                    function_range,
+                    function_ranges is not None,
+                )
             )
             if accepted and token.occurrence_address is not None:
                 line_addresses[line].add(int(token.occurrence_address))
@@ -715,12 +882,11 @@ class DockerizedDecompiler(Decompiler):
         else:
             name_to_addr = dict(elf_function_symbols(binary_path))
 
-        if annotated is not None and not name_to_addr:
-            name_to_addr = {
-                name: function.address
-                for name, function in annotated.functions.items()
-                if function.address is not None
-            }
+        binding_index = (
+            _retdec_binding_index(annotated, name_to_addr) if annotated is not None else None
+        )
+        if binding_index is not None and functions is None:
+            name_to_addr = _retdec_merge_bindings(name_to_addr, binding_index)
 
         if function_names:
             address_targets = _addr_targets_of(function_names)
@@ -733,23 +899,25 @@ class DockerizedDecompiler(Decompiler):
             }
 
         snippets = split_c_functions(source_text) if source_text else {}
-        annotated_by_address: dict[int, list[_RetDecFunction]] = defaultdict(list)
-        if annotated is not None:
-            for function in annotated.functions.values():
-                if function.address is not None:
-                    annotated_by_address[function.address & ~1].append(function)
 
         decompiled: dict[str, FunctionDecompilation] = {}
         failed: list[str] = []
         for name, addr in name_to_addr.items():
-            annotation = annotated.functions.get(name) if annotated is not None else None
-            if annotation is None and annotated is not None:
-                candidates = annotated_by_address.get(addr & ~1, [])
-                annotation = candidates[0] if len(candidates) == 1 else None
+            if binding_index is not None and (
+                name in binding_index.blocked_names
+                or (addr & ~1) in binding_index.blocked_addresses
+            ):
+                failed.append(name)
+                continue
+            annotation = binding_index.by_name.get(name) if binding_index is not None else None
+            if annotation is None and binding_index is not None:
+                annotation = binding_index.by_address.get(addr & ~1)
             code = annotation.code if annotation is not None else snippets.get(name)
             if not code:
                 failed.append(name)
                 continue
+            if annotation is not None and annotation.name != name:
+                code = re.sub(r"\b" + re.escape(annotation.name) + r"\b", name, code)
             code = self._normalize_code(code)
             decompiled[name] = FunctionDecompilation(
                 name=name,
