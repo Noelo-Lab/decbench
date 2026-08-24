@@ -66,9 +66,12 @@ def partition_manifest_by_binary(
 
     if shard_count < 1:
         raise ValueError("shard_count must be positive")
-    unique = set(keys)
+    rows = tuple(keys)
+    unique = set(rows)
     if not unique:
         raise ValueError("manifest has no function keys")
+    if len(rows) != len(unique):
+        raise ValueError("manifest contains duplicate function keys")
 
     groups: dict[BinaryKey, list[FunctionKey]] = defaultdict(list)
     for key in unique:

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from decbench.scoring.typematch_ab import keyset_sha256, load_manifest
 from decbench.scoring.typematch_sharding import (
     audit_manifest_shards,
@@ -57,6 +59,16 @@ def test_shard_audit_rejects_overlap_missing_unexpected_and_binary_split() -> No
     assert audit.missing_count == len(keys) - len(large)
     assert audit.unexpected_count == 1
     assert audit.binary_split_count == 1
+
+
+def test_partition_rejects_empty_duplicate_and_invalid_shard_inputs() -> None:
+    key = ("project", "O0", "binary", "function")
+    with pytest.raises(ValueError, match="no function keys"):
+        partition_manifest_by_binary([], 2)
+    with pytest.raises(ValueError, match="duplicate function keys"):
+        partition_manifest_by_binary([key, key], 2)
+    with pytest.raises(ValueError, match="positive"):
+        partition_manifest_by_binary([key], 0)
 
 
 def test_cli_writes_self_auditing_whole_binary_manifests(tmp_path: Path) -> None:
