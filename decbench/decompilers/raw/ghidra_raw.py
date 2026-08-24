@@ -216,7 +216,7 @@ class RawGhidraDecompiler(Decompiler):
         binary_path: Path,
         functions: list[tuple[str, int]] | None = None,
         output_dir: Path | None = None,
-        function_names: set[str] | None = None,
+        function_names: set[int] | None = None,
         progress_path: Path | None = None,
     ) -> DecompilationResult:
         """Decompile a binary with Ghidra natively (one program/JVM per process)."""

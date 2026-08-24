@@ -104,7 +104,7 @@ class RawKunaDecompiler(Decompiler):
         binary_path: Path,
         functions: list[tuple[str, int]] | None = None,
         output_dir: Path | None = None,
-        function_names: set[str] | None = None,
+        function_names: set[int] | None = None,
         progress_path: Path | None = None,
     ) -> DecompilationResult:
         """Decompile a whole binary with kuna (one CLI invocation per binary)."""

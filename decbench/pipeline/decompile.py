@@ -22,7 +22,7 @@ def decompile_binary(
     output_dir: Path | None = None,
     functions: list[tuple[str, int]] | None = None,
     config: DecompilerConfig | None = None,
-    function_names: set[str] | None = None,
+    function_names: set[int] | None = None,
     progress_path: Path | None = None,
     defer_provenance_validation: bool = False,
 ) -> DecompilationResult:
@@ -34,8 +34,8 @@ def decompile_binary(
         output_dir: Directory for output files
         functions: Optional list of (name, address) to decompile
         config: Decompiler configuration
-        function_names: Optional set of source function names to restrict
-            decompilation to (skips bundled filler; large speedup for angr).
+        function_names: Optional set of linked source-function addresses to
+            restrict decompilation to (skips bundled filler; large speedup for angr).
         progress_path: Optional path to pickle partial results to after each
             function (so a timeout-kill preserves completed work).
         defer_provenance_validation: Preserve native evidence when this worker
@@ -92,9 +92,7 @@ def decompile_project(
         optimization = OptimizationLevel(optimization)
 
     if optimization not in project.compiled_binaries:
-        raise ValueError(
-            f"Project '{project.name}' not compiled at {optimization.value}"
-        )
+        raise ValueError(f"Project '{project.name}' not compiled at {optimization.value}")
 
     binaries = project.compiled_binaries[optimization]
 
@@ -115,9 +113,7 @@ def decompile_project(
         # Fresh process per task: isolates JVM (Ghidra) and idalib (IDA)
         # state between decompiler backends. Requires Python 3.11+.
         try:
-            executor_ctx = ProcessPoolExecutor(
-                max_workers=workers, max_tasks_per_child=1
-            )
+            executor_ctx = ProcessPoolExecutor(max_workers=workers, max_tasks_per_child=1)
         except TypeError:
             executor_ctx = ProcessPoolExecutor(max_workers=workers)
 
