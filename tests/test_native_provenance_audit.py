@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from elftools.elf import elffile
 
 from decbench.auditing import native_provenance
 from decbench.auditing.native_provenance import (
@@ -75,6 +76,56 @@ def test_decode_instruction_starts_rejects_non_executable_range() -> None:
             [(0x2000, b"\xc3")],
             thumb=False,
         )
+
+
+def test_decode_instruction_starts_accepts_cortex_m_system_registers() -> None:
+    start = 0x08001000
+    code = bytes.fromhex("eff31183 83f31188")
+    info = binfmt.BinInfo("elf", "arm", 32)
+
+    assert decode_instruction_starts(
+        info,
+        [(start, start + len(code))],
+        [(start, code)],
+        thumb=True,
+        mclass=True,
+    ) == frozenset({start, start + 4})
+
+
+@pytest.mark.parametrize(
+    ("machine", "profiles", "expected"),
+    [
+        ("EM_ARM", [ord("M")], True),
+        ("EM_ARM", [ord("A")], False),
+        ("EM_ARM", [ord("M"), ord("A")], False),
+        ("EM_AARCH64", [ord("M")], False),
+    ],
+)
+def test_arm_mclass_detection_uses_exact_elf_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    machine: str,
+    profiles: list[int],
+    expected: bool,
+) -> None:
+    attributes = [
+        SimpleNamespace(tag="TAG_CPU_ARCH_PROFILE", value=profile) for profile in profiles
+    ]
+    scope = SimpleNamespace(iter_attributes=lambda: iter(attributes))
+    subsection = SimpleNamespace(
+        header=SimpleNamespace(vendor_name="aeabi"),
+        iter_subsubsections=lambda: iter((scope,)),
+    )
+    section = SimpleNamespace(iter_subsections=lambda: iter((subsection,)))
+    elf = SimpleNamespace(
+        header={"e_machine": machine},
+        get_section_by_name=lambda _name: section,
+    )
+    monkeypatch.setattr(elffile, "ELFFile", lambda _stream: elf)
+    binary = tmp_path / "fixture.elf"
+    binary.write_bytes(b"ELF fixture")
+
+    assert binfmt.elf_is_arm_mclass(binary) is expected
 
 
 def test_function_ranges_uses_dwarf_entry_instead_of_lowest_split_range(

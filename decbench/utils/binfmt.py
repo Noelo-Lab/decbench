@@ -174,7 +174,9 @@ def producer_flags(path: Path) -> list[str]:
     return []
 
 
-def capstone_arch_mode(info: BinInfo, thumb: bool = False):
+def capstone_arch_mode(
+    info: BinInfo, thumb: bool = False, mclass: bool = False
+) -> tuple[int, int] | None:
     """Return (capstone_arch, capstone_mode) for this binary, or None."""
     import capstone
 
@@ -182,7 +184,10 @@ def capstone_arch_mode(info: BinInfo, thumb: bool = False):
         mode = capstone.CS_MODE_64 if info.bits == 64 else capstone.CS_MODE_32
         return capstone.CS_ARCH_X86, mode
     if info.arch == "arm":
-        return capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB if thumb else capstone.CS_MODE_ARM
+        mode = capstone.CS_MODE_THUMB if thumb else capstone.CS_MODE_ARM
+        if thumb and mclass:
+            mode |= capstone.CS_MODE_MCLASS
+        return capstone.CS_ARCH_ARM, mode
     if info.arch == "aarch64":
         return capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM
     return None
@@ -264,6 +269,31 @@ def elf_function_is_thumb(path: Path, func_name: str, address: int) -> bool:
     except Exception:
         pass
     return False
+
+
+def elf_is_arm_mclass(path: Path) -> bool:
+    """Return whether an ARM ELF declares the microcontroller architecture profile."""
+    try:
+        from elftools.elf.elffile import ELFFile
+
+        with path.open("rb") as stream:
+            elf = ELFFile(stream)
+            if elf.header["e_machine"] != "EM_ARM":
+                return False
+            section = elf.get_section_by_name(".ARM.attributes")
+            if section is None or not hasattr(section, "iter_subsections"):
+                return False
+            profiles = {
+                int(attribute.value)
+                for subsection in section.iter_subsections()
+                if subsection.header.vendor_name == "aeabi"
+                for scope in subsection.iter_subsubsections()
+                for attribute in scope.iter_attributes()
+                if attribute.tag == "TAG_CPU_ARCH_PROFILE"
+            }
+            return profiles == {ord("M")}
+    except Exception:
+        return False
 
 
 _DWARF_SECS = (

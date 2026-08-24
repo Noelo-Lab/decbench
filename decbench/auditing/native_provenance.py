@@ -46,6 +46,7 @@ class FunctionCode:
     thumb: bool
     ranges: tuple[tuple[int, int], ...]
     instruction_starts: frozenset[int]
+    mclass: bool = False
 
 
 @dataclass(frozen=True)
@@ -301,12 +302,13 @@ def decode_instruction_starts(
     regions: Sequence[tuple[int, bytes]],
     *,
     thumb: bool,
+    mclass: bool = False,
 ) -> frozenset[int]:
     """Decode every exact function extent and return real instruction starts."""
 
     from capstone import Cs
 
-    arch_mode = binfmt.capstone_arch_mode(info, thumb=thumb)
+    arch_mode = binfmt.capstone_arch_mode(info, thumb=thumb, mclass=mclass)
     if arch_mode is None:
         raise ValueError(f"unsupported architecture {info.arch}")
     decoder = Cs(*arch_mode)
@@ -351,11 +353,13 @@ def resolve_function_code(
         raise ValueError(f"unsupported binary format/architecture {info.fmt}/{info.arch}")
     ranges = _function_ranges(binary_path, function_name, function_address, info.arch)
     thumb = _uses_thumb(binary_path, info, function_name, function_address)
+    mclass = thumb and info.fmt == "elf" and binfmt.elf_is_arm_mclass(binary_path)
     starts = decode_instruction_starts(
         info,
         ranges,
         binfmt.executable_regions(binary_path),
         thumb=thumb,
+        mclass=mclass,
     )
     expected = function_address & ~1 if info.arch == "arm" else function_address
     if expected not in starts:
@@ -367,6 +371,7 @@ def resolve_function_code(
         thumb=thumb,
         ranges=tuple(ranges),
         instruction_starts=starts,
+        mclass=mclass,
     )
 
 
@@ -1079,6 +1084,7 @@ def audit_results_tree(
             "function_identity": "exact DWARF name and linked entry address",
             "binary_identity": "unambiguous regular file inside the audited results tree",
             "address_validity": "decoded instruction starts inside exact DWARF function ranges",
+            "arm_profile": "ELF ARM attributes select M-class decoding; PE is never inferred",
             "line_numbering": "1-based rows in FunctionDecompilation.decompiled_code",
             "direct_only_variables": "accepted without a line map after address validation",
             "supported_formats": sorted(SUPPORTED_FORMATS),

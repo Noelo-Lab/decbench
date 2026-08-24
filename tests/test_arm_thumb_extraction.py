@@ -170,6 +170,13 @@ def test_a32_function_is_not_classified_as_thumb(arm_elf: Path) -> None:
     assert binfmt.elf_function_is_thumb(arm_elf, "lcd_add", _TEXT_BASE) is False
 
 
+def test_arm_elf_attributes_select_mclass_only_for_cortex_m(
+    thumb_artifacts: tuple[Path, Path], arm_elf: Path
+) -> None:
+    assert binfmt.elf_is_arm_mclass(thumb_artifacts[1]) is True
+    assert binfmt.elf_is_arm_mclass(arm_elf) is False
+
+
 @pytest.mark.parametrize("name", sorted(_EXPECTED))
 def test_source_instruction_addresses_select_thumb_mode(
     thumb_artifacts: tuple[Path, Path],

@@ -78,6 +78,17 @@ def test_instruction_addresses_decode_thumb_at_canonical_addresses() -> None:
     assert addresses == [address, address + 2, address + 6]
 
 
+def test_instruction_addresses_decode_cortex_m_system_registers() -> None:
+    address = 0x08001000
+    code = bytes.fromhex("eff31183 83f31188")
+    context = _synthetic_context(binfmt.BinInfo("elf", "arm", 32), address, code)
+    context.arm_mclass = True
+
+    addresses = instruction_addresses(None, address | 1, address + len(code), context)
+
+    assert addresses == [address, address + 4]
+
+
 def test_line_table_version_controls_pre_dwarf5_file_indexes() -> None:
     source = SimpleNamespace(name=b"source.c")
     header = {"version": 3, "file_entry": [source, SimpleNamespace(name=b"header.h")]}

@@ -185,6 +185,7 @@ class SourceBinaryEvidenceContext:
     binary_path: Path | None = None
     binary_info: Any = None
     code_regions: tuple[tuple[int, bytes], ...] = ()
+    arm_mclass: bool = False
 
     def close(self) -> None:
         if self.stream is not None:
@@ -838,6 +839,11 @@ def open_source_binary_context(binary_path: Path) -> SourceBinaryEvidenceContext
         binary_path=binary_path,
         binary_info=binary_info,
         code_regions=binfmt.executable_regions(binary_path),
+        arm_mclass=(
+            binary_info.fmt == "elf"
+            and binary_info.arch == "arm"
+            and binfmt.elf_is_arm_mclass(binary_path)
+        ),
     )
 
 
@@ -1043,7 +1049,11 @@ def instruction_addresses(
                 function_name or "",
                 decode_start,
             )
-    arch_mode = binfmt.capstone_arch_mode(info, thumb=thumb)
+    arch_mode = binfmt.capstone_arch_mode(
+        info,
+        thumb=thumb,
+        mclass=thumb and binary_context is not None and binary_context.arm_mclass,
+    )
     if arch_mode is None:
         raise ValueError(f"unsupported architecture {info.arch}")
 

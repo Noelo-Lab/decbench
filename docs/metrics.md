@@ -109,9 +109,10 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="9"`, bumped when native source evidence expanded from x86
-ELF to cross-format x86, ARM/Thumb, and AArch64 executable regions and line-table
-file indexes began following the line program's own DWARF version.
+Current `cache_version="10"`, bumped when Cortex-M Thumb decoding began honoring
+the ELF ARM architecture profile. Version 9 expanded native source evidence from
+x86 ELF to cross-format x86, ARM/Thumb, and AArch64 executable regions and made
+line-table file indexes follow the line program's own DWARF version.
 The per-function key covers the requested/resolved mode, matcher policy,
 redacted address/usage/anchor evidence, the stack shift, decompiled types used
 for grading, and DWARF ground truth. It does NOT cover `normalize_type`, so a
@@ -168,7 +169,8 @@ uses `VariableInfo.addresses` directly, or derives them from
 The source-side instruction-address adapter reads executable regions and the
 Capstone architecture through `utils/binfmt.py`. It supports x86/x86-64,
 ARM/Thumb, and AArch64 code in ELF and PE; ARM ELF function symbols select
-Thumb mode. Source instructions therefore use the same virtual/file-space
+Thumb mode, and the ELF ARM architecture profile enables Capstone's M-class
+instructions. Source instructions therefore use the same virtual/file-space
 coordinates as decompiler line maps instead of assuming an x86 `.text`
 section. DWARF file indexes follow the line table's own version because an
 object may pair a DWARF v5 compilation unit with a pre-v5 line program.
