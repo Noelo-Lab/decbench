@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable, TypeVar
+from collections.abc import Callable
+from typing import TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
     from decbench.decompilers.base import Decompiler, DecompilerConfig
@@ -75,13 +76,12 @@ class DecompilerRegistry:
 
         if base_name not in cls._decompilers:
             available = ", ".join(cls._decompilers.keys())
-            raise KeyError(
-                f"Decompiler '{base_name}' not found. Available: {available}"
-            )
+            raise KeyError(f"Decompiler '{base_name}' not found. Available: {available}")
 
         instance = cls._decompilers[base_name](config)
         instance.requested_version = version
         instance._spec_id = make_id(base_name, version)
+        instance._configure_requested_version()
         return instance
 
     @classmethod
@@ -122,6 +122,7 @@ def register_decompiler(name: str) -> Callable[[type[T]], type[T]]:
     Returns:
         Decorator function
     """
+
     def decorator(cls: type[T]) -> type[T]:
         DecompilerRegistry.register(name, cls)
         return cls

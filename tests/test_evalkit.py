@@ -29,6 +29,7 @@ from click.testing import CliRunner
 from decbench.evalkit import EvalKitError, kit_package, resolve
 from decbench.evalkit.export import export_kit
 from decbench.evalkit.ingest import ingest_submission
+from decbench.models.decompilation import variable_occurrence_policy
 
 pytestmark = pytest.mark.skipif(
     shutil.which("gcc") is None or shutil.which("strip") is None,
@@ -508,6 +509,7 @@ def test_ingest_packaged_zip_happy_path(packaged_zip: Path, tree_copy: Path) -> 
         assert func.address == truth[name]
         assert name in func.decompiled_code
         assert "sub_" not in func.decompiled_code
+        assert variable_occurrence_policy(func.metadata) == "unavailable"
 
     c_art = tree_copy / "O0" / "proj1" / "decompiled" / "mydec_prog1.c"
     assert f"// Function: add_nums @ 0x{truth['add_nums']:x}" in c_art.read_text()

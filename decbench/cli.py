@@ -1013,7 +1013,9 @@ def decompiler_build(name) -> None:
 
     console = Console()
     dec = DecompilerRegistry.get(name)
-    builder = getattr(dec, "build_image", None)
+    builder = getattr(dec, "build_configured_image", None)
+    if builder is None:
+        builder = getattr(dec, "build_image", None)
     if builder is None:
         console.print(f"[red]{name} is not a dockerized decompiler[/red]")
         return

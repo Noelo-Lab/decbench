@@ -615,7 +615,12 @@ scoreboard, and report. You get this for free:
 
 Example: the Ghidra backend reads `version_settings("ghidra",
 self.requested_version)` and launches the `install_dir` it names, falling back
-to `$GHIDRA_INSTALL_DIR` when the config has none.
+to `$GHIDRA_INSTALL_DIR` when the config has none. Dockerized backends resolve
+the configured `image` after the registry binds the requested version, so both
+availability checks and runs use that exact image. `DECBENCH_REKO_IMAGE` remains
+a higher-priority, explicit override for isolated Reko A/B runs. A configured
+r2dec image forces the Docker path; an unversioned r2dec spec retains its normal
+native-with-plugin preference and Docker fallback.
 
 Configure versions in `~/.config/decbench/decompilers.toml` (or
 `$DECBENCH_DECOMPILERS_CONFIG`):
@@ -625,7 +630,21 @@ Configure versions in `~/.config/decbench/decompilers.toml` (or
 install_dir = "/opt/ghidra_12.0"
 [ghidra.versions."12.1"]
 install_dir = "/opt/ghidra_12.1"
+
+[retdec.versions."5.0"]
+image = "decbench/retdec:5.0"
+
+[reko.versions."0.11"]
+image = "decbench/reko:0.11"
+
+[r2dec.versions."6.0"]
+image = "decbench/r2dec:6.0"
 ```
+
+`decbench decompiler-build retdec@5.0` builds and tags the image resolved for
+that exact spec without changing RetDec's unversioned `:latest` default. The
+same applies to other Dockerized specs, including a Reko image selected through
+the higher-priority `DECBENCH_REKO_IMAGE` override.
 
 Then `decbench run ... -d ghidra@12.0 -d ghidra@12.1` produces two comparable
 columns. (`scripts/ingest_history.py` can additionally fold a versioned run into

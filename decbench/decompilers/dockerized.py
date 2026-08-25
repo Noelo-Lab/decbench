@@ -12,7 +12,8 @@ because they ship as standalone CLIs rather than Python libraries:
   built-in ``pdc`` pseudo-decompiler when the r2dec plugin is absent. It picks,
   in order, native-with-plugin > the ``decbench/r2dec`` Docker image (real
   r2dec built from source; the host's packaged r2 usually lacks the dev headers
-  to build the plugin natively) > native ``pdc``. Unlike the whole-program
+  to build the plugin natively) > native ``pdc``. A version-configured image is
+  an explicit pin and takes precedence over every native path. Unlike the whole-program
   RetDec/Reko path, r2dec does NOT go through the ELF symbol table or
   ``split_c_functions`` — its discovery and per-function decompile are
   symbol-free and address-keyed, matching how the benchmark driver hands it a
@@ -36,7 +37,7 @@ Common design (:class:`DockerizedDecompiler`):
 
 Images are **not** auto-built. ``is_available()`` only reports whether the image
 already exists locally; build it explicitly with ``decbench decompiler-build
-<name>`` (which calls :meth:`DockerizedDecompiler.build_image`).
+<name>`` (which builds the image resolved for that decompiler spec).
 """
 
 from __future__ import annotations
@@ -61,6 +62,7 @@ from typing import Any, BinaryIO
 from decbench.decompilers.base import Decompiler, DecompilerConfig
 from decbench.decompilers.raw import common as raw_common
 from decbench.decompilers.registry import register_decompiler
+from decbench.decompilers.spec import version_settings
 from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
@@ -260,6 +262,21 @@ def _persist_retdec_sidecars(
         "out_json_sha256": digests["out.json"],
         "out_dsm_sha256": digests["out.dsm"],
     }
+
+
+def _docker_image_version(image: str) -> str | None:
+    """Return the tag or digest identifying an OCI image reference."""
+    image = image.strip()
+    if not image:
+        return None
+    if "@" in image:
+        digest = image.rsplit("@", 1)[1]
+        return digest or None
+    final_component = image.rsplit("/", 1)[-1]
+    if ":" in final_component:
+        tag = final_component.rsplit(":", 1)[1]
+        return tag or "latest"
+    return "latest"
 
 
 def elf_function_symbols(binary_path: Path) -> list[tuple[str, int]]:
@@ -894,8 +911,19 @@ class DockerizedDecompiler(Decompiler):
 
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
+        self._version_image_configured = False
         if config is not None and config.binary_timeout_seconds:
             self.container_timeout = float(config.binary_timeout_seconds)
+
+    def _configure_requested_version(self) -> None:
+        settings = version_settings(self.name, self.requested_version)
+        if "image" not in settings:
+            return
+        image = settings["image"]
+        if not isinstance(image, str) or not image.strip():
+            raise ValueError(f"invalid image for {self.id}: {image!r}")
+        self.image = image.strip()
+        self._version_image_configured = True
 
     @staticmethod
     def _docker_bin() -> str | None:
@@ -926,18 +954,26 @@ class DockerizedDecompiler(Decompiler):
         return self._image_present(self.image)
 
     @classmethod
-    def build_image(cls, no_cache: bool = False) -> int:
+    def build_image(
+        cls,
+        no_cache: bool = False,
+        *,
+        image: str | None = None,
+    ) -> int:
         """Build this backend's Docker image. Returns the ``docker build`` rc.
 
         Equivalent to ``docker build -f docker/<dockerfile> -t <image> docker/``
         (the ``docker/`` directory is the build context, so images can COPY the
-        helper scripts living there). Used by ``decbench decompiler-build <name>``.
+        helper scripts living there). ``image`` overrides the class default
+        without mutating it.
         """
         docker = shutil.which("docker")
         if not docker:
             raise RuntimeError("docker binary not found on PATH")
-        if not cls.image or not cls.dockerfile:
+        target_image = cls.image if image is None else image
+        if not isinstance(target_image, str) or not target_image.strip() or not cls.dockerfile:
             raise RuntimeError(f"{cls.__name__} has no image/dockerfile configured")
+        target_image = target_image.strip()
 
         dockerfile_path = _DOCKER_DIR / cls.dockerfile
         if not dockerfile_path.is_file():
@@ -949,19 +985,21 @@ class DockerizedDecompiler(Decompiler):
             "-f",
             str(dockerfile_path),
             "-t",
-            cls.image,
+            target_image,
         ]
         if no_cache:
             cmd.append("--no-cache")
         cmd.append(str(_DOCKER_DIR))
-        _l.info("Building %s: %s", cls.image, " ".join(cmd))
+        _l.info("Building %s: %s", target_image, " ".join(cmd))
         proc = subprocess.run(cmd)
         return proc.returncode
 
+    def build_configured_image(self, no_cache: bool = False) -> int:
+        """Build the image realized for this registry-created instance."""
+        return type(self).build_image(no_cache=no_cache, image=self.image)
+
     def get_version(self) -> str | None:
-        if not self.image:
-            return None
-        return self.image.rsplit(":", 1)[-1] if ":" in self.image else "latest"
+        return _docker_image_version(self.image)
 
     def _container_decompile(
         self,
@@ -1049,9 +1087,9 @@ class DockerizedDecompiler(Decompiler):
         """
         if not self.is_available():
             raise RuntimeError(
-                f"Decompiler '{self.name}' is not available "
+                f"Decompiler '{self.id}' is not available "
                 f"(image '{self.image}' missing — run `decbench decompiler-build "
-                f"{self.name}`)"
+                f"{self.id}`)"
             )
 
         start = time.time()
@@ -1327,12 +1365,22 @@ class RekoDecompiler(DockerizedDecompiler):
 
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
-        self.image = os.environ.get("DECBENCH_REKO_IMAGE") or self.image
+        raw_override = os.environ.get("DECBENCH_REKO_IMAGE")
+        self._image_override = (
+            raw_override.strip() if raw_override and raw_override.strip() else None
+        )
+        self.image = self._image_override or self.image
         self._native_provenance: dict[int, dict[str, Any]] = {}
         self._container_status: dict[str, Any] = {}
         self._container_error: str | None = None
         self._architecture_mode = "auto"
         self._architecture_evidence = "uninspected"
+
+    def _configure_requested_version(self) -> None:
+        if self._image_override is not None:
+            self.image = self._image_override
+            return
+        super()._configure_requested_version()
 
     def _container_decompile(self, binary_path: Path, work_dir: Path) -> str:
         self._native_provenance = {}
@@ -2142,17 +2190,21 @@ class R2DecDecompiler(DockerizedDecompiler):
         return False
 
     def is_available(self) -> bool:
-        """Available if native radare2+r2pipe OR the Docker image is present."""
+        """Require an explicitly configured image; otherwise allow native r2."""
+        if self._version_image_configured:
+            return self._image_present(self.image)
         return self._native_available() or self._image_present(self.image)
 
     def _select_path(self) -> str:
         """Choose the execution path: ``"native"`` or ``"docker"``.
 
-        Preference: native-with-plugin (real r2dec, no container overhead) >
-        docker (real r2dec in a container) > native-without-plugin (``pdc``). The
-        native path probes ``pdd``/``pdc`` itself, so this only decides host vs
-        container.
+        A configured image is an explicit Docker pin. Otherwise, preference is
+        native-with-plugin (real r2dec, no container overhead) > docker (real
+        r2dec in a container) > native-without-plugin (``pdc``). The native path
+        probes ``pdd``/``pdc`` itself, so this only decides host vs container.
         """
+        if self._version_image_configured:
+            return "docker"
         native = self._native_available()
         if native and self._native_plugin_available():
             return "native"
@@ -2162,8 +2214,8 @@ class R2DecDecompiler(DockerizedDecompiler):
             return "native"
         return "docker"
 
-    def get_version(self) -> str | None:
-        if self._native_available():
+    def _version_for_path(self, path: str) -> str | None:
+        if path == "native":
             try:
                 proc = subprocess.run(
                     [shutil.which("r2") or "radare2", "-v"],
@@ -2180,6 +2232,9 @@ class R2DecDecompiler(DockerizedDecompiler):
                 pass
             return "native"
         return super().get_version()
+
+    def get_version(self) -> str | None:
+        return self._version_for_path(self._select_path())
 
     def decompile_binary(
         self,
@@ -2433,7 +2488,7 @@ class R2DecDecompiler(DockerizedDecompiler):
             binary_name=binary_path.stem,
             decompiler=DecompilerMetadata(
                 decompiler_name=self.id,
-                decompiler_version=self.get_version(),
+                decompiler_version=self._version_for_path(via),
                 total_time_seconds=elapsed,
                 timeout_occurred=timed_out,
                 failed_functions=list(failed),
@@ -2553,7 +2608,7 @@ class R2DecDecompiler(DockerizedDecompiler):
         if not self._image_present(self.image):
             raise RuntimeError(
                 f"Decompiler '{self.name}' docker image '{self.image}' missing — "
-                f"run `decbench decompiler-build {self.name}`"
+                f"run `decbench decompiler-build {self.id}`"
             )
         start = time.time()
         elf_base = raw_common.elf_min_vaddr(binary_path)

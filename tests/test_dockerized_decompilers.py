@@ -78,6 +78,144 @@ def test_registry_get_returns_correct_class(spec: str, cls: type) -> None:
     assert dec.id == spec
 
 
+@pytest.mark.parametrize(
+    "spec,expected_image,expected_version",
+    [
+        ("retdec@5.0", "registry.example/decbench/retdec:5.0", "5.0"),
+        ("reko@0.11", "registry.example/decbench/reko:0.11", "0.11"),
+    ],
+)
+def test_versioned_docker_specs_realize_configured_images(
+    spec: str,
+    expected_image: str,
+    expected_version: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    name, version = spec.split("@", 1)
+    monkeypatch.delenv("DECBENCH_REKO_IMAGE", raising=False)
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.version_settings",
+        lambda actual_name, actual_version: (
+            {"image": expected_image} if (actual_name, actual_version) == (name, version) else {}
+        ),
+    )
+
+    dec = DecompilerRegistry.get(spec)
+
+    assert dec.id == spec
+    assert dec.image == expected_image
+    assert dec.get_version() == expected_version
+
+
+@pytest.mark.parametrize(
+    "spec,configured_image",
+    [
+        ("retdec@5.0", "decbench/retdec:5.0"),
+        ("reko@0.11", "decbench/reko:0.11"),
+    ],
+)
+def test_versioned_docker_availability_checks_configured_image(
+    spec: str,
+    configured_image: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("DECBENCH_REKO_IMAGE", raising=False)
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.version_settings",
+        lambda _name, _version: {"image": configured_image},
+    )
+    inspected: list[str] = []
+
+    def image_present(image: str) -> bool:
+        inspected.append(image)
+        return image == configured_image
+
+    monkeypatch.setattr(DockerizedDecompiler, "_image_present", staticmethod(image_present))
+
+    assert DecompilerRegistry.get(spec).is_available() is True
+    assert inspected == [configured_image]
+
+
+def test_versioned_decompiler_build_tags_realized_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from click.testing import CliRunner
+
+    from decbench.cli import main
+
+    configured_image = "registry.example/decbench/retdec:5.0"
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.version_settings",
+        lambda name, version: (
+            {"image": configured_image} if (name, version) == ("retdec", "5.0") else {}
+        ),
+    )
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.shutil.which",
+        lambda name: "/mock/docker" if name == "docker" else None,
+    )
+    commands: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr("decbench.decompilers.dockerized.subprocess.run", fake_run)
+
+    result = CliRunner().invoke(main, ["decompiler-build", "retdec@5.0"])
+
+    assert result.exit_code == 0, result.output
+    assert len(commands) == 1
+    command = commands[0]
+    assert command[command.index("-t") + 1] == configured_image
+    assert RetDecDecompiler.image == "decbench/retdec:latest"
+
+
+def test_versioned_docker_images_are_isolated_per_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.version_settings",
+        lambda name, version: (
+            {"image": f"registry.example/{name}:{version}"} if version is not None else {}
+        ),
+    )
+
+    first = DecompilerRegistry.get("retdec@5.0")
+    second = DecompilerRegistry.get("retdec@6.0")
+    bare = DecompilerRegistry.get("retdec")
+
+    assert first.image == "registry.example/retdec:5.0"
+    assert second.image == "registry.example/retdec:6.0"
+    assert bare.image == "decbench/retdec:latest"
+    assert first._version_image_configured is True
+    assert second._version_image_configured is True
+    assert bare._version_image_configured is False
+    assert RetDecDecompiler.image == "decbench/retdec:latest"
+
+
+def test_bare_docker_specs_preserve_latest_images(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DECBENCH_REKO_IMAGE", raising=False)
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.version_settings",
+        lambda _name, _version: {},
+    )
+
+    retdec = DecompilerRegistry.get("retdec")
+    reko = DecompilerRegistry.get("reko")
+
+    assert (retdec.id, retdec.image, retdec.get_version()) == (
+        "retdec",
+        "decbench/retdec:latest",
+        "latest",
+    )
+    assert (reko.id, reko.image, reko.get_version()) == (
+        "reko",
+        "decbench/reko:latest",
+        "latest",
+    )
+
+
 def test_docker_backends_unavailable_without_image() -> None:
     """retdec/reko report available iff their image exists; never auto-build."""
     for cls in (RetDecDecompiler, RekoDecompiler):
@@ -103,6 +241,99 @@ def test_r2dec_available_when_native_present() -> None:
         assert dec.is_available() == DockerizedDecompiler._image_present(dec.image)
 
 
+def test_configured_r2dec_image_forces_docker_and_image_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    configured_image = "localhost:5000/decbench/r2dec:6.0"
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.version_settings",
+        lambda name, version: (
+            {"image": configured_image} if (name, version) == ("r2dec", "6.0") else {}
+        ),
+    )
+    dec = DecompilerRegistry.get("r2dec@6.0")
+    inspected: list[str] = []
+    monkeypatch.setattr(
+        dec,
+        "_image_present",
+        lambda image: (inspected.append(image) or image == configured_image),
+    )
+    monkeypatch.setattr(
+        dec,
+        "_native_available",
+        lambda: pytest.fail("configured r2dec must not consult native availability"),
+    )
+    monkeypatch.setattr(
+        dec,
+        "_native_plugin_available",
+        lambda: pytest.fail("configured r2dec must not inspect native plugins"),
+    )
+
+    assert dec.is_available() is True
+    assert inspected == [configured_image]
+    assert dec._select_path() == "docker"
+    assert dec.get_version() == "6.0"
+    result = dec._make_result(
+        tmp_path / "binary",
+        {},
+        [],
+        0.0,
+        "docker",
+        "pdd",
+        None,
+    )
+    assert result.decompiler.decompiler_name == "r2dec@6.0"
+    assert result.decompiler.decompiler_version == "6.0"
+    assert result.decompiler.extra["image"] == configured_image
+
+
+def test_bare_r2dec_preserves_native_plugin_preference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.version_settings",
+        lambda _name, _version: {},
+    )
+    dec = DecompilerRegistry.get("r2dec")
+    monkeypatch.setattr(dec, "_native_available", lambda: True)
+    monkeypatch.setattr(dec, "_native_plugin_available", lambda: True)
+    monkeypatch.setattr(
+        dec,
+        "_image_present",
+        lambda _image: pytest.fail("native plugin should win before image inspection"),
+    )
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.shutil.which",
+        lambda name: "/mock/r2" if name in {"r2", "radare2"} else None,
+    )
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.subprocess.run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(cmd, 0, "radare2 6.0.8\n", ""),
+    )
+
+    assert dec._select_path() == "native"
+    assert dec.get_version() == "r2-6.0.8"
+
+
+@pytest.mark.parametrize(
+    "image,expected",
+    [
+        ("", None),
+        ("registry.example/decbench/retdec", "latest"),
+        ("localhost:5000/decbench/retdec", "latest"),
+        ("localhost:5000/decbench/retdec:5.0", "5.0"),
+        ("registry.example/decbench/retdec@sha256:abc123", "sha256:abc123"),
+        ("registry.example/decbench/retdec:5.0@sha256:abc123", "sha256:abc123"),
+    ],
+)
+def test_get_version_parses_oci_image_reference(image: str, expected: str | None) -> None:
+    dec = RetDecDecompiler()
+    dec.image = image
+
+    assert dec.get_version() == expected
+
+
 def test_get_version_proxies_image_tag() -> None:
     assert RetDecDecompiler().get_version() == "latest"
     assert RekoDecompiler().get_version() == "latest"
@@ -114,6 +345,53 @@ def test_reko_image_can_be_overridden_for_isolated_ab(
     monkeypatch.setenv("DECBENCH_REKO_IMAGE", "decbench/reko:test-candidate")
     assert RekoDecompiler().image == "decbench/reko:test-candidate"
     assert RekoDecompiler().get_version() == "test-candidate"
+
+
+def test_reko_image_override_wins_over_version_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built_images: list[str | None] = []
+
+    def fake_build_image(
+        _cls: type[RekoDecompiler],
+        no_cache: bool = False,
+        *,
+        image: str | None = None,
+    ) -> int:
+        assert no_cache is False
+        built_images.append(image)
+        return 0
+
+    monkeypatch.setenv("DECBENCH_REKO_IMAGE", "decbench/reko:test-candidate")
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.version_settings",
+        lambda _name, _version: {"image": "decbench/reko:0.11"},
+    )
+    monkeypatch.setattr(RekoDecompiler, "build_image", classmethod(fake_build_image))
+
+    dec = DecompilerRegistry.get("reko@0.11")
+
+    assert dec.id == "reko@0.11"
+    assert dec.image == "decbench/reko:test-candidate"
+    assert dec.get_version() == "test-candidate"
+    assert dec.build_configured_image() == 0
+    assert built_images == ["decbench/reko:test-candidate"]
+
+
+def test_reko_image_override_bypasses_invalid_version_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DECBENCH_REKO_IMAGE", "decbench/reko:test-candidate")
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.version_settings",
+        lambda _name, _version: {"image": ""},
+    )
+
+    dec = DecompilerRegistry.get("reko@0.11")
+
+    assert dec.id == "reko@0.11"
+    assert dec.image == "decbench/reko:test-candidate"
+    assert dec.get_version() == "test-candidate"
 
 
 def test_run_docker_places_extra_readonly_mount_before_image(

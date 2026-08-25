@@ -37,19 +37,24 @@ Images are **never auto-built** (building is a multi-minute side effect).
 DockerizedDecompiler.is_available()  # docker present AND `docker image inspect <image>` ok
 ```
 
-Build explicitly with the CLI (which calls `DockerizedDecompiler.build_image()`):
+Build explicitly with the CLI. For Dockerized backends it calls the instance's
+`DockerizedDecompiler.build_configured_image()`, which preserves the image
+resolved for a versioned spec or explicit override:
 
 ```bash
 decbench decompiler-build retdec
+decbench decompiler-build retdec@5.0
 decbench decompiler-build reko
 decbench decompiler-build r2dec
 decbench decompiler-build glaurung
 ```
 
-`build_image()` runs `docker build -f docker/<dockerfile> -t <image> docker/`
-(build context = this `docker/` directory, since the helper scripts live here)
-and returns the `docker build` exit code. Each Dockerfile's header shows its
-own equivalent `docker build` command.
+`build_configured_image()` delegates to `build_image()` with the realized image
+without mutating the backend's class-level `:latest` default. `build_image()`
+runs `docker build -f docker/<dockerfile> -t <image> docker/` (build context =
+this `docker/` directory, since the helper scripts live here) and returns the
+`docker build` exit code. Each Dockerfile's header shows its own equivalent
+`docker build` command.
 
 ## How each backend is invoked
 
@@ -92,6 +97,8 @@ invocations, a reported mode that disagrees with the host-selected mode, and zer
 recovered unique Thumb-bit-normalized requested addresses are recorded as
 benchmark errors instead of plain successful tasks. Set `DECBENCH_REKO_IMAGE` to
 exercise an isolated candidate tag without replacing `decbench/reko:latest`.
+That explicit override takes precedence over per-version configuration,
+including a malformed lower-priority image entry.
 
 ### r2dec
 
@@ -103,6 +110,12 @@ build the plugin (`r2pm -ci r2dec` needs `/usr/include/libr`), the image **is**
 the benchmark path: it builds radare2 **from source** so the real r2dec plugin
 compiles. `is_available()` is true if **either** native radare2+r2pipe is
 present **or** the Docker image exists.
+
+That preference order applies to the bare `r2dec` spec. When an `image` is
+configured for a versioned spec such as `r2dec@6.0`, the image is an explicit
+pin: availability requires that exact image, selection always uses Docker even
+when a native plugin is installed, and result metadata reports the realized
+image tag or digest.
 
 The checked-in `r2dec-decompile.py` driver is bind-mounted read-only over the
 copy baked into the image, so source-side provenance changes cannot silently
@@ -173,5 +186,5 @@ manually (no `decompiler-build` hook); see `docs/decompilers.md`.
 - Reko / RetDec CLI flags vary slightly across versions. The Reko wrapper tries
   both supported forms, preserves any partial `*.c` output, and reports failure
   if neither invocation succeeds. Bump `RETDEC_VERSION`/`REKO_REF` args and
-  retag the image to change versions (the dockerized backends do not read
-  per-version settings from `decompilers.toml`).
+  retag the image to change the image contents. Map versioned specs to those
+  tags under each backend's `versions` table in `decompilers.toml`.

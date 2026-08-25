@@ -80,6 +80,10 @@ class Decompiler(ABC):
             return self._spec_id
         return make_id(self.name, self.requested_version)
 
+    def _configure_requested_version(self) -> None:
+        """Apply settings after the registry binds a versioned spec."""
+        return None
+
     @abstractmethod
     def is_available(self) -> bool:
         """Check if this decompiler is available on the system.
