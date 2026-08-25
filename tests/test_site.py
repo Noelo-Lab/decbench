@@ -199,6 +199,7 @@ def test_type_measurement_provenance_and_dynamic_note_ship(
     assert 'aria-label="Type-score measurement note"' in app
     assert 'aria-describedby="type-evidence-note"' in app
     assert '<sup class="evidence-mark"' not in app
+    assert '.replace(/"/g, "&quot;").replace(/\'/g, "&#39;")' in app
     assert ".evidence-mark" in css
     assert ".evidence-mark:focus-visible" in css
 

@@ -65,6 +65,18 @@ def test_ghidra_default_var_names_are_synthetic(name: str) -> None:
     assert oracle["decompiled_status"]["decompiled"] == "synthetic"
 
 
+def test_ghidra_default_var_name_detection_is_linear_for_long_prefix() -> None:
+    name = "p" * 100_000 + "NotVar1"
+
+    oracle = build_name_oracle(
+        [_variable("source", name, 0x1000)],
+        [_variable("decompiled", name, 0x1000)],
+    )
+
+    assert oracle["source_status"]["source"] == "eligible"
+    assert oracle["decompiled_status"]["decompiled"] == "eligible"
+
+
 def test_stable_hash_sample_is_order_independent() -> None:
     targets = [_target(f"fn_{index}", 0x1000 + index) for index in range(20)]
     first = deterministic_sample(targets, size=7, seed="fixed")

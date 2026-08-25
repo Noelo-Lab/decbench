@@ -92,7 +92,6 @@ _SYNTHETIC_NAME_PATTERNS = (
         r"^(?:param|local|stack|temp|tmp|varnode|field|array|joined)_[0-9a-f]+$",
         re.IGNORECASE,
     ),
-    re.compile(r"^[puicbsldf]*Var\d+$"),
     re.compile(r"^(?:unaff|extraout|in|out)_[A-Za-z0-9_]+$", re.IGNORECASE),
     # Compiler/debugger-generated identifiers.
     re.compile(r"^(?:D|iftmp|pretmp|profiler|__compound_literal)\.?\d+$"),
@@ -657,6 +656,9 @@ def blind_variables(
 def _is_synthetic_name(name: str) -> bool:
     stripped = name.strip()
     if not stripped or not _C_IDENTIFIER.fullmatch(stripped):
+        return True
+    prefix, marker, suffix = stripped.partition("Var")
+    if marker and suffix.isdigit() and all(char in "puicbsldf" for char in prefix):
         return True
     return any(pattern.fullmatch(stripped) for pattern in _SYNTHETIC_NAME_PATTERNS)
 

@@ -530,7 +530,8 @@ function asciiBar(pct, width) {
 }
 function escapeHtml(s) {
     return (s == null ? "" : String(s))
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 function pct(cell) { return cell && cell[1] > 0 ? (cell[0] / cell[1]) * 100 : 0; }
 
