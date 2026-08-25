@@ -53,6 +53,7 @@ from decbench.utils.docker_task import (
     remove_docker_task_containers,
 )
 from decbench.utils.langs import build_stem_index, strip_source_ext  # noqa: E402
+from decbench.utils.native_code import NativeCodeResolver  # noqa: E402
 
 OPT_LEVELS = [
     OptimizationLevel.O0,
@@ -344,19 +345,59 @@ def _relabel_to_dwarf(
     # Pre-fix PE decompiles stored bare RVAs; adding the ImageBase recovers the
     # DWARF key. Harmless for ELF, where the base is already folded into fd.address.
     base = common.elf_min_vaddr(unstripped)
+    thumb_names: dict[int, tuple[int, str]] = {}
+    blocked_thumb_addresses: set[int] = set()
+    info = binfmt.detect(unstripped)
+    if info is not None and info.arch == "arm":
+        try:
+            resolver = NativeCodeResolver(unstripped)
+        except Exception:  # noqa: BLE001
+            resolver = None
+        if resolver is not None:
+            for address, name in addr2name.items():
+                try:
+                    thumb = resolver.uses_thumb(name, address)
+                except Exception:  # noqa: BLE001
+                    continue
+                if not thumb:
+                    continue
+                canonical = address & ~1
+                prior = thumb_names.get(canonical)
+                binding = (address, name)
+                if prior is not None and prior != binding:
+                    blocked_thumb_addresses.add(canonical)
+                else:
+                    thumb_names[canonical] = binding
+    for address in blocked_thumb_addresses:
+        thumb_names.pop(address, None)
+
     new_funcs: dict[str, object] = {}
     dropped = 0
     for fd in list(result.functions.values()):
         addr = int(fd.address)
-        dn = (
-            addr2name.get(addr)
-            or addr2name.get(addr & ~1)
-            or addr2name.get(addr + base)
-            or addr2name.get((addr + base) & ~1)
+        candidates = (addr,) if not base else (addr, addr + base)
+        binding = next(
+            (
+                (candidate, addr2name[candidate])
+                for candidate in candidates
+                if candidate in addr2name
+            ),
+            None,
         )
-        if dn is None:
+        if binding is None:
+            binding = next(
+                (
+                    thumb_names[canonical]
+                    for candidate in candidates
+                    if (canonical := candidate & ~1) in thumb_names
+                ),
+                None,
+            )
+        if binding is None:
             dropped += 1
             continue
+        matched_address, dn = binding
+        fd.address = matched_address
         if dn and dn != fd.name:
             fd.decompiled_code = re.sub(r"\b" + re.escape(fd.name) + r"\b", dn, fd.decompiled_code)
             fd.name = dn

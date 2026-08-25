@@ -249,6 +249,10 @@ class NativeCodeResolver:
             self._thumb_by_address.clear()
             self._thumb_by_name.clear()
 
+    def uses_thumb(self, function_name: str, function_address: int) -> bool:
+        """Return the binary-proven instruction state for one ARM function."""
+        return self._uses_thumb(function_name, function_address)
+
     def _uses_thumb(self, function_name: str, function_address: int) -> bool:
         if self.info.arch != "arm":
             return False
@@ -310,7 +314,7 @@ class NativeCodeResolver:
                 f"ambiguous DWARF function {function_name!r} at 0x{function_address:x}"
             )
         ranges = next(iter(candidates))
-        thumb = self._uses_thumb(function_name, function_address)
+        thumb = self.uses_thumb(function_name, function_address)
         mclass = thumb and self.mclass
         starts = decode_instruction_starts(
             self.info,

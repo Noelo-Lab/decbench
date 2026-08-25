@@ -43,18 +43,20 @@ from __future__ import annotations
 
 import contextlib
 import glob
+import hashlib
 import json
 import logging
 import os
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 from decbench.decompilers.base import Decompiler, DecompilerConfig
 from decbench.decompilers.raw import common as raw_common
@@ -75,6 +77,189 @@ _l = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DOCKER_DIR = _REPO_ROOT / "docker"
+_RETDEC_KEEP_SIDECARS_ENV = "DECBENCH_RETDEC_KEEP_SIDECARS"
+_RETDEC_SIDECAR_NAMES = ("out.json", "out.dsm")
+_RETDEC_SIDECAR_SCHEMA = "decbench-retdec-raw-sidecars-v1"
+
+
+def _file_sha256(path: Path) -> str:
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _open_retdec_regular_file(path: Path) -> BinaryIO:
+    try:
+        before = path.lstat()
+    except OSError as exc:
+        raise RuntimeError(f"RetDec raw artifact is unavailable: {path}") from exc
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+        raise RuntimeError(f"RetDec raw artifact is not a single-link regular file: {path}")
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise RuntimeError(f"RetDec raw artifact could not be opened safely: {path}") from exc
+    try:
+        after = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(after.st_mode)
+            or after.st_nlink != 1
+            or (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)
+        ):
+            raise RuntimeError(f"RetDec raw artifact changed while opening: {path}")
+        return os.fdopen(descriptor, "rb")
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _retdec_regular_sha256(path: Path) -> str:
+    with _open_retdec_regular_file(path) as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _read_retdec_regular_text(path: Path) -> str:
+    with _open_retdec_regular_file(path) as stream:
+        return stream.read().decode(errors="replace")
+
+
+def _retdec_sidecar_destination(
+    binary_path: Path,
+    output_dir: Path,
+) -> tuple[Path, str]:
+    binary_digest = _file_sha256(binary_path)
+    name_digest = hashlib.sha256(binary_path.name.encode()).hexdigest()
+    return output_dir / "retdec-sidecars" / binary_digest / name_digest, binary_digest
+
+
+def _retdec_sidecars_match(destination: Path, digests: dict[str, str]) -> bool:
+    try:
+        if destination.is_symlink() or not destination.is_dir():
+            return False
+        files = list(destination.iterdir())
+        return {path.name for path in files} == set(_RETDEC_SIDECAR_NAMES) and all(
+            not path.is_symlink()
+            and path.is_file()
+            and path.stat().st_nlink == 1
+            and _retdec_regular_sha256(path) == digests[path.name]
+            for path in files
+        )
+    except (OSError, RuntimeError):
+        return False
+
+
+def _require_retdec_artifact_directory(path: Path) -> None:
+    if path.is_symlink():
+        raise RuntimeError(f"RetDec raw sidecar directory is a symlink: {path}")
+    path.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink() or not path.is_dir():
+        raise RuntimeError(f"RetDec raw sidecar path is not a regular directory: {path}")
+
+
+def _quarantine_retdec_artifacts(
+    paths: list[Path],
+    output_dir: Path,
+    binary_digest: str,
+    name_digest: str,
+) -> list[Path]:
+    quarantine_root = output_dir / "retdec-sidecars-quarantine"
+    _require_retdec_artifact_directory(quarantine_root)
+    binary_root = quarantine_root / binary_digest
+    _require_retdec_artifact_directory(binary_root)
+    quarantine = binary_root / name_digest
+    _require_retdec_artifact_directory(quarantine)
+    destinations = [quarantine / path.name for path in paths]
+    if any(path.exists() or path.is_symlink() for path in destinations):
+        raise RuntimeError("RetDec raw sidecar quarantine destination already exists")
+    for source, destination in zip(paths, destinations, strict=True):
+        source.rename(destination)
+    return destinations
+
+
+def _persist_retdec_sidecars(
+    binary_path: Path,
+    work_dir: Path,
+    output_dir: Path,
+) -> dict[str, object]:
+    sources = {name: work_dir / name for name in _RETDEC_SIDECAR_NAMES}
+    missing = [
+        name for name, path in sources.items() if not path.exists() and not path.is_symlink()
+    ]
+    if missing:
+        raise RuntimeError(f"RetDec raw sidecar retention requires {', '.join(missing)}")
+
+    destination, binary_digest = _retdec_sidecar_destination(binary_path, output_dir)
+    digests = {name: _retdec_regular_sha256(path) for name, path in sources.items()}
+    _require_retdec_artifact_directory(output_dir)
+    sidecar_root = output_dir / "retdec-sidecars"
+    _require_retdec_artifact_directory(sidecar_root)
+    _require_retdec_artifact_directory(destination.parent)
+    staging_prefix = f".{destination.name}."
+    orphans = sorted(
+        (path for path in destination.parent.iterdir() if path.name.startswith(staging_prefix)),
+        key=lambda path: path.name,
+    )
+    if orphans:
+        if (
+            len(orphans) == 1
+            and not destination.exists()
+            and not destination.is_symlink()
+            and _retdec_sidecars_match(orphans[0], digests)
+        ):
+            orphans[0].rename(destination)
+        else:
+            quarantined = _quarantine_retdec_artifacts(
+                orphans,
+                output_dir,
+                binary_digest,
+                destination.name,
+            )
+            names = ", ".join(str(path.relative_to(output_dir)) for path in quarantined)
+            raise RuntimeError(f"RetDec orphan raw sidecar staging quarantined: {names}")
+
+    if destination.exists() or destination.is_symlink():
+        if not _retdec_sidecars_match(destination, digests):
+            raise RuntimeError(f"RetDec raw sidecar destination conflicts: {destination}")
+    else:
+        staging = Path(tempfile.mkdtemp(prefix=f".{destination.name}.", dir=destination.parent))
+        try:
+            for name, source in sources.items():
+                target = staging / name
+                with (
+                    _open_retdec_regular_file(source) as source_stream,
+                    target.open("xb") as target_stream,
+                ):
+                    shutil.copyfileobj(source_stream, target_stream)
+                    target_stream.flush()
+                    os.fsync(target_stream.fileno())
+            try:
+                staging.rename(destination)
+            except OSError:
+                if not destination.exists() or not _retdec_sidecars_match(destination, digests):
+                    raise
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+
+    if not _retdec_sidecars_match(destination, digests):
+        quarantined = _quarantine_retdec_artifacts(
+            [destination],
+            output_dir,
+            binary_digest,
+            destination.name,
+        )
+        raise RuntimeError(
+            "RetDec raw sidecar post-publication verification failed; quarantined: "
+            f"{quarantined[0].relative_to(output_dir)}"
+        )
+
+    return {
+        "schema": _RETDEC_SIDECAR_SCHEMA,
+        "path": str(destination.relative_to(output_dir)),
+        "binary_sha256": binary_digest,
+        "out_json_sha256": digests["out.json"],
+        "out_dsm_sha256": digests["out.dsm"],
+    }
 
 
 def elf_function_symbols(binary_path: Path) -> list[tuple[str, int]]:
@@ -204,11 +389,21 @@ class _RetDecAnnotatedSource:
 
 
 @dataclass(frozen=True)
+class _RetDecAddressPolicy:
+    thumb_entries: frozenset[int] = frozenset()
+
+    def key(self, address: int) -> int:
+        canonical = address & ~1
+        return canonical if canonical in self.thumb_entries else address
+
+
+@dataclass(frozen=True)
 class _RetDecBindingIndex:
     by_name: dict[str, _RetDecFunction]
     by_address: dict[int, _RetDecFunction]
     blocked_names: frozenset[str]
     blocked_addresses: frozenset[int]
+    address_policy: _RetDecAddressPolicy
 
 
 _RETDEC_VARIABLE_KINDS = frozenset({"i_arg", "i_lvar", "i_var"})
@@ -393,9 +588,33 @@ def _retdec_has_exact_dsm_entry(
     )
 
 
+def _retdec_address_policy(
+    binary_path: Path,
+    annotated: _RetDecAnnotatedSource | None,
+    base_bindings: dict[str, int],
+    target_addresses: set[int],
+) -> _RetDecAddressPolicy:
+    info = binfmt.detect(binary_path)
+    if info is None or info.arch != "arm":
+        return _RetDecAddressPolicy()
+
+    addresses = set(base_bindings.values()) | target_addresses
+    if annotated is not None:
+        addresses.update(
+            function.address
+            for function in annotated.functions.values()
+            if function.address is not None
+        )
+    mclass = info.fmt == "elf" and binfmt.elf_is_arm_mclass(binary_path)
+    return _RetDecAddressPolicy(
+        frozenset(address & ~1 for address in addresses if mclass or address & 1)
+    )
+
+
 def _retdec_binding_index(
     annotated: _RetDecAnnotatedSource,
     base_bindings: dict[str, int],
+    address_policy: _RetDecAddressPolicy,
 ) -> _RetDecBindingIndex:
     address_groups: dict[int, list[_RetDecFunction]] = defaultdict(list)
     blocked_names: set[str] = set()
@@ -407,7 +626,7 @@ def _retdec_binding_index(
             if _retdec_synthetic_address(function.name, 0) is not None:
                 blocked_names.add(function.name)
             continue
-        address_groups[function.address & ~1].append(function)
+        address_groups[address_policy.key(function.address)].append(function)
 
     for address, functions in address_groups.items():
         if len(functions) != 1:
@@ -419,9 +638,9 @@ def _retdec_binding_index(
             continue
         function = functions[0]
         bound_address = base_bindings.get(function.name)
-        if bound_address is not None and (bound_address & ~1) != address:
+        if bound_address is not None and address_policy.key(bound_address) != address:
             blocked_names.add(function.name)
-            blocked_addresses.update((address, bound_address & ~1))
+            blocked_addresses.update((address, address_policy.key(bound_address)))
 
     for address in blocked_addresses:
         blocked_names.update(function.name for function in address_groups.get(address, ()))
@@ -441,6 +660,7 @@ def _retdec_binding_index(
         by_address=by_address,
         blocked_names=frozenset(blocked_names),
         blocked_addresses=frozenset(blocked_addresses),
+        address_policy=address_policy,
     )
 
 
@@ -453,8 +673,8 @@ def _retdec_merge_bindings(
         name: address
         for name, address in base_bindings.items()
         if name not in index.blocked_names
-        and (address & ~1) not in index.blocked_addresses
-        and (address & ~1) not in annotated_addresses
+        and index.address_policy.key(address) not in index.blocked_addresses
+        and index.address_policy.key(address) not in annotated_addresses
     }
     for function in index.by_address.values():
         if function.address is not None:
@@ -756,6 +976,14 @@ class DockerizedDecompiler(Decompiler):
         """
         raise NotImplementedError
 
+    def _persist_raw_artifacts(
+        self,
+        binary_path: Path,
+        work_dir: Path,
+        output_dir: Path | None,
+    ) -> dict[str, object]:
+        return {}
+
     def _run_docker(
         self,
         args: list[str],
@@ -830,11 +1058,12 @@ class DockerizedDecompiler(Decompiler):
         timed_out = False
         combined_c: str | _RetDecAnnotatedSource = ""
         error: str | None = None
+        artifact_metadata: dict[str, object] = {}
 
         with tempfile.TemporaryDirectory(prefix=f"decbench_{self.name}_") as td:
             work_dir = Path(td)
             try:
-                combined_c = self._container_decompile(binary_path, work_dir)
+                produced = self._container_decompile(binary_path, work_dir)
             except subprocess.TimeoutExpired as e:
                 timed_out = True
                 error = f"timeout after {self.container_timeout}s"
@@ -842,6 +1071,19 @@ class DockerizedDecompiler(Decompiler):
             except Exception as e:  # noqa: BLE001
                 error = str(e)
                 _l.error("%s failed on %s: %s", self.name, binary_path, e)
+            else:
+                combined_c = produced
+            try:
+                artifact_metadata = self._persist_raw_artifacts(
+                    binary_path,
+                    work_dir,
+                    output_dir,
+                )
+            except Exception as e:  # noqa: BLE001
+                combined_c = ""
+                retention_error = f"raw artifact retention failed: {e}"
+                error = f"{error}; {retention_error}" if error else retention_error
+                _l.error("%s failed on %s: %s", self.name, binary_path, retention_error)
 
         result = self._build_result(
             binary_path=binary_path,
@@ -853,6 +1095,11 @@ class DockerizedDecompiler(Decompiler):
             error=error,
             output_dir=output_dir,
         )
+        if artifact_metadata:
+            result.decompiler.extra = {
+                **(result.decompiler.extra or {}),
+                "raw_sidecars": artifact_metadata,
+            }
 
         if output_dir is not None:
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -885,20 +1132,29 @@ class DockerizedDecompiler(Decompiler):
         else:
             name_to_addr = dict(elf_function_symbols(binary_path))
 
+        address_targets = _addr_targets_of(function_names)
+        address_policy = _retdec_address_policy(
+            binary_path,
+            annotated,
+            name_to_addr,
+            address_targets,
+        )
         binding_index = (
-            _retdec_binding_index(annotated, name_to_addr) if annotated is not None else None
+            _retdec_binding_index(annotated, name_to_addr, address_policy)
+            if annotated is not None
+            else None
         )
         if binding_index is not None and functions is None:
             name_to_addr = _retdec_merge_bindings(name_to_addr, binding_index)
 
         if function_names:
-            address_targets = _addr_targets_of(function_names)
+            normalized_targets = {address_policy.key(address) for address in address_targets}
             name_targets = {value for value in function_names if isinstance(value, str)}
             name_to_addr = {
                 name: address
                 for name, address in name_to_addr.items()
                 if name in name_targets
-                or (address_targets and raw_common._addr_matches(address, address_targets))
+                or (normalized_targets and address_policy.key(address) in normalized_targets)
             }
 
         snippets = split_c_functions(source_text) if source_text else {}
@@ -906,15 +1162,16 @@ class DockerizedDecompiler(Decompiler):
         decompiled: dict[str, FunctionDecompilation] = {}
         failed: list[str] = []
         for name, addr in name_to_addr.items():
+            binding_address = address_policy.key(addr)
             if binding_index is not None and (
                 name in binding_index.blocked_names
-                or (addr & ~1) in binding_index.blocked_addresses
+                or binding_address in binding_index.blocked_addresses
             ):
                 failed.append(name)
                 continue
             annotation = binding_index.by_name.get(name) if binding_index is not None else None
             if annotation is None and binding_index is not None:
-                annotation = binding_index.by_address.get(addr & ~1)
+                annotation = binding_index.by_address.get(binding_address)
             code = annotation.code if annotation is not None else snippets.get(name)
             if not code:
                 failed.append(name)
@@ -977,6 +1234,18 @@ class RetDecDecompiler(DockerizedDecompiler):
     image = "decbench/retdec:latest"
     dockerfile = "retdec.Dockerfile"
 
+    def _persist_raw_artifacts(
+        self,
+        binary_path: Path,
+        work_dir: Path,
+        output_dir: Path | None,
+    ) -> dict[str, object]:
+        if os.environ.get(_RETDEC_KEEP_SIDECARS_ENV) != "1":
+            return {}
+        if output_dir is None:
+            raise RuntimeError(f"{_RETDEC_KEEP_SIDECARS_ENV}=1 requires output_dir")
+        return _persist_retdec_sidecars(binary_path, work_dir, output_dir)
+
     def _container_decompile(
         self,
         binary_path: Path,
@@ -996,19 +1265,37 @@ class RetDecDecompiler(DockerizedDecompiler):
             work_dir=work_dir,
         )
         out_json = work_dir / "out.json"
-        if out_json.is_file():
+        if out_json.exists() or out_json.is_symlink():
             try:
                 dsm_path = work_dir / "out.dsm"
-                dsm = dsm_path.read_text(errors="replace") if dsm_path.is_file() else ""
+                dsm = (
+                    _read_retdec_regular_text(dsm_path)
+                    if dsm_path.exists() or dsm_path.is_symlink()
+                    else ""
+                )
                 instructions, ranges = _retdec_dsm_evidence(dsm, image_base)
-                return _parse_retdec_json(
-                    out_json.read_text(errors="replace"),
+                annotated = _parse_retdec_json(
+                    _read_retdec_regular_text(out_json),
                     image_base=image_base,
                     valid_instruction_addresses=instructions,
                     function_ranges=ranges,
                 )
-            except (OSError, ValueError) as exc:
+            except (OSError, RuntimeError, ValueError) as exc:
                 _l.warning("retdec JSON provenance unavailable for %s: %s", binary_path, exc)
+                if os.environ.get(_RETDEC_KEEP_SIDECARS_ENV) == "1":
+                    raise RuntimeError(
+                        "RetDec annotated JSON is invalid in raw sidecar retention mode"
+                    ) from exc
+            else:
+                if os.environ.get(_RETDEC_KEEP_SIDECARS_ENV) == "1" and json_proc.returncode != 0:
+                    raise RuntimeError(
+                        "RetDec annotated JSON invocation failed with "
+                        f"exit status {json_proc.returncode}"
+                    )
+                return annotated
+
+        if os.environ.get(_RETDEC_KEEP_SIDECARS_ENV) == "1":
+            raise RuntimeError("RetDec produced no annotated JSON in raw sidecar retention mode")
 
         proc = self._run_docker(
             args=[f"/in/{binary_path.name}", "-o", "/work/out.c"],

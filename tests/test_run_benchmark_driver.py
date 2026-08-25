@@ -12,6 +12,7 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
 )
+from decbench.utils import binfmt
 from scripts.run_benchmark import (
     DECOMPILER_TIMEOUT,
     _decompilation_outcome,
@@ -168,11 +169,16 @@ def test_source_address_filter_fails_closed() -> None:
     assert narrow_to_source(functions, {0xDEAD}, backend="test", binary_name="bin") == []
 
 
-def test_parent_filter_drops_backend_results_outside_requested_addresses(
+def test_parent_filter_keeps_non_arm_addresses_exact(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     binary = tmp_path / "binary"
     binary.write_bytes(b"not-an-elf")
+    monkeypatch.setattr(
+        "scripts.run_benchmark.binfmt.detect",
+        lambda _path: binfmt.BinInfo("elf", "x86", 32),
+    )
     result = DecompilationResult(
         binary_path=tmp_path / "stripped",
         binary_name="binary",
@@ -191,13 +197,128 @@ def test_parent_filter_drops_backend_results_outside_requested_addresses(
         },
     )
 
-    _relabel_to_dwarf(result, {0x1000: "wanted"}, binary)
+    _relabel_to_dwarf(result, {0x1000: "wrong", 0x2000: "wanted"}, binary)
 
     assert list(result.functions) == ["wanted"]
     assert result.functions["wanted"].name == "wanted"
     assert "wanted(" in result.functions["wanted"].decompiled_code
     assert result.binary_path == binary
     assert result.decompiler.extra["source_filter_unmatched_dropped"] == 1
+
+
+@pytest.mark.parametrize("thumb_state", [False, ValueError("unknown ARM state")])
+def test_parent_filter_does_not_fold_unknown_or_a32_arm_address(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    thumb_state: bool | ValueError,
+) -> None:
+    binary = tmp_path / "binary"
+    binary.write_bytes(b"not-an-elf")
+    monkeypatch.setattr(
+        "scripts.run_benchmark.binfmt.detect",
+        lambda _path: binfmt.BinInfo("elf", "arm", 32),
+    )
+
+    class Resolver:
+        def __init__(self, _path: Path):
+            pass
+
+        def uses_thumb(self, _name: str, _address: int) -> bool:
+            if isinstance(thumb_state, ValueError):
+                raise thumb_state
+            return thumb_state
+
+    monkeypatch.setattr("scripts.run_benchmark.NativeCodeResolver", Resolver)
+    result = DecompilationResult(
+        binary_path=tmp_path / "stripped",
+        binary_name="binary",
+        decompiler=DecompilerMetadata(decompiler_name="test"),
+        functions={
+            "sub_1001": FunctionDecompilation(
+                name="sub_1001",
+                address=0x1001,
+                decompiled_code="int sub_1001(void) { return 1; }",
+            ),
+        },
+    )
+
+    _relabel_to_dwarf(result, {0x1000: "arm_target"}, binary)
+
+    assert result.functions == {}
+    assert result.decompiler.extra["source_filter_unmatched_dropped"] == 1
+
+
+def test_parent_filter_folds_binary_proven_thumb_address(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "binary"
+    binary.write_bytes(b"not-an-elf")
+    monkeypatch.setattr(
+        "scripts.run_benchmark.binfmt.detect",
+        lambda _path: binfmt.BinInfo("elf", "arm", 32),
+    )
+
+    class Resolver:
+        def __init__(self, _path: Path):
+            pass
+
+        def uses_thumb(self, name: str, address: int) -> bool:
+            assert (name, address) == ("thumb_target", 0x1000)
+            return True
+
+    monkeypatch.setattr("scripts.run_benchmark.NativeCodeResolver", Resolver)
+    result = DecompilationResult(
+        binary_path=tmp_path / "stripped",
+        binary_name="binary",
+        decompiler=DecompilerMetadata(decompiler_name="test"),
+        functions={
+            "sub_1001": FunctionDecompilation(
+                name="sub_1001",
+                address=0x1001,
+                decompiled_code="int sub_1001(void) { return 1; }",
+            ),
+        },
+    )
+
+    _relabel_to_dwarf(result, {0x1000: "thumb_target"}, binary)
+
+    assert list(result.functions) == ["thumb_target"]
+    assert result.functions["thumb_target"].name == "thumb_target"
+    assert result.functions["thumb_target"].address == 0x1000
+    assert "thumb_target(" in result.functions["thumb_target"].decompiled_code
+    assert "source_filter_unmatched_dropped" not in result.decompiler.extra
+
+
+def test_parent_filter_rebases_pe_rva_to_matched_dwarf_address(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "binary.exe"
+    binary.write_bytes(b"not-a-pe")
+    monkeypatch.setattr(
+        "scripts.run_benchmark.binfmt.detect",
+        lambda _path: binfmt.BinInfo("pe", "x86", 32),
+    )
+    monkeypatch.setattr("decbench.decompilers.raw.common.elf_min_vaddr", lambda _path: 0x400000)
+    result = DecompilationResult(
+        binary_path=tmp_path / "stripped.exe",
+        binary_name="binary",
+        decompiler=DecompilerMetadata(decompiler_name="test"),
+        functions={
+            "sub_1000": FunctionDecompilation(
+                name="sub_1000",
+                address=0x1000,
+                decompiled_code="int sub_1000(void) { return 1; }",
+            ),
+        },
+    )
+
+    _relabel_to_dwarf(result, {0x401000: "pe_target"}, binary)
+
+    assert list(result.functions) == ["pe_target"]
+    assert result.functions["pe_target"].address == 0x401000
+    assert result.functions["pe_target"].name == "pe_target"
 
 
 @pytest.mark.parametrize("contents", ["not-json", "{}", '{"functions": []}'])

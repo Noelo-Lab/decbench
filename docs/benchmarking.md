@@ -294,6 +294,16 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
   runs)
 - `DECBENCH_OPT_LEVELS` (comma list, e.g. `"O0"` to narrow the run)
 - `DECBENCH_METRICS` (comma list, e.g. `"ged"` for a GED-only run)
+- `DECBENCH_RETDEC_KEEP_SIDECARS=1` atomically retains each RetDec binary's exact
+  `out.json` + `out.dsm` pair under its project/optimization `decompiled/`
+  directory. The path is keyed by the analyzed binary and filename digests, and
+  the checkpoint records only the relative path and SHA-256 values. This mode
+  accepts only single-link regular producer files and fails the binary closed if
+  either file is absent, the annotated invocation exits nonzero, or the pair
+  cannot be persisted; use it for auditable RetDec producer runs. A complete
+  interrupted staging pair is rehashed and recovered atomically; partial or
+  conflicting staging is moved to `retdec-sidecars-quarantine/` and fails closed
+  for explicit audit handling.
 - `DECBENCH_SKIP_FINALIZE=1` leaves the completed per-project checkpoints in
   place without rebuilding root-level derived files. Use it for concurrent
   runs over disjoint `-- project ...` shards, then run

@@ -36,13 +36,16 @@ from decbench.decompilers.dockerized import (
     _r2_json_lines,
     _r2_variable_records,
     _reko_architecture_mode,
+    _retdec_address_policy,
     _retdec_dsm_evidence,
+    _retdec_sidecar_destination,
     _retdec_variables,
     elf_function_symbols,
     split_c_functions,
 )
 from decbench.decompilers.registry import DecompilerRegistry
 from decbench.models.decompilation import variable_occurrence_policy
+from decbench.utils import binfmt
 
 _GZIP_CANDIDATES = [
     Path("results/sailr_full/O0/gzip/compiled/gzip"),
@@ -462,6 +465,142 @@ def test_retdec_synthetic_definition_recovers_partial_output(
     assert set(result.functions) == {"function_1000", "function_1010"}
 
 
+@pytest.mark.parametrize(
+    "info",
+    [
+        binfmt.BinInfo("pe", "x86", 32),
+        binfmt.BinInfo("elf", "x86-64", 64),
+        binfmt.BinInfo("elf", "aarch64", 64),
+    ],
+)
+def test_retdec_adjacent_non_arm_entries_remain_exact(
+    monkeypatch: pytest.MonkeyPatch,
+    info: binfmt.BinInfo,
+) -> None:
+    parsed = _parse_retdec_json(
+        json.dumps(
+            {
+                "language": "C",
+                "tokens": [
+                    *_retdec_definition_tokens("function_401000", function_token_address=0x401000),
+                    *_retdec_definition_tokens("function_401001", function_token_address=0x401001),
+                ],
+            }
+        ),
+        valid_instruction_addresses=frozenset({0x401000, 0x401001}),
+        function_ranges=((0x401000, 0x401001), (0x401001, 0x401002)),
+    )
+    monkeypatch.setattr("decbench.decompilers.dockerized.binfmt.detect", lambda _path: info)
+
+    result = RetDecDecompiler()._build_result(
+        binary_path=Path("/nonexistent/adjacent.bin"),
+        combined_c=parsed,
+        functions=[("entry_even", 0x401000), ("ProcEnd_StartThread", 0x401001)],
+        function_names={0x401000, 0x401001},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+
+    assert set(result.functions) == {"entry_even", "ProcEnd_StartThread"}
+    assert result.functions["entry_even"].address == 0x401000
+    assert result.functions["ProcEnd_StartThread"].address == 0x401001
+    assert "entry_even(void)" in result.functions["entry_even"].decompiled_code
+    assert "ProcEnd_StartThread(void)" in result.functions["ProcEnd_StartThread"].decompiled_code
+    assert result.decompiler.failed_functions == []
+
+
+@pytest.mark.parametrize(
+    ("annotation_address", "target_address"),
+    [(0x1010, 0x1011), (0x1011, 0x1010)],
+)
+def test_retdec_arm_thumb_entry_evidence_allows_bit_zero_equivalence(
+    monkeypatch: pytest.MonkeyPatch,
+    annotation_address: int,
+    target_address: int,
+) -> None:
+    parsed = _parse_retdec_json(
+        json.dumps(
+            {
+                "language": "C",
+                "tokens": _retdec_definition_tokens(
+                    f"function_{annotation_address:x}",
+                    function_token_address=annotation_address,
+                ),
+            }
+        ),
+        valid_instruction_addresses=frozenset({annotation_address}),
+        function_ranges=((annotation_address, annotation_address + 2),),
+    )
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.binfmt.detect",
+        lambda _path: binfmt.BinInfo("elf", "arm", 32),
+    )
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.binfmt.elf_is_arm_mclass", lambda _path: False
+    )
+
+    result = RetDecDecompiler()._build_result(
+        binary_path=Path("/nonexistent/thumb.elf"),
+        combined_c=parsed,
+        functions=[("thumb_target", target_address)],
+        function_names={target_address},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+
+    assert set(result.functions) == {"thumb_target"}
+    assert result.functions["thumb_target"].address == target_address
+    assert "thumb_target(void)" in result.functions["thumb_target"].decompiled_code
+
+
+def test_retdec_arm_mclass_is_explicit_binary_thumb_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.binfmt.detect",
+        lambda _path: binfmt.BinInfo("elf", "arm", 32),
+    )
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.binfmt.elf_is_arm_mclass", lambda _path: True
+    )
+
+    policy = _retdec_address_policy(
+        Path("/nonexistent/mclass.elf"),
+        None,
+        {"target": 0x1010},
+        {0x1010},
+    )
+
+    assert policy.key(0x1010) == 0x1010
+    assert policy.key(0x1011) == 0x1010
+
+
+def test_retdec_arm_without_thumb_evidence_keeps_addresses_exact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.binfmt.detect",
+        lambda _path: binfmt.BinInfo("elf", "arm", 32),
+    )
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.binfmt.elf_is_arm_mclass", lambda _path: False
+    )
+
+    policy = _retdec_address_policy(
+        Path("/nonexistent/arm.elf"),
+        None,
+        {"target": 0x1010},
+        {0x1010},
+    )
+
+    assert policy.key(0x1010) == 0x1010
+    assert policy.key(0x1011) == 0x1011
+
+
 def test_retdec_synthetic_definition_merges_with_unrelated_symbol(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -813,6 +952,358 @@ def test_retdec_plain_output_fallback_when_json_is_unavailable(
     assert dec._container_decompile(tmp_path / "missing.bin", tmp_path) == plain
     assert "json" in calls[0]
     assert calls[1][-2:] == ["-o", "/work/out.c"]
+
+
+def test_retdec_raw_sidecars_are_atomically_retained_when_enabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "input.bin"
+    binary.write_bytes(b"binary payload")
+    output_dir = tmp_path / "output"
+    json_bytes = b'{"language":"C","tokens":[]}'
+    dsm_bytes = b"; exact RetDec DSM\n"
+    dec = RetDecDecompiler()
+    monkeypatch.setenv("DECBENCH_RETDEC_KEEP_SIDECARS", "1")
+    monkeypatch.setattr(dec, "is_available", lambda: True)
+
+    def fake_decompile(_binary_path: Path, work_dir: Path) -> str:
+        (work_dir / "out.json").write_bytes(json_bytes)
+        (work_dir / "out.dsm").write_bytes(dsm_bytes)
+        return "int f(void) { return 1; }\n"
+
+    monkeypatch.setattr(dec, "_container_decompile", fake_decompile)
+
+    result = dec.decompile_binary(
+        binary,
+        functions=[("f", 0x1000)],
+        output_dir=output_dir,
+    )
+
+    metadata = result.decompiler.extra["raw_sidecars"]
+    destination = output_dir / metadata["path"]
+    assert {path.name for path in destination.iterdir()} == {"out.json", "out.dsm"}
+    assert (destination / "out.json").read_bytes() == json_bytes
+    assert (destination / "out.dsm").read_bytes() == dsm_bytes
+    assert all(
+        not path.is_symlink() and path.stat().st_nlink == 1 for path in destination.iterdir()
+    )
+    assert len(metadata["binary_sha256"]) == 64
+    assert len(metadata["out_json_sha256"]) == 64
+    assert len(metadata["out_dsm_sha256"]) == 64
+    assert set(result.functions) == {"f"}
+
+
+def test_retdec_raw_sidecar_mode_fails_closed_when_one_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "input.bin"
+    binary.write_bytes(b"binary payload")
+    output_dir = tmp_path / "output"
+    dec = RetDecDecompiler()
+    monkeypatch.setenv("DECBENCH_RETDEC_KEEP_SIDECARS", "1")
+    monkeypatch.setattr(dec, "is_available", lambda: True)
+
+    def fake_decompile(_binary_path: Path, work_dir: Path) -> str:
+        (work_dir / "out.json").write_text("{}")
+        return "int f(void) { return 1; }\n"
+
+    monkeypatch.setattr(dec, "_container_decompile", fake_decompile)
+
+    result = dec.decompile_binary(
+        binary,
+        functions=[("f", 0x1000)],
+        output_dir=output_dir,
+    )
+
+    assert result.functions == {}
+    assert result.decompiler.failed_functions == ["f"]
+    assert "raw artifact retention failed" in result.decompiler.extra["error"]
+    assert "out.dsm" in result.decompiler.extra["error"]
+    assert "raw_sidecars" not in result.decompiler.extra
+    assert not (output_dir / "retdec-sidecars").exists()
+
+
+def test_retdec_raw_sidecar_mode_never_mixes_plain_fallback_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "input.bin"
+    binary.write_bytes(b"binary payload")
+    output_dir = tmp_path / "output"
+    json_bytes = b"{not-json"
+    dsm_bytes = b"; first invocation DSM\n"
+    dec = RetDecDecompiler()
+    monkeypatch.setenv("DECBENCH_RETDEC_KEEP_SIDECARS", "1")
+    monkeypatch.setattr(dec, "is_available", lambda: True)
+
+    def fake_run(**kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if "/work/out.c" in kwargs["args"]:
+            pytest.fail("audit mode must not start the plain-C fallback")
+        (kwargs["work_dir"] / "out.json").write_bytes(json_bytes)
+        (kwargs["work_dir"] / "out.dsm").write_bytes(dsm_bytes)
+        return subprocess.CompletedProcess(kwargs["args"], 0, "", "")
+
+    monkeypatch.setattr(dec, "_run_docker", fake_run)
+
+    result = dec.decompile_binary(
+        binary,
+        functions=[("f", 0x1000)],
+        output_dir=output_dir,
+    )
+
+    assert result.functions == {}
+    assert "annotated JSON is invalid" in result.decompiler.extra["error"]
+    metadata = result.decompiler.extra["raw_sidecars"]
+    destination = output_dir / metadata["path"]
+    assert (destination / "out.json").read_bytes() == json_bytes
+    assert (destination / "out.dsm").read_bytes() == dsm_bytes
+
+
+def test_retdec_raw_sidecar_mode_rejects_container_created_symlinks_before_parsing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "input.bin"
+    binary.write_bytes(b"binary payload")
+    output_dir = tmp_path / "output"
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"language":"C","tokens":[]}')
+    dec = RetDecDecompiler()
+    monkeypatch.setenv("DECBENCH_RETDEC_KEEP_SIDECARS", "1")
+    monkeypatch.setattr(dec, "is_available", lambda: True)
+
+    def fake_run(**kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if "/work/out.c" in kwargs["args"]:
+            pytest.fail("audit mode must not start the plain-C fallback")
+        (kwargs["work_dir"] / "out.json").symlink_to(outside)
+        (kwargs["work_dir"] / "out.dsm").write_text("; DSM\n")
+        return subprocess.CompletedProcess(kwargs["args"], 0, "", "")
+
+    def fail_parse(*_args: Any, **_kwargs: Any) -> None:
+        pytest.fail("a container-created symlink must be rejected before parsing")
+
+    monkeypatch.setattr(dec, "_run_docker", fake_run)
+    monkeypatch.setattr("decbench.decompilers.dockerized._parse_retdec_json", fail_parse)
+
+    result = dec.decompile_binary(
+        binary,
+        functions=[("f", 0x1000)],
+        output_dir=output_dir,
+    )
+
+    assert result.functions == {}
+    assert "annotated JSON is invalid" in result.decompiler.extra["error"]
+    assert "not a single-link regular file" in result.decompiler.extra["error"]
+    assert "raw_sidecars" not in result.decompiler.extra
+    assert not (output_dir / "retdec-sidecars").exists()
+
+
+def test_retdec_raw_sidecar_mode_fails_nonzero_annotated_invocation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "input.bin"
+    binary.write_bytes(b"binary payload")
+    output_dir = tmp_path / "output"
+    dec = RetDecDecompiler()
+    monkeypatch.setenv("DECBENCH_RETDEC_KEEP_SIDECARS", "1")
+    monkeypatch.setattr(dec, "is_available", lambda: True)
+
+    def fake_run(**kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if "/work/out.c" in kwargs["args"]:
+            pytest.fail("audit mode must not start the plain-C fallback")
+        (kwargs["work_dir"] / "out.json").write_text('{"language":"C","tokens":[]}')
+        (kwargs["work_dir"] / "out.dsm").write_text("; partial DSM\n")
+        return subprocess.CompletedProcess(kwargs["args"], 7, "", "failed")
+
+    monkeypatch.setattr(dec, "_run_docker", fake_run)
+
+    result = dec.decompile_binary(
+        binary,
+        functions=[("f", 0x1000)],
+        output_dir=output_dir,
+    )
+
+    assert result.functions == {}
+    assert "annotated JSON invocation failed with exit status 7" in result.decompiler.extra["error"]
+    metadata = result.decompiler.extra["raw_sidecars"]
+    destination = output_dir / metadata["path"]
+    assert (destination / "out.json").is_file()
+    assert (destination / "out.dsm").is_file()
+
+
+def test_retdec_raw_sidecar_mode_quarantines_copy_corruption(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "input.bin"
+    binary.write_bytes(b"binary payload")
+    output_dir = tmp_path / "output"
+    dec = RetDecDecompiler()
+    monkeypatch.setenv("DECBENCH_RETDEC_KEEP_SIDECARS", "1")
+    monkeypatch.setattr(dec, "is_available", lambda: True)
+
+    def fake_decompile(_binary_path: Path, work_dir: Path) -> str:
+        (work_dir / "out.json").write_text("{}")
+        (work_dir / "out.dsm").write_text("; DSM\n")
+        return "int f(void) { return 1; }\n"
+
+    def corrupt_copy(_source: Any, target: Any) -> None:
+        target.write(b"corrupt")
+
+    monkeypatch.setattr(dec, "_container_decompile", fake_decompile)
+    monkeypatch.setattr("decbench.decompilers.dockerized.shutil.copyfileobj", corrupt_copy)
+
+    result = dec.decompile_binary(
+        binary,
+        functions=[("f", 0x1000)],
+        output_dir=output_dir,
+    )
+
+    assert result.functions == {}
+    assert "post-publication verification failed" in result.decompiler.extra["error"]
+    assert "raw_sidecars" not in result.decompiler.extra
+    quarantined = list((output_dir / "retdec-sidecars-quarantine").rglob("out.json"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_bytes() == b"corrupt"
+
+
+def test_retdec_raw_sidecar_mode_rejects_symlinked_artifact_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "input.bin"
+    binary.write_bytes(b"binary payload")
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (output_dir / "retdec-sidecars").symlink_to(outside, target_is_directory=True)
+    dec = RetDecDecompiler()
+    monkeypatch.setenv("DECBENCH_RETDEC_KEEP_SIDECARS", "1")
+    monkeypatch.setattr(dec, "is_available", lambda: True)
+
+    def fake_decompile(_binary_path: Path, work_dir: Path) -> str:
+        (work_dir / "out.json").write_text("{}")
+        (work_dir / "out.dsm").write_text("; DSM\n")
+        return "int f(void) { return 1; }\n"
+
+    monkeypatch.setattr(dec, "_container_decompile", fake_decompile)
+
+    result = dec.decompile_binary(
+        binary,
+        functions=[("f", 0x1000)],
+        output_dir=output_dir,
+    )
+
+    assert result.functions == {}
+    assert "directory is a symlink" in result.decompiler.extra["error"]
+    assert list(outside.iterdir()) == []
+
+
+def test_retdec_raw_sidecar_mode_quarantines_partial_orphan_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "input.bin"
+    binary.write_bytes(b"binary payload")
+    output_dir = tmp_path / "output"
+    destination, _binary_digest = _retdec_sidecar_destination(binary, output_dir)
+    destination.parent.mkdir(parents=True)
+    orphan = destination.parent / f".{destination.name}.interrupted"
+    orphan.mkdir()
+    (orphan / "out.json").write_text("partial")
+    dec = RetDecDecompiler()
+    monkeypatch.setenv("DECBENCH_RETDEC_KEEP_SIDECARS", "1")
+    monkeypatch.setattr(dec, "is_available", lambda: True)
+
+    def fake_decompile(_binary_path: Path, work_dir: Path) -> str:
+        (work_dir / "out.json").write_text("{}")
+        (work_dir / "out.dsm").write_text("; DSM\n")
+        return "int f(void) { return 1; }\n"
+
+    monkeypatch.setattr(dec, "_container_decompile", fake_decompile)
+
+    result = dec.decompile_binary(
+        binary,
+        functions=[("f", 0x1000)],
+        output_dir=output_dir,
+    )
+
+    assert result.functions == {}
+    assert "orphan raw sidecar staging quarantined" in result.decompiler.extra["error"]
+    assert not orphan.exists()
+    quarantined = list((output_dir / "retdec-sidecars-quarantine").rglob("out.json"))
+    assert len(quarantined) == 1
+    assert quarantined[0].read_text() == "partial"
+
+
+def test_retdec_raw_sidecar_mode_recovers_complete_orphan_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "input.bin"
+    binary.write_bytes(b"binary payload")
+    output_dir = tmp_path / "output"
+    destination, _binary_digest = _retdec_sidecar_destination(binary, output_dir)
+    destination.parent.mkdir(parents=True)
+    orphan = destination.parent / f".{destination.name}.interrupted"
+    orphan.mkdir()
+    (orphan / "out.json").write_text("{}")
+    (orphan / "out.dsm").write_text("; DSM\n")
+    dec = RetDecDecompiler()
+    monkeypatch.setenv("DECBENCH_RETDEC_KEEP_SIDECARS", "1")
+    monkeypatch.setattr(dec, "is_available", lambda: True)
+
+    def fake_decompile(_binary_path: Path, work_dir: Path) -> str:
+        (work_dir / "out.json").write_text("{}")
+        (work_dir / "out.dsm").write_text("; DSM\n")
+        return "int f(void) { return 1; }\n"
+
+    monkeypatch.setattr(dec, "_container_decompile", fake_decompile)
+
+    result = dec.decompile_binary(
+        binary,
+        functions=[("f", 0x1000)],
+        output_dir=output_dir,
+    )
+
+    assert set(result.functions) == {"f"}
+    assert not orphan.exists()
+    assert (destination / "out.json").read_text() == "{}"
+    assert (destination / "out.dsm").read_text() == "; DSM\n"
+    assert not (output_dir / "retdec-sidecars-quarantine").exists()
+
+
+def test_retdec_raw_sidecar_retention_is_disabled_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binary = tmp_path / "input.bin"
+    binary.write_bytes(b"binary payload")
+    output_dir = tmp_path / "output"
+    dec = RetDecDecompiler()
+    monkeypatch.delenv("DECBENCH_RETDEC_KEEP_SIDECARS", raising=False)
+    monkeypatch.setattr(dec, "is_available", lambda: True)
+
+    def fake_decompile(_binary_path: Path, work_dir: Path) -> str:
+        (work_dir / "out.json").write_text("{}")
+        (work_dir / "out.dsm").write_text("; DSM\n")
+        return "int f(void) { return 1; }\n"
+
+    monkeypatch.setattr(dec, "_container_decompile", fake_decompile)
+
+    result = dec.decompile_binary(
+        binary,
+        functions=[("f", 0x1000)],
+        output_dir=output_dir,
+    )
+
+    assert set(result.functions) == {"f"}
+    assert "raw_sidecars" not in result.decompiler.extra
+    assert not (output_dir / "retdec-sidecars").exists()
 
 
 def test_split_accepts_opening_brace_on_following_line() -> None:

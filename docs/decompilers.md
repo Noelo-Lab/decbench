@@ -291,12 +291,26 @@ The canonical raw adapters use these native sources:
   that is not itself a DSM function entry is treated as missing. Unique annotated
   addresses are merged before the stripped binary's dynamic-symbol filter;
   unrelated dynamic symbols cannot hide them, while name/address conflicts and
-  duplicate normalized addresses abstain. The shared native-provenance sanitizer
-  still verifies the relabeled DWARF function range and every retained line or
-  variable address.
+  duplicate binding addresses abstain. Binding and requested-address filters keep
+  exact addresses for x86, AArch64, and every other non-ARM target. They ignore
+  the ARM state bit only when the binary is ARM and an odd entry or ELF M-profile
+  attributes prove Thumb execution, so adjacent non-ARM addresses remain distinct.
+  The shared native-provenance sanitizer still verifies the relabeled DWARF
+  function range and every retained line or variable address.
   Its exact snippet supplies recovered types and ABI argument positions; duplicate
   or shadowed identifiers abstain from variable-occurrence evidence. Missing or
   malformed annotated output falls back to the older plain-C path.
+  For audit runs, `DECBENCH_RETDEC_KEEP_SIDECARS=1` publishes the exact JSON/DSM
+  pair as one per-binary artifact directory before temporary output is removed.
+  Producer outputs must be single-link regular files; missing or conflicting
+  artifacts and nonzero annotated invocations fail closed. Result metadata stores
+  only relative paths and SHA-256 digests rather than raw bytes. Published files
+  are re-opened and rehashed; complete interrupted staging is recovered, while
+  partial staging is quarantined and rejected.
+
+The benchmark driver's stripped-to-DWARF relabeling also preserves exact non-ARM
+addresses. It accepts an even/odd alias only for a source function whose unstripped
+binary metadata proves Thumb state; unavailable or conflicting ARM state fails closed.
 - Reko's pinned image captures exact `Identifier` object identities and their
   lower-IR `Statement.Address` values immediately before structuring, then
   intersects them with the identifiers that survive into the final Absyn tree.
