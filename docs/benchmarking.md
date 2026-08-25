@@ -621,6 +621,71 @@ groups; `--force` replaces the indexed set and removes stale generated shard man
 leaving other files alone. Preserve a rejected run separately as a control rather than merging
 its overlays into corrected output.
 
+For a full four-mode v11 A/B replay, use the guarded orchestrator instead of assembling those
+workers and merges by hand:
+
+```bash
+python scripts/run_typematch_ab_sharded.py \
+  results/full_run results/full_run/full_selected_manifest.json \
+  results/typematch_ab_v11_ida --scope full \
+  --function-data results/full_run/function_results.json \
+  --shards 8 --workers 8 --backend ida
+```
+
+`--scope full` requires the manifest to contain every function key in the frozen
+`function_results.json`. For a cross-tree comparison, pass the same separately frozen
+`--function-data` baseline to every producer root; do not use each root's locally finalized
+file when their function sets differ. The plan digest-binds that baseline and refuses a
+resume after any byte or denominator drift. Full scope rejects backends configured as
+sample-set-only. Evaluate those on
+their frozen denominator in a separate output directory instead:
+
+```bash
+python scripts/run_typematch_ab_sharded.py \
+  results/full_run results/full_run/sample_set_manifest.json \
+  results/typematch_ab_v11_sample --scope sample-set \
+  --shards 8 --workers 8 --backend codex
+```
+
+Sample scope requires an exact copy of that result tree's frozen
+`sample_set_manifest.json`; ordinary full-only trees need not contain one. Full-corpus
+experiments for configured sample-only backends such as Glaurung or Manifold must use
+`--scope experimental-full` plus explicit `--backend` selectors. They remain a separate,
+clearly marked plan and are not comparable to the regular full or frozen sample-set plan.
+
+The orchestrator runs `address`, `usage`, `address+usage`, and `auto` in fresh external Python
+process groups coordinated by a bounded thread pool; it does not create a fork-based Python
+worker pool. A manifest controls emitted rows, while every selected binary's complete
+producer function set remains available to sanitization and binary-wide stack calibration.
+Each backend/mode/shard attempt gets a unique output and empty cache directory. The driver
+records its PID, process-group ID, Linux process start identity, and exact command before work
+begins. An unreceipted retry proceeds only after the exact old process group is proved absent
+or terminated, so an orphan cannot write into the replacement attempt. Failed artifacts are
+preserved under `failed_attempts/`; successful caches are content-inventoried and made
+recursively read-only before promotion.
+
+Shard generation also runs in an attempt-unique stage with a recorded process identity, then
+promotes the complete, audited directory atomically. An interrupted pre-plan shard directory
+is quarantined and regenerated; once `run_plan.json` exists, any shard drift fails closed.
+
+Resume skips a worker only after reconstructing and matching its complete receipt: plan and
+manifest digests, exact command and paths, expected/actual counts and key hashes, v11
+occurrence provenance, stdout/stderr sizes and digests, overlay/sidecar digests, process
+record, and sealed cache inventory. Checkpoint container keys must also agree with the inner
+binary/backend/function model identities. Merges require an exact non-overlapping shard union;
+merge and report stages use attempt-unique directories and receipts, and unreceipted partial
+pairs are quarantined before regeneration. A receipted artifact mismatch fails closed.
+
+The run plan binds checkpoint, compiled-binary, preprocessed-source, Python-code, site scope
+policy, report policy, executable/runtime environment, effective `PYTHONPATH`, installed
+distribution metadata, and scoring-module inventories. Any drift requires a new output
+directory. The output must be outside the evaluated tree and outside dataset/source trees;
+inside a linked DecBench worktree only its `results/` subtree is eligible. Symlinked ancestry,
+special or multiply-linked lock files, and concurrent orchestrators are rejected.
+`--dry-run` performs preflight and whole-binary partition validation without creating the
+analysis directory. All generated overlays are explicitly non-canonical: the driver never
+writes `type_match_new.json`, finalizes results, rebuilds the site, or updates the dataset.
+
 The canonical rebuild is `scripts/finalize_results.py <tree>` (also what
 `run_benchmark.py`'s finalize calls): ALL checkpoints (never scoped — a
 `-- project` resume finalizes the whole tree and writes a full

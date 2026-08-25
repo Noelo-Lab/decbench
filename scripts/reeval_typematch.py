@@ -104,6 +104,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=[],
         help="limit a non-canonical replay to this exact backend id; repeatable",
     )
+    parser.add_argument(
+        "--function-data",
+        type=Path,
+        help=(
+            "explicit frozen function_results.json denominator for a non-canonical replay "
+            "(default: RESULTS_DIR/function_results.json)"
+        ),
+    )
     outputs = parser.add_mutually_exclusive_group()
     outputs.add_argument(
         "--emit",
@@ -124,14 +132,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--backend is for non-canonical A/B runs and cannot be combined with --emit")
     if args.backend and args.output is None:
         parser.error("--backend requires an explicitly named --output A/B overlay")
+    if args.function_data is not None and args.output is None:
+        parser.error("--function-data requires an explicitly named --output A/B overlay")
     if args.output is not None:
         canonical = args.results_dir / "type_match_new.json"
-        protected = (canonical, typematch_overlay_manifest_path(canonical))
+        function_data = args.function_data or args.results_dir / "function_results.json"
+        protected = [canonical, typematch_overlay_manifest_path(canonical), function_data]
+        if args.manifest is not None:
+            protected.append(args.manifest)
         candidates = (args.output, typematch_overlay_manifest_path(args.output))
         if any(_paths_alias(candidate, target) for candidate in candidates for target in protected):
             parser.error(
-                "--output must not alias the canonical type_match_new.json or its manifest; "
-                "use --emit for canonical promotion"
+                "--output and its metadata must not alias the canonical overlay, "
+                "function data, or selected manifest"
             )
     return args
 
@@ -156,17 +169,36 @@ def _sample_keys(path: Path) -> set[SampleKey]:
     return keys
 
 
-def _limit_decompilation(decompilation: object, functions: set[str]) -> object:
-    available = getattr(decompilation, "functions", None)
-    model_copy = getattr(decompilation, "model_copy", None)
-    if not isinstance(available, dict) or not callable(model_copy):
-        return decompilation
-    selected = {
-        key: function
-        for key, function in available.items()
-        if key in functions or getattr(function, "name", None) in functions
-    }
-    return model_copy(update={"functions": selected})
+def _validate_checkpoint_decompilation(
+    decompilation: object,
+    *,
+    binary_name: str,
+    backend_name: str,
+    coordinate: str,
+) -> DecompilationResult:
+    """Require checkpoint container keys to agree with the stored model identity."""
+
+    if not isinstance(decompilation, DecompilationResult):
+        raise BinaryRelocationError(
+            f"checkpoint result is not a DecompilationResult at {coordinate}"
+        )
+    if decompilation.binary_name != binary_name:
+        raise BinaryRelocationError(
+            f"checkpoint binary identity mismatch at {coordinate}: "
+            f"outer={binary_name!r}, inner={decompilation.binary_name!r}"
+        )
+    if decompilation.decompiler.decompiler_name != backend_name:
+        raise BinaryRelocationError(
+            f"checkpoint backend identity mismatch at {coordinate}: "
+            f"outer={backend_name!r}, inner={decompilation.decompiler.decompiler_name!r}"
+        )
+    for function_name, function in decompilation.functions.items():
+        if not isinstance(function_name, str) or function_name != function.name:
+            raise BinaryRelocationError(
+                f"checkpoint function identity mismatch at {coordinate}: "
+                f"outer={function_name!r}, inner={function.name!r}"
+            )
+    return decompilation
 
 
 def _resolve_checkpoint_binary(
@@ -224,13 +256,10 @@ def _relocate_decompilation(decompilation: object, binary_path: Path) -> object:
 
 def _prepare_decompilation(
     decompilation: object,
-    functions: set[str] | None,
+    _functions: set[str] | None,
     context: NativeProvenanceContext,
 ) -> object:
-    selected = (
-        _limit_decompilation(decompilation, functions) if functions is not None else decompilation
-    )
-    relocated = _relocate_decompilation(selected, context.binary_path)
+    relocated = _relocate_decompilation(decompilation, context.binary_path)
     if not isinstance(relocated, DecompilationResult):
         raise BinaryRelocationError(
             f"checkpoint decompilation is not a DecompilationResult for {context.binary_path}"
@@ -247,10 +276,12 @@ def _prepare_decompilation(
 
 def _function_data_scope(
     root: Path,
+    function_data_path: Path | None = None,
 ) -> tuple[dict[ScoreKey, float], set[SampleKey], set[SampleKey]]:
     """Load historical scores and the frozen global TypeMatch denominator once."""
 
-    with open(root / "function_results.json") as file:
+    path = function_data_path or root / "function_results.json"
+    with open(path) as file:
         function_data = json.load(file)
     old: dict[ScoreKey, float] = {}
     selected: set[SampleKey] = set()
@@ -283,7 +314,7 @@ def _function_data_scope(
                     measurable.add(function_key)
                     old[(*function_key, str(decompiler))] = float(raw_value)
     except (KeyError, TypeError) as exc:
-        raise ValueError(f"invalid function data {root / 'function_results.json'}: {exc}") from exc
+        raise ValueError(f"invalid function data {path}: {exc}") from exc
     return old, selected, measurable
 
 
@@ -367,7 +398,14 @@ def _promotion_provenance(metric: TypeMatchMetric, mode: str) -> dict[str, objec
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     root: Path = args.results_dir.resolve()
-    old, function_keys, measurable_keys = _function_data_scope(root)
+    function_data_path = (
+        args.function_data.resolve(strict=True)
+        if args.function_data is not None
+        else root / "function_results.json"
+    )
+    if not function_data_path.is_file():
+        raise ValueError(f"function data is not a regular file: {function_data_path}")
+    old, function_keys, measurable_keys = _function_data_scope(root, function_data_path)
     checkpoint_dir = root / "checkpoints"
     sample_keys = _sample_keys(args.manifest) if args.manifest is not None else None
     if sample_keys is not None:
@@ -410,6 +448,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             compiled = root / opt_name / project / "compiled"
             sources = list(preprocessed_by_stem(compiled).values())
             for binary_name, decompilers in binaries.items():
+                if not isinstance(binary_name, str):
+                    raise BinaryRelocationError(
+                        f"checkpoint binary key is not a string at {project}/{opt_name}: "
+                        f"{binary_name!r}"
+                    )
                 selected_functions = (
                     {
                         function
@@ -439,14 +482,28 @@ def main(argv: Sequence[str] | None = None) -> None:
                     raise
                 native_context = NativeProvenanceContext(binary_path)
                 for decompiler_name, decompilation in decompilers.items():
+                    if not isinstance(decompiler_name, str):
+                        raise BinaryRelocationError(
+                            "checkpoint backend key is not a string at "
+                            f"{project}/{opt_name}/{binary_name}: {decompiler_name!r}"
+                        )
                     if requested_backends and decompiler_name not in requested_backends:
                         continue
                     try:
-                        prepared = _prepare_decompilation(
+                        validated = _validate_checkpoint_decompilation(
                             decompilation,
-                            selected_functions,
+                            binary_name=binary_name,
+                            backend_name=decompiler_name,
+                            coordinate=f"{project}/{opt_name}/{binary_name}/{decompiler_name}",
+                        )
+                        prepared = _prepare_decompilation(
+                            validated,
+                            None,
                             native_context,
                         )
+                        emitted_functions = set(prepared.functions)
+                        if selected_functions is not None:
+                            emitted_functions.intersection_update(selected_functions)
                         expected_score_keys.update(
                             (
                                 project,
@@ -455,7 +512,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                                 str(function_name),
                                 str(decompiler_name),
                             )
-                            for function_name in prepared.functions
+                            for function_name in emitted_functions
                             if (project, opt_name, binary_name, str(function_name))
                             in measurable_keys
                         )
@@ -480,6 +537,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                                 f"metric reported {len(result.errors)} error(s) for {context}"
                             )
                     for function_name, value in result.function_results.items():
+                        if function_name not in emitted_functions:
+                            continue
                         scored_backends.add(decompiler_name)
                         key = (
                             project,

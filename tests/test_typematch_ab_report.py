@@ -210,7 +210,13 @@ def _write_checkpoints(path: Path) -> None:
         )
 
 
-def _report(tmp_path: Path, *, drift: bool = False) -> dict[str, object]:
+def _report(
+    tmp_path: Path,
+    *,
+    drift: bool = False,
+    run_scope: str | None = None,
+    scope_fairness: str | None = None,
+) -> dict[str, object]:
     function_data, manifest = _fixture_tree(tmp_path)
     address = tmp_path / "address.json"
     auto = tmp_path / "auto.json"
@@ -225,6 +231,8 @@ def _report(tmp_path: Path, *, drift: bool = False) -> dict[str, object]:
         modes=(("address", address), ("auto", auto)),
         baseline_mode="address",
         checkpoint_dir=checkpoints,
+        run_scope=run_scope,
+        scope_fairness=scope_fairness,
     )
 
 
@@ -410,6 +418,20 @@ def test_markdown_explains_shared_denominator(tmp_path: Path) -> None:
         "100.00% → 0.00% (-100.00 pp) | "
         "100.00% → 100.00% (+0.00 pp) |"
     ) in markdown
+
+
+def test_report_labels_experimental_full_scope(tmp_path: Path) -> None:
+    report = _report(
+        tmp_path,
+        run_scope="experimental-full",
+        scope_fairness="experimental-full-sample-only-backend",
+    )
+
+    assert report["scope"]["declared_run_scope"] == "experimental-full"
+    assert report["scope"]["declared_scope_fairness"] == "experimental-full-sample-only-backend"
+    markdown = render_markdown(report)
+    assert "Declared run scope: **experimental-full**" in markdown
+    assert "`experimental-full-sample-only-backend`" in markdown
 
 
 def test_report_json_is_deterministic_with_optimization_levels(tmp_path: Path) -> None:

@@ -213,11 +213,14 @@ For checkpoint A/B runs, `scripts/reeval_typematch.py --mode address|usage|addre
 prints old/new comparisons. Non-canonical overlays require an explicit
 `--output`; only `--emit` with `auto` may write `type_match_new.json`. `--output`
 cannot alias the canonical path. `--manifest sample_set_manifest.json` filters
-decompilations before scoring for a fast, non-canonical sample-set replay and cannot
-be combined with `--emit`. Repeatable `--backend NAME` selectors avoid replaying
-unrelated checkpoint columns and are likewise forbidden for canonical `--emit`
-promotion. A requested backend that produces no scores fails instead of writing a
-misleading empty overlay. Written overlays retain the legacy raw score-map
+the rows emitted to a non-canonical sample-set replay and cannot be combined with
+`--emit`. For every selected binary, however, sanitization, usage extraction, and
+binary-wide stack-offset calibration see the producer's complete function set; only
+the resulting overlay rows are manifest-filtered. A partial manifest therefore cannot
+change the calibration of a retained function. Repeatable `--backend NAME` selectors
+avoid replaying unrelated checkpoint columns and are likewise forbidden for canonical
+`--emit` promotion. A requested backend that produces no scores fails instead of
+writing a misleading empty overlay. Written overlays retain the legacy raw score-map
 shape and gain a digest-bound `.meta.json` companion containing the requested and
 resolved modes, complete policy values, policy/manifest schemas, and metric cache
 version. Scoped updates require compatible provenance and refuse legacy or mixed-policy
@@ -231,6 +234,15 @@ real decompiler omission while rejecting a silently dropped metric row, even whe
 every A/B mode would otherwise drop the same row. Explicit A/B outputs remain usable
 for partial experiments through a sample manifest or project scope, with that same
 fail-closed check applied before a scoped merge.
+
+An explicitly named A/B output may instead use
+`--function-data /path/to/frozen/function_results.json`. This supports comparisons
+between result trees whose locally finalized function sets differ while retaining one
+common denominator; it is forbidden for canonical promotion. The output overlay and
+its metadata may not alias that denominator or the selected manifest. The corpus-scale
+orchestrator additionally binds the external file's absolute path, size, digest,
+selected count, measurable count, and key digest into the run plan and revalidates it
+throughout the run.
 
 Before scoring each checkpoint result, the re-evaluator resolves the binary in
 the selected results tree, deep-copies and relocates the result, and applies the
@@ -247,7 +259,9 @@ errors, stale or duplicate rows, name shadowing, a mismatched function definitio
 variables without a mapped occurrence all abstain. No other legacy backend receives
 this repair without an equivalent same-render producer contract. The in-memory result
 declares those exact occurrences through the same producer policy metadata as a fresh
-backend.
+backend. The checkpoint's outer binary, backend, and function keys must exactly match
+the corresponding stored model identities. Only the stale `binary_path` is permitted
+to differ because relocation deliberately replaces it.
 
 Every fresh function declares a versioned `variable_occurrence_policy` in its
 metadata: `exact` for final-render line/variable identity, `direct` for sound
@@ -303,6 +317,18 @@ variable-line / variable-address fields; a line map without variable occurrence
 addresses is not claimed as usable correspondence evidence. The JSON is canonical;
 Markdown contains only the review headline. Invalid scope or provenance still writes
 the diagnostic report but exits nonzero unless `--allow-invalid` is requested.
+
+At corpus scale, `scripts/run_typematch_ab_sharded.py` is the supported wrapper around the
+partitioner, re-evaluator, and reporter. It always evaluates all four production modes over
+whole-binary shards so binary-wide stack calibration cannot drift, and its fixed denominator
+is the selected manifest intersected with the globally TypeMatch-measurable functions in the
+bound `function_results.json`. Expected overlay rows are narrower and exact per backend:
+functions present in that producer's checkpoint intersected with the fixed denominator.
+Consequently a real producer omission remains a reported miss, while a scoring exception or
+silently missing metric row aborts the worker. Per-worker fresh caches are sealed read-only
+and digest-bound alongside the overlay, provenance sidecar, and transcript before resume can
+reuse them. The final receipt binds the exact checkpoint/source/binary/code inventories and
+the exact non-overlapping union used by the four merged, non-canonical overlays.
 
 The reporting path accepts
 `MetricValue.metadata["variable_match_evidence"]` as `native`, `mixed`, or

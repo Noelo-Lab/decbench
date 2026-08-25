@@ -35,6 +35,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="optional checkpoint directory for line-map/variable-address coverage",
     )
     parser.add_argument("--regression-limit", type=int, default=100)
+    parser.add_argument("--run-scope")
+    parser.add_argument("--scope-fairness")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--markdown", type=Path)
     parser.add_argument(
@@ -57,6 +59,8 @@ def main(argv: list[str] | None = None) -> int:
             requested_backends=args.backend,
             checkpoint_dir=args.checkpoint_dir,
             regression_limit=args.regression_limit,
+            run_scope=args.run_scope,
+            scope_fairness=args.scope_fairness,
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json_payload(report))

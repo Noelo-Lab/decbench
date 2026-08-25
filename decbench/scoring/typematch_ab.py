@@ -675,6 +675,8 @@ def build_report(
     requested_backends: Sequence[str] = (),
     checkpoint_dir: Path | None = None,
     regression_limit: int = 100,
+    run_scope: str | None = None,
+    scope_fairness: str | None = None,
 ) -> dict[str, Any]:
     """Build one deterministic multi-mode TypeMatch A/B report."""
 
@@ -859,7 +861,7 @@ def build_report(
         }
 
     selected_count = len(universe.selected) + len(universe.missing_manifest_keys)
-    report = {
+    report: dict[str, Any] = {
         "schema": REPORT_SCHEMA,
         "provenance": {
             "function_data": {
@@ -944,6 +946,11 @@ def build_report(
             "warnings": warnings,
         },
     }
+    if run_scope is not None or scope_fairness is not None:
+        if not run_scope or not scope_fairness:
+            raise ValueError("run scope and fairness label must be provided together")
+        report["scope"]["declared_run_scope"] = run_scope
+        report["scope"]["declared_scope_fairness"] = scope_fairness
     return report
 
 
@@ -971,6 +978,15 @@ def render_markdown(report: Mapping[str, Any]) -> str:
     lines = [
         "# TypeMatch mode A/B",
         "",
+        *(
+            [
+                f"Declared run scope: **{scope['declared_run_scope']}** "
+                f"(`{scope['declared_scope_fairness']}`).",
+                "",
+            ]
+            if "declared_run_scope" in scope
+            else []
+        ),
         f"Shared denominator: **{scope['globally_type_measurable_functions']:,}** of "
         f"{scope['selected_functions']:,} selected functions, identically applied to every "
         "backend.",

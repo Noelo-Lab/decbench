@@ -9,11 +9,13 @@ from typing import Literal
 
 import pytest
 
+from decbench.metrics.type_match import TypeMatchMetric
 from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
     LineMapping,
+    VariableInfo,
 )
 from decbench.models.metrics import MetricResult, MetricValue
 from decbench.results_store import (
@@ -498,7 +500,7 @@ def test_scoped_ab_merge_removes_stale_rows_from_evaluated_scope(
     assert set(payload["angr"]) == {"proj::O0::bin::f"}
 
 
-def test_sample_manifest_filters_before_metric_evaluation(
+def test_sample_manifest_preserves_binary_calibration_and_filters_emitted_rows(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -508,8 +510,18 @@ def test_sample_manifest_filters_before_metric_evaluation(
         binary_name="bin",
         decompiler=DecompilerMetadata(decompiler_name="angr"),
         functions={
-            name: FunctionDecompilation(name=name, address=index, decompiled_code="")
-            for index, name in enumerate(("f", "g"), start=1)
+            "f": FunctionDecompilation(
+                name="f",
+                address=1,
+                decompiled_code="",
+                variables=[VariableInfo(stack_offset=offset) for offset in (-16, -24)],
+            ),
+            "g": FunctionDecompilation(
+                name="g",
+                address=2,
+                decompiled_code="",
+                variables=[VariableInfo(stack_offset=offset) for offset in (-20, -36, -52)],
+            ),
         },
     )
     with open(tmp_path / "checkpoints" / "proj.pkl", "wb") as file:
@@ -521,6 +533,7 @@ def test_sample_manifest_filters_before_metric_evaluation(
         )
     )
     seen: list[set[str]] = []
+    shifts: list[int | None] = []
 
     class StubMetric:
         cache_version = "stub-cache-v1"
@@ -533,6 +546,11 @@ def test_sample_manifest_filters_before_metric_evaluation(
             self, selected: DecompilationResult, **_kwargs: object
         ) -> MetricResult:
             seen.append(set(selected.functions))
+            ground_truth = {
+                1: {"f": [{"rbp_offset": [offset]} for offset in (-8, -16)]},
+                2: {"g": [{"rbp_offset": [offset]} for offset in (-4, -20, -36)]},
+            }
+            shifts.append(TypeMatchMetric._calibrate_binary_shift(selected, ground_truth))
             return _result()
 
     monkeypatch.setattr(reeval_typematch, "TypeMatchMetric", StubMetric)
@@ -542,7 +560,8 @@ def test_sample_manifest_filters_before_metric_evaluation(
         [str(tmp_path), "--mode", "usage", "--manifest", str(manifest), "--output", str(output)]
     )
 
-    assert seen == [{"f"}]
+    assert seen == [{"f", "g"}]
+    assert shifts == [16]
     payload, provenance = read_typematch_overlay(output)
     assert set(payload["angr"]) == {"proj::O0::bin::f"}
     assert provenance is not None and provenance["mode"] == "usage"
@@ -564,6 +583,43 @@ def test_backend_filter_cannot_promote_canonical_overlay(tmp_path: Path) -> None
 def test_backend_filter_requires_named_ab_output(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         reeval_typematch.parse_args([str(tmp_path), "--backend", "angr"])
+
+
+def test_function_data_override_requires_named_ab_output(tmp_path: Path) -> None:
+    function_data = tmp_path / "function_results.json"
+
+    with pytest.raises(SystemExit):
+        reeval_typematch.parse_args([str(tmp_path), "--function-data", str(function_data)])
+    with pytest.raises(SystemExit):
+        reeval_typematch.parse_args(
+            [str(tmp_path), "--function-data", str(function_data), "--emit"]
+        )
+
+
+@pytest.mark.parametrize("alias", ("output", "metadata", "manifest"))
+def test_ab_output_cannot_alias_frozen_inputs(tmp_path: Path, alias: str) -> None:
+    function_data = tmp_path / "frozen-function-results.json"
+    manifest = tmp_path / "selected.json"
+    if alias == "output":
+        output = function_data
+    elif alias == "metadata":
+        output = tmp_path / "scores.json"
+        function_data = reeval_typematch.typematch_overlay_manifest_path(output)
+    else:
+        output = manifest
+
+    with pytest.raises(SystemExit):
+        reeval_typematch.parse_args(
+            [
+                str(tmp_path),
+                "--function-data",
+                str(function_data),
+                "--manifest",
+                str(manifest),
+                "--output",
+                str(output),
+            ]
+        )
 
 
 def test_backend_filter_scores_only_exact_selected_backend(
