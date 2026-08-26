@@ -234,7 +234,7 @@ otherwise; flags read from the DWARF producer), via `decbench/utils/binfmt.py`.
 Returns a non-scoring result (an **abstention**, not a 0) if that toolchain
 isn't installed — don't fake a wrong-arch recompile. Works on ELF and PE.
 
-### The two fairness passes (v5, `cache_version="5"`)
+### The two fairness passes (`cache_version="7"`)
 
 Raw decompiler output rarely recompiles as-is (pseudo-types like
 `undefined4`, illegal tokens like `GLIBC_2.2.5::stderr`), so naive
@@ -251,7 +251,17 @@ before changing them, and bump `cache_version` if you do:
    via `derive_context_decls`, synthesized structs, width-typed globals,
    positional edits) and never redefines what the decompiler declared. This
    *maximizes compilation* uniformly (sailr O0 compile rate ~20-79% raw →
-   ~83-95% fixed, per decompiler).
+   ~83-95% fixed, per decompiler). If the flags passed to
+   `compile_with_fixup` contain no explicit language mode, the fixup uses
+   `-std=gnu17`; explicit `-ansi`/`--ansi` and `-std`/`--std` modes remain
+   unchanged.
+   The loop keeps implicit-function-declaration diagnostics visible so it can
+   inject prototypes, while trailing
+   `-Wno-error=incompatible-pointer-types` and `-Wno-error=int-conversion`
+   flags prevent type-recovery mistakes from blocking this byte-level metric.
+   A terminal failure retains a deterministic summary of compiler error
+   messages and warning-class tags in the per-function metadata, bounded to
+   400 characters and stripped of paths, source excerpts, carets, and notes.
 2. **Operand normalization** in `_disassemble_bytes` (byte_match.py) blanks
    link-time-dependent operands (direct branch/call targets, rip/pc-relative
    memory INCLUDING the unlinked object's bare `[rip]` form) and drops x86-64

@@ -230,7 +230,7 @@ class ByteMatchMetric(Metric):
     requires_source_cfg = False
     requires_decompiled_cfg = False
 
-    cache_version = "6"
+    cache_version = "7"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
@@ -341,7 +341,7 @@ class ByteMatchMetric(Metric):
                 metadata={
                     "compilable": False,
                     "fixup_iterations": fix.iterations,
-                    "error": "Compilation failed",
+                    "error": fix.error or "Compilation failed",
                 },
             )
 
