@@ -44,8 +44,7 @@ from decbench.pipeline.executor import PipelineConfig, PipelineExecutor  # noqa:
 from decbench.results_store import PROJECT_DIRS  # noqa: F401,E402
 from decbench.results_store import gather_project_tomls as gather_tomls
 from decbench.utils import binfmt  # noqa: E402
-from decbench.utils.cfg import extract_cfgs_from_source
-from decbench.utils.langs import build_stem_index, strip_source_ext  # noqa: E402
+from decbench.utils.cfg import extract_cfgs_from_source  # noqa: E402
 
 OPT_LEVELS = [
     OptimizationLevel.O0,
@@ -166,46 +165,10 @@ def project_source_functions(
     symbols), where decompilers only know functions by address. Returns an empty
     map if there is no usable DWARF (caller then falls back to all functions).
     """
-    if not source_stems:
-        return {}
-    try:
-        dw = binfmt.dwarf_info(binary_path)
-    except Exception:  # noqa: BLE001
-        return {}
-    if dw is None:
-        return {}
-    addr2name: dict[int, str] = {}
-    file_tables: dict[int, list] = {}
-    stem_index = build_stem_index(source_stems)
-    try:
-        for cu in dw.iter_CUs():
-            for die in cu.iter_DIEs():
-                if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
-                    continue
-                name = binfmt.die_str_attr(die, "DW_AT_name")
-                if name is None:
-                    continue
-                fi, owner = binfmt.die_attr_owner(die, "DW_AT_decl_file")
-                if fi is None:
-                    continue
-                files = binfmt.cu_file_table(dw, owner.cu, file_tables)
-                if not (0 <= fi.value < len(files)) or files[fi.value] is None:
-                    continue
-                stem = strip_source_ext(os.path.basename(files[fi.value]))
-                matched = stem_index.get(stem)
-                if matched is None:
-                    for norm, original in stem_index.items():
-                        if norm.endswith("-" + stem) or norm.endswith("_" + stem):
-                            matched = original
-                            break
-                if matched is not None:
-                    lp_addr = int(die.attributes["DW_AT_low_pc"].value)
-                    addr2name[lp_addr] = name
-                    if stem_out is not None:
-                        stem_out[lp_addr] = matched
-    except Exception:  # noqa: BLE001
-        return {}
-    return addr2name
+    owners = binfmt.source_function_owners(binary_path, source_stems)
+    if stem_out is not None:
+        stem_out.update({addr: stem for addr, (_name, stem) in owners.items()})
+    return {addr: name for addr, (name, _stem) in owners.items()}
 
 
 def extract_source_cfgs(
@@ -584,6 +547,7 @@ def main() -> int:
             ts = time.time()
             source_stems = set(project.preprocessed_sources.get(opt, {}).keys())
             src_fn_names: dict[str, dict[int, str]] = {}
+            src_fn_owners: dict[str, dict[int, tuple[str, str]]] = {}
             kept_binaries = []
             needed_stems: set[str] = set()
             for b in project.compiled_binaries[opt]:
@@ -594,6 +558,11 @@ def main() -> int:
                     fns = {a: nm for a, nm in fns.items() if allowed and nm in allowed}
                 if fns:
                     src_fn_names[b.stem] = fns
+                    src_fn_owners[b.stem] = {
+                        addr: (func_name, addr_stem[addr])
+                        for addr, func_name in fns.items()
+                        if addr in addr_stem
+                    }
                     kept_binaries.append(b)
                     needed_stems.update(addr_stem[a] for a in fns if a in addr_stem)
             skipped = len(project.compiled_binaries[opt]) - len(kept_binaries)
@@ -665,6 +634,7 @@ def main() -> int:
                         parallel=True,
                         workers=WORKERS,
                         precomputed_source_cfgs=src_cfgs,
+                        source_function_owners=src_fn_owners,
                     )
                 except Exception as e:  # noqa: BLE001
                     print(f"[{name}/{opt.value}] evaluate ERROR: {e}", flush=True)

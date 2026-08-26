@@ -45,7 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from decbench.utils.langs import preprocessed_by_stem  # noqa: E402
 
 PREVIOUS_GED_MAX_NODES = 60
-CHECKPOINT_SCHEMA_VERSION = 6
+CHECKPOINT_SCHEMA_VERSION = 7
 SOURCE_CACHE_SCHEMA_VERSION = 1
 HISTORICAL_CANDIDATE_PARSE = "legacy-overlay-evidence-reconciled-v3"
 
@@ -804,15 +804,27 @@ def eval_one(
         old_values,
     ) = task
     from decbench.metrics.ged import GEDMetric
+    from decbench.utils import binfmt
     from decbench.utils.cfg import (
         extract_cfgs_from_source,
         needs_decompiled_preprocessing,
         resolved_source_for_binary,
         sanitize_decompiled_c,
     )
+    from decbench.utils.results_tree import resolve_binary
 
     per_stem, best_by_name = _load_src(src_pkl)
-    src_cfgs = resolved_source_for_binary(stem, per_stem, best_by_name)
+    compiled = Path(c_path).parent.parent / "compiled"
+    binary = resolve_binary(compiled, stem)
+    function_owners = (
+        binfmt.source_function_owners(binary, set(per_stem)) if binary is not None else None
+    )
+    src_cfgs = resolved_source_for_binary(
+        stem,
+        per_stem,
+        best_by_name,
+        function_owners=function_owners,
+    )
     historical_src_cfgs: dict = {}
     if historical_src_pkl:
         historical_per_stem, historical_best = _load_src(historical_src_pkl)
@@ -1110,6 +1122,12 @@ def migrate_compatible_checkpoints(
 ) -> tuple[int, int]:
     """Upgrade checkpoints whose stored and requested historical bases agree."""
     from decbench.utils.cfg import sanitize_decompiled_c
+
+    # The compatibility proof below is specifically for the schema 4/5 -> 6
+    # historical-parse transition. Later schemas change corrected-score inputs
+    # and must be replayed, not relabeled as current.
+    if signature.get("schema_version") != 6:
+        return 0, 0
 
     schema5_signature = dict(signature)
     schema5_signature["schema_version"] = 5

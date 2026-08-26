@@ -8,8 +8,9 @@ paths read graph topology and each node's ``is_entrypoint`` /
 module writes, per binary, the ``function -> CFG`` map that
 ``pipeline/evaluate.py`` scores that binary against: the project's ``.i`` CFGs
 parsed **per translation unit** and then resolved through
-:func:`decbench.utils.cfg.resolved_source_for_binary` — the binary's own TU wins,
-other TUs are the fallback, and empty prototypes never displace a real body.
+:func:`decbench.utils.cfg.resolved_source_for_binary` — the function's DWARF
+declaration-file TU wins, followed by the binary-stem convention and the
+cross-TU fallback, and empty prototypes never displace a real body.
 Each DiGraph is relabeled to ``0..n-1`` with the entry/exit node ids and the
 degeneracy verdict recorded. :func:`rebuild_cfg` reconstructs a GED-ready
 ``nx.DiGraph`` from one serialized function, so the exact GED value is
@@ -39,6 +40,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from decbench.utils import binfmt
 from decbench.utils.cfg import (
     best_source_by_name,
     extract_cfgs_from_source,
@@ -46,7 +48,7 @@ from decbench.utils.cfg import (
     resolved_source_for_binary,
     strip_system_headers,
 )
-from decbench.utils.results_tree import OPT_LEVELS, compiled_dir
+from decbench.utils.results_tree import OPT_LEVELS, compiled_dir, resolve_binary
 
 if TYPE_CHECKING:
     from networkx import DiGraph
@@ -205,13 +207,17 @@ def _resolved_cfgs_for_opt(
             serialized[key] = relabel_cfg(cfg)
         return serialized[key]
 
-    return {
-        stem: {
+    out: dict[str, dict[str, CfgSerial]] = {}
+    for stem in stems:
+        binary = resolve_binary(compiled_dir(root, opt, project), stem)
+        owners = binfmt.source_function_owners(binary, set(by_tu)) if binary is not None else None
+        out[stem] = {
             name: _serialize(cfg)
-            for name, cfg in resolved_source_for_binary(stem, by_tu, best_by_name).items()
+            for name, cfg in resolved_source_for_binary(
+                stem, by_tu, best_by_name, function_owners=owners
+            ).items()
         }
-        for stem in stems
-    }
+    return out
 
 
 def cfg_json_path(dest: Path, opt: str, project: str, stem: str) -> Path:

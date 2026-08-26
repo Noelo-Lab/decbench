@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -321,6 +322,7 @@ def resolved_source_for_binary(
     binary_stem: str,
     source_cfgs_by_binary: dict[str, dict[str, DiGraph]],
     best_by_name: dict[str, DiGraph],
+    function_owners: Mapping[int, tuple[str, str]] | None = None,
 ) -> dict[str, DiGraph]:  # type: ignore
     """Source CFGs to score ONE binary against, TU-aware (fixes name collisions).
 
@@ -332,10 +334,34 @@ def resolved_source_for_binary(
     another binary's 56-node ``main``). Falls back to the cross-TU
     :func:`best_source_by_name` for functions the own TU doesn't define
     (statically-linked library code) or defines only as an empty prototype.
+
+    ``function_owners`` carries exact DWARF ``low_pc -> (name, decl-file TU)``
+    provenance. It takes priority over the binary-stem convention, which is not
+    reliable when a build names an output differently from its defining source.
+    A known owner with no real CFG abstains for that name instead of selecting a
+    same-named function from another translation unit.
     """
     resolved = dict(best_by_name)
     for name, cfg in (source_cfgs_by_binary.get(binary_stem) or {}).items():
         if not is_degenerate_source_cfg(cfg):
+            resolved[name] = cfg
+
+    owned_by_name: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for name, tu_stem in (function_owners or {}).values():
+        previous = owned_by_name.get(name)
+        if previous is not None and previous != tu_stem:
+            ambiguous.add(name)
+        else:
+            owned_by_name[name] = tu_stem
+    for name in ambiguous:
+        owned_by_name.pop(name, None)
+
+    for name, tu_stem in owned_by_name.items():
+        cfg = (source_cfgs_by_binary.get(tu_stem) or {}).get(name)
+        if cfg is None or is_degenerate_source_cfg(cfg):
+            resolved.pop(name, None)
+        else:
             resolved[name] = cfg
     return resolved
 
