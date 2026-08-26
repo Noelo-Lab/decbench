@@ -82,12 +82,19 @@ type_match. The publish/dataset paths still glob only `*.i`
 `scripts/compute_dataset_info.py`), so a C++ project cannot be published to the
 dataset yet.
 
-Source-side matching is per-TU: `pipeline/evaluate.py` matches a binary's OWN
-translation unit first, cross-TU best-by-name only as fallback (avoids
-same-name collisions across TUs). It is also per optimization level: an O0
-source CFG is not valid ground truth for O2 merely because both inputs came
-from the same project. The old JOERN_FAILURES.md failure analysis lives in git
-history; Joern parse-health stats render on the site's data page.
+Source-side matching is per-TU: each target function's DWARF `low_pc` and
+`DW_AT_decl_file` select its defining preprocessed translation unit first. The
+binary-stem convention is retained when that provenance is unavailable, and
+cross-TU best-by-name is only the final fallback. This matters when a build
+names an output differently from the source that defines its `main`; using the
+largest same-named graph from another TU is not valid ground truth. Matching is
+also per optimization level: an O0 source CFG is not valid ground truth for O2
+merely because both inputs came from the same project. The old
+JOERN_FAILURES.md failure analysis lives in git history; Joern parse-health
+stats render on the site's data page.
+
+The live evaluator, external eval-kit ingestion, dataset CFG export, and
+canonical `reeval_ged.py` overlay all use this ownership rule.
 
 **C++ name collisions.** Matching is by UNQUALIFIED name on both sides (DWARF
 `DW_AT_name` is `Get`, not `leveldb::DBImpl::Get`, and Joern's C++ frontend

@@ -749,6 +749,108 @@ def test_eval_one_rejects_reconstructed_fallback_mismatch(
         eval_one(task)
 
 
+def test_eval_one_uses_dwarf_tu_ownership_for_corrected_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decompiled = tmp_path / "O0" / "shadow" / "decompiled"
+    decompiled.mkdir(parents=True)
+    artifact = decompiled / "angr_new_subid_range.c"
+    artifact.write_text("// Function: main @ 0x12da\nint main(void) { return 0; }\n")
+    current_source = tmp_path / "current.pkl"
+    current_source.write_bytes(
+        pickle.dumps(
+            {
+                "per_stem": {
+                    "new_subid_range-new_subid_range": {"main": _graph(4, 3)},
+                    "login": {"main": _graph(40, 39)},
+                }
+            }
+        )
+    )
+    candidate_cfg = _graph(4, 3)
+    monkeypatch.setattr(
+        "decbench.utils.results_tree.resolve_binary",
+        lambda *_args: tmp_path / "O0" / "shadow" / "compiled" / "new_subid_range",
+    )
+    monkeypatch.setattr(
+        "decbench.utils.binfmt.source_function_owners",
+        lambda *_args: {0x12DA: ("main", "new_subid_range-new_subid_range")},
+    )
+    monkeypatch.setattr(
+        "decbench.utils.cfg.extract_cfgs_from_source",
+        lambda *_args, **_kwargs: {"main": candidate_cfg},
+    )
+    seen: list[int] = []
+
+    def compute(_self, _result, *, source_cfg, decompiled_cfg):
+        assert decompiled_cfg is candidate_cfg
+        seen.append(source_cfg.number_of_nodes())
+        return SimpleNamespace(
+            value=0.0,
+            metadata={"method": "vj_ged", "isomorphic": True, "approximated": False},
+        )
+
+    monkeypatch.setattr("decbench.metrics.ged.GEDMetric.compute_for_function", compute)
+
+    key, scores, _audit = eval_one(
+        (
+            "O0",
+            "shadow",
+            "new_subid_range",
+            "angr",
+            str(artifact),
+            str(current_source),
+            "",
+            False,
+            {},
+        )
+    )
+
+    assert key == "O0::shadow::new_subid_range::angr"
+    assert scores == {"main": {"value": 0.0, "perfect": True}}
+    assert seen == [4]
+
+
+def test_checkpoint_schema_tracks_dwarf_tu_ownership(tmp_path: Path) -> None:
+    assert reeval_ged.checkpoint_signature()["schema_version"] == 7
+
+    checkpoint_dir = tmp_path / "reeval_ged"
+    checkpoint_dir.mkdir()
+    artifact = tmp_path / "candidate.c"
+    source = tmp_path / "current.pkl"
+    historical = tmp_path / "historical.pkl"
+    artifact.write_text("int f(void) { return 0; }\n")
+    source.write_bytes(b"current")
+    historical.write_bytes(b"historical")
+    signature = reeval_ged.checkpoint_signature()
+    prior = dict(signature)
+    prior["schema_version"] = 5
+    prior["historical_candidate_parse"] = "legacy-overlay-raw-v1"
+    checkpoint = checkpoint_dir / "O2__proj__bin__angr.json"
+    checkpoint.write_text(json.dumps({"_meta": prior, "scores": {}, "over_previous_limit": {}}))
+    task = (
+        "O2",
+        "proj",
+        "bin",
+        "angr",
+        str(artifact),
+        str(source),
+        str(historical),
+        False,
+        {},
+    )
+
+    migrated, require_replay = migrate_compatible_checkpoints(
+        checkpoint_dir,
+        [task],
+        signature,
+    )
+
+    assert (migrated, require_replay) == (0, 0)
+    assert json.loads(checkpoint.read_text())["_meta"] == prior
+
+
 def test_checkpoint_migration_rejects_stored_fallback_mismatch(
     tmp_path: Path,
 ) -> None:

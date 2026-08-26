@@ -29,7 +29,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import os
 import pickle
 import re
 import tempfile
@@ -535,58 +534,21 @@ def _opt_key(section: dict, opt: str) -> Any:
     return enum_key
 
 
-def _stems_for_addrs(binary: Path, addrs: set[int], stems: set[str]) -> set[str]:
-    """The ``.i`` TU stems whose DWARF subprograms cover ``addrs``.
+def _function_owners_for_addrs(
+    binary: Path, addrs: set[int], stems: set[str]
+) -> dict[int, tuple[str, str]]:
+    """The DWARF function/TU owners for target ``addrs``.
 
     Mirrors ``project_source_functions``' ``stem_out`` (scripts/run_benchmark.py)
     so Joern parses only the translation units that hold the target functions.
     Empty result means "unknown" — the caller falls back to every TU.
     """
     if not stems or not addrs:
-        return set()
+        return {}
     from decbench.utils import binfmt
 
-    try:
-        dw = binfmt.dwarf_info(binary)
-    except Exception:  # noqa: BLE001
-        return set()
-    if dw is None:
-        return set()
-    matched: set[str] = set()
-    try:
-        for cu in dw.iter_CUs():
-            lp = dw.line_program_for_CU(cu)
-            version = 4
-            if lp is not None:
-                version = lp.header.get("version", cu.header.get("version", 4))
-            files: list[str | None] = [] if version >= 5 else [None]
-            if lp is not None:
-                for fe in lp["file_entry"]:
-                    nm = fe.name
-                    files.append(nm.decode() if isinstance(nm, bytes) else nm)
-            for die in cu.iter_DIEs():
-                if die.tag != "DW_TAG_subprogram":
-                    continue
-                attrs = die.attributes
-                if "DW_AT_low_pc" not in attrs:
-                    continue
-                if int(attrs["DW_AT_low_pc"].value) not in addrs:
-                    continue
-                fi = attrs.get("DW_AT_decl_file")
-                if fi is None or not (0 <= fi.value < len(files)) or files[fi.value] is None:
-                    continue
-                base = os.path.basename(files[fi.value])  # type: ignore[arg-type]
-                stem = base[:-2] if base.endswith(".c") else base
-                if stem in stems:
-                    matched.add(stem)
-                    continue
-                for s in stems:
-                    if s.endswith("-" + stem) or s.endswith("_" + stem):
-                        matched.add(s)
-                        break
-    except Exception:  # noqa: BLE001
-        return set()
-    return matched
+    owners = binfmt.source_function_owners(binary, stems)
+    return {addr: owner for addr, owner in owners.items() if addr in addrs}
 
 
 def _evaluate_group(
@@ -612,6 +574,7 @@ def _evaluate_group(
     )
 
     src_by_stem: dict[str, dict] = {}
+    owners_by_binary: dict[str, dict[int, tuple[str, str]]] = {}
     best: dict = {}
     if needs_source:
         compiled = tree / opt / project / "compiled"
@@ -624,12 +587,15 @@ def _evaluate_group(
             )
         else:
             needed: set[str] = set()
+            parse_all = False
             for e in entries:
-                got = _stems_for_addrs(e.binary, e.addrs, set(i_by_stem))
-                if not got:
-                    needed = set(i_by_stem)
-                    break
-                needed |= got
+                got = _function_owners_for_addrs(e.binary, e.addrs, set(i_by_stem))
+                owners_by_binary[e.stem] = got
+                if set(got) != e.addrs:
+                    parse_all = True
+                needed.update(tu_stem for _name, tu_stem in got.values())
+            if parse_all:
+                needed = set(i_by_stem)
             for stem in sorted(needed):
                 try:
                     src_by_stem[stem] = extract_cfgs_from_source(i_by_stem[stem]) or {}
@@ -643,7 +609,16 @@ def _evaluate_group(
 
     out: dict[str, dict[str, MetricResult]] = {}
     for e in entries:
-        src = resolved_source_for_binary(e.stem, src_by_stem, best) if needs_source else None
+        src = (
+            resolved_source_for_binary(
+                e.stem,
+                src_by_stem,
+                best,
+                function_owners=owners_by_binary.get(e.stem),
+            )
+            if needs_source
+            else None
+        )
         try:
             out[e.stem] = evaluate_decompilation(e.result, src, metric_names)
         except Exception as exc:  # noqa: BLE001
