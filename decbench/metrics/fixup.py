@@ -88,6 +88,13 @@ _STRUCT_TYPEDEF = re.compile(r"typedef\s+struct\s+(\w+)\s*\{[^{}]*\}\s*\1\s*;")
 
 _STRING_OR_CHAR = re.compile(r'"(?:[^"\\\n]|\\.)*"|\'(?:[^\'\\\n]|\\.)*\'')
 
+_DIAGNOSTIC_LINE = re.compile(r"^(?:.*?:\s*)?((?:fatal )?error):\s*(.+)$", re.MULTILINE)
+_DIAGNOSTIC_CLASS = re.compile(r"\[(-W[^\]\s]+)\]")
+_DIAGNOSTIC_QUOTED = re.compile(r"'[^'\n]*'|‘[^’\n]*’|“[^”\n]*”|\"[^\"\n]*\"")
+_DIAGNOSTIC_ABSOLUTE_PATH = re.compile(r"(?:[A-Za-z]:)?[/\\][^\s:]+")
+_DIAGNOSTIC_SOURCE_EXCERPT = re.compile(r"^\s*\d+\s*\|")
+_DIAGNOSTIC_LIMIT = 400
+
 
 def _sub_outside_strings(pattern: re.Pattern, repl, code: str) -> str:
     """Apply ``pattern.sub(repl, ...)`` only to spans outside string literals."""
@@ -783,6 +790,56 @@ def _errors_with_snippets(stderr: str) -> list[tuple[str, str]]:
     return [(m.group(1), m.group(2)) for m in _RE_ERR_SNIPPET.finditer(stderr)]
 
 
+def _summarize_compiler_errors(stderr: str) -> str:
+    """Return a bounded, deterministic summary of compiler error lines."""
+    classes: set[str] = set()
+    messages: set[str] = set()
+    for line in stderr.splitlines():
+        if _DIAGNOSTIC_SOURCE_EXCERPT.match(line):
+            continue
+        match = _DIAGNOSTIC_LINE.match(line)
+        if match is None:
+            continue
+        severity, message = match.groups()
+        classes.update(_DIAGNOSTIC_CLASS.findall(message))
+        message = _DIAGNOSTIC_CLASS.sub("", message)
+        message = _DIAGNOSTIC_QUOTED.sub("<redacted>", message)
+        message = _DIAGNOSTIC_ABSOLUTE_PATH.sub("<path>", message)
+        if message.endswith(": No such file or directory"):
+            message = re.sub(r"^\S+(?=: No such file or directory$)", "<path>", message)
+        message = " ".join(message.split()).strip()
+        if message:
+            messages.add(f"{severity}: {message}")
+
+    if not messages:
+        return "unrepairable"
+
+    class_prefix = f" [{', '.join(sorted(classes))}]" if classes else ""
+    summary = f"compiler diagnostics{class_prefix}: {'; '.join(sorted(messages))}"
+    if len(summary) <= _DIAGNOSTIC_LIMIT:
+        return summary
+
+    clipped = summary[: _DIAGNOSTIC_LIMIT - 3]
+    boundary = max(clipped.rfind(" "), clipped.rfind(";"))
+    if boundary >= _DIAGNOSTIC_LIMIT // 2:
+        clipped = clipped[:boundary]
+    return clipped.rstrip(" ,;") + "..."
+
+
+def _has_language_mode(flags: list[str]) -> bool:
+    """Whether direct caller flags select a C language mode."""
+    for index, flag in enumerate(flags):
+        if flag in {"-ansi", "--ansi"} or flag.startswith(("-std=", "--std=")):
+            return True
+        if (
+            flag in {"-std", "--std"}
+            and index + 1 < len(flags)
+            and not flags[index + 1].startswith("-")
+        ):
+            return True
+    return False
+
+
 def _build_source(code: str, decls: dict[str, str], structs: dict[str, list[str]]) -> str:
     """Assemble the candidate TU: includes + synthesized structs + injected
     decls/macros + code."""
@@ -904,6 +961,14 @@ def compile_with_fixup(
         flags = ["-O2", "-c", "-fno-builtin"]
     # No -w: implicit-declaration warnings are what drive prototype injection.
     flags = [f for f in flags if f != "-w"]
+    if not _has_language_mode(flags):
+        flags.append("-std=gnu17")
+    flags.extend(
+        [
+            "-Wno-error=incompatible-pointer-types",
+            "-Wno-error=int-conversion",
+        ]
+    )
 
     code = sanitize_tokens(code)
     decls: dict[str, str] = {}
@@ -1349,5 +1414,5 @@ def compile_with_fixup(
     return fail(
         _build_source(code, decls, structs),
         iteration,
-        (last_err or "").strip()[-400:] or "unrepairable",
+        _summarize_compiler_errors(last_err),
     )
