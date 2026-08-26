@@ -146,8 +146,21 @@ def decompile_binary(
   Helpers live in `decbench/decompilers/raw/common.py`.
 - **Skip non-source functions.** Drop PLT stubs/thunks and CRT helpers
   (`_start`, `__libc_csu_init`, `register_tm_clones`, …) and anything outside
-  `.text`. `common.py` provides `SKIP_NAMES`, `SKIP_PREFIXES`, and a `.text`
-  range check.
+  the `.text` family. Do not roll your own filter — call
+  `common.should_skip_function(name, file_addr, text_range, addr_targets)`,
+  which is the ONE rule every backend shares:
+  1. a function whose address is in `addr_targets` (the driver's DWARF `low_pc`
+     set — get it with `common.addr_targets_of(function_names)`) is a verified
+     real function and is **always kept**, whatever section it landed in;
+  2. otherwise `SKIP_NAMES` / `SKIP_PREFIXES` and the section ranges from
+     `common.elf_text_ranges()` apply.
+
+  `elf_text_ranges()` covers **every** `SHF_EXECINSTR` section whose name starts
+  with `.text`, not just the one literally named `.text`: real binaries split
+  their code (`-ffunction-sections` → one `.text.<fn>` per function; custom
+  linker scripts → `.text` + `.text_rest`). It returns `None` — meaning
+  "unknown, fall back to the name filter" — for non-ELF inputs, a binary with no
+  section headers, and a degenerate zero-size `.text`.
 - **Set `decompiler_name = self.id`.** The `id` property is your registered
   name, or `name@version` when a version is pinned (see §4). Using `self.id`
   keeps versioned runs as distinct, comparable columns everywhere downstream.

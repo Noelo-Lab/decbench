@@ -7,13 +7,17 @@ its output contract exactly *without* depending on declib:
 * ``elf_min_vaddr`` — lowest ``PT_LOAD`` virtual address; adding it to a
   decompiler's lifted (0-based / image-base-relative) address yields the
   ELF-file-space address that DWARF uses.
-* ``elf_text_range`` — ``[start, end)`` of the ``.text`` section, used to
-  drop PLT stubs / import thunks that live in their own sections.
+* ``elf_text_ranges`` — the ``[start, end)`` ranges of the binary's ``.text``
+  FAMILY sections (``.text``, ``.text.<fn>`` from ``-ffunction-sections``,
+  ``.text_rest`` …), used to drop PLT stubs / import thunks that live in their
+  own sections.
 * ``SKIP_NAMES`` / ``SKIP_PREFIXES`` — CRT/compiler-generated functions and
   thunk/import name prefixes that are never benchmarked.
 * ``should_skip_function`` / ``in_text`` — the name + section filter that
-  ``declib_dec._enumerate_functions`` applies. Address comparisons tolerate the
-  ARM Thumb T-bit (DWARF ``low_pc`` is even; angr reports Thumb entries odd).
+  ``declib_dec._enumerate_functions`` applies, with the DWARF-target exemption
+  that keeps a function the driver explicitly asked for. Address comparisons
+  tolerate the ARM Thumb T-bit (DWARF ``low_pc`` is even; angr reports Thumb
+  entries odd).
 * ``narrow_to_source`` — the optional ``function_names`` restriction (with the
   same "fall back to everything if nothing matched" behaviour as declib_dec).
 * ``dump_progress`` — the atomic partial-result pickle used by the run driver
@@ -26,6 +30,7 @@ Addresses everywhere in DecBench results are **ELF-file-space**
 
 from __future__ import annotations
 
+import bisect
 import logging
 import pickle
 from pathlib import Path
@@ -35,6 +40,11 @@ if TYPE_CHECKING:
     from decbench.models.decompilation import DecompilationResult
 
 _l = logging.getLogger(__name__)
+
+#: ``[start, end)`` executable ranges, or ``None`` when they could not be read.
+TextRanges = list[tuple[int, int]] | None
+
+_SHF_EXECINSTR = 0x4
 
 SKIP_NAMES = frozenset(
     {
@@ -122,54 +132,127 @@ def elf_min_vaddr(binary_path: Path) -> int:
         return 0
 
 
-def elf_text_range(binary_path: Path) -> tuple[int, int] | None:
-    """Get the ``[start, end)`` virtual-address range of the ``.text`` section.
+def elf_text_ranges(binary_path: Path) -> TextRanges:
+    """Get the ``[start, end)`` ranges of the binary's ``.text``-family sections.
 
     Used to exclude PLT stubs and import thunks, which live in their own
-    sections (``.plt`` / ``.plt.sec``) outside ``.text``.
+    sections (``.plt`` / ``.plt.sec``) outside the ``.text`` family.
+
+    "``.text`` family" is every ``SHF_EXECINSTR`` section whose name starts with
+    ``.text``, not the one section literally named ``.text``: real programs
+    routinely spread their code over several of them — ``-ffunction-sections``
+    emits one ``.text.<fn>`` per function (freertos: 108 of them, with the
+    literal ``.text`` holding only newlib), and custom linker scripts add their
+    own (u-boot: a 936-byte ``.text`` plus a 486 KB ``.text_rest``). Matching
+    only ``.text`` there discards the entire program. Sections outside the
+    family (``.plt``, ``.init``, ``.fini``, and u-boot's ``.efi_runtime``) stay
+    excluded exactly as before, so ordinary single-``.text`` binaries are
+    unaffected.
+
+    Returns ``None`` when the ranges cannot be determined — no ELF section
+    headers, no ``.text``-family section, a non-ELF input (PE/Mach-O), or a
+    degenerate zero-size ``.text`` (which would otherwise become an empty range
+    that drops every function). The name-prefix filter is the fallback in that
+    case; see :func:`should_skip_function`.
     """
     try:
         from elftools.elf.elffile import ELFFile
 
         with open(binary_path, "rb") as f:
             elf = ELFFile(f)
-            text = elf.get_section_by_name(".text")
-            if text is None:
-                return None
-            start = text["sh_addr"]
-            return (start, start + text["sh_size"])
+            spans: list[tuple[int, int]] = []
+            for sec in elf.iter_sections():
+                name = sec.name or ""
+                if not name.startswith(".text"):
+                    continue
+                if sec.header["sh_type"] == "SHT_NOBITS":
+                    continue
+                if not int(sec.header["sh_flags"]) & _SHF_EXECINSTR:
+                    continue
+                size = int(sec["sh_size"])
+                if size <= 0:
+                    continue
+                start = int(sec["sh_addr"])
+                spans.append((start, start + size))
+            return _merge_ranges(spans)
     except Exception as e:  # noqa: BLE001
-        _l.debug("Failed to read .text range for %s: %s", binary_path, e)
+        _l.debug("Failed to read .text ranges for %s: %s", binary_path, e)
         return None
 
 
-def in_text(file_addr: int, text_range: tuple[int, int] | None) -> bool:
-    """Whether an ELF-file-space address falls inside ``.text``.
+#: Back-compat alias for the pre-multi-section name.
+elf_text_range = elf_text_ranges
 
-    When the ``.text`` range is unknown, everything is treated as "in text"
+
+def _merge_ranges(spans: list[tuple[int, int]]) -> TextRanges:
+    """Sort + coalesce ``[start, end)`` spans; ``None`` when there are none.
+
+    Overlapping/duplicate sections (a section table may list the same bytes
+    twice) collapse into one span so the membership test stays a bisect.
+    """
+    if not spans:
+        return None
+    spans = sorted(spans)
+    merged: list[list[int]] = [list(spans[0])]
+    for start, end in spans[1:]:
+        if start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(a, b) for a, b in merged]
+
+
+def _as_ranges(text_range: TextRanges | tuple[int, int]) -> TextRanges:
+    """Accept either the current range LIST or a legacy single ``(start, end)``."""
+    if text_range is None:
+        return None
+    if isinstance(text_range, tuple):
+        return [(int(text_range[0]), int(text_range[1]))]
+    return text_range
+
+
+def in_text(file_addr: int, text_range: TextRanges | tuple[int, int]) -> bool:
+    """Whether an ELF-file-space address falls inside a ``.text``-family section.
+
+    When the ranges are unknown, everything is treated as "in text"
     (the name-prefix filter is the fallback in that case).
     """
-    if text_range is None:
-        return True
-    return text_range[0] <= file_addr < text_range[1]
+    ranges = _as_ranges(text_range)
+    if not ranges:
+        return ranges is None
+    idx = bisect.bisect_right(ranges, (file_addr, float("inf"))) - 1
+    return idx >= 0 and ranges[idx][0] <= file_addr < ranges[idx][1]
 
 
 def should_skip_function(
     name: str,
     file_addr: int,
-    text_range: tuple[int, int] | None,
+    text_range: TextRanges | tuple[int, int],
+    addr_targets: set[int] | None = None,
 ) -> bool:
     """Replicate ``declib_dec._enumerate_functions`` filtering for one function.
+
+    A function whose address is one of ``addr_targets`` (the DWARF ``low_pc``
+    source functions the benchmark driver asked for) is a VERIFIED real function
+    and is always kept, whatever section it landed in. This is the rule
+    ``dockerized._skip_r2_function`` has always applied on the r2dec path and
+    ``raw/dewolf_driver`` on the dewolf path; it now applies everywhere, so a
+    binary whose code sits outside the section filter's reach no longer scores 0
+    on some backends and not others.
 
     Args:
         name: function name (already non-empty checks happen here too).
         file_addr: function start address in ELF-file space
             (``lifted + elf_base``).
-        text_range: ``.text`` ``[start, end)`` or ``None``.
+        text_range: ``.text``-family ranges from :func:`elf_text_ranges`, or
+            ``None``.
+        addr_targets: the driver's DWARF ``low_pc`` set, if any.
 
     Returns:
         ``True`` if the function should be excluded from benchmarking.
     """
+    if addr_targets and _addr_matches(file_addr, addr_targets):
+        return False
     if not name or name in SKIP_NAMES:
         return True
     if text_range is not None:
@@ -180,6 +263,17 @@ def should_skip_function(
     elif name.startswith(SKIP_PREFIXES):
         return True
     return False
+
+
+def addr_targets_of(function_names: set[int] | set[str] | None) -> set[int]:
+    """The int (ELF-file-space) addresses in the driver's function filter.
+
+    The driver passes DWARF ``low_pc`` ints for a stripped binary and names for
+    the legacy non-stripped path; only the ints can exempt by address.
+    """
+    if not function_names:
+        return set()
+    return {int(x) for x in function_names if isinstance(x, int) and not isinstance(x, bool)}
 
 
 def narrow_to_source(
