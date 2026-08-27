@@ -16,6 +16,8 @@ Community feedback is welcome!
 
 See the live page for the latest results, insights, and purpose statement: [https://decbench.com](https://decbench.com)
 
+Because the scores move, every page accepts a dated [snapshot](https://decbench.com/snapshots/) of the scoreboard — so a number you cite keeps a stable link: [`decbench.com/leaderboard/?snapshot=27-08-2026`](https://decbench.com/leaderboard/?snapshot=27-08-2026).
+
 ## Metrics
 
 DecBench evaluates decompilers using three core metrics:

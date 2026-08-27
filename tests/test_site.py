@@ -32,7 +32,21 @@ from decbench.rendering.site import build_site
 
 DATA_FILES = ["aggregates", "dataset", "samples"]
 
-VIEW_IDS = ["leaderboard", "data", "view", "about", "changelog"]
+# The single-file report additionally carries an (always empty) snapshot index:
+# it cannot serve a snapshot store, but the client must still find the key.
+INLINE_FILES = [*DATA_FILES, "snapshots"]
+
+VIEW_IDS = ["leaderboard", "data", "view", "about", "changelog", "snapshots"]
+
+
+@pytest.fixture(autouse=True)
+def _no_repo_snapshots(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Build against an EMPTY snapshot store unless a test supplies one.
+
+    ``build_site`` defaults to the repo-root ``snapshots/``, so without this every
+    tree assertion here would drift each time a maintainer records a snapshot.
+    """
+    monkeypatch.setattr("decbench.rendering.site.load_snapshots", lambda *a, **k: [])
 
 
 @pytest.fixture
@@ -130,6 +144,7 @@ def test_build_site_writes_the_documented_tree(
         "fonts/source-code-pro-latin.woff2",
         *(f"data/{name}.json" for name in DATA_FILES),
         *(f"{view}/index.html" for view in VIEW_IDS),
+        "data/snapshots/index.json",
         "distance/index.html",
     }
 
@@ -211,6 +226,60 @@ def test_rebuild_removes_stale_data_files(
     build_site(scoreboard, function_data, out)
     assert not stale.exists()
     assert (out / "data" / "aggregates.json").exists()
+
+
+def _fake_store(root: Path, date: str, **meta: object) -> list[object]:
+    """A snapshot store with one recorded day, loaded the way the build loads it."""
+    from decbench.rendering.snapshots import load_snapshots
+
+    day = root / date
+    day.mkdir(parents=True)
+    (day / "aggregates.json").write_text('{"name":"frozen"}')
+    (day / "dataset.json").write_text("{}")
+    (day / "meta.json").write_text(json.dumps({"date": date, **meta}))
+    return load_snapshots(root)
+
+
+def test_snapshots_are_published_under_data(
+    tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
+) -> None:
+    """A recorded snapshot ships as data/snapshots/<date>/ plus one index entry."""
+    snaps = _fake_store(tmp_path / "store", "27-08-2026", label="v1.2")
+    out = tmp_path / "site"
+    build_site(scoreboard, function_data, out, snapshots=snaps)
+
+    frozen = out / "data" / "snapshots" / "27-08-2026"
+    assert json.loads((frozen / "aggregates.json").read_text())["name"] == "frozen"
+    assert (frozen / "dataset.json").is_file()
+    index = json.loads((out / "data" / "snapshots" / "index.json").read_text())
+    assert index == [{"date": "27-08-2026", "label": "v1.2"}]
+
+
+def test_snapshot_index_ships_even_with_no_snapshots(
+    tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
+) -> None:
+    """The client always fetches the index; a missing file would banner an error."""
+    out = tmp_path / "site"
+    build_site(scoreboard, function_data, out)
+    assert json.loads((out / "data" / "snapshots" / "index.json").read_text()) == []
+
+
+def test_rebuild_republishes_snapshots_from_the_store(
+    tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData
+) -> None:
+    """The store is authoritative: a deleted snapshot leaves the tree on rebuild.
+
+    Snapshots live under the wholly-regenerated ``data/`` precisely so they cannot
+    become the one stale thing a rebuild forgets to clean up.
+    """
+    snaps = _fake_store(tmp_path / "store", "27-08-2026")
+    out = tmp_path / "site"
+    build_site(scoreboard, function_data, out, snapshots=snaps)
+    assert (out / "data" / "snapshots" / "27-08-2026").is_dir()
+
+    build_site(scoreboard, function_data, out, snapshots=[])
+    assert not (out / "data" / "snapshots" / "27-08-2026").exists()
+    assert json.loads((out / "data" / "snapshots" / "index.json").read_text()) == []
 
 
 def test_each_visible_view_gets_a_subpage(
@@ -376,7 +445,8 @@ def test_inline_payloads_are_keyed_like_the_data_files(
     match = re.search(r"window\.__DECBENCH_INLINE__ = (\{.*?\});</script>", html, re.DOTALL)
     assert match is not None
     payloads = json.loads(match.group(1).replace("\\u003c", "<"))
-    assert sorted(payloads) == sorted(DATA_FILES)
+    assert sorted(payloads) == sorted(INLINE_FILES)
+    assert payloads["snapshots"] == []
 
 
 def test_inline_json_cannot_close_the_script_tag(tmp_path: Path, scoreboard: Scoreboard) -> None:

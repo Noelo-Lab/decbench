@@ -40,29 +40,43 @@ def test_view_registry_covers_the_report(content: Content) -> None:
         "view",
         "about",
         "changelog",
+        "snapshots",
     ]
 
 
 def test_visible_views_drop_data_backed_views_without_data(content: Content) -> None:
     without = [v.id for v in content.visible_views(has_function_data=False)]
     with_data = [v.id for v in content.visible_views(has_function_data=True)]
-    assert without == ["leaderboard", "about", "changelog"]
+    assert without == ["leaderboard", "about", "changelog", "snapshots"]
     assert with_data == [v.id for v in content.view_specs]
 
 
 def test_about_precedes_changelog_and_needs_no_data(content: Content) -> None:
     """The about page explains the numbers, so it sits after the data views
-    (just before the changelog, which closes the nav).
+    (just before the changelog and the snapshots that close the nav).
 
     Its id matches its nav label: it is "about" everywhere, and it is NOT the
     view the site opens on (see test_exactly_one_default_view).
     """
     ids = [v.id for v in content.view_specs]
-    assert ids[-2:] == ["about", "changelog"]
+    assert ids[-3:] == ["about", "changelog", "snapshots"]
     spec = next(v for v in content.view_specs if v.id == "about")
     assert spec.nav_label == "about"
     assert not spec.requires_function_data
     assert content.view("about").body_html
+
+
+def test_snapshots_view_ships_the_scaffold_app_js_fills(content: Content) -> None:
+    """The filter controls and table host are the contract with buildSnapshots.
+
+    The view must not require function data: a bad `?snapshot=` breaks the
+    aggregates fetch, and this is the page a reader lands on to find a good date.
+    """
+    body = content.view("snapshots").body_html
+    for element_id in ("snap-filters", "snap-dec", "snap-ver", "snap-count", "snapshots-body"):
+        assert f'id="{element_id}"' in body, element_id
+    spec = next(v for v in content.view_specs if v.id == "snapshots")
+    assert not spec.requires_function_data
 
 
 def test_exactly_one_default_view(content: Content) -> None:

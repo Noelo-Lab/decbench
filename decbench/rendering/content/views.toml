@@ -55,3 +55,14 @@ requires_function_data = false
 id = "changelog"
 nav_label = "changelog"
 requires_function_data = false
+
+# The dated scoreboard snapshots (`?snapshot=DD-MM-YYYY`). Sits beside the
+# changelog because the two move together: a snapshot is taken exactly when a
+# score-changing entry lands. The list is filled by app.js from
+# data/snapshots/index.json, so the view needs no per-function data — and must
+# keep working when a bad `?snapshot=` broke the aggregates fetch, which is
+# precisely when a reader comes here looking for a valid date.
+[[view]]
+id = "snapshots"
+nav_label = "snapshots"
+requires_function_data = false

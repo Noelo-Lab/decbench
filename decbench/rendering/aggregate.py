@@ -43,6 +43,7 @@ __all__ = [
     "build_dataset_page",
     "build_payloads",
     "combo_key",
+    "default_preset_name",
     "resolve_presets",
     "union_leaders",
 ]
@@ -97,6 +98,19 @@ def union_leaders(
         ranked.append((pct, name, dec))
     ranked.sort(key=lambda item: (-item[0], item[2]))
     return ranked
+
+
+def default_preset_name(aggregates: dict[str, Any]) -> str:
+    """The preset the leaderboard opens on — the one flagged ``default`` in the payload.
+
+    Falls back to the first preset, then to the reserved all-corpus combo of a
+    preset-less run, so a caller always has a real combo to read.
+    """
+    presets = aggregates.get("presets") or []
+    for preset in presets:
+        if preset.get("default"):
+            return str(preset["name"])
+    return str(presets[0]["name"]) if presets else ALL_PRESET
 
 
 def _js_is_finite(value: float | None) -> bool:
