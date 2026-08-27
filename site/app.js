@@ -514,9 +514,12 @@ function asciiBar(pct, width) {
     filled = Math.max(0, Math.min(filled, width));
     return "[" + "#".repeat(filled) + "-".repeat(width - filled) + "]";
 }
+// Quotes are escaped too: several callers interpolate into an attribute value
+// (href=, title=), where a bare " would close it and turn text into markup.
 function escapeHtml(s) {
     return (s == null ? "" : String(s))
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 function pct(cell) { return cell && cell[1] > 0 ? (cell[0] / cell[1]) * 100 : 0; }
 
@@ -1361,14 +1364,17 @@ function maybeScrollToHash() {
     if (el) el.scrollIntoView();
 }
 function initNav() {
+    const views = validViews();
     document.querySelectorAll(".nav-item").forEach(a => {
         const id = a.getAttribute("data-view");
         // Rewrite the href to the real subpage URL so middle-click / copy-link work
-// (the renderer ships "#id" for the no-JS and single-file forms).
-        // (the renderer ships "#id" for the no-JS and single-file forms).
-        if (ROOT !== null) {
+        // (the renderer ships "#id" for the no-JS and single-file forms). The id is
+        // DOM text, so it is checked against the rendered view set and encoded before
+        // it reaches an href — an unchecked one is a URL-injection sink.
+        if (ROOT !== null && views.indexOf(id) >= 0) {
             const qs = currentQuery();
-            try { a.setAttribute("href", basePath() + id + "/" + (qs ? "?" + qs : "")); } catch (e) {}
+            const href = basePath() + encodeURIComponent(id) + "/" + (qs ? "?" + qs : "");
+            try { a.setAttribute("href", href); } catch (e) {}
         }
         a.addEventListener("click", e => {
             if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || (e.button && e.button !== 0)) return;
