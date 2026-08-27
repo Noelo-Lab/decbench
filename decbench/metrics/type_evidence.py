@@ -20,6 +20,7 @@ from decbench.metrics.variable_match import (
 )
 from decbench.utils.binfmt import die_str_attr
 from decbench.utils.langs import is_cxx_preprocessed, strip_source_ext
+from decbench.utils.native_code import entry_address_candidates
 
 
 @dataclass(frozen=True)
@@ -227,10 +228,12 @@ class PreprocessedSourceContext:
         function_name: str,
         function_address: int,
     ) -> Path | None:
-        cu_paths = self._dwarf_source_index(binary_path).get(
-            (function_name, function_address),
-            (),
-        )
+        index = self._dwarf_source_index(binary_path)
+        cu_paths: tuple[str, ...] = ()
+        for candidate in entry_address_candidates(function_address):
+            cu_paths = index.get((function_name, candidate), ())
+            if cu_paths:
+                break
         selected = {
             path
             for cu_path in cu_paths

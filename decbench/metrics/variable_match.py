@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
+from decbench.utils.native_code import entry_address_candidates
+
 StructuredOccurrenceMode = Literal["producer", "experimental_legacy_regex"]
 STRUCTURED_OCCURRENCE_MODES = frozenset({"producer", "experimental_legacy_regex"})
 
@@ -1093,11 +1095,15 @@ def extract_source_evidence(
             stack.callback(binary_context.close)
         elf = binary_context.elf
         dwarfinfo = binary_context.dwarfinfo
-        found = (
-            binary_context.functions.get((function_name, function_address))
-            if binary_context is not None and function_address is not None
-            else None
+        entry_addresses = (
+            entry_address_candidates(function_address) if function_address is not None else ()
         )
+        found = None
+        if binary_context is not None and function_address is not None:
+            for candidate in entry_addresses:
+                found = binary_context.functions.get((function_name, candidate))
+                if found is not None:
+                    break
         for cu in dwarfinfo.iter_CUs():
             if found is not None:
                 break
@@ -1106,7 +1112,7 @@ def extract_source_evidence(
                     continue
                 if function_address is not None:
                     ranges = _die_ranges(die, dwarfinfo)
-                    if not any(begin == function_address for begin, _end in ranges):
+                    if not any(begin in entry_addresses for begin, _end in ranges):
                         continue
                 found = (cu, die)
                 break

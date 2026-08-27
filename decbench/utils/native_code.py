@@ -63,6 +63,18 @@ def die_ranges(die: Any, dwarfinfo: Any) -> tuple[tuple[int, int], ...]:
     return tuple(ranges)
 
 
+def entry_address_candidates(address: int) -> tuple[int, ...]:
+    """Return the addresses a function entry may legitimately be recorded under.
+
+    ARM tools report a Thumb entry point with bit 0 set, while DWARF records the
+    even ``low_pc``. A lookup keyed on the reported address alone therefore misses
+    every Thumb function, so both forms are tried before the join is called a miss.
+    """
+
+    masked = address & ~1
+    return (address,) if masked == address else (address, masked)
+
+
 def _normalize_ranges(
     ranges: Sequence[tuple[int, int]], architecture: str
 ) -> tuple[tuple[int, int], ...]:

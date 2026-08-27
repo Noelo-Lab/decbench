@@ -323,9 +323,13 @@ def _overlay_score_keys(payload: Mapping[str, Mapping[str, object]]) -> set[Scor
 
 def _metric_provenance(mode: str) -> dict[str, Any]:
     metric = TypeMatchMetric(MetricConfig(extra_options={"variable_match_mode": mode}))
-    if str(metric.cache_version) != "11":
+    try:
+        cache_version = int(str(metric.cache_version))
+    except ValueError:
+        cache_version = -1
+    if cache_version < 11:
         raise ShardedTypeMatchError(
-            f"this driver requires TypeMatch cache version 11, got {metric.cache_version!r}"
+            f"this driver requires TypeMatch cache version >= 11, got {metric.cache_version!r}"
         )
     return typematch_overlay_provenance(
         mode=mode,

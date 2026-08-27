@@ -89,6 +89,15 @@ class Universe:
     perfect_value: float
 
 
+def _cache_version_at_least(value: Any, minimum: int) -> bool:
+    """Report whether a recorded metric cache version is numeric and >= ``minimum``."""
+
+    try:
+        return int(str(value)) >= minimum
+    except (TypeError, ValueError):
+        return False
+
+
 def file_sha256(path: Path) -> str:
     """Return the SHA-256 digest of a file without loading it all at once."""
 
@@ -722,7 +731,7 @@ def build_report(
     for overlay in overlays:
         if overlay.provenance is None:
             continue
-        if str(overlay.provenance.get("metric_cache_version")) == "11":
+        if _cache_version_at_least(overlay.provenance.get("metric_cache_version"), 11):
             if overlay.provenance.get("structured_occurrence_mode") != "producer":
                 validation_errors.append(
                     f"v11 mode {overlay.name!r} does not declare producer occurrence mode"

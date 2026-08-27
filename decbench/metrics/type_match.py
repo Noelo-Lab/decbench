@@ -33,6 +33,7 @@ from decbench.metrics.variable_match import (
 )
 from decbench.models.decompilation import VariableOccurrencePolicy, variable_occurrence_policy
 from decbench.models.metrics import AggregationType, MetricResult, MetricValue
+from decbench.utils.native_code import entry_address_candidates
 
 if TYPE_CHECKING:
     from networkx import DiGraph
@@ -339,7 +340,11 @@ def _ground_truth_for_function(
     function_name: str,
     function_address: int,
 ) -> list[dict[str, Any]]:
-    at_address = index.get(int(function_address), {})
+    at_address: dict[str, list[dict[str, Any]]] = {}
+    for candidate in entry_address_candidates(int(function_address)):
+        at_address = index.get(candidate, {})
+        if at_address:
+            break
     exact = at_address.get(function_name)
     if exact is not None:
         return exact
@@ -918,7 +923,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "11"
+    cache_version = "12"
 
     weight = 1.0
     lower_is_better = False
