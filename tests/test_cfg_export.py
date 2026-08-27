@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import networkx as nx
 import pytest
@@ -194,6 +195,82 @@ def test_each_binary_gets_its_own_translation_unit(project_tree) -> None:
 
     assert len(read_export(dest, "cat")["main"]["nodes"]) == 3
     assert len(read_export(dest, "ls")["main"]["nodes"]) == 10
+
+
+def test_dwarf_owned_translation_unit_precedes_name_fallback(
+    project_tree, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A binary name need not equal the translation unit that defines its functions."""
+    tus = {
+        "new_subid_range-new_subid_range": {"main": chain(4)},
+        "login": {"main": chain(40)},
+    }
+    root, dest = project_tree(tus)
+    monkeypatch.setattr(cfg_export, "resolve_binary", lambda *_args: root / "new_subid_range")
+    monkeypatch.setattr(
+        cfg_export.binfmt,
+        "source_function_owners",
+        lambda *_args: {0x12DA: ("main", "new_subid_range-new_subid_range")},
+    )
+
+    cfg_export.export_project_cfgs(
+        root,
+        dest,
+        "proj",
+        {"O2": ["new_subid_range"]},
+    )
+
+    assert len(read_export(dest, "new_subid_range")["main"]["nodes"]) == 4
+
+
+def test_known_dwarf_owner_does_not_fall_back_to_another_tu() -> None:
+    """Missing source for a known owner is safer than a same-name substitution."""
+    tus = {"login": {"main": chain(40)}}
+    resolved = resolved_source_for_binary(
+        "new_subid_range",
+        tus,
+        best_source_by_name(tus),
+        function_owners={0x12DA: ("main", "new_subid_range-new_subid_range")},
+    )
+
+    assert "main" not in resolved
+
+
+def test_evaluate_project_accepts_precomputed_cfgs_with_dwarf_owners(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The benchmark driver can carry address/TU provenance into evaluation."""
+    from decbench.pipeline import evaluate
+
+    tus = {
+        "new_subid_range-new_subid_range": {"main": chain(4)},
+        "login": {"main": chain(40)},
+    }
+    seen: dict[str, int] = {}
+
+    def evaluate_one(_decompilation, source_cfgs, _metrics, preprocessed_sources=None):
+        seen["main_nodes"] = source_cfgs["main"].number_of_nodes()
+        return {}
+
+    monkeypatch.setattr(evaluate, "evaluate_decompilation", evaluate_one)
+    project = SimpleNamespace(name="shadow", preprocessed_sources={}, compiled_binaries={})
+
+    evaluate.evaluate_project(
+        project,
+        {"new_subid_range": {"test": object()}},
+        tmp_path,
+        optimization="O0",
+        metrics=["ged"],
+        parallel=False,
+        precomputed_source_cfgs=tus,
+        source_function_owners={
+            "new_subid_range": {
+                0x12DA: ("main", "new_subid_range-new_subid_range"),
+            }
+        },
+    )
+
+    assert seen == {"main_nodes": 4}
 
 
 def test_falls_back_across_tus_for_undefined_functions(project_tree) -> None:

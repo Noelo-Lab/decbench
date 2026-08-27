@@ -22,7 +22,9 @@ What's here:
     attribute through ``DW_AT_specification`` (and, in a C++ unit only,
     ``DW_AT_abstract_origin``), which is where C++ out-of-line definitions keep
     their name and decl file; :func:`cu_file_table` resolves the
-    ``DW_AT_decl_file`` index and :func:`cu_is_cxx` reports the unit's language.
+    ``DW_AT_decl_file`` index, :func:`source_function_owners` maps function
+    addresses to their defining translation units, and :func:`cu_is_cxx` reports
+    the unit's language.
 """
 
 from __future__ import annotations
@@ -509,6 +511,59 @@ def cu_file_table(dwarfinfo, cu, cache: dict[int, list] | None = None) -> list:
     if cache is not None:
         cache[cu.cu_offset] = files
     return files
+
+
+def source_function_owners(path: Path, source_stems: set[str]) -> dict[int, tuple[str, str]]:
+    """Map DWARF function addresses to ``(name, defining source-TU stem)``.
+
+    Only definitions whose ``DW_AT_decl_file`` matches one of ``source_stems``
+    are returned. Object-prefixed preprocessed stems such as ``program-main``
+    match a declaration file named ``main.c``.
+    """
+    if not source_stems:
+        return {}
+
+    from decbench.utils.langs import build_stem_index, strip_source_ext
+
+    try:
+        dw = dwarf_info(path)
+    except Exception:  # noqa: BLE001
+        return {}
+    if dw is None:
+        return {}
+
+    owners: dict[int, tuple[str, str]] = {}
+    file_tables: dict[int, list] = {}
+    stem_index = build_stem_index(source_stems)
+    try:
+        for cu in dw.iter_CUs():
+            for die in cu.iter_DIEs():
+                if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
+                    continue
+                name = die_str_attr(die, "DW_AT_name")
+                if name is None:
+                    continue
+                fi, owner = die_attr_owner(die, "DW_AT_decl_file")
+                if fi is None:
+                    continue
+                files = cu_file_table(dw, owner.cu, file_tables)
+                if not (0 <= fi.value < len(files)) or files[fi.value] is None:
+                    continue
+                decl_stem = strip_source_ext(Path(files[fi.value]).name)
+                matched = stem_index.get(decl_stem)
+                if matched is None:
+                    suffix_matches = [
+                        original
+                        for normalized, original in stem_index.items()
+                        if normalized.endswith("-" + decl_stem)
+                        or normalized.endswith("_" + decl_stem)
+                    ]
+                    matched = suffix_matches[0] if len(suffix_matches) == 1 else None
+                if matched is not None:
+                    owners[int(die.attributes["DW_AT_low_pc"].value)] = (name, matched)
+    except Exception:  # noqa: BLE001
+        return {}
+    return owners
 
 
 def _dwarf_function_range(path: Path, func_name: str) -> tuple[int, int] | None:

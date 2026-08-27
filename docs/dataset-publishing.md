@@ -251,10 +251,13 @@ nothing else. Store, per binary, the `function → CFG` map the pipeline used:
 opt level, **keeping them keyed per translation unit**, and then resolving each
 binary's map through the very same
 `best_source_by_name` / `resolved_source_for_binary` pair that
-`pipeline/evaluate.py` scores with: the binary's OWN translation unit wins, the
-cross-TU best-by-name is the fallback, and an empty prototype never displaces a
-real body. Delegating to that pair is what keeps the export from drifting from
-the scoring path (`tests/test_cfg_export.py` asserts the two agree). Each
+`pipeline/evaluate.py` scores with: DWARF `low_pc`/`DW_AT_decl_file` ownership
+wins for each function, the matching binary stem is the compatibility path when
+that ownership is unavailable, and cross-TU best-by-name is the final fallback.
+A known owner with no real source CFG abstains instead of borrowing a same-named
+function from another TU. Delegating to that pair is what keeps the export from
+drifting from the scoring path (`tests/test_cfg_export.py` asserts the two
+agree). Each
 DiGraph's nodes are relabeled to `0..n-1` (stable order); Joern parses are
 **deduplicated by stripped-content hash** so each unique translation unit is
 parsed once (Joern spawns a JVM per parse — the dominant cost; see the module

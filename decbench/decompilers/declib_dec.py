@@ -161,7 +161,12 @@ class DeclibDecompiler(Decompiler):
             if functions is not None:
                 target_funcs = [(name, addr - file_base) for name, addr in functions]
             else:
-                target_funcs = self._enumerate_functions(deci, binary_path, file_base)
+                target_funcs = self._enumerate_functions(
+                    deci,
+                    binary_path,
+                    file_base,
+                    raw_common.addr_targets_of(function_names),
+                )
 
             if function_names:
                 address_targets = {
@@ -337,18 +342,20 @@ class DeclibDecompiler(Decompiler):
         deci: DecompilerInterface,
         binary_path: Path,
         elf_base: int,
+        addr_targets: set[int] | None = None,
     ) -> list[tuple[str, int]]:
         """Enumerate (name, lifted_addr) for benchmarkable functions.
 
         Filters CRT/compiler helpers by name and anything outside file-backed
-        executable ELF/PE sections.
+        executable ELF/PE sections, EXCEPT functions the driver explicitly
+        asked for by address (:func:`raw_common.should_skip_function`).
         """
         code_ranges = raw_common.executable_code_ranges(binary_path)
         out: list[tuple[str, int]] = []
         for lifted_addr, light_func in deci.functions.items():
             name = light_func.name or ""
             file_addr = int(lifted_addr) + elf_base
-            if raw_common.should_skip_function(name, file_addr, code_ranges):
+            if raw_common.should_skip_function(name, file_addr, code_ranges, addr_targets):
                 continue
             out.append((name, int(lifted_addr)))
         return sorted(out, key=lambda x: x[1])

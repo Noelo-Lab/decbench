@@ -79,6 +79,7 @@ def evaluate_project(
     parallel: bool = True,
     workers: int | None = None,
     precomputed_source_cfgs: dict[str, dict[str, DiGraph]] | None = None,
+    source_function_owners: dict[str, dict[int, tuple[str, str]]] | None = None,
 ) -> dict[str, dict[str, dict[str, MetricResult]]]:
     """Evaluate all decompilations for a project.
 
@@ -87,6 +88,10 @@ def evaluate_project(
             binary name instead of re-extracting them from the preprocessed
             sources. Lets a caller extract source CFGs once and reuse them for
             both a decompile filter and this evaluation.
+        source_function_owners: Optional per-binary DWARF
+            ``low_pc -> (name, declaration-file TU)`` provenance for resolving
+            precomputed source CFGs. When source CFGs are extracted here, the
+            same provenance is read from each compiled binary automatically.
     """
     if isinstance(optimization, str):
         optimization = OptimizationLevel(optimization)
@@ -138,19 +143,42 @@ def evaluate_project(
     else:
         logger.warning("No preprocessed sources for %s/%s", project.name, optimization)
 
-    # TU-aware matching: prefer the binary's OWN translation unit so per-program
-    # functions hit the right body, falling back cross-TU only for functions it does
-    # not define. The old name-keyed union scored nologin's 5-node main against
-    # another binary's 56-node main.
+    # TU-aware matching uses exact DWARF declaration-file ownership when available,
+    # then the historical binary-stem convention, then the cross-TU fallback.
     from decbench.utils.cfg import best_source_by_name, resolved_source_for_binary
 
     best_by_name = best_source_by_name(source_cfgs_by_binary)
     preprocessed_sources = list(project.preprocessed_sources.get(optimization, {}).values())
 
+    function_owners = dict(source_function_owners or {})
+    if source_function_owners is None and precomputed_source_cfgs is None:
+        from decbench.utils import binfmt
+
+        binaries = {path.stem: path for path in project.compiled_binaries.get(optimization, [])}
+        source_stems = set(source_cfgs_by_binary)
+        for binary_name, dec_results in decompilations.items():
+            binary = binaries.get(binary_name)
+            if binary is None:
+                continue
+            target_addrs = {
+                function.address
+                for decompilation in dec_results.values()
+                for function in decompilation.functions.values()
+            }
+            owners = binfmt.source_function_owners(binary, source_stems)
+            function_owners[binary_name] = {
+                addr: owner for addr, owner in owners.items() if addr in target_addrs
+            }
+
     def _source_for(binary_name: str) -> dict[str, Any]:
         return cast(
             dict[str, Any],
-            resolved_source_for_binary(binary_name, source_cfgs_by_binary, best_by_name),
+            resolved_source_for_binary(
+                binary_name,
+                source_cfgs_by_binary,
+                best_by_name,
+                function_owners=function_owners.get(binary_name),
+            ),
         )
 
     if parallel:

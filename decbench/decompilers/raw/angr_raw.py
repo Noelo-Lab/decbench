@@ -188,6 +188,7 @@ class RawAngrDecompiler(Decompiler):
         start_time = time.time()
         elf_base = common.elf_min_vaddr(binary_path)
         code_ranges = common.executable_code_ranges(binary_path)
+        addr_targets = common.addr_targets_of(function_names)
         input_repair_count = 0
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
@@ -230,7 +231,7 @@ class RawAngrDecompiler(Decompiler):
                     # address for a non-PIE static ELF.
                     target_funcs = [(n, a) for (n, a) in functions]
                 else:
-                    target_funcs = self._enumerate(proj, elf_base, code_ranges)
+                    target_funcs = self._enumerate(proj, elf_base, code_ranges, addr_targets)
 
                 target_funcs = common.narrow_to_source(
                     target_funcs,
@@ -293,6 +294,7 @@ class RawAngrDecompiler(Decompiler):
         proj: Any,
         elf_base: int,
         code_ranges: common.CodeRangeFilter,
+        addr_targets: set[int] | None = None,
     ) -> list[tuple[str, int]]:
         """Enumerate (name, ELF-space addr) for benchmarkable functions.
 
@@ -309,7 +311,7 @@ class RawAngrDecompiler(Decompiler):
                 continue
             name = func.name or ""
             file_addr = (int(func.addr) - load_base) + elf_base
-            if common.should_skip_function(name, file_addr, code_ranges):
+            if common.should_skip_function(name, file_addr, code_ranges, addr_targets):
                 continue
             out.append((name, file_addr))
         return sorted(out, key=lambda x: x[1])

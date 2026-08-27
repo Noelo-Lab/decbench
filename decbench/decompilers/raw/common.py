@@ -8,11 +8,17 @@ its output contract exactly *without* depending on declib:
   decompiler's lifted (0-based / image-base-relative) address yields the
   ELF-file-space address that DWARF uses.
 * ``executable_code_ranges`` — the disjoint file-backed executable section
-  ranges in an ELF or PE binary.
+  ranges in an ELF or PE binary (``.text``, the ``.text.<fn>`` fan-out from
+  ``-ffunction-sections``, ``.text_rest``, ``ER_ROM1`` …), with the linkage
+  scaffolding (``.init``, ``.fini``, ``.iplt``, ``.plt*``) excluded.
 * ``SKIP_NAMES`` / ``SKIP_PREFIXES`` — CRT/compiler-generated functions and
   thunk/import name prefixes that are never benchmarked.
 * ``should_skip_function`` / ``in_executable_code`` — the shared name and
-  executable-section filter.
+  executable-section filter, with the DWARF-target exemption that keeps a
+  function the driver explicitly asked for whatever section it landed in.
+  Address comparisons tolerate the ARM Thumb T-bit (DWARF ``low_pc`` is even;
+  angr reports Thumb entries odd).
+* ``addr_targets_of`` — the int (address) half of the driver's function filter.
 * ``narrow_to_source`` — the optional ``function_names`` restriction, applied
   fail-closed so an address mismatch cannot broaden a requested subset.
 * ``dump_progress`` — the atomic partial-result pickle used by the run driver
@@ -229,8 +235,18 @@ def should_skip_function(
     name: str,
     file_addr: int,
     code_ranges: CodeRangeFilter,
+    addr_targets: set[int] | None = None,
 ) -> bool:
     """Replicate ``declib_dec._enumerate_functions`` filtering for one function.
+
+    A function whose address is one of ``addr_targets`` (the DWARF ``low_pc``
+    source functions the benchmark driver asked for) is a VERIFIED real function
+    and is always kept, whatever section it landed in. This is the rule
+    ``dockerized._skip_r2_function`` has always applied on the r2dec path and
+    ``raw/dewolf_driver`` on the dewolf path; it now applies everywhere, so a
+    binary whose code sits outside the section filter's reach no longer scores 0
+    on some backends and not others. It is also what keeps the fail-closed empty
+    range (an unreadable or unsupported binary) from dropping every function.
 
     Args:
         name: function name (already non-empty checks happen here too).
@@ -238,10 +254,13 @@ def should_skip_function(
             (``lifted + elf_base``).
         code_ranges: Executable section ranges, one legacy single range, or
             ``None`` for the legacy name-prefix fallback.
+        addr_targets: the driver's DWARF ``low_pc`` set, if any.
 
     Returns:
         ``True`` if the function should be excluded from benchmarking.
     """
+    if addr_targets and _addr_matches(file_addr, addr_targets):
+        return False
     if not name or name in SKIP_NAMES:
         return True
     if code_ranges is not None:
@@ -250,6 +269,17 @@ def should_skip_function(
     elif name.startswith(SKIP_PREFIXES):
         return True
     return False
+
+
+def addr_targets_of(function_names: set[int] | set[str] | None) -> set[int]:
+    """The int (ELF-file-space) addresses in the driver's function filter.
+
+    The driver passes DWARF ``low_pc`` ints for a stripped binary and names for
+    the legacy non-stripped path; only the ints can exempt by address.
+    """
+    if not function_names:
+        return set()
+    return {int(x) for x in function_names if isinstance(x, int) and not isinstance(x, bool)}
 
 
 def narrow_to_source(

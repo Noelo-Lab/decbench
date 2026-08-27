@@ -2079,21 +2079,24 @@ def _r2_bare_name(name: str) -> str:
     return name.rsplit(".", 1)[-1] if name else name
 
 
-def _addr_targets_of(function_names: set[int] | set[str] | None) -> set[int]:
-    """The int (ELF-file-space) addresses in the driver's function filter."""
-    if not function_names:
-        return set()
-    return {int(x) for x in function_names if isinstance(x, int) and not isinstance(x, bool)}
+#: Back-compat alias; the driver's address filter is parsed in ``raw.common``.
+_addr_targets_of = raw_common.addr_targets_of
 
 
 def _skip_r2_function(
     bare_name: str,
     file_addr: int,
     code_ranges: raw_common.CodeRangeFilter,
+    addr_targets: set[int] | None = None,
 ) -> bool:
-    """Whether to drop an r2-discovered function outside executable code."""
+    """Whether to drop an r2-discovered function outside executable code.
 
-    return raw_common.should_skip_function(bare_name, file_addr, code_ranges)
+    A function whose address is one the driver asked for is a VERIFIED real
+    function and is kept whatever section it landed in; the exemption now lives
+    in the shared filter, so every backend applies it identically.
+    """
+
+    return raw_common.should_skip_function(bare_name, file_addr, code_ranges, addr_targets)
 
 
 def _func_ident_in_code(code: str) -> str | None:
@@ -2259,6 +2262,7 @@ class R2DecDecompiler(DockerizedDecompiler):
         elf_base: int,
         code_ranges: raw_common.CodeRangeFilter,
         baddr: int,
+        addr_targets: set[int] | None = None,
     ) -> list[tuple[str, int, int]]:
         """``(r2_flag_name, file_addr, r2_addr)`` for benchmarkable functions.
 
@@ -2280,7 +2284,7 @@ class R2DecDecompiler(DockerizedDecompiler):
                 continue
             raw = int(raw)
             file_addr = raw - baddr + elf_base
-            if _skip_r2_function(_r2_bare_name(name), file_addr, code_ranges):
+            if _skip_r2_function(_r2_bare_name(name), file_addr, code_ranges, addr_targets):
                 continue
             out.append((name, file_addr, raw))
         out.sort(key=lambda t: t[1])
@@ -2525,6 +2529,7 @@ class R2DecDecompiler(DockerizedDecompiler):
         start = time.time()
         elf_base = raw_common.elf_min_vaddr(binary_path)
         code_ranges = raw_common.executable_code_ranges(binary_path)
+        r2_addr_targets = _addr_targets_of(function_names)
         decompiled: dict[str, FunctionDecompilation] = {}
         failed: list[str] = []
         used_cmd = "pdc"
@@ -2557,7 +2562,7 @@ class R2DecDecompiler(DockerizedDecompiler):
                     targets.append((name, int(fa), raw, name))
             else:
                 targets = self._narrow(
-                    self._discover(r, elf_base, code_ranges, baddr),
+                    self._discover(r, elf_base, code_ranges, baddr, r2_addr_targets),
                     function_names,
                     binary_path.name,
                 )
@@ -2613,6 +2618,7 @@ class R2DecDecompiler(DockerizedDecompiler):
         start = time.time()
         elf_base = raw_common.elf_min_vaddr(binary_path)
         code_ranges = raw_common.executable_code_ranges(binary_path)
+        r2_addr_targets = _addr_targets_of(function_names)
 
         addr_targets: list[int] | None = None
         ints: set[int] = set()
@@ -2694,7 +2700,7 @@ class R2DecDecompiler(DockerizedDecompiler):
             nm = entry.get("name") or ""
             if _r2_is_import(nm) or nm in _R2_ENTRY_NAMES:
                 continue
-            if _skip_r2_function(_r2_bare_name(nm), file_addr, code_ranges):
+            if _skip_r2_function(_r2_bare_name(nm), file_addr, code_ranges, r2_addr_targets):
                 continue
             by_addr[file_addr] = (nm, entry)
             discovered.append((nm, file_addr, int(raw)))

@@ -167,10 +167,28 @@ def decompile_binary(
   `decbench/decompilers/raw/common.py`.
 - **Skip non-source functions.** Drop PLT stubs/thunks and CRT helpers
   (`_start`, `__libc_csu_init`, `register_tm_clones`, …) and anything outside
-  the binary's disjoint file-backed executable ELF/PE sections. Do not replace
-  those ranges with one min/max envelope: gaps and intervening data are not
-  code. `common.py` provides `SKIP_NAMES`, `SKIP_PREFIXES`, and the shared
-  executable-range check.
+  the binary's disjoint file-backed executable ELF/PE sections. Do not roll your
+  own filter — call
+  `common.should_skip_function(name, file_addr, code_ranges, addr_targets)`,
+  which is the ONE rule every backend shares:
+  1. a function whose address is in `addr_targets` (the driver's DWARF `low_pc`
+     set — get it with `common.addr_targets_of(function_names)`) is a verified
+     real function and is **always kept**, whatever section it landed in;
+  2. otherwise `SKIP_NAMES` / `SKIP_PREFIXES` and the ranges from
+     `common.executable_code_ranges()` apply.
+
+  `executable_code_ranges()` covers **every** file-backed `SHF_EXECINSTR` ELF
+  section except the linkage scaffolding (`.init`, `.fini`, `.iplt`, `.plt*`),
+  plus the executable sections of a PE. That is what accepts real code layouts
+  the old literal-`.text` filter discarded: `-ffunction-sections` (one
+  `.text.<fn>` per function), custom linker scripts (`.text` + `.text_rest`),
+  and firmware regions (`ER_ROM1`, `.efi_runtime`). Do not replace those ranges
+  with one min/max envelope: gaps and intervening data are not code.
+
+  The result is **fail-closed** — an unreadable or unsupported binary yields an
+  empty range collection that rejects every address, rather than silently
+  treating the whole address space as code. Rule 1 is what keeps that from
+  zeroing a run: the driver's DWARF targets survive an empty range set.
 - **Set `decompiler_name = self.id`.** The `id` property is your registered
   name, or `name@version` when a version is pinned (see §4). Using `self.id`
   keeps versioned runs as distinct, comparable columns everywhere downstream.

@@ -106,6 +106,7 @@ class RawBinjaDecompiler(Decompiler):
         start_time = time.time()
         elf_base = common.elf_min_vaddr(binary_path)
         code_ranges = common.executable_code_ranges(binary_path)
+        addr_targets = common.addr_targets_of(function_names)
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
         failed_functions: list[str] = []
@@ -137,7 +138,7 @@ class RawBinjaDecompiler(Decompiler):
         bv = None
         try:
             bv = self._load(binary_path)
-            enumerated = self._enumerate(bv, elf_base, code_ranges)
+            enumerated = self._enumerate(bv, elf_base, code_ranges, addr_targets)
             if functions is not None:
                 requested = {n for (n, _a) in functions}
                 enumerated = [(n, a) for (n, a) in enumerated if n in requested]
@@ -211,6 +212,7 @@ class RawBinjaDecompiler(Decompiler):
         bv: Any,
         elf_base: int,
         code_ranges: common.CodeRangeFilter,
+        addr_targets: set[int] | None = None,
     ) -> list[tuple[str, int]]:
         """Enumerate (name, ELF-space addr) for benchmarkable functions."""
         load_base = self._binja_load_base(bv)
@@ -223,7 +225,7 @@ class RawBinjaDecompiler(Decompiler):
                 file_addr = (int(func.start) - load_base) + elf_base
             except Exception:  # noqa: BLE001
                 continue
-            if common.should_skip_function(name, file_addr, code_ranges):
+            if common.should_skip_function(name, file_addr, code_ranges, addr_targets):
                 continue
             out.append((name, file_addr))
         return sorted(out, key=lambda x: x[1])
