@@ -13,7 +13,7 @@ dashed rules, ASCII bars). `html.py` is **skeleton assembly only** — it holds
 NO CSS, NO JS, NO prose. Layout:
 
 - `content/` — **ALL maintainer-editable text.** `<view>.md` per view
-  (leaderboard, **data**, **view**, changelog, **about**) + `site.toml`
+  (leaderboard, **data**, **view**, changelog, **snapshots**, **about**) + `site.toml`
   (brand/footer/banners/sidebar/side_stats, and `[decompilers] hidden` = the
   site-hidden decompilers, currently Phoenix), `views.toml` (view registry: id, nav label,
   `requires_function_data`, which is `default`), `metrics.toml` (display
@@ -125,7 +125,15 @@ decbench report results/full_run/scoreboard.toml -o results/full_run/report.html
 # Deployable Pages tree. Takes a RESULTS TREE, and requires its
 # function_results.json — every view is computed from per-function data.
 decbench site build results/full_run -o site/
+
+# Freeze the BUILT tree's two small payloads under a date. Renders nothing and
+# recomputes nothing — see "Scoreboard snapshots" below.
+decbench site snapshot
 ```
+
+A third subcommand, `decbench site snapshot`, is deliberately absent from the
+table above: it renders no page at all. It copies an already-built tree's small
+payloads into the dated store so a past scoreboard keeps a stable link.
 
 `decbench site build` (CLI in `cli.py`) takes a RESULTS TREE, not a
 scoreboard — `scoreboard.toml` is also accepted and resolved to its parent —
@@ -141,7 +149,8 @@ visible view (asset links prefixed `../` directly — deliberately NO
 `#anchors` — plus the `window.__DECBENCH_ROOT__` stamp; stale view dirs are
 pruned only when their index.html carries `SITE_PAGE_MARKER`), so
 `/leaderboard/` etc. deep-link; client state lives in query params
-(`?dataset=<preset>&norm=1`, and on the view page
+(`?dataset=<preset>&norm=1`, the site-wide `?snapshot=<DD-MM-YYYY>` that every
+nav link carries forward, and on the view page
 `?tier=&dec=&metric=&fn=<proj>/<opt>/<bin>::<func>`); legacy `#<view>` hashes
 still route.
 
@@ -161,19 +170,140 @@ workflow only uploads it, failing if `site/index.html` or
 **Republishing after results change** (new runs, new decompiler columns,
 score updates — anything that touches `scoreboard.toml` /
 `function_results.json`; remember the overlays → finalize flow in
-benchmarking.md runs FIRST) is three steps:
+benchmarking.md runs FIRST) is three steps, four when the change moves scores:
 
 ```bash
+decbench site snapshot -l 'pre-<change>'           # 0. FIRST, iff the change moves scores
 decbench site build results/full_run -o site/      # 1. build locally
-git add site && git commit -m 'site: refresh'      # 2. commit it (site/ is deliberately NOT gitignored)
+git add site && git commit -m 'site: refresh'      # 2. commit it — plus snapshots/ if step 0 ran
+                                                   #    (site/ is deliberately NOT gitignored)
 git push                                           # 3. Actions deploys it
 ```
+
+Step 0 is **order-critical and conditional**. `site snapshot` freezes the BUILT
+tree, so it only captures the OLD numbers while they are still standing: once
+step 1 regenerates `data/`, they are gone (and the results tree that produced
+them may be gone too). Take it whenever the change moves published scores or
+breaks comparability, and only when the maintainer asks — see "Scoreboard
+snapshots" below. Skip it for a pure prose/CSS re-render, which moves nothing.
 
 Before pushing, sanity-check the fresh build against the live site: nothing
 extreme should change — e.g. a decompiler losing half its decompiled
 functions, or a drastic rank flip — unless a MAJOR benchmark change (new
 metric, many projects added/removed) explains it. See the critical rules in
 `docs/agents.md`.
+
+## Scoreboard snapshots
+
+A snapshot is a stable, dated link back to the scoreboard as it stood:
+`https://decbench.com/leaderboard/?snapshot=27-08-2026`. It exists because the
+published numbers move — a metric fix, a new decompiler column, a re-finalized
+tree — and a plain link that silently re-renders under the new numbers
+misrepresents whatever it was cited for. Implementation:
+`decbench/rendering/snapshots.py` (the store + capture), `site.py`
+(materialization), the `site` command group in `cli.py`.
+
+**Only the two SMALL payloads are frozen** — `aggregates.json` (~48 KB) and
+`dataset.json` (~6 KB), i.e. `SNAPSHOT_PAYLOADS`. Every view therefore keeps
+working frozen EXCEPT the View page: `samples.json` is 31 MB of embedded source,
+copying it per snapshot would grow the repo by a full corpus each time, and the
+code panel is not what anyone cites. Under `?snapshot=` the View page says so —
+a "not part of snapshots" notice — and its side-by-side code stays live.
+
+**Two locations, one source of truth:**
+
+* `<repo>/snapshots/<DD-MM-YYYY>/{aggregates,dataset,meta}.json` — the
+  canonical, git-tracked store, written ONLY by `decbench site snapshot`
+  (`default_snapshots_dir()` resolves it like the CLI resolves `CHANGELOG.md`;
+  a wheel install has no checkout beside it, so the directory simply does not
+  exist and the site builds with an empty snapshot list).
+* `site/data/snapshots/` — the copy `decbench site build` materializes into the
+  deployable tree, because Pages serves nothing outside `site/`. It lands under
+  the wholly-regenerated `data/`, which is why snapshots are **not** an exception
+  to the "`data/` is wiped every build" rule: the store stays authoritative, and
+  a snapshot deleted from it disappears on the next build. The per-day
+  directories there carry the two payloads only — `meta.json` is not copied,
+  because `data/snapshots/index.json` is the concatenation of every `meta.json`,
+  newest first, so the listing page and a snapshot's own record cannot disagree.
+
+`load_snapshots` is deliberately tolerant: a directory whose name is not a
+snapshot date, or which is missing its `meta.json` or a payload, is skipped
+rather than failing the build — the site must still deploy when one snapshot is
+half-written.
+
+**Date format.** `DD-MM-YYYY` is canonical in both the URL and the directory
+name (`DATE_PATTERN`, mirrored by `app.js`'s `SNAPSHOT_RE` — validated on both
+sides, because the client must never turn an arbitrary query param into a fetch
+path). ISO `YYYY-MM-DD` is *also* accepted on input and normalized to the
+canonical form — by `parse_date` on the CLI and by `app.js` in the URL — since
+every other date in the repo is year-first and that is what a maintainer reaches
+for.
+
+```bash
+decbench site snapshot                       # freeze site/ under today's date
+decbench site snapshot -d 2026-08-27 -l "v1.2 GED fairness" -n "why it was taken"
+decbench site snapshot --force               # overwrite that day's snapshot
+decbench site snapshot -s site/ --snapshots-dir snapshots   # non-default tree/store
+decbench site build results/full_run -o site/ --snapshots-dir snapshots
+```
+
+`site snapshot` reads the BUILT tree (`-s/--site-dir`, default `site/`), not the
+results tree, so a snapshot is byte-for-byte the numbers that were published —
+including which decompilers were hidden and which preset was default at the
+time. It refuses to overwrite an existing day without `--force`. It writes the
+store AND materializes `site/data/snapshots/` immediately, so a fresh snapshot
+is live with no rebuild; commit both (`git add snapshots site`).
+
+Because snapshots are copied from a built tree rather than recomputed, they are
+frozen **after** render-time filtering — hidden decompilers and the malware
+exclusion are already applied, so a snapshot can never leak something the live
+site hides.
+
+**Snapshots are an editorial act, never automatic.** Nothing in the build takes
+one; `decbench site build` only publishes what is already in the store. One is
+taken when the maintainer asks for it, at the same moment `CHANGELOG.md` earns
+an entry — a score-moving or comparability-breaking change. An agent should
+recommend one then, and never create one on its own.
+
+**The `/snapshots/` listing** is an ordinary view — `views.toml` id `snapshots`
++ `content/snapshots.md`, sitting beside the changelog because the two move
+together — with `requires_function_data = false`: `app.js` fills its scaffold
+(`#snap-dec` / `#snap-ver` / `#snap-count` / `#snapshots-body`) from
+`data/snapshots/index.json`, which is always the LIVE index, never a frozen one.
+Its two filters are linkable (`?dec=&ver=`); see "Routing and URL state".
+
+### `meta.json` / `data/snapshots/index.json`
+
+`index.json` is nothing but the list of every `meta.json`, newest first. Each
+record is derived **entirely from the frozen `aggregates.json`** (`_build_meta`),
+so a snapshot's record and its payload can never drift apart:
+
+```json
+{"date":"27-08-2026","iso_date":"2026-08-27","label":"","note":"",
+ "scoreboard":"sailr_full","version":"1.1.0","generated_at":"2026-07-15T15:28:00",
+ "functions":91483,"binaries":806,"preset":"unoptimized",
+ "decompilers":["angr","ghidra","ida"],
+ "decompiler_names":{"ida":"Hex-Rays"},
+ "decompiler_versions":{"ida":"9.2","ghidra":"12.1"},
+ "metrics":["ged","type_match","byte_match"],
+ "leaders":[{"dec":"ida","name":"Hex-Rays","pct":47.7}]}
+```
+
+* `label` / `note` are the only maintainer-supplied fields (`-l` / `-n`), `""`
+  when unset. `date` is the canonical form; `iso_date` is the same day for
+  anything that sorts or parses.
+* `preset` is that day's default preset and `leaders` is its top 3 by **Union**
+  over the on-screen decompilers, sample-set-only backends excluded — the same
+  `aggregate.union_leaders` the og-descriptions use.
+* `decompiler_names` / `decompiler_versions` come from the payload's
+  `decompiler_registry`, so versions are the **prettified** ones (IDA reads
+  `9.2`, not `920`). They fill differently, and the abbreviated example above
+  hides it: `decompiler_names` has an entry for **every** id (the raw id when
+  the registry has no `display_name`), while a decompiler with no known version
+  is present in `decompilers` but **absent** from `decompiler_versions`.
+  `decompiler_versions` is what powers the `/snapshots/` page's version filter —
+  find every snapshot where Ghidra was 12.1.
+* `functions` / `binaries` are the corpus-wide `totals`, not a combo's counts.
 
 ---
 
@@ -204,9 +334,10 @@ site/
 ├── leaderboard/index.html  # one subpage per VISIBLE view: the same skeleton, that
 ├── view/index.html         #   view marked active and its asset links prefixed with
 ├── changelog/index.html    #   "../" (no <base> — that would break same-document SVG
-├── about/index.html        #   url(#marker) refs and #anchors). Makes /leaderboard/,
-│                           #   /data/, ... directly linkable and reload-safe.
-│                           #   (changelog is a prose-only view.)
+├── snapshots/index.html    #   url(#marker) refs and #anchors). Makes /leaderboard/,
+├── about/index.html        #   /data/, ... directly linkable and reload-safe.
+│                           #   (changelog is prose-only; snapshots lists the dated
+│                           #   scoreboard freezes from data/snapshots/index.json.)
 ├── distance/index.html     # MARKER-LESS redirect stub: the distance view became
 │                           #   the data view (2026-07-23), and old /distance/
 │                           #   links canonicalize + hop to ../data/ preserving
@@ -224,7 +355,13 @@ site/
     ├── aggregates.json # the 10 combos + registry + the global cost block. Eager.
     ├── dataset.json    # About page tables + the data page's pipeline-health
     │                   #   section. Corpus-wide, selector-independent.
-    └── samples.json    # View page. Lazy — fetched on first view.
+    ├── samples.json    # View page. Lazy — fetched on first view.
+    └── snapshots/      # copied in from the git-tracked <repo>/snapshots/ store
+        ├── index.json  #   (the authoritative one). index.json = every meta.json,
+        │               #   newest first — the /snapshots/ listing, always LIVE.
+        └── 27-08-2026/ #   one directory per frozen day: the two SMALL payloads
+            ├── aggregates.json  # ONLY (no samples.json, no meta.json), fetched
+            └── dataset.json     # in place of the live ones under ?snapshot=.
 ```
 
 Every generated page carries the comment marker `<!-- decbench:page -->`. On rebuild
@@ -234,7 +371,9 @@ hand-added page) a maintainer dropped in `site/`. The `distance/index.html` redi
 stub is deliberately marker-less so that prune keeps it (`site.py`'s
 `_LEGACY_REDIRECTS`); legacy `#distance` hashes are likewise routed client-side
 (`app.js`'s `LEGACY_HASH_VIEWS`). `data/` and `fonts/` are wholly regenerated and
-wiped first.
+wiped first — `data/snapshots/` included: it is re-copied from the repo-root store
+on every build (`write_snapshot_tree`), never preserved in place, which is what
+keeps that store the single source of truth.
 
 `index.html` in **single-file mode** (`decbench report`) inlines every asset and every
 data file into one HTML document, so it still opens over `file://` where `fetch()` is
@@ -300,8 +439,32 @@ change — never a new history entry), both modes:
 * view page only: `tier=easy|medium|hard`, `dec=<decompiler id>`, `metric=<metric>`,
   and `fn=<project>/<opt>/<binary>::<function>` (the selected function). These are
   written only while the view page is open.
+* `snapshot=<DD-MM-YYYY>` — render the day's frozen payloads
+  (`data/snapshots/<date>/{aggregates,dataset}.json`) instead of the live ones. It
+  is the one param that is **site-wide and sticky**: it survives every navigation
+  and is written into the nav links' own hrefs, so a snapshot URL stays a snapshot
+  URL. While it is set a global notice renders above every view (`#snapshot-notice`
+  lives OUTSIDE every `.view` section in the skeleton, so one notice covers the
+  whole site and a per-view banner can never overwrite it), the sidebar's
+  decompiler/metric counters are rewritten from the loaded payload (a day with a
+  different backend set must not leave today's counts standing beside its
+  numbers), and the View page renders a "not part of snapshots" notice over live
+  code. See "Scoreboard snapshots" above.
+* `/snapshots/` page only: `dec=<decompiler id>` and `ver=<version>` — that
+  listing's two filters (`#snap-dec` / `#snap-ver`; e.g. every snapshot where
+  Ghidra was 12.1), resolved against each record's `decompiler_versions`. `dec`
+  shares its name with the view page's, but it is a different page's state; both
+  are written only while `/snapshots/` is open.
 
 Unknown or invalid values fall back silently to defaults — never an error banner.
+**One deliberate exception**: a `snapshot=` naming a date the site has no record
+of shows an explicit error, quoting the date and linking to `/snapshots/`. Every
+other param merely selects among live data, so ignoring a typo costs nothing;
+falling back here would render *today's* numbers under a URL that promises a past
+day's — misrepresenting them, which is the exact failure snapshots exist to
+prevent. The listing view is registered `requires_function_data = false` for the
+same reason: it must still render when a bad `?snapshot=` broke the aggregates
+fetch, which is precisely when a reader lands there looking for a valid date.
 
 **Theme.** The light/dark choice is NOT part of the SPA state above: it is applied
 before `app.js` runs, by the tiny bootstrap script in every page's `<head>` (see

@@ -2,6 +2,10 @@
 
 Significant changes to DecBench that introduce or update results, which can be viewable on the website.
 
+### 2026-08-27
+- Added dated scoreboard snapshots. Any page accepts `?snapshot=DD-MM-YYYY` to render
+  the numbers as they stood on that day, and `/snapshots/` lists them.
+
 ### 2026-08-08
 
 - Update `Kuna` to version `v1.121`, which has changed its rank.

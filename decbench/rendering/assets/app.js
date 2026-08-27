@@ -295,6 +295,22 @@ const INIT_PARAMS = (function () {
     try { return new URLSearchParams(location.search); } catch (e) { return new URLSearchParams(); }
 })();
 
+// ---- Snapshots (?snapshot=DD-MM-YYYY) ----
+// Mirrors decbench/rendering/snapshots.py: SNAPSHOT_PAYLOADS is the same set of
+// data-file stems a snapshot freezes (samples.json is deliberately not one), and
+// the two accepted date forms are the ones parse_date() takes, ISO normalized to
+// the canonical DD-MM-YYYY. Validated on this side too: an arbitrary query param
+// must never become a fetch path.
+const SNAPSHOT_PAYLOADS = {aggregates: 1, dataset: 1};
+const SNAPSHOT_RE = /^\d{2}-\d{2}-\d{4}$/;
+const SNAPSHOT_ISO_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const SNAPSHOT = (function () {
+    const raw = (INIT_PARAMS.get("snapshot") || "").trim();
+    if (SNAPSHOT_RE.test(raw)) return raw;
+    const iso = SNAPSHOT_ISO_RE.exec(raw);
+    return iso ? (iso[3] + "-" + iso[2] + "-" + iso[1]) : null;
+})();
+
 // Cached deliberately: pushState later moves location without moving the root,
 // so recomputing from a post-navigation URL would lie.
 // that first loaded plus the stamped hop. Cached deliberately: pushState later moves
@@ -320,6 +336,16 @@ const state = {
     normalize: false
 };
 
+// The snapshot listing is always live; a frozen payload comes from that day's
+// own directory (snapshots.py's write_snapshot_tree lays both out).
+function dataPath(name) {
+    if (name === "snapshots") return "data/snapshots/index.json";
+    if (SNAPSHOT && SNAPSHOT_PAYLOADS[name]) {
+        return "data/snapshots/" + SNAPSHOT + "/" + name + ".json";
+    }
+    return "data/" + name + ".json";
+}
+
 const _payloads = {};
 function loadData(name) {
     if (_payloads[name]) return _payloads[name];
@@ -334,7 +360,7 @@ function loadData(name) {
         // re-resolve against whatever path pushState/replaceState moved us to, and
         // the first cached rejection would stick for the whole session.
         const prefix = ROOT !== null ? basePath() : "";
-        p = fetch(prefix + "data/" + name + ".json").then(r => {
+        p = fetch(prefix + dataPath(name)).then(r => {
             if (!r.ok) throw new Error("HTTP " + r.status + " " + r.statusText);
             return r.json();
         });
@@ -528,6 +554,8 @@ function asciiBar(pct, width) {
     filled = Math.max(0, Math.min(filled, width));
     return "[" + "#".repeat(filled) + "-".repeat(width - filled) + "]";
 }
+// Quotes are escaped too: several callers interpolate into an attribute value
+// (href=, title=), where a bare " would close it and turn text into markup.
 function escapeHtml(s) {
     return (s == null ? "" : String(s))
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -541,16 +569,24 @@ function cssVar(name, fallback) {
 }
 
 function setLoading(el) { if (el) el.innerHTML = '<p class="view-desc">Loading&hellip;</p>'; }
-function showBanner(viewId, msg) {
+function bannerFor(viewId) {
     const sec = document.getElementById("view-" + viewId);
-    if (!sec) return;
+    if (!sec) return null;
     let b = sec.querySelector(".banner");
     if (!b) {
         b = document.createElement("div");
         b.className = "banner";
         sec.insertBefore(b, sec.firstChild);
     }
-    b.textContent = "[ error ] " + msg;
+    return b;
+}
+function showBanner(viewId, msg) {
+    const b = bannerFor(viewId);
+    if (b) b.textContent = "[ error ] " + msg;
+}
+function showBannerHtml(viewId, html) {
+    const b = bannerFor(viewId);
+    if (b) b.innerHTML = html;
 }
 
 function cellPctHtml(cell, evidence, occurrencePolicy) {
@@ -771,6 +807,12 @@ function updateStats(result) {
     if (fnEl) fnEl.textContent = result.functions.toLocaleString();
     const binEl = document.querySelector('[data-stat="binaries"]');
     if (binEl) binEl.textContent = result.binaries.toLocaleString();
+    // A snapshot can carry a different set of either, so the sidebar counts come
+    // from the loaded payload rather than from the page the renderer stamped.
+    const decEl = document.querySelector('[data-stat="decompilers"]');
+    if (decEl) decEl.textContent = String(((AGG && AGG.decompilers) || []).length);
+    const metEl = document.querySelector('[data-stat="metrics"]');
+    if (metEl) metEl.textContent = String(((AGG && AGG.metrics) || []).length);
     const counter = document.getElementById("function-counter");
     if (counter) {
         const ds = state.dataset ? ("[" + state.dataset + "] ") : "";
@@ -1063,6 +1105,193 @@ function applyViewParams(c) {
     return fnIdx;
 }
 
+/* ---- Snapshots: the notice, and the /snapshots/ listing --------------------
+ * Every record read here is one index.json entry — snapshots.py's _build_meta
+ * output — so a row describes the day it was taken (its own decompiler names and
+ * versions), never today's registry, which AGG may not even be holding.
+ */
+const SNAP_ANY = "__any__";
+const SNAP_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+let SNAPSHOT_LIST = [];
+let _snapMeta = null;
+let _snapNoticeOn = false;
+
+function snapDateLabel(name) {
+    const m = SNAPSHOT_RE.test(name || "") ? String(name).split("-") : null;
+    if (!m) return name || "";
+    const mon = SNAP_MONTHS[parseInt(m[1], 10) - 1] || m[1];
+    return parseInt(m[0], 10) + " " + mon + " " + m[2];
+}
+function snapshotHref(date) {
+    const q = "?snapshot=" + encodeURIComponent(date);
+    return (ROOT !== null) ? (basePath() + "leaderboard/" + q) : q;
+}
+function snapshotsListUrl() {
+    return (ROOT !== null) ? (basePath() + "snapshots/") : "#snapshots";
+}
+// The current view with the snapshot dropped — the way back to live.
+function snapshotLiveUrl() {
+    const params = new URLSearchParams(currentQuery());
+    params.delete("snapshot");
+    const qs = params.toString();
+    if (ROOT !== null) return basePath() + (state.view ? state.view + "/" : "") + (qs ? "?" + qs : "");
+    return location.pathname + (qs ? "?" + qs : "") + (location.hash || "");
+}
+function snapshotLinksHtml() {
+    return '<a href="' + escapeHtml(snapshotLiveUrl()) + '">back to live</a> &middot; ' +
+        '<a href="' + escapeHtml(snapshotsListUrl()) + '">all snapshots</a>';
+}
+function renderSnapshotNotice(meta) {
+    const el = document.getElementById("snapshot-notice");
+    if (!el || !SNAPSHOT) return;
+    _snapMeta = meta || _snapMeta;
+    const label = _snapMeta && _snapMeta.label;
+    el.innerHTML = "[ snapshot ] Viewing the scoreboard as of " +
+        escapeHtml(snapDateLabel(SNAPSHOT)) + "." +
+        (label ? (" " + escapeHtml(label)) : "") + " " + snapshotLinksHtml();
+    el.hidden = false;
+    _snapNoticeOn = true;
+}
+// Shown only once the frozen aggregates are in hand: a missing snapshot must
+// banner as missing (below), never announce itself as a frozen scoreboard.
+function initSnapshotNotice() {
+    if (!SNAPSHOT) return;
+    renderSnapshotNotice(null);
+    loadData("snapshots").then(list => {
+        const meta = (list || []).filter(m => m && m.date === SNAPSHOT)[0];
+        if (meta) renderSnapshotNotice(meta);
+    }).catch(() => { });
+}
+function snapshotMissingHtml() {
+    return "[ error ] No snapshot was recorded for " + escapeHtml(snapDateLabel(SNAPSHOT)) +
+        " (" + escapeHtml(SNAPSHOT) + "). Live numbers are deliberately NOT shown under a " +
+        "snapshot URL. " + snapshotLinksHtml();
+}
+function snapshotViewNotice(body) {
+    body.innerHTML = '<p class="view-desc">Source samples are not part of a snapshot &mdash; ' +
+        'they are ~31&nbsp;MB per day, so only the scoreboard payloads are frozen. ' +
+        '<a href="' + escapeHtml(snapshotLiveUrl()) + '">Open the live view page</a> ' +
+        'for source next to decompiler output.</p>';
+}
+
+function addOption(sel, value, label) {
+    const o = document.createElement("option");
+    o.value = value; o.textContent = label;
+    sel.appendChild(o);
+}
+function optValues(sel) { return Array.from(sel.options).map(o => o.value); }
+function snapDecName(meta, dec) { return (meta.decompiler_names || {})[dec] || dec; }
+function snapVerText(v) { return v ? (/^\d/.test(v) ? "v" + v : v) : ""; }
+function snapDecHtml(meta, dec) {
+    const v = snapVerText((meta.decompiler_versions || {})[dec]);
+    return escapeHtml(snapDecName(meta, dec)) + (v ? (" " + escapeHtml(v)) : "");
+}
+function snapVersionsHtml(meta, dec) {
+    const decs = meta.decompilers || [];
+    if (dec !== SNAP_ANY) {
+        return decs.indexOf(dec) >= 0 ? snapDecHtml(meta, dec) : "&mdash;";
+    }
+    return decs.length ? decs.map(d => snapDecHtml(meta, d)).join(" &middot; ") : "&mdash;";
+}
+function snapLeadersHtml(meta) {
+    const leaders = meta.leaders || [];
+    if (!leaders.length) return "&mdash;";
+    return leaders.map((l, i) => {
+        const p = Number(l && l.pct) || 0;
+        return '<span class="snap-leader"><span class="cell-count">' + (i + 1) + '.</span> ' +
+            escapeHtml((l && (l.name || l.dec)) || "?") +
+            ' <span class="cell-pct pct-' + pctClass(p) + '">' + p.toFixed(1) + '%</span></span>';
+    }).join(" ");
+}
+function snapMatches(meta, dec, ver) {
+    if (dec === SNAP_ANY) return true;
+    if ((meta.decompilers || []).indexOf(dec) < 0) return false;
+    if (ver === SNAP_ANY) return true;
+    return (meta.decompiler_versions || {})[dec] === ver;
+}
+function fillSnapDecs(sel) {
+    const names = {};
+    SNAPSHOT_LIST.forEach(m => (m.decompilers || []).forEach(d => {
+        if (!(d in names)) names[d] = snapDecName(m, d);
+    }));
+    const ids = Object.keys(names)
+        .sort((a, b) => names[a].localeCompare(names[b]) || a.localeCompare(b));
+    sel.innerHTML = "";
+    addOption(sel, SNAP_ANY, "any");
+    ids.forEach(d => addOption(sel, d, names[d]));
+}
+function fillSnapVersions(sel, dec) {
+    if (!sel) return;
+    sel.innerHTML = "";
+    addOption(sel, SNAP_ANY, "any");
+    if (dec === SNAP_ANY) return;
+    const vers = [];
+    SNAPSHOT_LIST.forEach(m => {
+        const v = (m.decompiler_versions || {})[dec];
+        if (v && vers.indexOf(v) < 0) vers.push(v);
+    });
+    vers.sort().forEach(v => addOption(sel, v, v));
+}
+function snapRowHtml(meta, dec) {
+    const label = meta.label || meta.note || "";
+    return '<tr class="binrow"><td class="lb-name"><a href="' +
+        escapeHtml(snapshotHref(meta.date)) + '" title="' + escapeHtml(meta.date) + '">' +
+        escapeHtml(snapDateLabel(meta.date)) + '</a></td>' +
+        '<td>' + (label ? escapeHtml(label) : "&mdash;") + '</td>' +
+        '<td>' + (Number(meta.functions) || 0).toLocaleString() + '</td>' +
+        '<td class="cell-count snap-versions">' + snapVersionsHtml(meta, dec) + '</td>' +
+        '<td class="snap-leaders">' + snapLeadersHtml(meta) + '</td></tr>';
+}
+function renderSnapshotsTable() {
+    const body = document.getElementById("snapshots-body");
+    if (!body) return;
+    const decSel = document.getElementById("snap-dec"), verSel = document.getElementById("snap-ver");
+    const dec = decSel ? decSel.value : SNAP_ANY, ver = verSel ? verSel.value : SNAP_ANY;
+    const rows = SNAPSHOT_LIST.filter(m => snapMatches(m, dec, ver));
+    let html = '<table id="snapshots-table"><thead><tr><th>date</th><th>label</th>' +
+        '<th>functions</th><th>decompiler versions</th><th>leaders</th></tr></thead><tbody>';
+    if (!rows.length) {
+        html += '<tr><td colspan="5" class="snap-empty">No snapshots match this filter.</td></tr>';
+    } else {
+        rows.forEach(m => { html += snapRowHtml(m, dec); });
+    }
+    body.innerHTML = html + "</tbody></table>";
+    const count = document.getElementById("snap-count");
+    if (count) count.textContent = rows.length + " / " + SNAPSHOT_LIST.length + " snapshots";
+}
+// index.json is already newest-first; rendering never re-sorts it.
+function buildSnapshots(list) {
+    SNAPSHOT_LIST = Array.isArray(list) ? list.filter(m => m && m.date) : [];
+    const body = document.getElementById("snapshots-body");
+    if (!body) return;
+    const filters = document.getElementById("snap-filters");
+    if (!SNAPSHOT_LIST.length) {
+        body.innerHTML = '<p class="view-desc">No snapshots have been recorded yet.</p>';
+        if (filters) filters.hidden = true;
+        return;
+    }
+    const decSel = document.getElementById("snap-dec"), verSel = document.getElementById("snap-ver");
+    if (decSel) {
+        fillSnapDecs(decSel);
+        const wantDec = INIT_PARAMS.get("dec");
+        if (wantDec && optValues(decSel).indexOf(wantDec) >= 0) decSel.value = wantDec;
+        fillSnapVersions(verSel, decSel.value);
+        decSel.addEventListener("change", () => {
+            fillSnapVersions(verSel, decSel.value);
+            renderSnapshotsTable();
+            syncUrl();
+        });
+    }
+    if (verSel) {
+        const wantVer = INIT_PARAMS.get("ver");
+        if (wantVer && optValues(verSel).indexOf(wantVer) >= 0) verSel.value = wantVer;
+        verSel.addEventListener("change", () => { renderSnapshotsTable(); syncUrl(); });
+    }
+    if (filters) filters.hidden = false;
+    renderSnapshotsTable();
+}
+
 function baseName(dec) { const a = dec.indexOf("@"); return a >= 0 ? dec.substring(0, a) : dec; }
 
 function currentTheme() {
@@ -1080,10 +1309,14 @@ function initThemeToggle() {
     });
 }
 
+// `independent` views render without the aggregates payload: the snapshot listing
+// is exactly what a bad ?snapshot= sends people to, so it must survive one.
 const LAZY_VIEWS = {
     about: {file: "dataset", body: "dataset-summary", render: buildDataset},
     data: {file: "dataset", body: "joern-source", render: buildPipelineHealth},
-    view: {file: "samples", body: "view-body", render: initView}
+    view: {file: "samples", body: "view-body", render: initView},
+    snapshots: {file: "snapshots", body: "snapshots-body", render: buildSnapshots,
+                independent: true}
 };
 const lazyStarted = {};
 function ensureViewData(name) {
@@ -1092,12 +1325,16 @@ function ensureViewData(name) {
     const body = document.getElementById(spec.body);
     if (!body) return;
     lazyStarted[name] = true;
+    if (SNAPSHOT && name === "view") { snapshotViewNotice(body); return; }
     setLoading(body);
-    Promise.all([loadData("aggregates"), loadData(spec.file)])
-        .then(([, data]) => spec.render(data))
+    const needed = spec.independent
+        ? [loadData(spec.file)]
+        : [loadData("aggregates"), loadData(spec.file)];
+    Promise.all(needed)
+        .then(loaded => spec.render(loaded[loaded.length - 1]))
         .catch(err => {
             body.innerHTML = "";
-            showBanner(name, "Could not load data/" + spec.file + ".json — " + err.message);
+            showBanner(name, "Could not load " + dataPath(spec.file) + " — " + err.message);
         });
 }
 
@@ -1109,6 +1346,7 @@ function showView(name) {
     document.querySelectorAll(".nav-item").forEach(a => {
         a.classList.toggle("active", a.getAttribute("data-view") === name);
     });
+    if (_snapNoticeOn) renderSnapshotNotice(null);
     ensureViewData(name);
 }
 function validViews() {
@@ -1189,18 +1427,29 @@ function maybeScrollToHash() {
     if (el) el.scrollIntoView();
 }
 function initNav() {
+    const views = validViews();
     document.querySelectorAll(".nav-item").forEach(a => {
         const id = a.getAttribute("data-view");
         // Rewrite the href to the real subpage URL so middle-click / copy-link work
-// (the renderer ships "#id" for the no-JS and single-file forms).
-        // (the renderer ships "#id" for the no-JS and single-file forms).
-        if (ROOT !== null) { try { a.setAttribute("href", basePath() + id + "/"); } catch (e) {} }
+        // (the renderer ships "#id" for the no-JS and single-file forms). The id is
+        // DOM text, so it is checked against the rendered view set and encoded before
+        // it reaches an href — an unchecked one is a URL-injection sink.
+        if (ROOT !== null && views.indexOf(id) >= 0) {
+            const qs = currentQuery();
+            const href = basePath() + encodeURIComponent(id) + "/" + (qs ? "?" + qs : "");
+            try { a.setAttribute("href", href); } catch (e) {}
+        }
         a.addEventListener("click", e => {
             if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || (e.button && e.button !== 0)) return;
             e.preventDefault();
             navigate(id);
         });
     });
+    // No samples are frozen, so the view page is dimmed — but still reachable.
+    if (SNAPSHOT) {
+        const vi = document.querySelector('.nav-item[data-view="view"]');
+        if (vi) vi.classList.add("nav-item-muted");
+    }
     if (ROOT !== null) window.addEventListener("popstate", onPopState);
     window.addEventListener("hashchange", onHashChange);
     const target = routeTarget();
@@ -1214,6 +1463,7 @@ function defaultPresetName() {
 }
 function currentQuery() {
     const params = new URLSearchParams();
+    if (SNAPSHOT) params.set("snapshot", SNAPSHOT);
     if (state.dataset && state.dataset !== defaultPresetName()) params.set("dataset", state.dataset);
     if (state.normalize) params.set("norm", "1");
     if (state.view === "view") {
@@ -1223,6 +1473,11 @@ function currentQuery() {
         if (c.metric && c.metric.value) params.set("metric", c.metric.value);
         const s = c.fn ? VIEW_SAMPLES[parseInt(c.fn.value, 10)] : null;
         if (s) params.set("fn", sampleKey(s));
+    }
+    if (state.view === "snapshots") {
+        const d = document.getElementById("snap-dec"), v = document.getElementById("snap-ver");
+        if (d && d.value && d.value !== SNAP_ANY) params.set("dec", d.value);
+        if (v && v.value && v.value !== SNAP_ANY) params.set("ver", v.value);
     }
     return params.toString();
 }
@@ -1282,9 +1537,15 @@ function init() {
         initDatasetSelector();
         refresh();
         buildCost();
+        initSnapshotNotice();
         maybeScrollToHash();
     }).catch(err => {
-        ["leaderboard", "about", "data"].forEach(v => showBanner(v,
+        const views = ["leaderboard", "about", "data"];
+        if (SNAPSHOT) {
+            views.forEach(v => showBannerHtml(v, snapshotMissingHtml()));
+            return;
+        }
+        views.forEach(v => showBanner(v,
             "Could not load data/aggregates.json — " + err.message +
             ". this view has no data."));
     });
