@@ -116,7 +116,11 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="11"`. Version 11 makes producer-supplied structured
+Current `cache_version="12"`. Version 12 masks the ARM Thumb bit off a function
+entry address before joining it to DWARF, so a Thumb function whose static name
+repeats across translation units resolves to its own ground truth instead of
+being dropped; only backends that report tagged addresses (angr) are affected.
+Version 11 makes producer-supplied structured
 variable occurrence fields authoritative: an empty `line_numbers`/`addresses`
 pair is an abstention and is never repopulated by matching the variable's spelling
 against rendered C. Version 10 began honoring the ELF ARM architecture profile
@@ -177,6 +181,25 @@ address match, which would prevent usage evidence from correcting a false
 native pairing. Paired regressions remain explicit in A/B reports so this
 tradeoff can be reviewed rather than hidden.
 
+**The production policy is a fixed constant** (`_VARIABLE_MATCH_DEFAULTS` in
+`type_match.py`): address overlap threshold `0.10`, address ambiguity margin
+`0.03`, usage threshold `0.15`, usage ambiguity margin `0`, combined threshold
+`0.20`, combined ambiguity margin `0`, and address weight `0.50`.
+Variable-size compatibility is **always false** — the matcher is called with
+`use_size_compatibility=False`, and a scoreboard that tries to switch it on via
+`variable_match_policy` is rejected outright, because byte width is part of the
+answer TypeMatch grades. The address pair `min_overlap=0.1` /
+`ambiguity_margin=0.03` was a pre-existing frozen baseline, carried forward
+unchanged; only the usage and combined values (`0.15`, `0.20`, both margins `0`,
+address weight `0.50`) were selected, on a 26-function tuning partition of the
+Coreutils O2 sample, before any held-out result was viewed.
+A scoreboard may override individual thresholds through the metric's
+`variable_match_policy` option (unknown keys raise, `address_weight` must be
+strictly between 0 and 1, and every threshold/margin must be non-negative). The
+policy is part of the per-function cache key, so an override re-keys itself and
+needs no `cache_version` bump; changing the correspondence *algorithm* still
+does.
+
 C source evidence is selected by the function address's DWARF compilation unit
 and its path-qualified preprocessor line marker, then joined to DWARF variables
 by stable DIE identity. Each C translation unit's exact-name function index is
@@ -215,6 +238,114 @@ native stage. The field is absent when correspondence accepted no pair, because
 no evidence channel was actually used. These values support the report's
 measurement caveat without publishing variable names, features, addresses,
 stable identities, types, or absolute source paths.
+
+### Usage evidence — parsing, features, and scoring
+
+The usage channel adapts the design principle behind
+[discovRE](https://www.ndss-symposium.org/wp-content/uploads/2017/09/discovre-efficient-cross-architecture-identification-bugs-binary-code.pdf):
+describe an entity with cheap behavioral features, retrieve plausible
+candidates, and abstain when the best assignment is weak or ambiguous. It is an
+adaptation to variables in C syntax, not a reimplementation of discovRE's
+binary-function matcher. It exists because most decompilers and every
+code-producing LLM return only C-like text, with no line map to overlap.
+
+**Parsing contract** (`metrics/variable_features.py`). Usage features are
+extracted with [tree-sitter](https://tree-sitter.github.io/tree-sitter/) and its
+C grammar — this is why `tree-sitter` and `tree-sitter-c` are runtime, not dev,
+dependencies. Tree-sitter is used precisely because it keeps usable
+concrete-syntax subtrees in imperfect pseudocode, including *underneath*
+parse-error nodes, so a function that does not parse cleanly still yields
+features instead of nothing. If a decompiler returns only a statement/body
+fragment with no `function_definition` node at all, the extractor wraps the body
+in a synthetic function and reparses once; if the text contains any
+`function_definition` at all and none of them carries the requested name, that is
+an explicit abstention rather than a guess, and no fragment wrapping is
+attempted. The same rule governs the source side:
+each preprocessed `.i` unit is indexed by exact function name **once**
+(`index_c_functions`) and reused for every function in that translation unit, so
+macro-expanded behavior is analyzed without reparsing the whole unit per
+function, and a name with anything other than exactly one definition abstains.
+C++ `.ii` units deliberately emit **no** source usage features — a separate
+grammar and its own leakage audit would be required first — so C++ functions
+fall back to the address channel.
+
+**Feature vector.** Each variable gets a sparse counted vector of usage context
+only: generic read/write/read-write roles (`use:*`); assignment, binary and
+unary operator roles (`assign:*`, `binary:*`, `unary:*` — the last covering
+dereference, address-of, and increment/decrement); memory roles
+(`memory:field:base`, `memory:subscript:base|index`) and `operation:cast`;
+condition, loop, switch, `for`, and return-value context (`control:*`); direct
+call name, arity, argument position, indirect-callee use, and call
+return-target use (`call:*`); and normalized integer plus hashed
+string/character literals (`literal:*`). Commutative operand
+sides (`+ * & | ^ == != && ||`) are normalized to one `commutative` side so that
+`a + b` and `b + a` agree. Literals attach only to a variable's own local
+operand relation, so a constant in a sibling call argument does not smear across
+every argument. Synthetic address-derived callee names (`sub_4011a0`,
+`fcn.004011a0`, …) are normalized away, as are callees declared locally within
+the same function — both are dropped rather than becoming a `call:named:` token,
+which carries the vector's strongest weight. Decompiler pseudo-calls whose names
+encode byte/bit widths — `__ROR8__`, `CONCAT71`, `SUB168`, byte/word extractors,
+carry/borrow helpers — collapse to width-free operation families
+(`pseudo:rotate-right`, `pseudo:concatenate`, `pseudo:subpiece`, …) so two
+backends that pick different widths still agree. Identifiers appearing in
+comments, string bodies, member-name position, or unevaluated
+`sizeof`/`alignof` operands never become uses.
+
+**Candidate discovery.** A backend that ships no structured variable list at all
+is not scored as having zero variables: the metric parses candidates out of its
+own rendered C instead (`parse_c_variables`), and marks them `inferred_from_code`.
+Discovery takes parameters and body-local declarators, skipping `typedef` and
+`extern` storage classes and bare function prototypes. Unnamed decompiler
+candidates are admitted (`include_unnamed=True`) because a variable the backend
+never named still has usage. Where a name is declared more than once in one
+function — shadowing — every occurrence is left featureless rather than merged,
+since the vector cannot tell the declarations apart.
+
+**Discovered candidates are sanitized, per mode.** A candidate recovered from
+rendered C carries no trustworthy machine evidence, so before matching it loses
+its addresses, line numbers, and live ranges, and in `address` mode its usage
+features as well. In `address` mode it is dropped outright unless it still has a
+reliable anchor — an ABI argument index or an explicit stack offset. Only `usage`
+mode takes such a candidate unchanged. This is what keeps `address`-mode numbers
+honest for text-only backends: they cannot earn address-channel credit from
+evidence that was reverse-engineered out of their own output.
+
+**The type exclusions are load-bearing.** Type spelling, byte width, pointer
+depth, and cast *target* type are excluded from the vector on purpose: the
+correspondence exists to grade recovered types, so any of them would leak the
+answer. Names and sizes are likewise cleared before correspondence and
+size-compatible matching is disabled, which is the same rule stated from the
+policy side above.
+
+**Similarity.** For a token with count `c_t` the matcher uses
+`x_t = log(1 + c_t)`. A token's weight is a fixed family reliability — 3 for
+named direct calls and string literals, 2 for structural operations, control
+context, literals and call arity, 1 for the generic roles — divided by a
+log-scaled degree term (`max(1, log2(degree + 1))`) counted over the union of the
+source and decompiled variables being matched, so a token shared by many of them
+counts for less. The pair score is
+a weighted generalized Jaccard over the union of both vectors:
+
+```text
+sum_t weight_t * min(x_source_t, x_decompiled_t)
+------------------------------------------------
+sum_t weight_t * max(x_source_t, x_decompiled_t)
+```
+
+At least one *shared non-generic* context token is required; matching read/write
+counts alone score zero. Qualified edges then go through the same deterministic
+mutual-best, bidirectional runner-up-margin peeling as address overlap, so equal
+best vectors abstain instead of being resolved by name or declaration order.
+
+In `address+usage`, the two channels combine linearly
+(`address_weight * address + (1 - address_weight) * usage`) **only when both are
+present** — the source and decompiler variable each have addresses, and each has
+non-generic usage context. If one channel is genuinely absent the other is used
+unscaled against its own threshold (`address-only` / `usage-fallback` stages).
+If both channels are present but contradict, the contradicting side contributes
+its zero to the fused score, which is how usage evidence can veto a weak overlap
+edge.
 
 For checkpoint A/B runs, `scripts/reeval_typematch.py --mode address|usage|address+usage|auto`
 prints old/new comparisons. Non-canonical overlays require an explicit

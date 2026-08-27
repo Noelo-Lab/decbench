@@ -704,7 +704,7 @@ print(json.dumps({
 
     from elftools.elf.elffile import ELFFile
 
-    from decbench.experimental.local_variable_distance import instruction_addresses
+    from decbench.metrics.variable_match import instruction_addresses
 
     with live_tiny_binary.open("rb") as stream:
         instruction_starts = set(instruction_addresses(ELFFile(stream), start, end))

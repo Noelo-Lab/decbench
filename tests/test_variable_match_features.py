@@ -4,14 +4,14 @@ from dataclasses import replace
 
 import pytest
 
-from decbench.experimental.local_variable_distance import (
+from decbench.metrics.variable_features import analyze_c_function
+from decbench.metrics.variable_match import (
     DistanceResult,
     FunctionEvidence,
     VariableEvidence,
     extract_decompiler_evidence,
     match_variables,
 )
-from decbench.experimental.local_variable_features import analyze_c_function
 from decbench.models.decompilation import FunctionDecompilation
 
 
@@ -212,6 +212,22 @@ def test_unevaluated_and_member_identifiers_do_not_become_uses() -> None:
         "memory:field:base": 1,
         "use:read": 1,
     }
+
+
+def test_literals_are_found_through_parentheses_and_unary_operators() -> None:
+    """Literal discovery recurses through ``parenthesized_expression``/``unary_expression``."""
+
+    analysis = analyze_c_function(
+        "int f(void) { int plain = 5; int wrapped = (7); int folded = -(7); return 0; }",
+        "f",
+    )
+
+    def literals(name: str) -> dict[str, int]:
+        return {key: count for key, count in analysis.features[name] if key.startswith("literal:")}
+
+    assert literals("plain") == {"literal:number:exact:5": 1}
+    assert literals("wrapped") == {"literal:number:exact:7": 1}
+    assert literals("folded") == {"literal:number:exact:7": 1}
 
 
 def test_code_only_decompiler_variables_are_inferred() -> None:

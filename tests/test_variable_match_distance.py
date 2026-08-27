@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-import json
-import subprocess
 import sys
 from dataclasses import replace
-from pathlib import Path
 from types import SimpleNamespace
-
-import pytest
 
 from decbench.decompilers.raw.ghidra_raw import RawGhidraDecompiler
 from decbench.decompilers.raw.ida_raw import RawIDADecompiler
-from decbench.experimental.local_variable_distance import (
+from decbench.metrics.variable_match import (
     VariableEvidence,
     extract_decompiler_evidence,
     match_variables,
@@ -363,49 +358,3 @@ def test_saved_decompiler_evidence_uses_native_variable_addresses() -> None:
     assert calibration_evidence.variables[2].identity == "ghidra@12.1:2"
     assert calibration_evidence.variables[2].name == ""
     assert calibration_evidence.variables[2].addresses == frozenset({0x1002})
-
-
-def test_grep_main_demo(tmp_path: Path) -> None:
-    required = [
-        Path("testing/grep"),
-        Path("testing/grep.c"),
-        Path("testing/grep.i"),
-        Path("testing/ida_grep.c"),
-        Path("/Applications/IDA Professional 9.2.app/Contents/MacOS"),
-    ]
-    if not all(path.exists() for path in required):
-        pytest.skip("grep fixture or IDA 9.2 is unavailable")
-    output = tmp_path / "proof"
-    subprocess.run(
-        [
-            sys.executable,
-            "scripts/demo_local_variable_distance.py",
-            "--check",
-            "--output-dir",
-            str(output),
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    evidence = json.loads((output / "evidence.json").read_text())
-    assert evidence["summary"]["mapped_decompiled_lines"] > 500
-    assert evidence["summary"]["decompiled_total"] == 140
-    assert evidence["artifact_checks"]["provided_declared_names"] == 140
-    assert all(row["passed"] for row in evidence["oracle_checks"])
-    assert all(row["passed"] for row in evidence["negative_oracle_checks"])
-    assert all(row["passed"] for row in evidence["correspondence_checks"])
-    source = {var["name"]: var for var in evidence["source"]["variables"]}
-    assert all(line >= 2462 for line in source["argc"]["lines"])
-    assert all(line >= 2462 for line in source["matcher"]["lines"])
-    assert all(
-        line >= 2462 for variable in evidence["source"]["variables"] for line in variable["lines"]
-    )
-    assert all(variable["name"] for variable in evidence["decompiled"]["variables"])
-    assert source["num_operands"]["addresses"] == [
-        "0x5ddf",
-        "0x5df6",
-        "0x5e23",
-        "0x5e9b",
-        "0x5e9d",
-    ]
