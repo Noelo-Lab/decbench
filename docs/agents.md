@@ -49,6 +49,7 @@ decbench list-decompilers           # show available decompilers
 decbench list-metrics               # show available metrics
 decbench report scoreboard.toml     # render the HTML report
 decbench site build results/full_run -o site/   # build the deployable Pages tree
+decbench site snapshot              # freeze the built site under today's date (only on request)
 ```
 
 Real benchmark runs use `scripts/compile_all.py` + `scripts/run_benchmark.py`
@@ -134,6 +135,13 @@ Key conventions:
   gitignored), and every sample then fails with `binary_not_found`. Run the
   finalize/info-writer scripts from the main checkout and select a different
   code version with `PYTHONPATH=`, never by changing cwd.
+- **Scoreboard snapshots are taken ONLY when the user asks** — never
+  automatically. `decbench site snapshot -l '<why>'` freezes the BUILT `site/`
+  tree under a date so `?snapshot=DD-MM-YYYY` serves those numbers forever; it
+  must run BEFORE the rebuild that moves them, or they are gone. Whenever a
+  change is breaking or moves published scores — the same moment a human must
+  add a `CHANGELOG.md` entry — RECOMMEND one; never create it unasked.
+  See `docs/site.md`.
 - **When updating results** be sure to keep the huggingface-side dataset up to
   date with our changes, found at https://huggingface.co/datasets/noelo-lab/decbench-dataset.
   You can usually find a local clone one directory above this repo in

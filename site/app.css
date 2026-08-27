@@ -134,6 +134,10 @@ a { color: var(--text); text-decoration: none; }
     color: var(--green);
 }
 .nav-item.active .nav-bullet { color: var(--green); }
+/* Snapshot mode: the view page has no frozen samples, so its entry reads as
+   unavailable — dimmed, but still clickable (app.js explains why on the page). */
+.nav-item-muted { opacity: 0.5; }
+.nav-item-muted:hover { opacity: 1; }
 .side-section { border-top: dashed 1px rgba(var(--line-rgb),0.25); padding-top: 0.9rem; }
 .side-label { color: var(--text-muted); font-size: 0.78em; margin-bottom: 0.4rem; }
 .ds-controls { display: flex; flex-wrap: wrap; gap: 0.3rem; }
@@ -165,6 +169,11 @@ a { color: var(--text); text-decoration: none; }
     border: dashed 1px var(--amber); color: var(--amber);
     padding: 0.6rem 0.9rem; margin: 0 0 1rem; font-size: 0.9em;
 }
+/* The frozen-scoreboard notice (#snapshot-notice): a state, not a failure, so it
+   takes --blue rather than the error banner's amber. --blue is re-inked for the
+   light theme with the rest of the palette. */
+.banner.snapshot { border-color: var(--blue); color: var(--blue); }
+.banner.snapshot a { color: inherit; text-decoration: underline; }
 h2.view-title { font-size: 1.3rem; font-weight: 700; margin-bottom: 0.2rem; }
 h2.view-title:before { content: "## "; color: var(--text-muted); }
 .view-desc { color: var(--text-muted); font-size: 0.88em; margin-bottom: 1.1rem; }
@@ -247,6 +256,17 @@ td.metric-cell { white-space: nowrap; }
 .cat-btn.active { color: var(--bg); background: var(--green); border-style: solid; font-weight: 700; }
 tr.cat-hl td { background: var(--tint-green-hl); }
 
+/* ---- Snapshots listing (the rest is the shared table styling above) ---- */
+#snapshots-table td { vertical-align: top; }
+#snapshots-table .lb-name a { text-decoration: none; }
+#snapshots-table .lb-name a:hover { text-decoration: underline; }
+/* A day with a dozen backends makes this the widest cell on the page; let it
+   wrap instead of pushing the leaders off the table. */
+#snapshots-table td.snap-versions { max-width: 26rem; white-space: normal; }
+.snap-leaders { white-space: nowrap; }
+.snap-leader { margin-right: 0.9rem; }
+.snap-empty { color: var(--text-muted); }
+
 /* ---- Buttons / inputs ---- */
 button, select, input[type=text] {
     background: var(--bg); border: dashed 1px var(--border-color);
@@ -256,9 +276,11 @@ button, select, input[type=text] {
 button:hover, select:hover { color: var(--bg); background: var(--text); }
 .ds-btn { padding: 0.15rem 0.5rem; font-size: 0.82em; }
 .ds-btn.active { color: var(--bg); background: var(--text); border-style: solid; font-weight: 700; }
-.controls { display: flex; align-items: center; gap: 0.7rem; margin: 0.8rem 0; flex-wrap: wrap; font-size: 0.9em; }
-.controls label { color: var(--text-muted); }
-.counter { color: var(--text-muted); font-size: 0.82em; }
+.controls, .snap-filters { display: flex; align-items: center; gap: 0.7rem; margin: 0.8rem 0; flex-wrap: wrap; font-size: 0.9em; }
+.controls label, .snap-filters label { color: var(--text-muted); }
+/* The display above outranks the UA's [hidden] rule, so restate it. */
+.snap-filters[hidden] { display: none; }
+.counter, #snap-count { color: var(--text-muted); font-size: 0.82em; }
 
 /* ---- Collapsible metric visualizations (about page) ---- */
 details.metric-viz {
@@ -656,8 +678,8 @@ pre.viz-code code {
   #compile-table td[data-label] .bar-ascii { white-space: pre; }
 
 
-  /* ---- About page: two plain tables -> horizontal scroll, no page overflow -- */
-  #dataset-projects, #joern-output-table {
+  /* ---- Plain tables -> horizontal scroll, no page overflow ----------------- */
+  #dataset-projects, #joern-output-table, #snapshots-table {
     display: block; width: 100%; overflow-x: auto; white-space: nowrap;
     -webkit-overflow-scrolling: touch;
   }
@@ -685,7 +707,7 @@ pre.viz-code code {
    ========================================================================== */
 @media (min-width: 701px) and (max-width: 1499px) {
   #leaderboard-table, #distance-table, #compile-table,
-  #metrics-perfect-table, #joern-output-table, #dataset-projects {
+  #metrics-perfect-table, #joern-output-table, #dataset-projects, #snapshots-table {
     display: block; width: 100%; overflow-x: auto;
   }
 }

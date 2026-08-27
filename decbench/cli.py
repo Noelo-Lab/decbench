@@ -469,7 +469,13 @@ def site() -> None:
     default="site",
     help="Output directory for the site tree",
 )
-def site_build(results_path, output) -> None:
+@click.option(
+    "--snapshots-dir",
+    type=click.Path(),
+    default=None,
+    help="Snapshot store to publish (default: the repo-root snapshots/)",
+)
+def site_build(results_path, output, snapshots_dir) -> None:
     """Build the static site from a RESULTS TREE.
 
     RESULTS_PATH is a results directory containing scoreboard.toml and
@@ -512,8 +518,13 @@ def site_build(results_path, output) -> None:
     fd.samples.extend(sample_set)
     console.print(f"Materialized [bold]{len(sample_set)}[/bold] sample-set View entries.")
 
+    from decbench.rendering.snapshots import load_snapshots
+
+    snaps = load_snapshots(Path(snapshots_dir) if snapshots_dir else None)
+    console.print(f"Publishing [bold]{len(snaps)}[/bold] recorded scoreboard snapshots.")
+
     out_dir = Path(output)
-    build_site(scoreboard, fd, out_dir, _site_content())
+    build_site(scoreboard, fd, out_dir, _site_content(), snapshots=snaps)
 
     total = 0
     for path in sorted(p for p in out_dir.rglob("*") if p.is_file()):
@@ -522,6 +533,74 @@ def site_build(results_path, output) -> None:
         console.print(f"  {path.relative_to(out_dir)!s:<32} {_human_size(size):>10}")
     console.print(f"\nSite written to [bold]{out_dir}[/bold] ({_human_size(total)} total)")
     console.print("\nNext: [bold]git add site && git commit -m 'site: refresh' && git push[/bold]")
+
+
+@site.command("snapshot")
+@click.option(
+    "-s",
+    "--site-dir",
+    type=click.Path(exists=True),
+    default="site",
+    help="The BUILT site tree to freeze (default: site)",
+)
+@click.option(
+    "-d",
+    "--date",
+    "date_text",
+    default=None,
+    help="Snapshot day as DD-MM-YYYY or YYYY-MM-DD (default: today)",
+)
+@click.option("-l", "--label", default="", help="Short title shown in the snapshots list")
+@click.option("-n", "--note", default="", help="Why this snapshot was taken")
+@click.option(
+    "--snapshots-dir",
+    type=click.Path(),
+    default=None,
+    help="Snapshot store (default: the repo-root snapshots/)",
+)
+@click.option("--force", is_flag=True, help="Overwrite an existing snapshot for that day")
+def site_snapshot(site_dir, date_text, label, note, snapshots_dir, force) -> None:
+    """Record a dated snapshot of the scoreboard from a BUILT site tree.
+
+    Snapshots are never taken automatically. Take one whenever a change moves
+    published scores or breaks comparability — the same moment CHANGELOG.md
+    earns an entry — so the old numbers keep a stable link:
+    https://decbench.com/leaderboard/?snapshot=DD-MM-YYYY
+    """
+    from datetime import date as date_cls
+
+    from rich.console import Console
+
+    from decbench.rendering.snapshots import (
+        SnapshotError,
+        capture,
+        default_snapshots_dir,
+        parse_date,
+        write_snapshot_tree,
+    )
+
+    console = Console()
+    store = Path(snapshots_dir) if snapshots_dir else default_snapshots_dir()
+
+    try:
+        day = parse_date(date_text) if date_text else date_cls.today()
+        snap = capture(Path(site_dir), store, day, label=label, note=note, force=force)
+    except SnapshotError as e:
+        raise click.ClickException(str(e)) from e
+
+    # Materialize into the tree straight away so the snapshot is live without a
+    # rebuild; the next `site build` regenerates the same copy from the store.
+    from decbench.rendering.snapshots import load_snapshots
+
+    write_snapshot_tree(Path(site_dir) / "data", load_snapshots(store))
+
+    size = sum(p.stat().st_size for p in snap.path.rglob("*") if p.is_file())
+    console.print(f"Snapshot [bold]{snap.name}[/bold] written to {snap.path} ({_human_size(size)})")
+    console.print(f"  scoreboard : {snap.meta['scoreboard']} v{snap.meta['version']}")
+    console.print(f"  functions  : {snap.meta['functions']:,}")
+    console.print(f"  decompilers: {', '.join(snap.meta['decompilers'])}")
+    console.print(f"\nLink: [bold]https://decbench.com/leaderboard/?snapshot={snap.name}[/bold]")
+    console.print("\nNext: [bold]git add snapshots site && git commit && git push[/bold]")
 
 
 def _human_size(num_bytes: int) -> str:

@@ -24,9 +24,9 @@ from typing import Any
 from decbench.models.function_data import FunctionData
 from decbench.models.scoreboard import Scoreboard
 from decbench.rendering.aggregate import (
-    ALL_PRESET,
     SAMPLE_SET_PRESET,
     build_payloads,
+    default_preset_name,
     union_leaders,
 )
 from decbench.rendering.content import Content, load_content
@@ -42,6 +42,7 @@ from decbench.rendering.html import (
     iter_site_icons,
     linked_assets,
 )
+from decbench.rendering.snapshots import Snapshot, load_snapshots, write_snapshot_tree
 
 __all__ = ["build_site"]
 
@@ -80,6 +81,7 @@ def build_site(
     function_data: FunctionData,
     out_dir: Path,
     content: Content | None = None,
+    snapshots: list[Snapshot] | None = None,
 ) -> None:
     """Write the complete static site tree to ``out_dir``.
 
@@ -96,6 +98,10 @@ def build_site(
         content: Parsed ``content/``; loaded (and cached) when omitted. The CLI
             passes one with the repo-root ``CHANGELOG.md`` injected into the
             ``changelog`` view (see :meth:`Content.with_view`).
+        snapshots: Recorded scoreboard snapshots to copy into ``data/snapshots/``;
+            read from the repo-root store when omitted. Because they are copied
+            under the wholly-regenerated ``data/``, the store stays the single
+            source of truth and a deleted snapshot disappears on the next build.
     """
     from decbench.rendering.visibility import apply_hidden_decompilers
 
@@ -110,6 +116,7 @@ def build_site(
     (out_dir / _DATA_DIR).mkdir()
     (out_dir / _FONTS_DIR).mkdir()
 
+    snapshots = load_snapshots() if snapshots is None else snapshots
     payloads = build_payloads(function_data, scoreboard)
     root_social, view_social = _social_meta(content, payloads["aggregates"])
 
@@ -132,6 +139,7 @@ def build_site(
 
     for name, payload in payloads.items():
         _write_json(out_dir / _DATA_DIR / f"{name}.json", payload)
+    write_snapshot_tree(out_dir / _DATA_DIR, snapshots)
 
     _write_view_subpages(scoreboard, function_data, content, out_dir, view_social)
     current = {spec.id for spec in content.visible_views(function_data is not None)}
@@ -248,19 +256,6 @@ def _social_meta(
     return root, per_view
 
 
-def _default_preset(aggregates: dict[str, Any]) -> str:
-    """The preset the leaderboard opens on — the one flagged ``default`` in the payload.
-
-    Falls back to the first preset, then to the reserved all-corpus combo of a
-    preset-less run, so :func:`union_leaders` always has a real combo to read.
-    """
-    presets = aggregates.get("presets") or []
-    for preset in presets:
-        if preset.get("default"):
-            return str(preset["name"])
-    return str(presets[0]["name"]) if presets else ALL_PRESET
-
-
 def _format_leaders(ranked: list[tuple[float, str, str]], count: int = 3) -> str:
     """A ranking as ``"1. Hex-Rays 47.7% · 2. Kuna 47.5% · 3. angr 45.3%"``.
 
@@ -279,7 +274,7 @@ def _view_descriptions(aggregates: dict[str, Any]) -> dict[str, str]:
     Union over the on-screen decompilers; the view page quotes the sample-set top-3
     (all decompilers, since that is where the LLM agents render). Kept <= 200 chars.
     """
-    default_preset = _default_preset(aggregates)
+    default_preset = default_preset_name(aggregates)
     unopt_top3 = _format_leaders(
         union_leaders(aggregates, default_preset, exclude_sample_set_only=True)
     )
@@ -306,6 +301,10 @@ def _view_descriptions(aggregates: dict[str, Any]) -> dict[str, str]:
         ),
         "view": view,
         "changelog": "What changed in the DecBench benchmark and site.",
+        "snapshots": (
+            "Dated snapshots of the DecBench scoreboard — stable links back to the "
+            "numbers as they stood, filterable by decompiler version."
+        ),
         "about": (
             "How DecBench works: three ground-truth metrics (control flow, types, "
             "recompilation) over real C projects, firmware, and malware."

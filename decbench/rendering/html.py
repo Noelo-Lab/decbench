@@ -350,7 +350,12 @@ def render_html_report(
     if function_data is None:
         assets = static_assets()
     else:
-        assets = inline_assets(build_payloads(function_data, scoreboard))
+        payloads = build_payloads(function_data, scoreboard)
+        # A single file cannot serve a snapshot store: the frozen payloads live in
+        # the deployed tree. Ship an empty index rather than no key at all, so the
+        # snapshots view renders its empty state instead of a fetch error.
+        payloads["snapshots"] = []
+        assets = inline_assets(payloads)
     html = build_page(scoreboard, function_data, assets, content)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html, encoding="utf-8")
@@ -391,6 +396,10 @@ def build_page(
     nav = "".join(_nav_item(spec, active=spec.id == active) for spec in visible)
     selector = _dataset_selector(function_data, content) if has_data else ""
     banner = f'<div class="banner">{site.no_function_data_banner}</div>' if not has_data else ""
+    # Filled by app.js under `?snapshot=`. It sits OUTSIDE every `.view` section so
+    # one notice covers the whole site, and so `showBanner`'s per-view `.banner`
+    # lookup can never overwrite it with an error.
+    snapshot_notice = '<div class="banner snapshot" id="snapshot-notice" hidden></div>'
     sections = "".join(
         _view_section(content, spec, scoreboard, function_data, active=spec.id == active)
         for spec in visible
@@ -437,7 +446,7 @@ def build_page(
         </aside>
 
         <main class="main">
-            {banner}
+            {banner}{snapshot_notice}
             {sections}
             <div class="rule"></div>
             <footer>{footer}</footer>
@@ -488,8 +497,10 @@ def _side_stats(
 ) -> str:
     """The sidebar counters.
 
-    ``functions``/``binaries`` carry a ``data-stat`` hook because ``app.js``
-    rewrites them to the selected dataset's counts; the other two are fixed.
+    All four carry a ``data-stat`` hook: ``app.js`` rewrites ``functions``/
+    ``binaries`` to the selected dataset's counts, and rewrites the other two from
+    the loaded payload so a snapshot of a day with a different backend set does not
+    leave today's counts standing beside its numbers.
 
     The decompiler/metric counts prefer ``function_data``: after an additive
     resume (``DECBENCH_DECOMPILERS=r2dec ... run_benchmark``) the tree's
@@ -500,8 +511,8 @@ def _side_stats(
     stats = [
         ("functions", f"{scoreboard.total_functions:,}", True),
         ("binaries", f"{scoreboard.total_binaries:,}", True),
-        ("decompilers", f"{len(counted.decompilers)}", False),
-        ("metrics", f"{len(counted.metrics)}", False),
+        ("decompilers", f"{len(counted.decompilers)}", True),
+        ("metrics", f"{len(counted.metrics)}", True),
     ]
     out = ""
     for name, value, live in stats:
