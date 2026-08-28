@@ -55,6 +55,9 @@ class Decompiler(ABC):
     name: str = "base"
     display_name: str = "Base Decompiler"
     version: str | None = None
+    # False for a column DecBench cannot produce itself — an external submission
+    # scored through `decbench evalkit ingest`. See decompilers/external.py.
+    runnable: bool = True
 
     def __init__(self, config: DecompilerConfig | None = None):
         """Initialize the decompiler.

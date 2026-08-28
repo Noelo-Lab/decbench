@@ -73,6 +73,8 @@ If you have a decompiler you would like to add to DecBench, but would prefer to 
 You can compete on it by downloading the dataset, decompiling each requested function, and sending back the zip to `decbench@mahaloz.re` or opening an issue. 
 This does not require installing decbench, and does not require you to build the site.
 
+If you would rather your decompiled output was not republished, say so when you send the results: we can score and rank you exactly like everyone else while withholding the code itself, so the View page shows `private` where your output would be and nothing ships to the [dataset](https://huggingface.co/datasets/noelo-lab/decbench-dataset).
+
 ```bash
 # download the dataset
 curl -L https://huggingface.co/datasets/noelo-lab/decbench-dataset/resolve/main/kits/decbench-evalkit-sample-set.zip -o kit.zip && unzip kit.zip

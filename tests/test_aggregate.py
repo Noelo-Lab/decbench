@@ -12,6 +12,7 @@ real corpus happens not to exercise.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -913,3 +914,47 @@ def test_cost_block_llm_entry_wins_over_batch_for_the_same_decompiler() -> None:
     cost = _cost_block(load_content(), _cost_data(info))
     assert cost["alpha"]["time"]["basis"] == "per-function"
     assert cost["alpha"]["time"]["median_s"] == 100.0
+
+
+def _private_sample() -> SampleEntry:
+    """One sample carrying both a public and a private-artifact decompiler's code."""
+    return SampleEntry(
+        project="proj",
+        opt_level="O0",
+        binary="bin",
+        function="xstrdup",
+        source_code="int f(void) { return 0; }",
+        decompiled={"alpha": "int alpha_body(void) {}", "ventris": "int SECRET(void) {}"},
+        values={"alpha": {"ged": 0.0}, "ventris": {"ged": 1.0}},
+        perfects={"alpha": {"ged": True}, "ventris": {"ged": False}},
+    )
+
+
+def test_payload_withholds_private_artifact_code_but_keeps_its_scores() -> None:
+    """A `private_artifacts` submitter ships numbers, never C.
+
+    The published sample must carry no body for that id anywhere in the payload —
+    this is the gate the Pages workflow backstops.
+    """
+    data = _data([_func("f", values={"alpha": {"ged": 0.0}}, perfects={"alpha": {"ged": True}})])
+    data.samples = [_private_sample()]
+
+    emitted = build_payloads(data, Scoreboard())["samples"][0]
+
+    assert "ventris" not in emitted["decompiled"], "private code must not ship"
+    assert emitted["private"] == ["ventris"], "the id stays selectable on the View page"
+    assert emitted["decompiled"]["alpha"] == "int alpha_body(void) {}", "others untouched"
+    assert emitted["values"]["ventris"] == {"ged": 1.0}, "scores still published"
+    assert emitted["perfects"]["ventris"] == {"ged": False}
+    assert "SECRET" not in json.dumps(emitted), "no body anywhere in the entry"
+
+
+def test_payload_redaction_does_not_mutate_the_stored_samples() -> None:
+    """`function_results.json` legitimately keeps the full code; only the payload drops it."""
+    data = _data([_func("f", values={"alpha": {"ged": 0.0}}, perfects={"alpha": {"ged": True}})])
+    data.samples = [_private_sample()]
+
+    build_payloads(data, Scoreboard())
+
+    assert data.samples[0].decompiled["ventris"] == "int SECRET(void) {}"
+    assert data.samples[0].private == []

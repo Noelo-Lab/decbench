@@ -143,13 +143,16 @@ def results_tree(tmp_path: Path) -> Path:
     return root
 
 
-def test_default_exclusions_are_empty(results_tree: Path):
-    """EXCLUDED_DECOMPILERS is empty (the last excluded backend was fully
-    removed 2026-07-23), so a default load strips nothing — any future
-    exclusion must be a deliberate edit of the tuple."""
-    assert EXCLUDED_DECOMPILERS == ()
+def test_default_exclusions_cover_the_private_submitters(results_tree: Path):
+    """Every id here must be a deliberate edit of the tuple, not a stray addition.
+
+    ``ventris`` is excluded because RevEng.AI submitted their eval kit on the
+    condition that the decompiled artifacts stay private, and this publisher
+    cannot ship a column's scores without also copying its ``.c`` files.
+    """
+    assert EXCLUDED_DECOMPILERS == ("ventris",)
     fd = load_dataset(results_tree)
-    assert fd.decompilers == [KEPT, STRIPPED]
+    assert fd.decompilers == [KEPT, STRIPPED], "a fixture id is not accidentally excluded"
 
 
 def test_load_dataset_strips_explicit_exclusions(results_tree: Path):

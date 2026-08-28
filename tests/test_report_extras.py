@@ -21,6 +21,7 @@ from decbench.scoring.report_extras import (
     build_samples,
     compute_compile_rates,
     malware_projects,
+    redact_private_artifacts,
 )
 
 SOURCE = """\
@@ -330,3 +331,26 @@ def test_build_payloads_scrubs_prebaked_malware(tmp_path: Path, monkeypatch) -> 
     assert payloads["samples"] == []
     assert "hardest" not in payloads
     assert "MALWARE_C" not in json.dumps(payloads)
+
+
+def test_redact_private_artifacts_matches_versioned_ids() -> None:
+    """A pinned `name@version` column inherits its base name's privacy setting."""
+    entry = SampleEntry(
+        project="p",
+        opt_level="O0",
+        binary="b",
+        function="f",
+        decompiled={"ghidra@12.1": "keep", "ventris@2": "hide", "ventris": "hide"},
+    )
+    [out] = redact_private_artifacts([entry], {"ventris"})
+    assert out.decompiled == {"ghidra@12.1": "keep"}
+    assert out.private == ["ventris", "ventris@2"]
+
+
+def test_redact_private_artifacts_is_a_noop_with_nothing_private() -> None:
+    """The common case must not copy every sample entry."""
+    entry = SampleEntry(
+        project="p", opt_level="O0", binary="b", function="f", decompiled={"ghidra": "c"}
+    )
+    assert redact_private_artifacts([entry], set())[0] is entry
+    assert redact_private_artifacts([entry], {"ventris"})[0] is entry

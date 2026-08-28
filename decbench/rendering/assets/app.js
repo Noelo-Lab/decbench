@@ -949,11 +949,20 @@ function renderViewEntry() {
             '<p class="view-desc">Source unavailable &mdash; ' +
             escapeHtml(sourceUnavailableReason(s.source_status)) + '</p></div>';
     }
-    html += '<div class="cmp-col"><h4>' + escapeHtml(dec) + '</h4>' +
-        (code ? ('<pre><code>' + hlC(code) + '</code></pre>')
-              : ('<p class="view-desc">No output from ' + escapeHtml(dec) +
-                 ' for this function.</p>')) +
-        '</div>';
+    const withheld = (s.private || []).indexOf(dec) >= 0;
+    let panel;
+    if (code) {
+        panel = '<pre><code>' + hlC(code) + '</code></pre>';
+    } else if (withheld) {
+        panel = '<p class="view-desc">private &mdash; ' + escapeHtml(decName(dec)) +
+            ' submitted this function, but asked that their decompiled output not be ' +
+            'published. The scores above are measured on the real output.</p>';
+    } else {
+        panel = '<p class="view-desc">No output from ' + escapeHtml(dec) +
+            ' for this function.</p>';
+    }
+    html += '<div class="cmp-col' + (withheld ? ' src-missing' : '') + '"><h4>' +
+        escapeHtml(dec) + '</h4>' + panel + '</div>';
     html += '</div>';
     c.body.innerHTML = html;
 }
@@ -992,6 +1001,7 @@ function initView(samples) {
     const decs = [];
     for (const s of VIEW_SAMPLES) {
         for (const d in (s.decompiled || {})) if (decs.indexOf(d) < 0) decs.push(d);
+        for (const d of (s.private || [])) if (decs.indexOf(d) < 0) decs.push(d);
     }
     decs.sort();
     if (c.dec) {

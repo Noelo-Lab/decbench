@@ -65,6 +65,9 @@ CANONICAL_DECOMPILERS = (
     "codex",
     "claude-code",
     "manifold",
+    "glaurung",
+    "fission",
+    "ventris",
 )
 SELECTED_DECOMPILERS = CANONICAL_DECOMPILERS
 if os.environ.get("DECBENCH_REEVAL_DECOMPILERS"):

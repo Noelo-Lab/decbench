@@ -2,6 +2,7 @@
 
 import contextlib
 
+from decbench.decompilers import external  # noqa: F401  (registers the external ids)
 from decbench.decompilers.base import Decompiler, DecompilerConfig
 from decbench.decompilers.registry import DecompilerRegistry, register_decompiler
 
