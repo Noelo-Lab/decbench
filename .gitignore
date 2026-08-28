@@ -157,3 +157,4 @@ tests/example_project/*.s
 .claude/
 # LLM decompiler traces (prompt + transcript + CLI session log per function)
 /llm_traces/
+private/
