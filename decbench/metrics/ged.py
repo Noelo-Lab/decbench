@@ -153,7 +153,7 @@ class GEDMetric(Metric):
     requires_source_cfg = True
     requires_decompiled_cfg = True
 
-    cache_version = "3"
+    cache_version = "4"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)

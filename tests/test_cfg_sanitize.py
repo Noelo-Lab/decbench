@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from decbench.utils.cfg import escape_literal_control_bytes, sanitize_decompiled_c
+from decbench.utils.cfg import (
+    escape_literal_control_bytes,
+    rewrite_computed_gotos,
+    sanitize_decompiled_c,
+)
 
 
 class TestEscapeLiteralControlBytes:
@@ -55,3 +59,42 @@ class TestSanitizeDecompiledC:
 
     def test_still_widens_int128(self) -> None:
         assert sanitize_decompiled_c("unsigned __int128 x;") == "unsigned long long x;"
+
+    def test_applies_computed_goto_rewrite(self) -> None:
+        assert sanitize_decompiled_c("int f(void)\n{\n    goto *x;\n}\n") == (
+            "int f(void)\n{\n    {}\n}\n"
+        )
+
+
+class TestRewriteComputedGotos:
+    def test_plain_identifier_target(self) -> None:
+        assert rewrite_computed_gotos("goto *x;") == "{}"
+
+    def test_cast_and_parenthesized_target(self) -> None:
+        assert rewrite_computed_gotos("goto *((void *)(a0->field_dc->field_10));") == "{}"
+
+    def test_function_pointer_cast_target(self) -> None:
+        assert rewrite_computed_gotos("goto *(void (*)(void))expr;") == "{}"
+
+    def test_table_indexed_target(self) -> None:
+        assert rewrite_computed_gotos("goto *(fn_table[i]);") == "{}"
+
+    def test_braceless_if_branch_stays_valid(self) -> None:
+        out = rewrite_computed_gotos("if (c)\n    goto *p;\nelse\n    goto done;")
+        assert out == "if (c)\n    {}\nelse\n    goto done;"
+
+    def test_plain_goto_untouched(self) -> None:
+        code = "goto LABEL_800083f;"
+        assert rewrite_computed_gotos(code) == code
+
+    def test_string_literal_untouched(self) -> None:
+        code = 's = "contains goto *x; in a string";'
+        assert rewrite_computed_gotos(code) == code
+
+    def test_comment_untouched(self) -> None:
+        code = "// goto *x;\ngoto real_label;"
+        assert rewrite_computed_gotos(code) == code
+
+    def test_idempotent(self) -> None:
+        once = rewrite_computed_gotos("goto *((void *)(x));")
+        assert rewrite_computed_gotos(once) == once
