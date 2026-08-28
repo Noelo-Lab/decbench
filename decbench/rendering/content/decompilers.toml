@@ -13,6 +13,14 @@
 #                 for this backend (see the logo block there). Flows through the
 #                 registry so app.js knows which ids can show a logo; the whole
 #                 logo experiment is gated by SHOW_LOGOS in app.js. Default false.
+#   private_artifacts  true when the submitter asked us to keep their decompiled
+#                 output unpublished. The scores still render everywhere; only the
+#                 code bodies are withheld — the View page shows a "private" notice
+#                 in place of the C. Enforced at the last payload gate
+#                 (rendering/aggregate.py::build_payloads), mirrored by
+#                 publish/layout.py's EXCLUDED_DECOMPILERS for the HuggingFace
+#                 dataset, and backstopped in .github/workflows/pages.yml.
+#                 Default false.
 #   version_overrides  optional inline table mapping a RAW version string (as the
 #                 run recorded it, e.g. IDA's "920") to a prettier one ("9.2").
 #
@@ -100,6 +108,14 @@ display_name = "Fission"
 url = "https://github.com/fission-systems/Fission"
 license = "open-source"
 logo = true
+
+[[decompiler]]
+id = "ventris"
+display_name = "Ventris"
+url = "https://reveng.ai/"
+license = "closed-source"
+logo = true
+private_artifacts = true
 
 [[decompiler]]
 id = "claude-code"

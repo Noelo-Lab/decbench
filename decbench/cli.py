@@ -302,17 +302,24 @@ def list_decompilers() -> None:
     console = Console()
     table = Table(title="Available Decompilers")
     table.add_column("Name", style="cyan")
+    table.add_column("Kind")
     table.add_column("Available", style="green")
     table.add_column("Version")
 
+    rows: list[tuple[str, str, str, str]] = []
     for name in DecompilerRegistry.list_registered():
         try:
             dec = DecompilerRegistry.get(name)
-            available = "Y" if dec.is_available() else "N"
-            version = dec.get_version() or "-"
-            table.add_row(name, available, version)
+            kind = "plugin" if dec.runnable else "external"
+            rows.append((name, kind, "Y" if dec.is_available() else "N", dec.get_version() or "-"))
         except Exception:
-            table.add_row(name, "N", "-")
+            rows.append((name, "plugin", "N", "-"))
+
+    # Backends we can run first, then the external-submission ids; import order
+    # would otherwise decide, and that shifts with whichever optional backend
+    # imports on this host.
+    for row in sorted(rows, key=lambda r: (r[1] == "external", r[0])):
+        table.add_row(*row)
 
     console.print(table)
 

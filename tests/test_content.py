@@ -297,6 +297,13 @@ def test_decompiler_license_and_logo_are_parsed(content: Content) -> None:
     assert content.decompiler("reko").logo is False
 
 
+def test_private_artifacts_defaults_off_and_is_parsed(content: Content) -> None:
+    """Only submitters who asked for it are flagged; everyone else publishes code."""
+    assert content.decompiler("angr").private_artifacts is False
+    assert content.decompiler("ventris").private_artifacts is True
+    assert content.private_artifact_decompilers == frozenset({"ventris"})
+
+
 def test_decompiler_lookup_matches_base_name_for_versioned_ids(content: Content) -> None:
     """A versioned id (ghidra@12.1) with no exact entry resolves to its base."""
     spec = content.decompiler("ghidra@12.1")

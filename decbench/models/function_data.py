@@ -122,6 +122,14 @@ class SampleEntry(BaseModel):
     decompiled: dict[str, str] = Field(
         default_factory=dict, description="decompiler id -> decompiled C"
     )
+    private: list[str] = Field(
+        default_factory=list,
+        description="decompiler ids whose output was withheld from this entry at the "
+        "submitter's request — their code is stripped from :attr:`decompiled` and the "
+        "View page renders a 'private' notice instead. Set only on the published "
+        "payload (see :func:`decbench.rendering.aggregate.build_payloads`); the stored "
+        "function_results.json keeps the full code.",
+    )
     values: dict[str, dict[str, float]] = Field(
         default_factory=dict, description="decompiler -> metric -> value"
     )

@@ -54,6 +54,9 @@ KIT_FORMAT_VERSION = 1
 
 _DEC_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
+# Every column whose published GED lives in the overlay. `reeval_ged.py` rebuilds
+# `ged_new.json` from scratch and keeps only the slices of the decompilers it was
+# told to promote, so an id missing from this list has its GED silently wiped.
 _REEVAL_DEFAULTS = (
     "angr",
     "ghidra",
@@ -64,11 +67,11 @@ _REEVAL_DEFAULTS = (
     "dewolf",
     "codex",
     "claude-code",
+    "manifold",
+    "glaurung",
+    "fission",
+    "ventris",
 )
-
-# The LLM backends' byte_match rides on inline checkpoint values, so the
-# byte_match refresh command must not name them.
-_LLM_BASENAMES = ("codex", "claude-code", "kimi-code")
 
 
 @dataclass
@@ -628,8 +631,7 @@ def _evaluate_group(
 
 def _next_steps(tree: Path, dec_id: str) -> str:
     """The exact follow-up commands to publish the new column."""
-    reeval = ",".join((*_REEVAL_DEFAULTS, dec_id))
-    bm_reeval = ",".join((*(d for d in _REEVAL_DEFAULTS if d not in _LLM_BASENAMES), dec_id))
+    reeval = ",".join(dict.fromkeys((*_REEVAL_DEFAULTS, dec_id)))
     return (
         f"Next steps to publish '{dec_id}':\n"
         f"  1) refresh the type_match overlay from the updated checkpoints:\n"
@@ -637,10 +639,13 @@ def _next_steps(tree: Path, dec_id: str) -> str:
         f"  2) refresh the GED overlay with the new column included:\n"
         f"       DECBENCH_REEVAL_DECOMPILERS={reeval} \\\n"
         f"         python scripts/reeval_ged.py {tree}\n"
-        f"  3) refresh the byte_match overlay (skip ONLY if you ingested with\n"
-        f"     --evaluate and are content with the inline values; without this the\n"
-        f"     published Compiles rate for the new column stays empty):\n"
-        f"       DECBENCH_REEVAL_DECOMPILERS={bm_reeval} \\\n"
+        f"  3) refresh the byte_match overlay for the NEW column only (its merge is\n"
+        f"     additive, so every other column keeps its overlay; naming a column\n"
+        f"     that has no byte_match checkpoint yet would newly compute — and move\n"
+        f"     — its published score). Skip ONLY if you ingested with --evaluate and\n"
+        f"     are content with the inline values; without this the published\n"
+        f"     Compiles rate for the new column stays empty:\n"
+        f"       DECBENCH_REEVAL_DECOMPILERS={dec_id} \\\n"
         f"         python scripts/reeval_bytematch.py {tree}\n"
         f"  4) canonical guarded rebuild of the derived files (+ --audit to check\n"
         f"     for silent coverage gaps):\n"

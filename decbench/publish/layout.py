@@ -50,9 +50,14 @@ DATASET_REPO_ID = "noelo-lab/decbench-dataset"
 DEFAULT_CONFIGS = ["sample-set", "large", "unoptimized", "optimized", "inlined", "full"]
 _FULL = "full"
 _FULL_DESCRIPTION = "everything — all projects and opt levels (O0 + O2 + O2-noinline)"
-# The dataset mirror of the site's `[decompilers] hidden`. Empty since the last
-# excluded backend was removed; the strip mechanism stays for future use.
-EXCLUDED_DECOMPILERS: tuple[str, ...] = ()
+# The dataset mirror of the site's `[decompilers] hidden`. `ventris` is here for
+# the other reason a column can be unpublishable: RevEng.AI submitted their eval
+# kit on the condition that the decompiled artifacts stay private, and this
+# publisher has no way to ship a column's scores without also copying its `.c`
+# files. The site keeps their scores (only the code bodies are withheld there —
+# `private_artifacts` in rendering/content/decompilers.toml); the dataset drops
+# the column outright.
+EXCLUDED_DECOMPILERS: tuple[str, ...] = ("ventris",)
 
 Logger = Callable[[str], None]
 

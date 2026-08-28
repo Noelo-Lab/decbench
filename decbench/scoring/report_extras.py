@@ -151,6 +151,51 @@ def drop_malware_entries(entries: Sequence[Any], excluded: set[str], kind: str) 
     return kept
 
 
+def redact_private_artifacts(entries: Sequence[Any], private: Iterable[str]) -> list[Any]:
+    """Strip the code of ``private`` decompilers out of already-built sample entries.
+
+    Some contributors submit an eval kit on the condition that their decompiled
+    output is not republished (``private_artifacts`` in
+    ``rendering/content/decompilers.toml``). Their *scores* are published like
+    everyone else's — only the C is withheld: the id moves from
+    :attr:`SampleEntry.decompiled` to :attr:`SampleEntry.private`, which keeps it
+    selectable on the View page and tells the client to render a notice instead of
+    a code panel.
+
+    Applied at the payload gate rather than where samples are built, for the same
+    reason as :func:`drop_malware_entries`: ``decbench site build`` and ``decbench
+    report`` both read a ``function_results.json`` straight from disk, and that
+    file legitimately holds the full code.
+    """
+    private_set = set(private)
+    if not entries or not private_set:
+        return list(entries or [])
+    out: list[Any] = []
+    redacted: Counter[str] = Counter()
+    for entry in entries:
+        code = dict(entry.decompiled or {})
+        hit = sorted(d for d in code if _base_dec(d) in private_set)
+        if not hit:
+            out.append(entry)
+            continue
+        for dec in hit:
+            code.pop(dec)
+            redacted[dec] += 1
+        out.append(
+            entry.model_copy(
+                update={"decompiled": code, "private": sorted(set(entry.private) | set(hit))}
+            )
+        )
+    for dec, n in sorted(redacted.items()):
+        logger.info("samples: withheld %d %s code bodies (private artifacts)", n, dec)
+    return out
+
+
+def _base_dec(dec_id: str) -> str:
+    """A decompiler id's base name (``ghidra@12.1`` -> ``ghidra``)."""
+    return dec_id.split("@", 1)[0]
+
+
 def _perfect_value_for(metric_name: str) -> float:
     """Return a metric's perfect value, tolerating an unregistered metric."""
     try:

@@ -248,6 +248,11 @@ class DecompilerSpec:
     is shown as a muted tag in the leaderboard's stacked name cell. ``logo`` marks
     that a ``.dlogo-<id>`` background-image is shipped in ``app.css``; both flow
     through the registry so the client can render them (see ``aggregate.py``).
+
+    ``private_artifacts`` marks a submitter who asked us not to publish their
+    decompiled output. Their scores render everywhere as usual; only the code
+    bodies are withheld, at the payload gate in
+    :func:`decbench.rendering.aggregate.build_payloads`.
     """
 
     id: str
@@ -255,6 +260,7 @@ class DecompilerSpec:
     url: str = ""
     license: str = ""
     logo: bool = False
+    private_artifacts: bool = False
     version_overrides: dict[str, str] = field(default_factory=dict)
 
     def pretty_version(self, raw: str | None) -> str | None:
@@ -412,6 +418,15 @@ class Content:
             if pricing.name == name:
                 return pricing
         return None
+
+    @property
+    def private_artifact_decompilers(self) -> frozenset[str]:
+        """Ids whose decompiled code must never reach a published payload.
+
+        Base names, matched the way ``site.toml``'s ``hidden`` list is, so a
+        versioned id inherits its base entry's setting.
+        """
+        return frozenset(d.id for d in self.decompilers if d.private_artifacts)
 
 
 def _read(name: str) -> str:
@@ -620,6 +635,7 @@ def load_content() -> Content:
             url=d.get("url", ""),
             license=d.get("license", ""),
             logo=bool(d.get("logo", False)),
+            private_artifacts=bool(d.get("private_artifacts", False)),
             version_overrides=dict(d.get("version_overrides") or {}),
         )
         for d in _load_toml("decompilers.toml")["decompiler"]

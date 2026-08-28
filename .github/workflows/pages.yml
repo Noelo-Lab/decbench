@@ -85,6 +85,57 @@ jobs:
           fi
           echo "Malware payload check: clean."
 
+          # Some contributors submit an eval kit on the condition that their
+          # decompiled output is never republished (`private_artifacts` in
+          # decbench/rendering/content/decompilers.toml). Their SCORES are
+          # published; only the code is withheld, by the payload gate in
+          # decbench/rendering/aggregate.py::build_payloads. This is the backstop
+          # for that gate — structural rather than a grep, because the id also
+          # appears legitimately as a key in `values`/`perfects` and as a
+          # decompiler_versions string, and a regex that has to tell those apart is
+          # a guard that fails OPEN.
+          python3 - <<'PYCHECK'
+          import json, pathlib, sys
+
+          try:
+              import tomllib
+          except ModuleNotFoundError:  # fail CLOSED: no parser, no publish
+              sys.exit("::error::python3 has no tomllib (needs 3.11+); cannot check private artifacts")
+
+          toml = pathlib.Path("decbench/rendering/content/decompilers.toml")
+          private = {
+              d["id"]
+              for d in tomllib.loads(toml.read_text())["decompiler"]
+              if d.get("private_artifacts")
+          }
+          if not private:
+              print("Private-artifact check: no private decompilers declared.")
+              sys.exit(0)
+
+          bad = []
+          for path in sorted(pathlib.Path("site/data").rglob("*.json")):
+              try:
+                  payload = json.loads(path.read_text())
+              except json.JSONDecodeError as exc:
+                  sys.exit(f"::error::{path} is not valid JSON ({exc})")
+              if not isinstance(payload, list):
+                  continue
+              for entry in payload:
+                  code = (entry or {}).get("decompiled") or {}
+                  for dec in private:
+                      if code.get(dec):
+                          bad.append(f"{path}: {entry.get('function')} carries {dec} code")
+
+          if bad:
+              print("::error::Private decompiler output found in site/data — refusing to publish.")
+              for line in bad[:20]:
+                  print(f"  {line}")
+              if len(bad) > 20:
+                  print(f"  ... and {len(bad) - 20} more")
+              sys.exit(1)
+          print(f"Private-artifact check: clean ({', '.join(sorted(private))} withheld).")
+          PYCHECK
+
           echo "Site tree ($(du -sh site | cut -f1)):"
           find site -type f | sort | sed 's/^/  /'
 

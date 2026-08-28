@@ -24,7 +24,8 @@ NO CSS, NO JS, NO prose. Layout:
   `FunctionData.cost_info`'s token facts, so a price fix is a re-render;
   ships all-zero PLACEHOLDER cards that render n/a until the maintainer fills
   them in), PLUS `decompilers.toml` — the decompiler registry (id → official
-  display_name/url/version_overrides, e.g. ida→"Hex-Rays" + "920"→"9.2");
+  display_name/url/license/logo/`private_artifacts`/version_overrides, e.g.
+  ida→"Hex-Rays" + "920"→"9.2");
   shipped into `aggregates.json` as `decompiler_registry` (hidden decompilers
   gated out), rendered as linked names + versions everywhere `app.js` names a
   decompiler. Loaded by `content.py` (`load_content()`) into frozen
@@ -569,6 +570,25 @@ for that id (grayscale at rest, full colour on row hover), consumed when `app.js
 rendered anywhere. Both fields are emitted only when set, so the payload stays
 minimal.
 
+`private_artifacts = true` marks a contributor who submitted an eval kit on the
+condition that their decompiled output is never republished. It changes nothing
+about their numbers — every table, chart and per-function score is built and
+rendered exactly as for any other column. It only withholds the C: at the payload
+gate (`aggregate.build_payloads`, the same last gate the malware scrub uses)
+`report_extras.redact_private_artifacts` moves the id out of each
+`SampleEntry.decompiled` and into `SampleEntry.private`, so `samples.json` ships
+no body for it and the View page renders a "private" notice in the code panel
+while still listing the decompiler in its dropdown and printing its scores. The
+stored `function_results.json` keeps the full code — it is local-only
+(`/results*` is gitignored) and the reeval scripts read the on-disk
+`decompiled/<dec>_*.c` artifacts to produce those very scores. Two mirrors keep
+it honest: `publish/layout.EXCLUDED_DECOMPILERS` drops the column from the
+HuggingFace dataset entirely (see
+[dataset-publishing.md](dataset-publishing.md)), and `.github/workflows/pages.yml`
+re-reads `decompilers.toml` and structurally rejects any `site/data/*.json`
+carrying a body for a private id, so a regression in the gate breaks the deploy
+instead of shipping.
+
 The presentation comes from `decbench/rendering/content/decompilers.toml`. The
 `version` is `decompiler_versions[id]` passed through that entry's `version_overrides`
 (e.g. IDA's raw `"920"` → `"9.2"`), prettified **server-side** so the client renders
@@ -719,3 +739,10 @@ opens that page.
 Malware targets are **excluded** from both payloads at build time
 (`scoring/report_extras.py`), because publishing them is what these files would
 otherwise do — see the note there. They still count in every score.
+
+`private` (default `[]`) lists the decompiler ids whose code was withheld from
+that entry — contributors flagged `private_artifacts` in `decompilers.toml`. The
+id is removed from `decompiled` and appears here instead; `values`/`perfects`
+still carry its scores. `app.js` unions `private` into the View page's decompiler
+dropdown (a column with no bodies would otherwise be unselectable, taking its
+per-function scores with it) and renders a "private" notice in the code panel.

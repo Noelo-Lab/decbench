@@ -47,6 +47,16 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
   Dockerfiles in `docker/`.
 - **LLM / coding-agent** (`llm_dec.py`: `codex`, `claude-code`, `kimi-code`):
   Part II below.
+- **External / not runnable here** (`external.py`: `fission`, `ventris`): ids we
+  publish but can never execute — their numbers arrive as sample-set submissions
+  (Part III) and there is no tool to drive. Each is one row in
+  `EXTERNAL_DECOMPILERS`; the generated class has `runnable = False`,
+  `is_available()` permanently False, and a `decompile_binary` that raises with a
+  pointer to `decbench evalkit ingest`. That makes them *known* —
+  `decbench list-decompilers` shows them with `Kind = external` — while every
+  consumer that already gates on `is_available()` skips them untouched. A tool
+  that *does* have an in-tree backend does not belong here even when its published
+  numbers came from a submission (`glaurung` and `manifold` both have backends).
 
 Key conventions (all families):
 
@@ -563,7 +573,7 @@ drops the C output into the kit's `results/` folder, runs the bundled
 as a new **sample-set-only** decompiler column (like `codex`/`claude-code`),
 scored by GED / type_match / byte_match exactly like Ghidra or IDA, and it
 appears on the [leaderboard](https://decbench.com/). The published columns
-ingested this way are `manifold`, `glaurung`, and `fission`.
+ingested this way are `manifold`, `glaurung`, `fission`, and `ventris`.
 
 ```
 MAINTAINER                     CONTRIBUTOR                    MAINTAINER
@@ -721,7 +731,12 @@ python scripts/finalize_results.py results/full_run --audit
 #      [decompilers] sample_set_only (off-preset coverage would look
 #      artificially bad under the shared denominator).
 #    - decbench/rendering/content/decompilers.toml: add a [[decompiler]] entry
-#      (id/display_name/url/license) so the column renders a linked name.
+#      (id/display_name/url/license) so the column renders a linked name. Add
+#      `private_artifacts = true` if the contributor asked us not to republish
+#      their decompiled output (see "Private artifacts" below).
+#    - decbench/decompilers/external.py: add an EXTERNAL_DECOMPILERS row when the
+#      tool has no in-tree backend, so `decbench list-decompilers` knows the name
+#      and reports it as `external` rather than pretending it never existed.
 
 # 5. Re-run the info writers (a function_results rebuild does NOT repopulate
 #    them). External kits carry no timing/token facts, so the new column simply
@@ -733,7 +748,37 @@ python scripts/compute_dataset_info.py results/full_run
 decbench site build results/full_run -o site/
 ```
 
-## 4. Limitations
+## 4. Private artifacts (scores published, code withheld)
+
+A contributor may submit on the condition that their decompiled output is never
+republished. Set `private_artifacts = true` on their `[[decompiler]]` entry in
+`decbench/rendering/content/decompilers.toml` and everything else stays the same:
+they are scored, ranked, and charted like any other column — only the C is
+withheld.
+
+What that flag actually does:
+
+- **Site / report.** `aggregate.build_payloads` — the same last gate the malware
+  scrub uses — calls `report_extras.redact_private_artifacts`, which moves the id
+  out of every `SampleEntry.decompiled` and into `SampleEntry.private`. So
+  `site/data/samples.json` ships no body for it, and the View page still lists the
+  decompiler in its dropdown and prints its per-function scores, with a "private"
+  notice where the code panel would be. Nothing else in the site changes.
+- **HuggingFace dataset.** The publisher cannot ship a column's scores without also
+  copying its `results/<dec>/**.c` tree, so the column is dropped outright via
+  `publish/layout.EXCLUDED_DECOMPILERS`. Never run `publish_dataset.py
+  --no-exclusions` against the live dataset repo.
+- **CI.** `.github/workflows/pages.yml` re-reads `decompilers.toml` and refuses to
+  deploy a `site/data/*.json` carrying a body for a private id — a fail-closed
+  backstop for the gate above.
+
+What it does **not** do: the results tree keeps the full code. That is deliberate
+and required — `scripts/reeval_ged.py` and `scripts/reeval_bytematch.py` read the
+on-disk `decompiled/<dec>_*.c` artifacts to produce the very scores we publish.
+`/results*` is gitignored, so those artifacts never leave the machine; keep the
+submission zip out of git too (`private/` is ignored for exactly this).
+
+## 5. Limitations
 
 - **byte_match abstains for ARM/PE** on hosts without the cross/MinGW
   toolchains (a non-scoring result, not a 0) — GED + type_match carry those

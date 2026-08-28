@@ -734,11 +734,22 @@ def build_payloads(function_data: FunctionData, scoreboard: Scoreboard) -> dict[
     code baked in. Filtering here too means an old results tree cannot republish it.
     Only the code-carrying payload is touched: ``aggregates`` (the leaderboard /
     metrics / distance numbers) still counts every malware function.
-    """
-    from decbench.scoring.report_extras import drop_malware_entries, malware_projects
 
+    It is the same gate for the other kind of withheld code: a contributor whose
+    ``decompilers.toml`` entry sets ``private_artifacts`` keeps every score but
+    ships no C (see
+    :func:`decbench.scoring.report_extras.redact_private_artifacts`).
+    """
+    from decbench.scoring.report_extras import (
+        drop_malware_entries,
+        malware_projects,
+        redact_private_artifacts,
+    )
+
+    content = load_content()
     excluded = malware_projects(function_data)
     samples = drop_malware_entries(function_data.samples, excluded, "samples")
+    samples = redact_private_artifacts(samples, content.private_artifact_decompilers)
 
     return {
         "aggregates": build_aggregates(function_data, scoreboard),
