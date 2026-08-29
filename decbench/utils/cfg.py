@@ -40,6 +40,11 @@ _FUNCTION_MARKER = re.compile(
     re.M,
 )
 
+# GNU computed goto (``goto *EXPR;``). Matched on masked text (see
+# :func:`rewrite_computed_gotos`) so literals and comments are never rewritten;
+# a plain ``goto label;`` has no ``*`` and never matches.
+_COMPUTED_GOTO = re.compile(r"\bgoto\s*\*")
+
 # Tab and newline are the emitted source's own layout, not literal payload.
 _KEEP_RAW_BYTES = frozenset({0x09, 0x0A})
 
@@ -76,11 +81,41 @@ def escape_literal_control_bytes(text: str) -> str:
     return "".join(out)
 
 
+def rewrite_computed_gotos(text: str) -> str:
+    """Replace GNU computed gotos with an empty compound statement.
+
+    ``goto *EXPR;`` is valid GNU C, but Joern parses it into ``UnsupportedStmt``
+    nodes whose block loses its entry-point role — so a correct single-block
+    function scores GED 2 instead of 0. The target of a computed goto is not
+    statically derivable, so the statement contributes no CFG edge either way;
+    replacing it with ``{}`` (rather than deleting it, which would break a
+    braceless ``if (c) goto *p; else ...``) leaves exactly the control flow the
+    surrounding code defines, with block roles intact. Matching runs on the
+    comment/literal-masked text, so a ``"goto *"`` inside a string is never
+    rewritten, and a plain ``goto label;`` never matches. Idempotent: the
+    replacement contains no ``goto *``.
+    """
+    code = _mask_c_noncode(text)
+    pieces: list[str] = []
+    pos = 0
+    for match in _COMPUTED_GOTO.finditer(code):
+        if match.start() < pos:
+            continue
+        end = code.find(";", match.end())
+        if end < 0:
+            continue
+        pieces.append(text[pos : match.start()])
+        pieces.append("{}")
+        pos = end + 1
+    pieces.append(text[pos:])
+    return "".join(pieces)
+
+
 def sanitize_decompiled_c(text: str) -> str:
     """Clean decompiler-specific C quirks that break Joern's parser.
 
     GED only cares about CFG *structure*, so these edits are purely to make the
-    body parseable — they never touch control flow. Four tool-specific quirks:
+    body parseable — they never touch control flow. Five quirks:
 
     * **Aggregate/array return type** (angr/ghidra): ``T [N] name(...)``
       is rewritten to ``T name(...)``. Anchored to the start of a line so a real
@@ -89,12 +124,15 @@ def sanitize_decompiled_c(text: str) -> str:
       is not valid C.
     * **128-bit types** (ida): ``__int128`` is widened to ``long long`` (the exact
       width is irrelevant to the CFG).
+    * **Computed gotos** (any decompiler emitting GNU C): ``goto *EXPR;`` becomes
+      an empty compound statement — see :func:`rewrite_computed_gotos`.
     * **Raw control bytes in literals**: escaped, so a verbatim ``.rodata`` string
       cannot make pyjoern's fast parser emit non-JSON and void the invocation.
     """
     text = _AGG_RETURN.sub(r"\1 \2", text)
     text = _REG_ANNOTATION.sub("", text)
     text = text.replace("unsigned __int128", "unsigned long long").replace("__int128", "long long")
+    text = rewrite_computed_gotos(text)
     return escape_literal_control_bytes(text)
 
 
