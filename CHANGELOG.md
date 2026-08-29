@@ -2,6 +2,9 @@
 
 Significant changes to DecBench that introduce or update results, which can be viewable on the website.
 
+### 2026-08-28
+- Added the Ventris decompiler.
+
 ### 2026-08-27
 - Added dated scoreboard snapshots. Any page accepts `?snapshot=DD-MM-YYYY` to render
   the numbers as they stood on that day, and `/snapshots/` lists them.
