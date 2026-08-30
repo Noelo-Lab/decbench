@@ -200,20 +200,28 @@ def decompile_binary(
 | `decompiled_code` (C string) | GED, byte_match | **Yes** — without it nothing scores |
 | `address` (ELF-space) | type_match, byte_match | **Yes** |
 | `variables: list[VariableInfo]` | type_match | Recommended (else parsed out of the C) |
-| `line_mappings: list[LineMapping]` | type_match variable correspondence / CFG attribution | Strongly recommended; without it only ABI argument and stack anchors remain |
+| `line_mappings: list[LineMapping]` | type_match variable correspondence / CFG attribution | Strongly recommended; a producer with no address provenance at all is scored by the caveated legacy name correspondence |
 | `metadata` (e.g. goto/bool counts) | report extras | Optional |
 
 A backend that only fills `decompiled_code` + correct `address` already scores
 on GED and byte_match, and type_match parses variable declarations in its C
 (signature → ABI-positioned args + locals). This parsing recovers types and variable
 bindings only; production occurrence addresses are never synthesized with a name
-regex. Variables and line maps improve fidelity but are not required. Type_match
-correspondence uses address evidence only, so a backend without occurrence
-addresses is matched through ABI argument and stack anchors alone. Each function
-records its correspondence evidence marker (`native` in the current metric; the
-historical `mixed` and `fallback_only` categories are still read for older data),
-and the site marks a Type percentage whose producer occurrence policy was
-`unavailable` or `undeclared`.
+regex. Variables and line maps improve fidelity but are not required.
+
+Type_match picks its correspondence per producer output. A backend whose output carries
+instruction-address provenance anywhere (variable `addresses`, or variable `line_numbers`
+plus an addressed line map) is scored by the address correspondence: address evidence,
+ABI argument positions, and explicit stack offsets, with variable names never used. A
+backend that carries none at all — Glaurung, Manifold, the LLM/coding-agent backends,
+imported eval-kit C — is scored by the legacy name correspondence instead of losing its
+residual variables entirely: ABI position, then calibrated stack offset (including one
+recovered from a `local_XX`/`var_XX` name), then exact variable name. Each function
+records `correspondence` (`address`/`legacy_name`) and its evidence marker: `native` on
+the address path, `fallback_only` on the legacy path (the historical `mixed` category is
+still read for older data). `fallback_only` marks the Type percentage with the site's
+asterisk, as does a producer occurrence policy of `unavailable` or `undeclared`.
+See [metrics.md](metrics.md#two-correspondence-paths).
 
 #### Native line and variable provenance
 
@@ -438,12 +446,14 @@ final `Expr`/`Stmt` nodes and JSON renderer still carry no origin; Manifold's
 upstream head is still the pinned `b63daf30ccfbcc3a88d7ead117df17e41127f499`.
 
 Their DecBench adapters deliberately emit no native occurrence addresses or
-line maps. Final-name-to-earlier-IR joins would be heuristic, so local-variable
-correspondence falls back to ABI argument and stack anchors, which apply only when
-the final C signature or a structured stack offset exposes them. Metric metadata
-records `linemap_present=false`, an `unavailable` producer occurrence policy, and
-zero `decompiler_address_variables`; the report's producer-policy caveat covers
-those scores.
+line maps. Final-name-to-earlier-IR joins would be heuristic, so these producers carry no
+address provenance at all and type_match scores them through the legacy name
+correspondence: ABI argument position, calibrated stack offset (including one recovered
+from a `local_XX`/`var_XX` name), then exact variable name. Metric metadata records
+`correspondence=legacy_name`, `variable_match_evidence=fallback_only`,
+`linemap_present=false`, an `unavailable` producer occurrence policy, and zero
+`decompiler_address_variables`; the report's evidence and producer-policy caveats both
+cover those scores.
 
 The minimal upstream implementation is a provenance-carrying final AST, not a
 post-render text matcher:

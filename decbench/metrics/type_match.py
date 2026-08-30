@@ -260,11 +260,61 @@ def _uncommitted_size(var: Any) -> int | None:
     return _UNCOMMITTED_WIDTH.get(t)
 
 
-def _effective_offset(var: Any) -> int | None:
-    """Return only an explicit stack offset; variable names are not evidence."""
+# Several decompilers encode a stack slot's frame offset in the NAME while leaving
+# ``stack_offset`` unset. ``*Stack_*`` is excluded (mixed sign conventions).
+_LEGACY_NAME_OFFSET = re.compile(r"^(?:local|var)_([0-9a-fA-F]+)$")
+
+
+def _legacy_effective_offset(var: Any) -> int | None:
+    """Stack offset for a decompiled var under the LEGACY name-based correspondence.
+
+    Recovers the offset from a ``local_``/``var_`` name when ``stack_offset`` is unset.
+    Names are not sound evidence, so this is reachable only from the legacy path, which
+    is reserved for producers that expose no instruction-address provenance at all and
+    whose rows are caveated accordingly. The address correspondence reads
+    ``VariableInfo.stack_offset`` alone and never calls this.
+    """
 
     offset = getattr(var, "stack_offset", None)
-    return int(offset) if offset is not None else None
+    if offset is not None:
+        return int(offset)
+    match = _LEGACY_NAME_OFFSET.match(getattr(var, "name", "") or "")
+    return -int(match.group(1), 16) if match else None
+
+
+# Backends whose final output cannot carry machine-to-variable lineage at all, so
+# the address correspondence can never fire for them: their AST discards it
+# (glaurung, manifold) or they emit only text (the LLM agents and external
+# text-only submissions). These fall back to the legacy name correspondence.
+#
+# This is a DECLARED capability, deliberately not measured from the data. A
+# checkpoint can lack per-variable provenance for reasons that have nothing to do
+# with the backend -- the canonical results/full_run checkpoints store line
+# mappings without per-variable addresses for every backend, including IDA and
+# Ghidra. Inferring from the data there would silently move every published
+# column onto name matching. Anything not listed keeps the strict address path.
+LEGACY_CORRESPONDENCE_BACKENDS = frozenset(
+    {
+        "glaurung",
+        "manifold",
+        "claude-code",
+        "codex",
+        "kimi-code",
+        "fission",
+        "ventris",
+    }
+)
+
+
+def uses_legacy_correspondence(decompiler_name: str | None) -> bool:
+    """Whether *decompiler_name* is declared incapable of address provenance.
+
+    The name may carry a version (``glaurung@0.3``); identity is the base name.
+    """
+
+    if not decompiler_name:
+        return False
+    return str(decompiler_name).split("@", 1)[0] in LEGACY_CORRESPONDENCE_BACKENDS
 
 
 def extract_ground_truth_type_index(binary_path: Path) -> GroundTruthTypeIndex:
@@ -914,7 +964,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "13"
+    cache_version = "14"
 
     weight = 1.0
     lower_is_better = False
@@ -955,14 +1005,33 @@ class TypeMatchMetric(Metric):
         binary_path: Path | None = None,
         source_context: PreprocessedSourceContext | None = None,
         backend: str = "decompiler",
+        address_provenance: bool | None = None,
         **kwargs: Any,
     ) -> MetricValue:
-        """Compute type accuracy after type-blind variable correspondence."""
+        """Compute type accuracy through the correspondence this producer can support.
+
+        ``address_provenance`` declares whether this producer can carry
+        instruction-address provenance at all. ``compute_for_binary`` resolves it once
+        per ``DecompilationResult`` from the DECLARED backend capability
+        (:func:`uses_legacy_correspondence`), never from the checkpoint's contents: a
+        checkpoint can lack per-variable provenance for reasons unrelated to the
+        backend. An undeclared ``None`` keeps the address correspondence, so no caller
+        loses it implicitly.
+
+        With address provenance the correspondence is type-blind and address-anchored
+        (instruction addresses, ABI argument positions, calibrated stack offsets). A
+        producer with no address provenance at all cannot score residual variables that
+        way, so it falls back to the legacy name-based correspondence and its rows are
+        flagged ``fallback_only`` for the report's asterisk.
+        """
         if not ground_truth_vars:
             return MetricValue(
                 value=0.0,
                 metadata={"error": "No ground truth types available"},
             )
+
+        if address_provenance is False:
+            return self._legacy_value(decompiled, ground_truth_vars, calibration_shift)
 
         raw_variables = list(getattr(decompiled, "variables", []) or [])
         inferred_from_code = False
@@ -1149,6 +1218,7 @@ class TypeMatchMetric(Metric):
             gt_stack_vars,
             decomp_stack_vars,
             extra_metadata={
+                "correspondence": "address",
                 **({"variable_match_evidence": evidence_kind} if evidence_kind is not None else {}),
                 "match_stage_counts": dict(sorted(stage_counts.items())),
                 "matched_count": len(result.matches),
@@ -1209,6 +1279,92 @@ class TypeMatchMetric(Metric):
             metadata=metadata,
         )
 
+    def _legacy_value(
+        self,
+        decompiled: FunctionDecompilation,
+        ground_truth_vars: list[dict[str, Any]],
+        calibration_shift: int | None,
+    ) -> MetricValue:
+        """Score a producer with no address provenance through the legacy correspondence."""
+
+        variables = list(getattr(decompiled, "variables", []) or [])
+        key_inputs = [
+            "legacy_name",
+            [
+                {
+                    "name": variable.name,
+                    "type": variable.type,
+                    "stack_offset": variable.stack_offset,
+                    "size": variable.size,
+                    "kind": getattr(variable, "kind", None),
+                    "arg_index": variable.arg_index,
+                }
+                for variable in variables
+            ],
+            decompiled.decompiled_code if not variables else "",
+            ground_truth_vars,
+            calibration_shift,
+        ]
+        return self._cached_value(
+            key_inputs,
+            lambda: self._compute_legacy_uncached(
+                decompiled,
+                ground_truth_vars,
+                calibration_shift,
+            ),
+        )
+
+    def _compute_legacy_uncached(
+        self,
+        decompiled: FunctionDecompilation,
+        ground_truth_vars: list[dict[str, Any]],
+        calibration_shift: int | None,
+    ) -> MetricValue:
+        """Legacy correspondence: ABI arguments, calibrated stack offsets, then exact name."""
+
+        gt_stack_vars = sum(1 for gv in ground_truth_vars if gv.get("rbp_offset"))
+
+        if not decompiled.variables and decompiled.decompiled_code:
+            parsed = parse_c_variables(decompiled.decompiled_code, decompiled.name)
+            if parsed:
+                decompiled = decompiled.model_copy(update={"variables": parsed})
+
+        decomp_stack_vars = sum(
+            1 for v in decompiled.variables if _legacy_effective_offset(v) is not None
+        )
+
+        if decompiled.variables:
+            value = self._match_structured(
+                decompiled,
+                ground_truth_vars,
+                gt_stack_vars,
+                decomp_stack_vars,
+                calibration_shift,
+            )
+        else:
+            value = self._match_by_regex(
+                decompiled,
+                ground_truth_vars,
+                gt_stack_vars,
+                decomp_stack_vars,
+            )
+
+        value.metadata.update(
+            {
+                "correspondence": "legacy_name",
+                "variable_match_evidence": "fallback_only",
+                "linemap_present": False,
+                "producer_variable_occurrence_policy": (
+                    variable_occurrence_policy(getattr(decompiled, "metadata", None))
+                    or "undeclared"
+                ),
+                "structured_occurrence_mode": "producer",
+                "source_address_variables": 0,
+                "decompiler_address_variables": 0,
+            }
+        )
+        return value
+
     def _match_structured(
         self,
         decompiled: FunctionDecompilation,
@@ -1217,14 +1373,17 @@ class TypeMatchMetric(Metric):
         decomp_stack_vars: int,
         calibration_shift: int | None = None,
     ) -> MetricValue:
-        """Match GT vars to structured decompiled vars: arg position, then
-        stack offset, then name. Each decompiled variable is credited at most
-        once (DWARF can report more variables at an offset/name than the
-        decompiler recovered, e.g. shadowed locals)."""
+        """LEGACY correspondence: arg position, then stack offset, then exact name.
+
+        Each decompiled variable is credited at most once (DWARF can report more
+        variables at an offset/name than the decompiler recovered, e.g. shadowed
+        locals). Reached only from ``_legacy_value``, for producers with no address
+        provenance; names are never matching evidence on the address path.
+        """
         gt_offsets: list[int] = []
         for gv in ground_truth_vars:
             gt_offsets.extend(gv.get("rbp_offset", []))
-        var_offsets: list[int | None] = [_effective_offset(v) for v in decompiled.variables]
+        var_offsets: list[int | None] = [_legacy_effective_offset(v) for v in decompiled.variables]
         decomp_offsets = [o for o in var_offsets if o is not None]
         gt_off_set = set(gt_offsets)
 
@@ -1356,7 +1515,7 @@ class TypeMatchMetric(Metric):
         gt_stack_vars: int,
         decomp_stack_vars: int,
     ) -> MetricValue:
-        """Match GT vars to regex-extracted decompiled declarations by name."""
+        """LEGACY name-only fallback for a producer that exposes no structured variables."""
         decomp_vars = extract_types_from_decompiled_code(decompiled.decompiled_code)
 
         if not decomp_vars:
@@ -1449,6 +1608,9 @@ class TypeMatchMetric(Metric):
             )
 
         binary_shift = self._calibrate_binary_shift(decompilation, gt_types)
+        address_provenance = not uses_legacy_correspondence(
+            decompilation.decompiler.decompiler_name
+        )
 
         for func_name, func_decomp in decompilation.functions.items():
             try:
@@ -1467,6 +1629,7 @@ class TypeMatchMetric(Metric):
                     binary_path=binary_path,
                     source_context=source_context,
                     backend=decompilation.decompiler.decompiler_name,
+                    address_provenance=address_provenance,
                 )
                 function_results[func_name] = value
 

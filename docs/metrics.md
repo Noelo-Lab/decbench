@@ -114,7 +114,11 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="13"`. Version 13 removed the `usage` and `address+usage`
+Current `cache_version="14"`. Version 14 splits scoring into two correspondence paths
+(see [Two correspondence paths](#two-correspondence-paths)): a producer that carries
+instruction-address provenance keeps the address correspondence unchanged, while a
+producer that carries none at all falls back to the legacy name-based correspondence
+instead of scoring residual variables not at all. Version 13 removed the `usage` and `address+usage`
 correspondence modes: address evidence is now the only correspondence channel, so the
 matcher no longer builds type-blind C usage feature vectors and the per-function key no
 longer carries them. Version 12 masks the ARM Thumb bit off a function
@@ -151,9 +155,69 @@ bzip2/ghidra, 108 functions: cold 5 hits / 103 misses, then a second process at
 the default random seed 25/83 and a third 51/57 — versus 108/0 with sorted
 lists). Any new list in that payload must be sorted too.
 
+### Two correspondence paths
+
+Which correspondence a function is scored through depends on the **declared capability
+of the backend that produced it**, never on what a particular checkpoint happens to
+contain. `LEGACY_CORRESPONDENCE_BACKENDS` names the backends whose final output cannot
+carry machine-to-variable lineage at all — their AST discards it (Glaurung, Manifold) or
+they emit only text (the LLM agents, external text-only submissions). Everything else,
+and anything unlisted, takes the address path.
+
+Declared rather than measured is load-bearing, not a style choice. A checkpoint can lack
+per-variable provenance for reasons that have nothing to do with the backend: the
+canonical `results/full_run` checkpoints store line mappings **without** per-variable
+addresses for every backend, IDA and Ghidra included. A predicate that probed the data
+would read those as address-incapable and silently move the entire published leaderboard
+onto exact-name matching, caveating every row. `compute_for_binary` therefore resolves
+the choice from `decompiler_name` alone, once per `DecompilationResult`.
+
+Producer scope rather than function scope also matters: an address-capable backend
+routinely emits individual functions with no addressed variable (measured: 12 of 107 IDA
+functions in `bzip2` at `-O0`), and a per-function rule would both switch those rows onto
+name matching and make two identical outputs score differently depending on whether an
+unrelated sibling function carried an address. The declaration is explicit, not implied:
+`address_provenance=None` — any caller that does not declare — keeps the address
+correspondence, so only a deliberate `False` selects the legacy path.
+
+- **Address correspondence** (angr, Binary Ninja, Ghidra, IDA, Kuna, r2dec, dewolf, Reko,
+  annotated RetDec). Unchanged, type-blind, and described below. Variable names are never
+  matching evidence on this path, and stack offsets come only from an explicit
+  `VariableInfo.stack_offset`. Rows record `correspondence: "address"`.
+- **Legacy name correspondence** (Glaurung, Manifold, the LLM/coding-agent backends,
+  imported eval-kit C — any producer with no address provenance anywhere in its output).
+  This is the pre-provenance matcher preserved verbatim as `_match_structured` /
+  `_match_by_regex`: ABI argument position, then calibrated stack offset — including an
+  offset recovered from a `local_XX` / `var_XX` name via `_legacy_effective_offset` —
+  then **exact variable name**, with a regex declaration parse when the producer exposes
+  no structured variables at all. Rows record `correspondence: "legacy_name"`.
+
+Name-derived offsets and exact-name matching are not sound evidence, and they are
+unreachable from the address path: `_legacy_effective_offset` is called only from
+`_match_structured` and the legacy stack-variable count. That keeps the type-blind
+guarantee for every address-capable backend intact while giving a name-only producer a
+score at all.
+
+Legacy rows are **not measured the same way** and are caveated accordingly. Each one
+reports `variable_match_evidence: "fallback_only"`, which is the existing category the
+report, the site, and `typematch_ab`'s `asterisk_recommended` already treat as a
+measurement caveat — no parallel mechanism was added. They also report
+`linemap_present: false`, zero `decompiler_address_variables`, and the producer's own
+declared `producer_variable_occurrence_policy` (`unavailable`/`undeclared` for every
+current legacy producer, which independently triggers the same asterisk). They report
+`structured_occurrence_mode: "producer"`, which on this path asserts only what that guard
+exists to assert — that no experimental regex occurrence synthesis was used.
+
+Measured effect on Glaurung (`full_glaurung` checkpoints, uncached): `bzip2` `-O0`
+97 functions, mean `0.3153 → 0.6028`, 61 functions improved and 0 regressed;
+`gzip` `-O0` 134 functions, mean `0.3391 → 0.6723`, 84 improved and 0 regressed.
+No address-capable slice moves at all.
+
+### The address correspondence
+
 Variable correspondence is selected **before** recovered types are graded.
 The matcher receives no variable names, types, or sizes. There is exactly one
-correspondence channel, **address evidence**: unique ABI argument positions and
+correspondence channel on this path, **address evidence**: unique ABI argument positions and
 calibrated stack slots are accepted first, then variables are paired by
 ambiguity-checked weighted overlap between source instruction addresses and
 decompiler line-map addresses. A prototype `usage` channel and a stacked
@@ -196,18 +260,20 @@ section. DWARF file indexes follow the line table's own version because an
 object may pair a DWARF v5 compilation unit with a pre-v5 line program.
 Unsupported formats or architectures transparently continue with
 argument/stack anchors alone.
-Backends and old checkpoints without those fields remain scorable through ABI
-argument positions and explicit stack offsets. Exact variable names are never a
-matching fallback. At `-O2`, a register local with no address and no anchor
-remains a false negative.
+An address-capable backend's functions without those fields remain scorable through ABI
+argument positions and explicit stack offsets, and exact variable names are never a
+matching fallback there. At `-O2`, a register local with no address and no anchor
+remains a false negative. A producer with no address provenance anywhere takes the
+legacy name correspondence instead (see
+[Two correspondence paths](#two-correspondence-paths)).
 
 The denominator is unchanged: every retained DWARF variable is graded, even if
 it has no observable correspondence evidence. Metadata records accepted-stage
 provenance as `variable_match_evidence`, plus stage counts, observable counts,
-and line-map presence. With address evidence as the only channel the production
-metric now only ever emits `native`; the reporting path still reads the historical
-`mixed` and `fallback_only` categories so older overlays and function data stay
-loadable. The field is absent when correspondence accepted no pair, because no
+and line-map presence. The address path emits only `native`; the legacy name path emits
+`fallback_only` for every row it scores. The reporting path also still reads the
+historical `mixed` category so older overlays and function data stay loadable. On the
+address path the field is absent when correspondence accepted no pair, because no
 evidence channel was actually used. These values support the report's
 measurement caveat without publishing variable names, addresses, stable
 identities, types, or absolute source paths.
@@ -364,10 +430,11 @@ the exact non-overlapping union used by the merged, non-canonical overlay.
 The reporting path accepts
 `MetricValue.metadata["variable_match_evidence"]` as `native`, `mixed`, or
 `fallback_only`, based on the evidence actually used for that function rather than
-the backend's name. The `mixed` and `fallback_only` categories described the removed
-usage channel; the production metric no longer emits them, and they are retained on
-the reading side only so older overlays and function data stay loadable. When the
-production metric emits it, this provenance is carried through
+the backend's name. `native` is the address correspondence and `fallback_only` is the
+legacy name correspondence; `mixed` described the removed usage channel and is retained
+on the reading side only so older overlays and function data stay loadable. The
+companion `correspondence` field (`address` / `legacy_name`) names the path in plain
+terms for a reviewer reading raw metadata. This provenance is carried through
 `FunctionRecord.metric_evidence`
 and the site's `metric_evidence` aggregate. The row's
 `producer_variable_occurrence_policy` is independently carried through the matching

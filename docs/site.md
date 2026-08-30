@@ -555,9 +555,12 @@ not percentages: the UI renders `count/total` next to the bar, and computing the
 percentage client-side keeps the JSON small and lossless.
 
 `metric_evidence` is additive and sparse. For `type_match`, `native` means native
-line/address provenance and deterministic anchors were sufficient. `mixed` and
-`fallback_only` recorded the removed type-blind usage channel; the metric no longer
-emits them and the client still reads them so older data stays loadable.
+line/address provenance and deterministic anchors were sufficient. `fallback_only` means
+the row was scored by the legacy name-based correspondence, which is what a producer
+carrying no instruction-address provenance at all falls back to
+([metrics.md](metrics.md#two-correspondence-paths)). `mixed` recorded the removed
+type-blind usage channel; the metric no longer emits it and the client still reads it so
+older data stays loadable.
 `measured` counts this
 decompiler's finite values in the active combo. It is deliberately not the shared
 `per_metric` denominator, which can also include a decompiler's missing value as a

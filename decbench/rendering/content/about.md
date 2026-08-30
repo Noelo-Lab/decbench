@@ -391,14 +391,21 @@ When we sampled this process, we found it was small.
 ### Type Edit Distance
 Type recovery first has to determine which decompiled variable corresponds to which
 source variable. When a backend provides native pseudocode-to-instruction provenance,
-we use the variable's instruction addresses; otherwise correspondence falls back to ABI
-argument position and calibrated stack offsets. Instruction-address evidence is the only
-correspondence channel. The heuristic deliberately leaves ambiguous candidates unmatched,
-so a backend that cannot expose sound provenance may conservatively undercount
-recovery. The same caveat applies when a producer cannot expose
-or declare sound variable-occurrence provenance, including a measured row where no
-correspondence was accepted and therefore no evidence category exists. The leaderboard
-marks those Type percentages with an asterisk without changing their scores or denominators.
+we use the variable's instruction addresses, plus ABI argument position and calibrated
+stack offsets; variable names are never evidence there. The heuristic deliberately leaves
+ambiguous candidates unmatched, so a backend that cannot expose sound provenance may
+conservatively undercount recovery.
+
+A backend that exposes no instruction-address provenance at all — Glaurung, Manifold and
+the LLM/coding-agent decompilers, for instance — cannot be measured that way, so we score
+it by the older name-based correspondence instead of not scoring its variables at all:
+argument position, calibrated stack offset, then exact variable name. Name matching is
+weaker evidence and rewards a decompiler that happened to import debug names, so those
+scores are measured differently from the rest of the board. The same caveat applies when
+a producer cannot expose or declare sound variable-occurrence provenance, including a
+measured row where no correspondence was accepted and therefore no evidence category
+exists. The leaderboard marks all of those Type percentages with an asterisk without
+changing their scores or denominators.
 
 ### Recompilation Byte Edit Distance
 The flaw here is that each function is evaluated alone.

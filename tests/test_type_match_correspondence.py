@@ -609,7 +609,15 @@ def test_optional_source_failures_preserve_binary_denominator(
                 name="target",
                 address=0x1000,
                 decompiled_code="int target(int renamed) { return renamed + 1; }",
-                variables=[VariableInfo(name="renamed", type="int", kind="arg", arg_index=0)],
+                variables=[
+                    VariableInfo(
+                        name="renamed",
+                        type="int",
+                        kind="arg",
+                        arg_index=0,
+                        addresses=[0x1004],
+                    )
+                ],
             )
         },
     )
@@ -656,12 +664,21 @@ def test_structured_occurrence_policy_prevents_name_derived_addresses(
         variables=[VariableInfo(name="renamed", type="int")],
     )
 
+    # A sibling function supplies the producer's address provenance, so ``target`` is
+    # scored by the address correspondence with a genuinely empty occurrence field.
+    addressed = FunctionDecompilation(
+        name="other",
+        address=0x2000,
+        decompiled_code="int other(void) { int kept = 1; return kept; }",
+        variables=[VariableInfo(name="kept", type="int", addresses=[0x2004])],
+    )
+
     def score(backend: str) -> Any:
         decompilation = DecompilationResult(
             binary_path=tmp_path / "program",
             binary_name="program",
             decompiler=DecompilerMetadata(decompiler_name=backend),
-            functions={"target": function},
+            functions={"target": function, "other": addressed},
         )
         return _metric().compute_for_binary(decompilation).function_results["target"]
 
@@ -672,8 +689,10 @@ def test_structured_occurrence_policy_prevents_name_derived_addresses(
     assert ghidra.metadata["match_stage_counts"] == {}
     assert ghidra.metadata["producer_variable_occurrence_policy"] == "undeclared"
     assert ghidra.metadata["structured_occurrence_mode"] == "producer"
+    assert ghidra.metadata["correspondence"] == "address"
     assert legacy.value == 0.0
     assert legacy.metadata["match_stage_counts"] == {}
+    assert legacy.metadata["correspondence"] == "address"
 
 
 @pytest.mark.parametrize(
@@ -981,3 +1000,241 @@ def test_unsupported_binary_format_falls_back_to_anchors(tmp_path: Path) -> None
 
     assert result.error is not None and "native:" in result.error, result.error
     assert len(result.variables) == 1
+
+
+def _named_only_decompilation(tmp_path: Path, backend: str) -> DecompilationResult:
+    """A producer that ships names and a frame-offset name, but no address provenance."""
+
+    return DecompilationResult(
+        binary_path=tmp_path / "program",
+        binary_name="program",
+        decompiler=DecompilerMetadata(decompiler_name=backend),
+        functions={
+            "target": FunctionDecompilation(
+                name="target",
+                address=0x1000,
+                decompiled_code=(
+                    "int target(void) { int original; int local_10; sink(original); return 0; }"
+                ),
+                variables=[
+                    VariableInfo(name="original", type="int"),
+                    VariableInfo(name="local_10", type="char"),
+                ],
+            )
+        },
+    )
+
+
+def _named_only_ground_truth() -> list[dict[str, Any]]:
+    return [
+        {
+            "identity": "source:0",
+            "name": "original",
+            "type": ["int"],
+            "rbp_offset": [],
+        },
+        {
+            "identity": "source:1",
+            "name": "unrelated",
+            "type": ["char"],
+            "rbp_offset": [-0x10],
+        },
+    ]
+
+
+def test_producer_without_address_provenance_scores_by_legacy_name(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import decbench.metrics.type_match as type_match_module
+
+    monkeypatch.setattr(
+        type_match_module,
+        "extract_ground_truth_type_index",
+        lambda path: {0x1000: {"target": _named_only_ground_truth()}},
+    )
+
+    result = _metric().compute_for_binary(_named_only_decompilation(tmp_path, "glaurung"))
+    value = result.function_results["target"]
+
+    assert value.value == 1.0
+    assert value.metadata["correspondence"] == "legacy_name"
+    assert value.metadata["matched_by_name"] == 1
+    assert value.metadata["matched_by_offset"] == 1
+
+
+def test_legacy_scored_rows_carry_the_asterisk_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import decbench.metrics.type_match as type_match_module
+    from decbench.scoring.function_data_builder import _metric_evidence_for
+    from decbench.scoring.typematch_ab import ScoreEntry, _evidence_summary
+
+    monkeypatch.setattr(
+        type_match_module,
+        "extract_ground_truth_type_index",
+        lambda path: {0x1000: {"target": _named_only_ground_truth()}},
+    )
+
+    result = _metric().compute_for_binary(_named_only_decompilation(tmp_path, "glaurung"))
+    value = result.function_results["target"]
+
+    assert value.metadata["variable_match_evidence"] == "fallback_only"
+    assert value.metadata["producer_variable_occurrence_policy"] == "undeclared"
+    assert value.metadata["linemap_present"] is False
+    assert value.metadata["decompiler_address_variables"] == 0
+    assert _metric_evidence_for("type_match", value) == "fallback_only"
+
+    key = ("proj", "O0", "program", "target")
+    entry = ScoreEntry(value.value, "fallback_only", "undeclared", "producer")
+    summary = _evidence_summary([("glaurung", key, entry)], {})
+    assert summary["site_caveated"] == 1
+    assert summary["asterisk_recommended"] is True
+
+
+def test_address_capable_producer_never_matches_by_exact_name(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The same names, with address provenance present, must not match by name."""
+
+    import decbench.metrics.type_match as type_match_module
+
+    monkeypatch.setattr(
+        type_match_module,
+        "extract_ground_truth_type_index",
+        lambda path: {0x1000: {"target": _named_only_ground_truth()}},
+    )
+    decompilation = _named_only_decompilation(tmp_path, "ghidra@12.1")
+    decompilation.functions["other"] = FunctionDecompilation(
+        name="other",
+        address=0x2000,
+        decompiled_code="int other(void) { int kept = 1; return kept; }",
+        variables=[VariableInfo(name="kept", type="int", addresses=[0x2004])],
+    )
+
+    value = _metric().compute_for_binary(decompilation).function_results["target"]
+
+    assert value.metadata["correspondence"] == "address"
+    assert value.metadata["matched_by_name"] == 0
+    assert value.metadata.get("variable_match_evidence") != "fallback_only"
+    assert value.value < 1.0
+
+
+def test_address_provenance_is_resolved_per_producer_not_per_function(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """One addressless function inside an address-capable producer stays on the address path."""
+
+    import decbench.metrics.type_match as type_match_module
+
+    monkeypatch.setattr(
+        type_match_module,
+        "extract_ground_truth_type_index",
+        lambda path: {
+            0x1000: {"target": _named_only_ground_truth()},
+            0x2000: {"other": _named_only_ground_truth()},
+        },
+    )
+    decompilation = _named_only_decompilation(tmp_path, "ida")
+    decompilation.functions["other"] = FunctionDecompilation(
+        name="other",
+        address=0x2000,
+        decompiled_code="int other(void) { int original; return 0; }",
+        variables=[VariableInfo(name="original", type="int", addresses=[0x2004])],
+    )
+
+    results = _metric().compute_for_binary(decompilation).function_results
+
+    assert results["target"].metadata["correspondence"] == "address"
+    assert results["other"].metadata["correspondence"] == "address"
+
+
+def test_undeclared_callers_keep_the_address_correspondence() -> None:
+    decompiled = FunctionDecompilation(
+        name="target",
+        address=0x1000,
+        decompiled_code="",
+        variables=[VariableInfo(name="same", type="int")],
+    )
+    ground_truth = [{"identity": "source:0", "name": "same", "type": ["int"], "rbp_offset": []}]
+
+    undeclared = _metric().compute_for_function(decompiled, ground_truth_vars=ground_truth)
+    declared = _metric().compute_for_function(
+        decompiled,
+        ground_truth_vars=ground_truth,
+        address_provenance=False,
+    )
+
+    assert undeclared.value == 0.0
+    assert undeclared.metadata["correspondence"] == "address"
+    assert declared.value == 1.0
+    assert declared.metadata["correspondence"] == "legacy_name"
+
+
+def test_legacy_correspondence_is_declared_per_backend_not_measured() -> None:
+    """Only declared address-incapable backends take the legacy name correspondence."""
+
+    from decbench.metrics.type_match import uses_legacy_correspondence
+
+    for name in ("glaurung", "manifold", "claude-code", "codex", "fission", "ventris"):
+        assert uses_legacy_correspondence(name) is True, name
+    for name in ("ida", "ghidra", "binja", "angr", "kuna", "r2dec", "dewolf", "reko", "retdec"):
+        assert uses_legacy_correspondence(name) is False, name
+
+    assert uses_legacy_correspondence("glaurung@0.3") is True
+    assert uses_legacy_correspondence("ghidra@12.1") is False
+    assert uses_legacy_correspondence(None) is False
+    assert uses_legacy_correspondence("some-new-submission") is False
+
+
+def test_address_backend_without_stored_provenance_keeps_the_address_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A provenance-less checkpoint must NOT move a published column onto name matching.
+
+    Regression test. The canonical results/full_run checkpoints store line mappings
+    without per-variable addresses for every backend, IDA and Ghidra included.Selecting
+    the correspondence by probing the data would silently flip the entire published
+    leaderboard onto exact-name matching and caveat every row.
+    """
+    import decbench.metrics.type_match as type_match_module
+
+    ground_truth = [
+        {
+            "identity": "source:0",
+            "name": "original",
+            "type": ["int"],
+            "is_arg": False,
+            "rbp_offset": [],
+        }
+    ]
+    monkeypatch.setattr(
+        type_match_module,
+        "extract_ground_truth_type_index",
+        lambda path: {0x1000: {"target": ground_truth}},
+    )
+
+    def result_for(decompiler: str) -> Any:
+        return DecompilationResult(
+            binary_path=tmp_path / "program",
+            binary_name="program",
+            decompiler=DecompilerMetadata(decompiler_name=decompiler),
+            functions={
+                "target": FunctionDecompilation(
+                    name="target",
+                    address=0x1000,
+                    decompiled_code="int target(void) { int original = 1; return original; }",
+                    variables=[VariableInfo(name="original", type="int", kind="local")],
+                )
+            },
+        )
+
+    addressed = _metric().compute_for_binary(result_for("ghidra@12.1"))
+    legacy = _metric().compute_for_binary(result_for("glaurung"))
+
+    assert addressed.function_results["target"].metadata["correspondence"] == "address"
+    assert legacy.function_results["target"].metadata["correspondence"] == "legacy_name"
