@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from decbench.metrics.variable_features import analyze_c_function, index_c_functions
+from decbench.metrics.variable_features import index_c_functions
 from decbench.metrics.variable_match import (
     FunctionEvidence,
     SourceBinaryEvidenceContext,
@@ -30,7 +30,6 @@ class SourceEvidenceResult:
     variables: tuple[VariableEvidence, ...]
     source_path: Path | None
     native_address_variables: int
-    usage_variables: int
     error: str | None = None
 
 
@@ -300,7 +299,7 @@ def build_source_evidence(
     ground_truth_vars: list[dict[str, Any]],
     context: PreprocessedSourceContext | None,
 ) -> SourceEvidenceResult:
-    """Join DWARF variables to source addresses and type-blind C usage features."""
+    """Join DWARF variables to their source instruction addresses."""
 
     errors: list[str] = []
     selection = _SourceSelection(None, None)
@@ -326,7 +325,7 @@ def build_source_evidence(
                 preprocessed_path=source_path,
                 include_inlined=True,
                 function_address=function_address,
-                feature_code=("" if is_cxx_preprocessed(source_path) else source_code),
+                function_code=("" if is_cxx_preprocessed(source_path) else source_code),
                 source_lines=(
                     context.source_line_index(source_path) if context is not None else None
                 ),
@@ -340,38 +339,10 @@ def build_source_evidence(
     native_by_id = (
         {variable.identity: variable for variable in native.variables} if native is not None else {}
     )
-    usage = None
-    if source_code is not None and source_path is not None and not is_cxx_preprocessed(source_path):
-        try:
-            usage = analyze_c_function(
-                source_code,
-                function_name,
-                (str(variable.get("name", "")) for variable in ground_truth_vars),
-            )
-        except Exception as exc:  # noqa: BLE001 - anchors remain a safe fallback
-            errors.append(f"usage:{type(exc).__name__}")
-
     variables: list[VariableEvidence] = []
     for index, variable in enumerate(ground_truth_vars):
         identity = str(variable.get("identity") or f"source:{index}")
         native_variable = native_by_id.get(identity)
-        name = str(variable.get("name", ""))
-        raw_features = variable.get("usage_features", ())
-        if isinstance(raw_features, dict):
-            supplied_features = tuple(
-                sorted((str(feature), int(count)) for feature, count in raw_features.items())
-            )
-        else:
-            supplied_features = tuple(
-                sorted((str(feature), int(count)) for feature, count in raw_features)
-            )
-        features: tuple[tuple[str, int], ...]
-        if source_path is not None and is_cxx_preprocessed(source_path):
-            features = ()
-        elif usage is not None and name:
-            features = usage.features.get(name, supplied_features)
-        else:
-            features = supplied_features
         variables.append(
             VariableEvidence(
                 identity=identity,
@@ -387,7 +358,6 @@ def build_source_evidence(
                 arg_index=(
                     int(variable["arg_index"]) if variable.get("arg_index") is not None else None
                 ),
-                usage_features=features,
             )
         )
 
@@ -396,6 +366,5 @@ def build_source_evidence(
         frozen,
         source_path,
         sum(bool(variable.addresses) for variable in frozen),
-        sum(bool(variable.usage_features) for variable in frozen),
         ";".join(sorted(set(errors))) or None,
     )

@@ -182,9 +182,9 @@ def test_merge_typematch_overlay() -> None:
 
 def _typematch_provenance(*, cache_version: str = "7", **policy: float) -> dict[str, object]:
     return typematch_overlay_provenance(
-        mode="auto",
-        resolved_mode="address+usage",
-        policy=policy or {"min_overlap": 0.1, "address_weight": 0.5},
+        mode="address",
+        resolved_mode="address",
+        policy=policy or {"min_overlap": 0.1, "ambiguity_margin": 0.03},
         metric_cache_version=cache_version,
         structured_occurrence_mode="producer",
         variable_occurrence_policy_schema="decbench-variable-occurrence-policy-v1",

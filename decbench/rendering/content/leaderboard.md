@@ -53,4 +53,4 @@ on the [view page](https://decbench.com/view/?dataset=sample-set&tier=sample-set
 
 <div id="leaderboard-dataset-desc"></div>
 
-<p id="type-evidence-note" class="view-desc evidence-note" hidden><span class="evidence-mark" aria-hidden="true">*</span> Some Type measurements used type-blind usage evidence, or came from a producer that could not expose or declare sound variable-occurrence provenance. The marker also covers measured rows with no accepted variable correspondence. These limitations can leave plausible matches unmatched, so the reported recovery rate may be conservative. Scores and denominators are calculated identically.</p>
+<p id="type-evidence-note" class="view-desc evidence-note" hidden><span class="evidence-mark" aria-hidden="true">*</span> Some Type measurements came from a producer that could not expose or declare sound variable-occurrence provenance. The marker also covers measured rows with no accepted variable correspondence. These limitations can leave plausible matches unmatched, so the reported recovery rate may be conservative. Scores and denominators are calculated identically.</p>

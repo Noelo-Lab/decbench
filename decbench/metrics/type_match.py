@@ -14,7 +14,7 @@ import re
 from collections import Counter, defaultdict
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from decbench.metrics.base import Metric, MetricConfig
 from decbench.metrics.registry import register_metric
@@ -24,8 +24,6 @@ from decbench.metrics.type_evidence import (
     build_source_evidence,
 )
 from decbench.metrics.variable_match import (
-    MATCHER_MODES,
-    MatcherMode,
     VariableEvidence,
     _die_ranges,
     extract_decompiler_evidence,
@@ -734,9 +732,9 @@ def parse_c_variables(code: str, func_name: str) -> list[Any]:
 
     Recovers function arguments (with ABI ``arg_index``, name-independent) from
     ``func_name``'s signature plus local declarations from the body. A decompiler
-    that emits only C text therefore gets the same argument-position anchors and
-    usage-feature extraction as one exposing structured variables. This declaration
-    parser never supplies occurrence addresses.
+    that emits only C text therefore gets the same argument-position anchors as one
+    exposing structured variables. This declaration parser never supplies occurrence
+    addresses.
     """
     from decbench.models.decompilation import VariableInfo
 
@@ -879,13 +877,7 @@ def _calibrate_shift_multi(
 _VARIABLE_MATCH_DEFAULTS: dict[str, float] = {
     "min_overlap": 0.1,
     "ambiguity_margin": 0.03,
-    "min_usage_similarity": 0.15,
-    "usage_ambiguity_margin": 0.0,
-    "min_combined_similarity": 0.2,
-    "combined_ambiguity_margin": 0.0,
-    "address_weight": 0.5,
 }
-_VARIABLE_MATCH_MODES = (*MATCHER_MODES, "auto")
 
 
 def _matching_evidence_payload(variables: list[VariableEvidence]) -> list[dict[str, Any]]:
@@ -898,7 +890,6 @@ def _matching_evidence_payload(variables: list[VariableEvidence]) -> list[dict[s
             "stack_offsets": sorted(variable.stack_offsets),
             "kind": variable.kind,
             "arg_index": variable.arg_index,
-            "usage_features": sorted(variable.usage_features),
             "inferred_from_code": variable.inferred_from_code,
         }
         for variable in sorted(variables, key=lambda item: item.identity)
@@ -923,7 +914,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "12"
+    cache_version = "13"
 
     weight = 1.0
     lower_is_better = False
@@ -939,11 +930,6 @@ class TypeMatchMetric(Metric):
         self._source_context_key: tuple[Path, str, tuple[Path, ...]] | None = None
         self._source_context: PreprocessedSourceContext | None = None
         options = self.config.extra_options
-        mode = str(options.get("variable_match_mode", "auto"))
-        if mode not in _VARIABLE_MATCH_MODES:
-            raise ValueError(
-                f"unknown variable_match_mode {mode!r}; expected one of " f"{_VARIABLE_MATCH_MODES}"
-            )
         raw_policy = options.get("variable_match_policy", {})
         if not isinstance(raw_policy, dict):
             raise ValueError("variable_match_policy must be a mapping")
@@ -952,13 +938,10 @@ class TypeMatchMetric(Metric):
             raise ValueError(f"unknown variable-match policy options: {sorted(unknown)}")
         if raw_policy.get("use_size_compatibility"):
             raise ValueError("production variable matching cannot use variable sizes")
-        self.variable_match_mode = mode
         self.variable_match_policy = {
             key: float(raw_policy.get(key, default))
             for key, default in _VARIABLE_MATCH_DEFAULTS.items()
         }
-        if not 0 < self.variable_match_policy["address_weight"] < 1:
-            raise ValueError("variable-match address_weight must be strictly between 0 and 1")
         if any(value < 0 for value in self.variable_match_policy.values()):
             raise ValueError("variable-match thresholds and margins must be non-negative")
 
@@ -1056,10 +1039,6 @@ class TypeMatchMetric(Metric):
                 ground_truth_offsets,
                 decompiled_offsets,
             )
-        resolved_mode = cast(
-            MatcherMode,
-            "address+usage" if self.variable_match_mode == "auto" else self.variable_match_mode,
-        )
         linemap_present = bool(
             any(
                 getattr(mapping, "addresses", [])
@@ -1073,11 +1052,7 @@ class TypeMatchMetric(Metric):
             source_result.source_path.name if source_result.source_path is not None else None
         )
         key_inputs = [
-            {
-                "requested_mode": self.variable_match_mode,
-                "resolved_mode": resolved_mode,
-                "policy": self.variable_match_policy,
-            },
+            {"policy": self.variable_match_policy},
             _matching_evidence_payload(list(source_result.variables)),
             _matching_evidence_payload(decompiled_evidence),
             sorted((identity, sorted(forms)) for identity, forms in source_types.items()),
@@ -1107,7 +1082,6 @@ class TypeMatchMetric(Metric):
                 decompiled_evidence,
                 decompiled_by_id,
                 stack_shift_hint,
-                resolved_mode,
                 source_result,
                 evidence_error,
                 linemap_present,
@@ -1123,7 +1097,6 @@ class TypeMatchMetric(Metric):
         decompiled_evidence: list[VariableEvidence],
         decompiled_by_id: dict[str, Any],
         calibration_shift: int | None,
-        resolved_mode: MatcherMode,
         source_result: SourceEvidenceResult,
         evidence_error: str | None,
         linemap_present: bool,
@@ -1134,7 +1107,6 @@ class TypeMatchMetric(Metric):
         result = match_variables(
             source_evidence,
             decompiled_evidence,
-            mode=resolved_mode,
             stack_shift_hint=calibration_shift,
             use_size_compatibility=False,
             **self.variable_match_policy,
@@ -1164,24 +1136,7 @@ class TypeMatchMetric(Metric):
         stage_counts = Counter(match.stage for match in result.matches)
         source_address_vars = sum(bool(variable.addresses) for variable in source_evidence)
         decompiled_address_vars = sum(bool(variable.addresses) for variable in decompiled_evidence)
-        source_usage_vars = sum(bool(variable.usage_features) for variable in source_evidence)
-        decompiled_usage_vars = sum(
-            bool(variable.usage_features) for variable in decompiled_evidence
-        )
-        native_stages = {"argument", "stack", "overlap", "address-only"}
-        fallback_stages = {"usage", "usage-fallback"}
-        used_native = bool(native_stages & stage_counts.keys()) or bool(stage_counts.get("fused"))
-        used_fallback = bool(fallback_stages & stage_counts.keys()) or bool(
-            stage_counts.get("fused")
-        )
-        if not stage_counts:
-            evidence_kind = None
-        elif used_native and used_fallback:
-            evidence_kind = "mixed"
-        elif used_native:
-            evidence_kind = "native"
-        else:
-            evidence_kind = "fallback_only"
+        evidence_kind = "native" if stage_counts else None
 
         return self._build_result(
             tp,
@@ -1195,8 +1150,6 @@ class TypeMatchMetric(Metric):
             decomp_stack_vars,
             extra_metadata={
                 **({"variable_match_evidence": evidence_kind} if evidence_kind is not None else {}),
-                "variable_match_mode_requested": self.variable_match_mode,
-                "variable_match_mode": resolved_mode,
                 "match_stage_counts": dict(sorted(stage_counts.items())),
                 "matched_count": len(result.matches),
                 "unmatched_source_count": len(result.unmatched_source),
@@ -1207,8 +1160,6 @@ class TypeMatchMetric(Metric):
                 "structured_occurrence_mode": "producer",
                 "source_address_variables": source_address_vars,
                 "decompiler_address_variables": decompiled_address_vars,
-                "source_usage_variables": source_usage_vars,
-                "decompiler_usage_variables": decompiled_usage_vars,
                 "source_evidence_error": source_result.error,
                 "decompiler_evidence_error": evidence_error,
                 "source_file": (
@@ -1542,7 +1493,7 @@ class TypeMatchMetric(Metric):
                 "(gt_funcs=%d, gt_vars=%d, gt_stack_vars=%d). Likely causes: "
                 "(a) the decompiler produced no structured variables "
                 "(arguments/stack vars) to align positionally or by offset; "
-                "(b) native address and usage evidence was absent or ambiguous; "
+                "(b) native address evidence was absent or ambiguous; "
                 "(c) recovered types did not match DWARF after correspondence.",
                 binary_path,
                 sum(len(functions) for functions in gt_types.values()),

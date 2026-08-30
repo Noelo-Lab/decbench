@@ -555,9 +555,10 @@ not percentages: the UI renders `count/total` next to the bar, and computing the
 percentage client-side keeps the JSON small and lossless.
 
 `metric_evidence` is additive and sparse. For `type_match`, `native` means native
-line/address provenance and deterministic anchors were sufficient; `mixed` means
-type-blind usage evidence was used jointly with native address/anchor evidence; and
-`fallback_only` means type-blind usage evidence was used alone. `measured` counts this
+line/address provenance and deterministic anchors were sufficient. `mixed` and
+`fallback_only` recorded the removed type-blind usage channel; the metric no longer
+emits them and the client still reads them so older data stays loadable.
+`measured` counts this
 decompiler's finite values in the active combo. It is deliberately not the shared
 `per_metric` denominator, which can also include a decompiler's missing value as a
 miss. Older `function_results.json` files carry no evidence metadata, so the three

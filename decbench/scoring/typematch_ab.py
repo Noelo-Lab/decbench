@@ -1,4 +1,4 @@
-"""Reproducible A/B summaries for TypeMatch correspondence modes."""
+"""Reproducible A/B summaries for independently generated TypeMatch overlays."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from decbench.models.decompilation import (
     VARIABLE_OCCURRENCE_POLICY_SCHEMA,
 )
 from decbench.models.function_data import VARIABLE_MATCH_EVIDENCE
-from decbench.results_store import read_typematch_overlay
+from decbench.results_store import TYPEMATCH_MATCHER_MODE, read_typematch_overlay
 from decbench.utils import binfmt
 from decbench.utils.results_tree import compiled_dir, resolve_binary
 
@@ -49,7 +49,7 @@ class ScoreEntry:
 
 @dataclass(frozen=True)
 class ModeOverlay:
-    """One named mode overlay after validation and key normalization."""
+    """One named overlay after validation and key normalization."""
 
     name: str
     path: Path
@@ -81,7 +81,7 @@ class ProducerEvidence:
 
 @dataclass(frozen=True)
 class Universe:
-    """Frozen function universe used for every backend and mode."""
+    """Frozen function universe used for every backend and overlay."""
 
     selected: dict[FunctionKey, FunctionFact]
     measurable: dict[FunctionKey, FunctionFact]
@@ -687,7 +687,7 @@ def build_report(
     run_scope: str | None = None,
     scope_fairness: str | None = None,
 ) -> dict[str, Any]:
-    """Build one deterministic multi-mode TypeMatch A/B report."""
+    """Build one deterministic multi-overlay TypeMatch A/B report."""
 
     if regression_limit < 0:
         raise ValueError("regression_limit must be non-negative")
@@ -754,15 +754,10 @@ def build_report(
                     f"v11 mode {overlay.name!r} has {unreported} entries without complete "
                     "producer occurrence provenance"
                 )
-        declared = {
-            str(overlay.provenance.get("mode")),
-            str(overlay.provenance.get("resolved_mode")),
-        }
-        if overlay.name == "stacked" and "address+usage" in declared:
-            continue
-        if overlay.name not in declared:
+        if str(overlay.provenance.get("resolved_mode")) != TYPEMATCH_MATCHER_MODE:
             validation_errors.append(
-                f"mode label {overlay.name!r} disagrees with {overlay.path} provenance"
+                f"overlay {overlay.name!r} at {overlay.path} was not produced by the "
+                f"{TYPEMATCH_MATCHER_MODE} correspondence"
             )
 
     denominator_keys = set(universe.measurable)

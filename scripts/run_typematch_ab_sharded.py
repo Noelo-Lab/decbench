@@ -4,7 +4,7 @@
 The driver partitions a frozen function manifest by whole binary, evaluates
 each backend/mode/shard in an isolated subprocess, validates every overlay
 against the checkpoint-derived expected key set, and only then merges and
-reports the four production matcher modes.  All outputs live below the
+reports the production address correspondence.  All outputs live below the
 explicit analysis directory; this script never promotes a canonical overlay.
 """
 
@@ -47,6 +47,7 @@ from decbench.models.decompilation import VARIABLE_OCCURRENCE_POLICY_SCHEMA  # n
 from decbench.rendering.content import load_content  # noqa: E402
 from decbench.rendering.visibility import is_hidden  # noqa: E402
 from decbench.results_store import (  # noqa: E402
+    TYPEMATCH_MATCHER_MODE,
     TypeMatchOverlayError,
     read_typematch_overlay,
     typematch_overlay_manifest_path,
@@ -72,7 +73,7 @@ from scripts.reeval_typematch import (  # noqa: E402
 FunctionKey = tuple[str, str, str, str]
 ScoreKey = tuple[str, str, str, str, str]
 
-MODES = ("address", "usage", "address+usage", "auto")
+MODES = (TYPEMATCH_MATCHER_MODE,)
 RUN_SCOPES = ("full", "sample-set", "experimental-full")
 RUN_PLAN_SCHEMA = "decbench-typematch-ab-sharded-plan-v2"
 JOB_RECEIPT_SCHEMA = "decbench-typematch-ab-sharded-job-v2"
@@ -322,7 +323,7 @@ def _overlay_score_keys(payload: Mapping[str, Mapping[str, object]]) -> set[Scor
 
 
 def _metric_provenance(mode: str) -> dict[str, Any]:
-    metric = TypeMatchMetric(MetricConfig(extra_options={"variable_match_mode": mode}))
+    metric = TypeMatchMetric(MetricConfig())
     try:
         cache_version = int(str(metric.cache_version))
     except ValueError:
@@ -333,7 +334,7 @@ def _metric_provenance(mode: str) -> dict[str, Any]:
         )
     return typematch_overlay_provenance(
         mode=mode,
-        resolved_mode="address+usage" if mode == "auto" else mode,
+        resolved_mode=mode,
         policy=metric.variable_match_policy,
         metric_cache_version=metric.cache_version,
         structured_occurrence_mode="producer",
@@ -941,8 +942,6 @@ def _worker_command(job: WorkerJob, root: Path, output: Path) -> tuple[str, ...]
         sys.executable,
         str(_REPO_ROOT / "scripts/reeval_typematch.py"),
         str(root),
-        "--mode",
-        job.mode,
         "--manifest",
         str(job.manifest),
         "--function-data",
@@ -1858,10 +1857,10 @@ def _merge_modes(
             raise ShardedTypeMatchError(
                 f"mode {mode!r} merged union mismatch: expected {len(expected)}, got {len(seen)}"
             )
-        target = output / "merged" / f"type_match_{mode.replace('+', '_plus_')}.json"
+        target = output / "merged" / f"type_match_{mode}.json"
         provenance = _metric_provenance(mode)
         receipt_path = target.with_suffix(".receipt.json")
-        stage_root = output / "stages" / "merge" / mode.replace("+", "_plus_")
+        stage_root = output / "stages" / "merge" / mode
         stale_stages = sorted(stage_root.iterdir()) if stage_root.is_dir() else []
         if _validate_merge_receipt(
             receipt_path=receipt_path,
@@ -2447,7 +2446,7 @@ def _validate_completed_run(
     expected = set().union(*expected_by_backend.values())
     merged: dict[str, Path] = {}
     for mode in MODES:
-        path = output / "merged" / f"type_match_{mode.replace('+', '_plus_')}.json"
+        path = output / "merged" / f"type_match_{mode}.json"
         _validate_overlay(path, mode=mode, expected=expected, backend=None)
         if not _validate_merge_receipt(
             receipt_path=path.with_suffix(".receipt.json"),
@@ -2605,9 +2604,7 @@ def _assert_output_scope(
                 "output inside a linked source worktree must be below its results directory"
             )
     canonical = (root / "type_match_new.json").resolve()
-    generated = [
-        output / "merged" / f"type_match_{mode.replace('+', '_plus_')}.json" for mode in MODES
-    ]
+    generated = [output / "merged" / f"type_match_{mode}.json" for mode in MODES]
     for path in generated:
         try:
             aliases = path.resolve() == canonical or (
@@ -2941,7 +2938,7 @@ def _run_locked(
         backends=backends,
         expected_by_backend=expected_by_backend,
     )
-    expected_job_count = 4 * sum(
+    expected_job_count = len(MODES) * sum(
         bool({key for key in expected_by_backend[backend] if key[:4] in shard_keys})
         for _path, shard_keys, _row in shard_rows
         for backend in backends

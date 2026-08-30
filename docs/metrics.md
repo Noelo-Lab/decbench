@@ -72,10 +72,8 @@ not publishable to the dataset yet (see benchmarking.md).
 byte_match does not use the preprocessed units (`requires_source_cfg = False`;
 it recompiles the decompiled code). type_match still reads its denominator and
 types from DWARF, but now also uses `.i`/`.ii` units to construct source
-evidence. C `.i` units provide native address and type-blind usage evidence;
-C++ `.ii` units provide native address evidence while the C-only usage parser
-explicitly abstains. Without a usable unit, type_match falls back to ABI
-argument and stack anchors. Sample source extraction only *falls back* to them.
+evidence: both `.i` and `.ii` units supply the native address channel. Without a
+usable unit, type_match falls back to ABI argument and stack anchors. Sample source extraction only *falls back* to them.
 So do NOT disable `Project.emit_preprocessed` (default True,
 `models/project.py`) or `-save-temps=obj` in the default `base_flags`
 (`compilers/gcc.py`). The only preprocessed-free evaluation path is the
@@ -116,7 +114,10 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="12"`. Version 12 masks the ARM Thumb bit off a function
+Current `cache_version="13"`. Version 13 removed the `usage` and `address+usage`
+correspondence modes: address evidence is now the only correspondence channel, so the
+matcher no longer builds type-blind C usage feature vectors and the per-function key no
+longer carries them. Version 12 masks the ARM Thumb bit off a function
 entry address before joining it to DWARF, so a Thumb function whose static name
 repeats across translation units resolves to its own ground truth instead of
 being dropped; only backends that report tagged addresses (angr) are affected.
@@ -127,8 +128,8 @@ against rendered C. Version 10 began honoring the ELF ARM architecture profile
 when decoding Cortex-M Thumb. Version 9 expanded native source evidence from x86
 ELF to cross-format x86, ARM/Thumb, and AArch64 executable regions and made
 line-table file indexes follow the line program's own DWARF version.
-The per-function key covers the requested/resolved mode, matcher policy,
-redacted address/usage/anchor evidence, the stack shift, decompiled types used
+The per-function key covers the matcher policy,
+redacted address/anchor evidence, the stack shift, decompiled types used
 for grading, and DWARF ground truth. It does NOT cover `normalize_type`, so a
 normalization-policy change still requires a version bump (see
 [Metric caching](#metric-caching)).
@@ -151,51 +152,25 @@ the default random seed 25/83 and a third 51/57 — versus 108/0 with sorted
 lists). Any new list in that payload must be sorted too.
 
 Variable correspondence is selected **before** recovered types are graded.
-The matcher receives no variable names, types, or sizes. Its production modes
-are:
-
-1. **`address`** — unique ABI argument positions and calibrated stack slots are
-   accepted first, then variables are paired by ambiguity-checked weighted
-   overlap between source instruction addresses and decompiler line-map
-   addresses.
-2. **`usage`** — variables are paired only from strict, type/name/address-blind
-   C usage context. Named direct-call positions, distinctive operators,
-   literal roles, memory roles, and control roles carry evidence; generic
-   read/write counts alone cannot create a match.
-3. **`address+usage`** — anchors are accepted first; remaining pairs use fused
-   evidence when both channels exist and their channel-specific address-only or
-   usage-fallback thresholds otherwise.
-4. **`auto`** — the default and canonical published policy, currently resolving
-   to `address+usage` so native line maps are used when present and usage
-   evidence fills genuine gaps.
-
-`address+usage` is a fused policy, not an address pass followed only by extra
-fallback matches. When both variables expose address and usage evidence, the
-combined score and threshold replace the address-only score and threshold.
-Usage evidence can therefore rerank an address candidate, make it ambiguous,
-or move it below the combined threshold. Match count and final TypeMatch score
-are intentionally not monotonic relative to `address`. Guaranteeing score
-monotonicity would require either consulting recovered/ground-truth types while
-selecting correspondence, which is forbidden, or freezing every accepted
-address match, which would prevent usage evidence from correcting a false
-native pairing. Paired regressions remain explicit in A/B reports so this
-tradeoff can be reviewed rather than hidden.
+The matcher receives no variable names, types, or sizes. There is exactly one
+correspondence channel, **address evidence**: unique ABI argument positions and
+calibrated stack slots are accepted first, then variables are paired by
+ambiguity-checked weighted overlap between source instruction addresses and
+decompiler line-map addresses. A prototype `usage` channel and a stacked
+`address+usage` fusion were evaluated and removed — they were too unpredictable
+to publish — so there is no mode selector and no `variable_match_mode` option.
 
 **The production policy is a fixed constant** (`_VARIABLE_MATCH_DEFAULTS` in
-`type_match.py`): address overlap threshold `0.10`, address ambiguity margin
-`0.03`, usage threshold `0.15`, usage ambiguity margin `0`, combined threshold
-`0.20`, combined ambiguity margin `0`, and address weight `0.50`.
+`type_match.py`): address overlap threshold `0.10` and address ambiguity margin
+`0.03`.
 Variable-size compatibility is **always false** — the matcher is called with
 `use_size_compatibility=False`, and a scoreboard that tries to switch it on via
 `variable_match_policy` is rejected outright, because byte width is part of the
-answer TypeMatch grades. The address pair `min_overlap=0.1` /
-`ambiguity_margin=0.03` was a pre-existing frozen baseline, carried forward
-unchanged; only the usage and combined values (`0.15`, `0.20`, both margins `0`,
-address weight `0.50`) were selected, on a 26-function tuning partition of the
-Coreutils O2 sample, before any held-out result was viewed.
-A scoreboard may override individual thresholds through the metric's
-`variable_match_policy` option (unknown keys raise, `address_weight` must be
-strictly between 0 and 1, and every threshold/margin must be non-negative). The
+answer TypeMatch grades. The `min_overlap=0.1` / `ambiguity_margin=0.03` pair is
+a pre-existing frozen baseline, carried forward unchanged.
+A scoreboard may override either threshold through the metric's
+`variable_match_policy` option (unknown keys raise, and every threshold/margin
+must be non-negative). The
 policy is part of the per-function cache key, so an override re-keys itself and
 needs no `cache_version` bump; changing the correspondence *algorithm* still
 does.
@@ -206,9 +181,9 @@ by stable DIE identity. Each C translation unit's exact-name function index is
 built once; the sole-definition fallback is forbidden because it can attribute
 an unrelated body to the requested function. If DWARF pinning is unavailable,
 only one unambiguous exact C definition is accepted. C++ follows the same native
-address path but contributes no C usage features. Optional selection, native,
-or usage-extraction failures retain every DWARF variable in the denominator and
-fall back to the remaining evidence channels. The decompiler side
+address path. Optional selection or native-extraction failures retain every
+DWARF variable in the denominator and fall back to the remaining anchors. The
+decompiler side
 uses `VariableInfo.addresses` directly, or derives them from
 `VariableInfo.line_numbers` plus `FunctionDecompilation.line_mappings`.
 The source-side instruction-address adapter reads executable regions and the
@@ -220,148 +195,69 @@ coordinates as decompiler line maps instead of assuming an x86 `.text`
 section. DWARF file indexes follow the line table's own version because an
 object may pair a DWARF v5 compilation unit with a pre-v5 line program.
 Unsupported formats or architectures transparently continue with
-strict C usage evidence and argument/stack anchors, and their accepted-stage
-evidence marker reflects that fallback.
-Backends and old checkpoints without those fields remain scorable: C-like text
-is parsed for strict usage evidence, with ABI argument positions and explicit
-stack offsets as the final anchors. Exact variable names are never a matching
-fallback. At `-O2`, a register local with no address, distinctive usage, or
-anchor remains a false negative.
+argument/stack anchors alone.
+Backends and old checkpoints without those fields remain scorable through ABI
+argument positions and explicit stack offsets. Exact variable names are never a
+matching fallback. At `-O2`, a register local with no address and no anchor
+remains a false negative.
 
 The denominator is unchanged: every retained DWARF variable is graded, even if
 it has no observable correspondence evidence. Metadata records accepted-stage
-provenance as `variable_match_evidence = native|mixed|fallback_only`, plus mode,
-stage counts, observable counts, and line-map presence. `native` means only
-address/argument/stack stages were accepted, `mixed` means accepted matching
-used both native and usage evidence, and `fallback_only` means no accepted
-native stage. The field is absent when correspondence accepted no pair, because
-no evidence channel was actually used. These values support the report's
-measurement caveat without publishing variable names, features, addresses,
-stable identities, types, or absolute source paths.
-
-### Usage evidence — parsing, features, and scoring
-
-The usage channel adapts the design principle behind
-[discovRE](https://www.ndss-symposium.org/wp-content/uploads/2017/09/discovre-efficient-cross-architecture-identification-bugs-binary-code.pdf):
-describe an entity with cheap behavioral features, retrieve plausible
-candidates, and abstain when the best assignment is weak or ambiguous. It is an
-adaptation to variables in C syntax, not a reimplementation of discovRE's
-binary-function matcher. It exists because most decompilers and every
-code-producing LLM return only C-like text, with no line map to overlap.
-
-**Parsing contract** (`metrics/variable_features.py`). Usage features are
-extracted with [tree-sitter](https://tree-sitter.github.io/tree-sitter/) and its
-C grammar — this is why `tree-sitter` and `tree-sitter-c` are runtime, not dev,
-dependencies. Tree-sitter is used precisely because it keeps usable
-concrete-syntax subtrees in imperfect pseudocode, including *underneath*
-parse-error nodes, so a function that does not parse cleanly still yields
-features instead of nothing. If a decompiler returns only a statement/body
-fragment with no `function_definition` node at all, the extractor wraps the body
-in a synthetic function and reparses once; if the text contains any
-`function_definition` at all and none of them carries the requested name, that is
-an explicit abstention rather than a guess, and no fragment wrapping is
-attempted. The same rule governs the source side:
-each preprocessed `.i` unit is indexed by exact function name **once**
-(`index_c_functions`) and reused for every function in that translation unit, so
-macro-expanded behavior is analyzed without reparsing the whole unit per
-function, and a name with anything other than exactly one definition abstains.
-C++ `.ii` units deliberately emit **no** source usage features — a separate
-grammar and its own leakage audit would be required first — so C++ functions
-fall back to the address channel.
-
-**Feature vector.** Each variable gets a sparse counted vector of usage context
-only: generic read/write/read-write roles (`use:*`); assignment, binary and
-unary operator roles (`assign:*`, `binary:*`, `unary:*` — the last covering
-dereference, address-of, and increment/decrement); memory roles
-(`memory:field:base`, `memory:subscript:base|index`) and `operation:cast`;
-condition, loop, switch, `for`, and return-value context (`control:*`); direct
-call name, arity, argument position, indirect-callee use, and call
-return-target use (`call:*`); and normalized integer plus hashed
-string/character literals (`literal:*`). Commutative operand
-sides (`+ * & | ^ == != && ||`) are normalized to one `commutative` side so that
-`a + b` and `b + a` agree. Literals attach only to a variable's own local
-operand relation, so a constant in a sibling call argument does not smear across
-every argument. Synthetic address-derived callee names (`sub_4011a0`,
-`fcn.004011a0`, …) are normalized away, as are callees declared locally within
-the same function — both are dropped rather than becoming a `call:named:` token,
-which carries the vector's strongest weight. Decompiler pseudo-calls whose names
-encode byte/bit widths — `__ROR8__`, `CONCAT71`, `SUB168`, byte/word extractors,
-carry/borrow helpers — collapse to width-free operation families
-(`pseudo:rotate-right`, `pseudo:concatenate`, `pseudo:subpiece`, …) so two
-backends that pick different widths still agree. Identifiers appearing in
-comments, string bodies, member-name position, or unevaluated
-`sizeof`/`alignof` operands never become uses.
+provenance as `variable_match_evidence`, plus stage counts, observable counts,
+and line-map presence. With address evidence as the only channel the production
+metric now only ever emits `native`; the reporting path still reads the historical
+`mixed` and `fallback_only` categories so older overlays and function data stay
+loadable. The field is absent when correspondence accepted no pair, because no
+evidence channel was actually used. These values support the report's
+measurement caveat without publishing variable names, addresses, stable
+identities, types, or absolute source paths.
 
 **Candidate discovery.** A backend that ships no structured variable list at all
 is not scored as having zero variables: the metric parses candidates out of its
 own rendered C instead (`parse_c_variables`), and marks them `inferred_from_code`.
-Discovery takes parameters and body-local declarators, skipping `typedef` and
-`extern` storage classes and bare function prototypes. Unnamed decompiler
-candidates are admitted (`include_unnamed=True`) because a variable the backend
-never named still has usage. Where a name is declared more than once in one
-function — shadowing — every occurrence is left featureless rather than merged,
-since the vector cannot tell the declarations apart.
+Discovery uses [tree-sitter](https://tree-sitter.github.io/tree-sitter/) and its
+C grammar (`metrics/variable_features.py`) — this is why `tree-sitter` and
+`tree-sitter-c` are runtime, not dev, dependencies; the same parser backs the
+decompiler line-provenance path (`variable_occurrence_lines`) and each preprocessed
+`.i` unit's exact-name function index (`index_c_functions`). Tree-sitter is used
+precisely because it keeps usable concrete-syntax subtrees in imperfect pseudocode,
+including *underneath* parse-error nodes. If a decompiler returns only a
+statement/body fragment with no `function_definition` node at all, the extractor
+wraps the body in a synthetic function and reparses once; if the text contains any
+`function_definition` at all and none of them carries the requested name, that is
+an explicit abstention rather than a guess. Discovery takes parameters and
+body-local declarators, skipping `typedef` and `extern` storage classes and bare
+function prototypes. Unnamed decompiler candidates are admitted
+(`include_unnamed=True`).
 
-**Discovered candidates are sanitized, per mode.** A candidate recovered from
-rendered C carries no trustworthy machine evidence, so before matching it loses
-its addresses, line numbers, and live ranges, and in `address` mode its usage
-features as well. In `address` mode it is dropped outright unless it still has a
-reliable anchor — an ABI argument index or an explicit stack offset. Only `usage`
-mode takes such a candidate unchanged. This is what keeps `address`-mode numbers
-honest for text-only backends: they cannot earn address-channel credit from
-evidence that was reverse-engineered out of their own output.
+**Discovered candidates are sanitized.** A candidate recovered from rendered C
+carries no trustworthy machine evidence, so before matching it loses its
+addresses, line numbers, and live ranges, and it is dropped outright unless it
+still has a reliable anchor — an ABI argument index or an explicit stack offset.
+This is what keeps the numbers honest for text-only backends: they cannot earn
+address-channel credit from evidence that was reverse-engineered out of their own
+output.
 
-**The type exclusions are load-bearing.** Type spelling, byte width, pointer
-depth, and cast *target* type are excluded from the vector on purpose: the
-correspondence exists to grade recovered types, so any of them would leak the
-answer. Names and sizes are likewise cleared before correspondence and
-size-compatible matching is disabled, which is the same rule stated from the
-policy side above.
+**The type exclusions are load-bearing.** Names and sizes are cleared before
+correspondence and size-compatible matching is disabled, because the
+correspondence exists to grade recovered types and any of them would leak the
+answer.
 
-**Similarity.** For a token with count `c_t` the matcher uses
-`x_t = log(1 + c_t)`. A token's weight is a fixed family reliability — 3 for
-named direct calls and string literals, 2 for structural operations, control
-context, literals and call arity, 1 for the generic roles — divided by a
-log-scaled degree term (`max(1, log2(degree + 1))`) counted over the union of the
-source and decompiled variables being matched, so a token shared by many of them
-counts for less. The pair score is
-a weighted generalized Jaccard over the union of both vectors:
-
-```text
-sum_t weight_t * min(x_source_t, x_decompiled_t)
-------------------------------------------------
-sum_t weight_t * max(x_source_t, x_decompiled_t)
-```
-
-At least one *shared non-generic* context token is required; matching read/write
-counts alone score zero. Qualified edges then go through the same deterministic
-mutual-best, bidirectional runner-up-margin peeling as address overlap, so equal
-best vectors abstain instead of being resolved by name or declaration order.
-
-In `address+usage`, the two channels combine linearly
-(`address_weight * address + (1 - address_weight) * usage`) **only when both are
-present** — the source and decompiler variable each have addresses, and each has
-non-generic usage context. If one channel is genuinely absent the other is used
-unscaled against its own threshold (`address-only` / `usage-fallback` stages).
-If both channels are present but contradict, the contradicting side contributes
-its zero to the fused score, which is how usage evidence can veto a weak overlap
-edge.
-
-For checkpoint A/B runs, `scripts/reeval_typematch.py --mode address|usage|address+usage|auto`
-prints old/new comparisons. Non-canonical overlays require an explicit
-`--output`; only `--emit` with `auto` may write `type_match_new.json`. `--output`
+For checkpoint A/B runs, `scripts/reeval_typematch.py` prints old/new comparisons.
+Non-canonical overlays require an explicit
+`--output`; only `--emit` may write `type_match_new.json`. `--output`
 cannot alias the canonical path. `--manifest sample_set_manifest.json` filters
 the rows emitted to a non-canonical sample-set replay and cannot be combined with
-`--emit`. For every selected binary, however, sanitization, usage extraction, and
+`--emit`. For every selected binary, however, sanitization and
 binary-wide stack-offset calibration see the producer's complete function set; only
 the resulting overlay rows are manifest-filtered. A partial manifest therefore cannot
 change the calibration of a retained function. Repeatable `--backend NAME` selectors
 avoid replaying unrelated checkpoint columns and are likewise forbidden for canonical
 `--emit` promotion. A requested backend that produces no scores fails instead of
 writing a misleading empty overlay. Written overlays retain the legacy raw score-map
-shape and gain a digest-bound `.meta.json` companion containing the requested and
-resolved modes, complete policy values, policy/manifest schemas, and metric cache
-version. Scoped updates require compatible provenance and refuse legacy or mixed-policy
+shape and gain a digest-bound `.meta.json` companion containing the matcher mode
+(now always `address`), complete policy values, policy/manifest schemas, and metric
+cache version. Scoped updates require compatible provenance and refuse legacy or mixed-policy
 merges. Every overlay write is transactional, including explicitly named A/B
 outputs. A missing checkpoint, binary-relocation failure, scoring exception,
 reported metric error, or coverage mismatch leaves the existing overlay and companion
@@ -369,7 +265,7 @@ unchanged. Coverage is exact for the invocation: required rows are the functions
 actually present in each selected producer checkpoint intersected with the frozen
 global TypeMatch-measurable denominator in `function_results.json`. This permits a
 real decompiler omission while rejecting a silently dropped metric row, even when
-every A/B mode would otherwise drop the same row. Explicit A/B outputs remain usable
+every A/B overlay would otherwise drop the same row. Explicit A/B outputs remain usable
 for partial experiments through a sample manifest or project scope, with that same
 fail-closed check applied before a scoped merge.
 
@@ -408,9 +304,7 @@ intentional abstention. Missing declarations on legacy checkpoints also fail clo
 The production metric always uses `structured_occurrence_mode="producer"` and records
 both the declaration and mode in per-function diagnostics. The extractor retains an
 explicitly named `experimental_legacy_regex` API for isolated v10 comparisons, but no
-production adapter or metric configuration enables it. This restriction applies only
-to structured occurrence addresses; address-free, type-blind usage features are still
-extracted from the final C for every backend.
+production adapter or metric configuration enables it.
 
 TypeMatch v11 overlays retain each scored function's producer occurrence policy as
 `producer_variable_occurrence_policy` and its `structured_occurrence_mode`. Their
@@ -421,8 +315,8 @@ without a recognized `exact`, `direct`, `unavailable`, or legacy `undeclared` po
 The A/B reporter reports those policies separately from accepted-evidence categories
 and the measurement-undercount asterisk.
 
-Summarize independently generated modes with the shared-denominator reporter,
-not the re-evaluator's per-mode console mean:
+Summarize independently generated overlays with the shared-denominator reporter,
+not the re-evaluator's own console mean:
 
 ```bash
 python scripts/report_typematch_ab.py \
@@ -430,8 +324,6 @@ python scripts/report_typematch_ab.py \
   --results-root results/full_run \
   --manifest results/full_run/sample_set_manifest.json \
   --mode address=/tmp/type-ab/address.json \
-  --mode usage=/tmp/type-ab/usage.json \
-  --mode auto=/tmp/type-ab/auto.json \
   --baseline-mode address \
   --checkpoint-dir /tmp/pr48-native-sample/checkpoints \
   --output /tmp/type-ab/report.json \
@@ -439,7 +331,7 @@ python scripts/report_typematch_ab.py \
 ```
 
 The report validates every overlay's digest-bound policy/cache provenance and
-requires identical per-backend score keys across modes. It reports two different
+requires identical per-backend score keys across overlays. It reports two different
 statistics deliberately: the conditional partial mean uses only finite scores,
 while the published Type percentage counts perfect functions over the shared set
 where any backend measured TypeMatch. A backend's missing score is therefore a
@@ -457,7 +349,8 @@ Markdown contains only the review headline. Invalid scope or provenance still wr
 the diagnostic report but exits nonzero unless `--allow-invalid` is requested.
 
 At corpus scale, `scripts/run_typematch_ab_sharded.py` is the supported wrapper around the
-partitioner, re-evaluator, and reporter. It always evaluates all four production modes over
+partitioner, re-evaluator, and reporter. It always evaluates the production address
+correspondence over
 whole-binary shards so binary-wide stack calibration cannot drift, and its fixed denominator
 is the selected manifest intersected with the globally TypeMatch-measurable functions in the
 bound `function_results.json`. Expected overlay rows are narrower and exact per backend:
@@ -466,14 +359,16 @@ Consequently a real producer omission remains a reported miss, while a scoring e
 silently missing metric row aborts the worker. Per-worker fresh caches are sealed read-only
 and digest-bound alongside the overlay, provenance sidecar, and transcript before resume can
 reuse them. The final receipt binds the exact checkpoint/source/binary/code inventories and
-the exact non-overlapping union used by the four merged, non-canonical overlays.
+the exact non-overlapping union used by the merged, non-canonical overlay.
 
 The reporting path accepts
 `MetricValue.metadata["variable_match_evidence"]` as `native`, `mixed`, or
 `fallback_only`, based on the evidence actually used for that function rather than
-the backend's name. Mixed and fallback-only measurements use type-blind usage evidence
-jointly with native address/anchor evidence or alone, respectively. When the production
-metric emits it, this provenance is carried through `FunctionRecord.metric_evidence`
+the backend's name. The `mixed` and `fallback_only` categories described the removed
+usage channel; the production metric no longer emits them, and they are retained on
+the reading side only so older overlays and function data stay loadable. When the
+production metric emits it, this provenance is carried through
+`FunctionRecord.metric_evidence`
 and the site's `metric_evidence` aggregate. The row's
 `producer_variable_occurrence_policy` is independently carried through the matching
 `FunctionRecord` field and aggregate. A Type percentage receives an explanatory

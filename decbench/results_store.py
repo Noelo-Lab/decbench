@@ -85,6 +85,7 @@ class TypeMatchOverlayError(RuntimeError):
 
 TYPEMATCH_OVERLAY_MANIFEST_SCHEMA = 1
 TYPEMATCH_POLICY_SCHEMA = "type-match-variable-correspondence-v1"
+TYPEMATCH_MATCHER_MODE = "address"
 _TYPEMATCH_PROVENANCE_FIELDS = (
     "schema_version",
     "metric",

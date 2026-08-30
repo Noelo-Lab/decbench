@@ -181,7 +181,7 @@ GED = <span class="n">3</span> &nbsp;&mdash;&nbsp; 1 node insertion + 2 edge ins
 ## [2] Type correctness
 metric: Type Correctness
 
-Did the decompiler recover the right variable and argument types? We match decompiled variables against DWARF ground truth using name-independent evidence: arguments by ABI position, stack variables by calibrated offset, and remaining variables by validated instruction-address overlap or type-blind usage context. We then score the fraction recovered correctly.
+Did the decompiler recover the right variable and argument types? We match decompiled variables against DWARF ground truth using name-independent evidence: arguments by ABI position, stack variables by calibrated offset, and remaining variables by validated instruction-address overlap. We then score the fraction recovered correctly.
 
 <details class="metric-viz" open>
 <summary>how type matching works: DWARF ground truth &harr; recovered variables</summary>
@@ -222,7 +222,7 @@ Did the decompiler recover the right variable and argument types? We match decom
 <text x="686" y="146" text-anchor="end" font-size="15" fill="var(--amber)">&#8800;</text>
 
 <!-- band B label -->
-<text x="360" y="188" text-anchor="middle" font-size="10.5" fill="var(--text-muted)"><tspan fill="var(--text)" font-weight="bold">[2]</tspan> stack locals &mdash; by frame offset, <tspan fill="var(--text)" font-weight="bold">[3]</tspan> then address / usage evidence</text>
+<text x="360" y="188" text-anchor="middle" font-size="10.5" fill="var(--text-muted)"><tspan fill="var(--text)" font-weight="bold">[2]</tspan> stack locals &mdash; by frame offset, <tspan fill="var(--text)" font-weight="bold">[3]</tspan> then instruction-address evidence</text>
 
 <!-- ==== local slots ==== -->
 <!-- B1 -->
@@ -259,7 +259,7 @@ Did the decompiler recover the right variable and argument types? We match decom
 <div class="viz-legend">
 <span class="pass"><span class="k">[1]</span> arguments by ABI position (name-independent)</span>
 <span class="pass"><span class="k">[2]</span> stack vars by calibrated frame offset</span>
-<span class="pass"><span class="k">[3]</span> residual variables by address / type-blind usage</span>
+<span class="pass"><span class="k">[3]</span> residual variables by instruction address</span>
 <span class="pass"><span style="color:var(--green)">&#10003;</span> correct type &middot; <span style="color:var(--amber)">&#8800;</span> type mismatch &middot; <span style="color:var(--red)">&#10007;</span> missed</span>
 </div>
 
@@ -268,7 +268,7 @@ Did the decompiler recover the right variable and argument types? We match decom
 <div class="perfect"><span class="viz-good">1.0</span> &rarr; every recoverable variable typed correctly = perfect</div>
 </div>
 
-<p class="viz-note">Only variables carrying a DWARF location count as <em>recoverable</em> &mdash; fully optimized-out vars are dropped for everyone, so the denominator is identical across decompilers. Arguments match by ABI position (name-independent, so angr's <code>a1</code>/<code>a2</code> get fair credit), stack locals by an auto-calibrated frame-offset shift (here <code>+0x10</code>, so ground-truth <code>-0x18</code> aligns to the decompiler's <code>-0x28</code>), and residual variables require unambiguous validated instruction-address overlap or distinctive type-blind usage context. Names and recovered types are never correspondence evidence.</p>
+<p class="viz-note">Only variables carrying a DWARF location count as <em>recoverable</em> &mdash; fully optimized-out vars are dropped for everyone, so the denominator is identical across decompilers. Arguments match by ABI position (name-independent, so angr's <code>a1</code>/<code>a2</code> get fair credit), stack locals by an auto-calibrated frame-offset shift (here <code>+0x10</code>, so ground-truth <code>-0x18</code> aligns to the decompiler's <code>-0x28</code>), and residual variables require unambiguous validated instruction-address overlap. Names and recovered types are never correspondence evidence.</p>
 
 </div>
 </details>
@@ -391,11 +391,11 @@ When we sampled this process, we found it was small.
 ### Type Edit Distance
 Type recovery first has to determine which decompiled variable corresponds to which
 source variable. When a backend provides native pseudocode-to-instruction provenance,
-we use the variable's instruction addresses. The matcher can also compare type-blind
-usage patterns such as reads, writes, operations, and call-site roles, either alone or
-jointly with native address/anchor evidence. The heuristic deliberately leaves ambiguous
-candidates unmatched, so results that use mixed or fallback-only evidence may
-conservatively undercount recovery. The same caveat applies when a producer cannot expose
+we use the variable's instruction addresses; otherwise correspondence falls back to ABI
+argument position and calibrated stack offsets. Instruction-address evidence is the only
+correspondence channel. The heuristic deliberately leaves ambiguous candidates unmatched,
+so a backend that cannot expose sound provenance may conservatively undercount
+recovery. The same caveat applies when a producer cannot expose
 or declare sound variable-occurrence provenance, including a measured row where no
 correspondence was accepted and therefore no evidence category exists. The leaderboard
 marks those Type percentages with an asterisk without changing their scores or denominators.

@@ -108,10 +108,11 @@ def _result(*, functions: tuple[str, ...] = ("f",), errors: tuple[str, ...] = ()
 def _install_metric(
     monkeypatch: pytest.MonkeyPatch,
     outcome: MetricResult | Exception,
+    policy: dict[str, float] | None = None,
 ) -> None:
     class StubMetric:
         cache_version = "stub-cache-v1"
-        variable_match_policy = {"min_overlap": 0.1, "address_weight": 0.5}
+        variable_match_policy = policy or {"min_overlap": 0.1, "ambiguity_margin": 0.03}
 
         def __init__(self, _config: object) -> None:
             pass
@@ -183,7 +184,7 @@ def test_reevaluation_rebinds_checkpoint_binary_to_selected_tree(
 
     class StubMetric:
         cache_version = "stub-cache-v1"
-        variable_match_policy = {"min_overlap": 0.1, "address_weight": 0.5}
+        variable_match_policy = {"min_overlap": 0.1, "ambiguity_margin": 0.03}
 
         def __init__(self, _config: object) -> None:
             pass
@@ -230,7 +231,7 @@ def test_reevaluation_rebinds_unique_suffixed_binary(
 
     class StubMetric:
         cache_version = "stub-cache-v1"
-        variable_match_policy = {"min_overlap": 0.1, "address_weight": 0.5}
+        variable_match_policy = {"min_overlap": 0.1, "ambiguity_margin": 0.03}
 
         def __init__(self, _config: object) -> None:
             pass
@@ -328,7 +329,7 @@ def test_ab_failure_preserves_existing_overlay_bytes(
     _install_metric(monkeypatch, outcome)
 
     with pytest.raises(TypeMatchOverlayError):
-        reeval_typematch.main([str(tmp_path), "--mode", "address", "--output", str(output)])
+        reeval_typematch.main([str(tmp_path), "--output", str(output)])
 
     assert output.read_bytes() == b"A/B sentinel\n"
     assert manifest.read_bytes() == b"manifest sentinel\n"
@@ -345,7 +346,7 @@ def test_ab_missing_checkpoint_preserves_existing_overlay(
     _install_metric(monkeypatch, _result())
 
     with pytest.raises(TypeMatchOverlayError, match="missing checkpoint"):
-        reeval_typematch.main([str(tmp_path), "--mode", "address", "--output", str(output)])
+        reeval_typematch.main([str(tmp_path), "--output", str(output)])
 
     assert output.read_bytes() == b"A/B sentinel\n"
 
@@ -361,7 +362,7 @@ def test_written_overlay_requires_every_measurable_checkpoint_function(
     _install_metric(monkeypatch, _result(functions=("f",)))
 
     with pytest.raises(TypeMatchOverlayError, match=r"missing 1 .*proj::O0::bin::g::angr"):
-        reeval_typematch.main([str(tmp_path), "--mode", "address", "--output", str(output)])
+        reeval_typematch.main([str(tmp_path), "--output", str(output)])
 
     assert not output.exists()
 
@@ -375,7 +376,7 @@ def test_written_overlay_allows_measurable_function_absent_from_producer(
     output = tmp_path / "address-ab.json"
     _install_metric(monkeypatch, _result(functions=("f",)))
 
-    reeval_typematch.main([str(tmp_path), "--mode", "address", "--output", str(output)])
+    reeval_typematch.main([str(tmp_path), "--output", str(output)])
 
     payload, _provenance = read_typematch_overlay(output)
     assert set(payload["angr"]) == {"proj::O0::bin::f"}
@@ -398,7 +399,7 @@ def test_noncanonical_output_cannot_alias_canonical_path(
         output.hardlink_to(canonical)
 
     with pytest.raises(SystemExit):
-        reeval_typematch.parse_args([str(tmp_path), "--mode", "usage", "--output", str(output)])
+        reeval_typematch.parse_args([str(tmp_path), "--output", str(output)])
 
     assert canonical.read_text() == "sentinel"
 
@@ -409,9 +410,9 @@ def test_ab_output_remains_raw_json_with_provenance_companion(
 ) -> None:
     _make_results_tree(tmp_path)
     _install_metric(monkeypatch, _result())
-    output = tmp_path / "usage-ab.json"
+    output = tmp_path / "scoped-ab.json"
 
-    reeval_typematch.main([str(tmp_path), "--mode", "usage", "--output", str(output)])
+    reeval_typematch.main([str(tmp_path), "--output", str(output)])
 
     raw = json.loads(output.read_text())
     payload, provenance = read_typematch_overlay(output)
@@ -420,16 +421,16 @@ def test_ab_output_remains_raw_json_with_provenance_companion(
     assert payload["angr"]["proj::O0::bin::f"]["producer_variable_occurrence_policy"] == "exact"
     assert payload["angr"]["proj::O0::bin::f"]["structured_occurrence_mode"] == "producer"
     assert provenance is not None
-    assert provenance["mode"] == "usage"
-    assert provenance["resolved_mode"] == "usage"
-    assert provenance["policy"] == {"address_weight": 0.5, "min_overlap": 0.1}
+    assert provenance["mode"] == "address"
+    assert provenance["resolved_mode"] == "address"
+    assert provenance["policy"] == {"ambiguity_margin": 0.03, "min_overlap": 0.1}
     assert provenance["structured_occurrence_mode"] == "producer"
     assert (
         provenance["variable_occurrence_policy_schema"] == "decbench-variable-occurrence-policy-v1"
     )
 
 
-def test_successful_canonical_run_replaces_sentinel_with_auto_provenance(
+def test_successful_canonical_run_replaces_sentinel_with_address_provenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -443,33 +444,25 @@ def test_successful_canonical_run_replaces_sentinel_with_auto_provenance(
     payload, provenance = read_typematch_overlay(canonical)
     assert payload["angr"]["proj::O0::bin::f"]["value"] == 1.0
     assert provenance is not None
-    assert provenance["mode"] == "auto"
-    assert provenance["resolved_mode"] == "address+usage"
+    assert provenance["mode"] == "address"
+    assert provenance["resolved_mode"] == "address"
 
 
-def test_scoped_ab_merge_rejects_incompatible_mode_and_preserves_output(
+def test_scoped_ab_merge_rejects_incompatible_policy_and_preserves_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _make_results_tree(tmp_path)
     _install_metric(monkeypatch, _result())
     output = tmp_path / "ab.json"
-    reeval_typematch.main([str(tmp_path), "--mode", "address", "--output", str(output)])
+    reeval_typematch.main([str(tmp_path), "--output", str(output)])
     before = output.read_bytes()
     manifest = typematch_overlay_manifest_path(output)
     manifest_before = manifest.read_bytes()
+    _install_metric(monkeypatch, _result(), policy={"min_overlap": 0.5, "ambiguity_margin": 0.03})
 
     with pytest.raises(TypeMatchOverlayError, match="incompatible scoped"):
-        reeval_typematch.main(
-            [
-                str(tmp_path),
-                "proj",
-                "--mode",
-                "usage",
-                "--output",
-                str(output),
-            ]
-        )
+        reeval_typematch.main([str(tmp_path), "proj", "--output", str(output)])
 
     assert output.read_bytes() == before
     assert manifest.read_bytes() == manifest_before
@@ -484,7 +477,7 @@ def test_scoped_ab_merge_removes_stale_rows_from_evaluated_scope(
     _add_checkpoint_function(tmp_path, "g")
     output = tmp_path / "ab.json"
     _install_metric(monkeypatch, _result(functions=("f", "g")))
-    reeval_typematch.main([str(tmp_path), "--mode", "address", "--output", str(output)])
+    reeval_typematch.main([str(tmp_path), "--output", str(output)])
 
     checkpoint = tmp_path / "checkpoints" / "proj.pkl"
     with checkpoint.open("rb") as file:
@@ -494,7 +487,7 @@ def test_scoped_ab_merge_removes_stale_rows_from_evaluated_scope(
         pickle.dump(data, file)
     _install_metric(monkeypatch, _result(functions=("f",)))
 
-    reeval_typematch.main([str(tmp_path), "proj", "--mode", "address", "--output", str(output)])
+    reeval_typematch.main([str(tmp_path), "proj", "--output", str(output)])
 
     payload, _provenance = read_typematch_overlay(output)
     assert set(payload["angr"]) == {"proj::O0::bin::f"}
@@ -537,7 +530,7 @@ def test_sample_manifest_preserves_binary_calibration_and_filters_emitted_rows(
 
     class StubMetric:
         cache_version = "stub-cache-v1"
-        variable_match_policy = {"min_overlap": 0.1, "address_weight": 0.5}
+        variable_match_policy = {"min_overlap": 0.1, "ambiguity_margin": 0.03}
 
         def __init__(self, _config: object) -> None:
             pass
@@ -556,15 +549,13 @@ def test_sample_manifest_preserves_binary_calibration_and_filters_emitted_rows(
     monkeypatch.setattr(reeval_typematch, "TypeMatchMetric", StubMetric)
     output = tmp_path / "sample-ab.json"
 
-    reeval_typematch.main(
-        [str(tmp_path), "--mode", "usage", "--manifest", str(manifest), "--output", str(output)]
-    )
+    reeval_typematch.main([str(tmp_path), "--manifest", str(manifest), "--output", str(output)])
 
     assert seen == [{"f", "g"}]
     assert shifts == [16]
     payload, provenance = read_typematch_overlay(output)
     assert set(payload["angr"]) == {"proj::O0::bin::f"}
-    assert provenance is not None and provenance["mode"] == "usage"
+    assert provenance is not None and provenance["mode"] == "address"
 
 
 def test_sample_manifest_cannot_promote_canonical_overlay(tmp_path: Path) -> None:
@@ -699,9 +690,7 @@ def test_reevaluation_sanitizes_relocated_copy_without_rewriting_checkpoint(
     monkeypatch.setattr(reeval_typematch, "sanitize_native_provenance", sanitize)
     _install_metric(monkeypatch, _result())
 
-    reeval_typematch.main(
-        [str(tmp_path), "--mode", "address", "--output", str(tmp_path / "address.json")]
-    )
+    reeval_typematch.main([str(tmp_path), "--output", str(tmp_path / "address.json")])
 
     assert seen == [(relocated, relocated)]
     assert checkpoint.read_bytes() == before

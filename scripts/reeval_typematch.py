@@ -1,17 +1,15 @@
 """Re-evaluate type_match from checkpoints without running decompilers.
 
-The default ``auto`` mode is the canonical stacked address+usage policy.
-Experimental modes can be compared in place, or written to an explicitly
-named output file for A/B analysis. Only ``--emit`` may write the canonical
-``type_match_new.json`` overlay, and only in ``auto`` mode. Every written
-overlay has a digest-bound ``.meta.json`` companion recording its matcher mode,
-policy schema, policy values, and metric cache version.
+Correspondence is always address evidence. Scoped or experimental replays can be
+compared in place, or written to an explicitly named output file for A/B analysis.
+Only ``--emit`` may write the canonical ``type_match_new.json`` overlay. Every
+written overlay has a digest-bound ``.meta.json`` companion recording its matcher
+mode, policy schema, policy values, and metric cache version.
 
 Usage::
 
     python scripts/reeval_typematch.py results/full_run
-    python scripts/reeval_typematch.py results/full_run --mode usage
-    python scripts/reeval_typematch.py results/full_run --mode address \
+    python scripts/reeval_typematch.py results/full_run \
         --output results/full_run/type_match_address.json sample-set
     python scripts/reeval_typematch.py results/full_run --emit
 """
@@ -47,6 +45,7 @@ from decbench.models.decompilation import (
 )
 from decbench.models.function_data import VARIABLE_MATCH_EVIDENCE
 from decbench.results_store import (
+    TYPEMATCH_MATCHER_MODE,
     TypeMatchOverlayError,
     merge_typematch_overlay,
     read_typematch_overlay,
@@ -57,7 +56,6 @@ from decbench.results_store import (
 from decbench.utils import binfmt
 from decbench.utils.langs import preprocessed_by_stem
 
-MODES = ("auto", "address", "usage", "address+usage")
 PRODUCER_OCCURRENCE_POLICIES = frozenset((*VARIABLE_OCCURRENCE_POLICIES, "undeclared"))
 SampleKey = tuple[str, str, str, str]
 ScoreKey = tuple[str, str, str, str, str]
@@ -92,7 +90,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results_dir", type=Path)
     parser.add_argument("projects", nargs="*")
-    parser.add_argument("--mode", choices=MODES, default="auto")
     parser.add_argument(
         "--manifest",
         type=Path,
@@ -116,7 +113,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     outputs.add_argument(
         "--emit",
         action="store_true",
-        help="write the canonical type_match_new.json overlay (auto mode only)",
+        help="write the canonical type_match_new.json overlay",
     )
     outputs.add_argument(
         "--output",
@@ -124,8 +121,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="write an explicitly named A/B overlay without touching the canonical one",
     )
     args = parser.parse_args(argv)
-    if args.emit and args.mode != "auto":
-        parser.error("--emit is reserved for the canonical auto mode; use --output for A/B modes")
     if args.emit and args.manifest is not None:
         parser.error("--manifest is for partial A/B runs and cannot be combined with --emit")
     if args.emit and args.backend:
@@ -383,11 +378,10 @@ def _coverage_difference(expected: set[ScoreKey], actual: set[ScoreKey]) -> str 
     return "; ".join(details)
 
 
-def _promotion_provenance(metric: TypeMatchMetric, mode: str) -> dict[str, object]:
-    resolved_mode = "address+usage" if mode == "auto" else mode
+def _promotion_provenance(metric: TypeMatchMetric) -> dict[str, object]:
     return typematch_overlay_provenance(
-        mode=mode,
-        resolved_mode=resolved_mode,
+        mode=TYPEMATCH_MATCHER_MODE,
+        resolved_mode=TYPEMATCH_MATCHER_MODE,
         policy=metric.variable_match_policy,
         metric_cache_version=metric.cache_version,
         structured_occurrence_mode="producer",
@@ -421,8 +415,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         {key[0] for key in measurable_keys if sample_keys is None or key in sample_keys}
     )
     projects = list(dict.fromkeys(args.projects or manifest_projects or measurable_projects))
-    metric = TypeMatchMetric(MetricConfig(extra_options={"variable_match_mode": args.mode}))
-    provenance = _promotion_provenance(metric, args.mode)
+    metric = TypeMatchMetric(MetricConfig())
+    provenance = _promotion_provenance(metric)
     aggregate: defaultdict[str, AggregateRow] = defaultdict(
         lambda: {"o": 0.0, "n": 0.0, "c": 0, "imp": 0, "wor": 0}
     )
@@ -596,7 +590,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     if missing_backends:
         raise ValueError("requested backend(s) produced no scores: " + ", ".join(missing_backends))
 
-    print(f"\nmode: {args.mode}")
+    print(f"\nmode: {TYPEMATCH_MATCHER_MODE}")
     if args.manifest is not None:
         digest = hashlib.sha256(args.manifest.read_bytes()).hexdigest()
         print(f"manifest: {args.manifest} ({len(sample_keys or ())} functions, sha256={digest})")

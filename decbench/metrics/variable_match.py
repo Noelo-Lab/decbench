@@ -1,10 +1,9 @@
-"""Address- and usage-evidence matching for local-variable correspondence."""
+"""Address-evidence matching for local-variable correspondence."""
 
 from __future__ import annotations
 
 import bisect
 import contextlib
-import math
 import re
 import struct
 from collections import defaultdict
@@ -32,7 +31,6 @@ class VariableEvidence:
     decl_line: int | None = None
     lines: tuple[int, ...] = ()
     live_ranges: tuple[tuple[int, int], ...] = ()
-    usage_features: tuple[tuple[str, int], ...] = ()
     inferred_from_code: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -41,7 +39,6 @@ class VariableEvidence:
         data["stack_offsets"] = list(self.stack_offsets)
         data["lines"] = list(self.lines)
         data["live_ranges"] = [[f"0x{start:x}", f"0x{end:x}"] for start, end in self.live_ranges]
-        data["usage_features"] = {feature: count for feature, count in self.usage_features}
         return data
 
     @classmethod
@@ -51,8 +48,6 @@ class VariableEvidence:
         def address(value: Any) -> int:
             return int(value, 0) if isinstance(value, str) else int(value)
 
-        raw_features = data.get("usage_features", {})
-        features = raw_features.items() if isinstance(raw_features, Mapping) else raw_features
         return cls(
             identity=str(data["identity"]),
             name=str(data.get("name", "")),
@@ -67,7 +62,6 @@ class VariableEvidence:
             live_ranges=tuple(
                 (address(start), address(end)) for start, end in data.get("live_ranges", [])
             ),
-            usage_features=tuple(sorted((str(feature), int(count)) for feature, count in features)),
             inferred_from_code=bool(data.get("inferred_from_code", False)),
         )
 
@@ -308,104 +302,16 @@ def _address_weights(
     }
 
 
-def _usage_weights(
-    source: Iterable[VariableEvidence],
-    decompiled: Iterable[VariableEvidence],
-) -> dict[str, float]:
-    from decbench.metrics.variable_features import feature_reliability
-
-    degrees: dict[str, int] = defaultdict(int)
-    for variable in [*source, *decompiled]:
-        for feature, count in variable.usage_features:
-            if count > 0:
-                degrees[feature] += 1
-    return {
-        feature: feature_reliability(feature) / max(1.0, math.log2(degree + 1))
-        for feature, degree in degrees.items()
-    }
-
-
-def _usage_similarity(
-    source: VariableEvidence,
-    decompiled: VariableEvidence,
-    weights: Mapping[str, float],
-) -> float:
-    from decbench.metrics.variable_features import is_context_feature
-
-    source_features = {feature: count for feature, count in source.usage_features if count > 0}
-    decompiled_features = {
-        feature: count for feature, count in decompiled.usage_features if count > 0
-    }
-    shared = source_features.keys() & decompiled_features.keys()
-    if not any(is_context_feature(feature) for feature in shared):
-        return 0.0
-    union = source_features.keys() | decompiled_features.keys()
-    numerator = sum(
-        weights[feature]
-        * min(
-            math.log1p(source_features.get(feature, 0)),
-            math.log1p(decompiled_features.get(feature, 0)),
-        )
-        for feature in union
-    )
-    denominator = sum(
-        weights[feature]
-        * max(
-            math.log1p(source_features.get(feature, 0)),
-            math.log1p(decompiled_features.get(feature, 0)),
-        )
-        for feature in union
-    )
-    return numerator / denominator if denominator else 0.0
-
-
-def has_usage_context(variable: VariableEvidence) -> bool:
-    """Return whether a variable has a non-generic feature usable for matching."""
-
-    from decbench.metrics.variable_features import is_context_feature
-
-    return any(
-        count > 0 and is_context_feature(feature) for feature, count in variable.usage_features
-    )
-
-
-MatcherMode = Literal["address", "usage", "address+usage"]
-MATCHER_MODES: tuple[MatcherMode, ...] = ("address", "usage", "address+usage")
-
-
 def match_variables(
     source: Iterable[VariableEvidence],
     decompiled: Iterable[VariableEvidence],
     *,
-    mode: MatcherMode = "address",
     min_overlap: float = 0.1,
     ambiguity_margin: float = 0.03,
-    min_usage_similarity: float = 0.1,
-    usage_ambiguity_margin: float = 0.03,
-    min_combined_similarity: float = 0.1,
-    combined_ambiguity_margin: float | None = None,
-    address_weight: float = 0.5,
     use_size_compatibility: bool = False,
     stack_shift_hint: int | None = None,
 ) -> DistanceResult:
-    if mode not in MATCHER_MODES:
-        raise ValueError(f"unknown matcher mode {mode!r}; expected one of {MATCHER_MODES}")
-    if not 0 < address_weight < 1:
-        raise ValueError("address_weight must be strictly between 0 and 1")
-    fused_margin = (
-        usage_ambiguity_margin if combined_ambiguity_margin is None else combined_ambiguity_margin
-    )
-    if any(
-        value < 0
-        for value in (
-            min_overlap,
-            ambiguity_margin,
-            min_usage_similarity,
-            usage_ambiguity_margin,
-            min_combined_similarity,
-            fused_margin,
-        )
-    ):
+    if min_overlap < 0 or ambiguity_margin < 0:
         raise ValueError("matcher thresholds and ambiguity margins must be non-negative")
     source_all = sorted(source, key=lambda var: var.identity)
     decompiled_candidates: list[VariableEvidence] = []
@@ -413,38 +319,13 @@ def match_variables(
         if not variable.inferred_from_code:
             decompiled_candidates.append(variable)
             continue
-        if mode == "usage":
-            decompiled_candidates.append(variable)
-            continue
-        sanitized = replace(
-            variable,
-            addresses=frozenset(),
-            lines=(),
-            live_ranges=(),
-            usage_features=() if mode == "address" else variable.usage_features,
-        )
-        if mode != "address" or sanitized.arg_index is not None or sanitized.stack_offsets:
+        sanitized = replace(variable, addresses=frozenset(), lines=(), live_ranges=())
+        if sanitized.arg_index is not None or sanitized.stack_offsets:
             decompiled_candidates.append(sanitized)
     decompiled_all = sorted(decompiled_candidates, key=lambda var: var.identity)
-    if mode == "address":
-        observable = [
-            var
-            for var in source_all
-            if var.addresses or var.stack_offsets or var.arg_index is not None
-        ]
-    elif mode == "usage":
-        observable = [var for var in source_all if has_usage_context(var)]
-    else:
-        observable = [
-            var
-            for var in source_all
-            if (
-                var.addresses
-                or var.stack_offsets
-                or var.arg_index is not None
-                or has_usage_context(var)
-            )
-        ]
+    observable = [
+        var for var in source_all if var.addresses or var.stack_offsets or var.arg_index is not None
+    ]
     observable_ids = {var.identity for var in observable}
     unobservable = [var for var in source_all if var.identity not in observable_ids]
     source_by_id = {var.identity: var for var in observable}
@@ -462,14 +343,8 @@ def match_variables(
         source_runner_up_gap: float | None = None,
         decompiled_runner_up_gap: float | None = None,
     ) -> None:
-        intersection = (
-            ()
-            if mode == "usage"
-            else tuple(
-                sorted(
-                    source_by_id[source_id].addresses & decompiled_by_id[decompiled_id].addresses
-                )
-            )
+        intersection = tuple(
+            sorted(source_by_id[source_id].addresses & decompiled_by_id[decompiled_id].addresses)
         )
         matches.append(
             VariableMatch(
@@ -485,49 +360,35 @@ def match_variables(
         remaining_source.remove(source_id)
         remaining_decompiled.remove(decompiled_id)
 
-    use_anchors = mode != "usage"
-    if use_anchors:
-        source_args: dict[int, list[VariableEvidence]] = defaultdict(list)
-        decompiled_args: dict[int, list[VariableEvidence]] = defaultdict(list)
-        for var in observable:
-            if var.arg_index is not None:
-                source_args[var.arg_index].append(var)
-        for var in decompiled_all:
-            if var.arg_index is not None:
-                decompiled_args[var.arg_index].append(var)
-        for index in sorted(source_args.keys() & decompiled_args.keys()):
-            if len(source_args[index]) == len(decompiled_args[index]) == 1:
-                accept(
-                    source_args[index][0].identity,
-                    decompiled_args[index][0].identity,
-                    "argument",
-                    1.0,
-                )
+    source_args: dict[int, list[VariableEvidence]] = defaultdict(list)
+    decompiled_args: dict[int, list[VariableEvidence]] = defaultdict(list)
+    for var in observable:
+        if var.arg_index is not None:
+            source_args[var.arg_index].append(var)
+    for var in decompiled_all:
+        if var.arg_index is not None:
+            decompiled_args[var.arg_index].append(var)
+    for index in sorted(source_args.keys() & decompiled_args.keys()):
+        if len(source_args[index]) == len(decompiled_args[index]) == 1:
+            accept(
+                source_args[index][0].identity,
+                decompiled_args[index][0].identity,
+                "argument",
+                1.0,
+            )
 
-    source_stack = (
-        [source_by_id[key] for key in remaining_source if source_by_id[key].stack_offsets]
-        if use_anchors
-        else []
+    source_stack = [
+        source_by_id[key] for key in remaining_source if source_by_id[key].stack_offsets
+    ]
+    decompiled_stack = [
+        decompiled_by_id[key] for key in remaining_decompiled if decompiled_by_id[key].stack_offsets
+    ]
+    shift = _stack_shift(
+        source_stack,
+        decompiled_stack,
+        use_size_compatibility=use_size_compatibility,
     )
-    decompiled_stack = (
-        [
-            decompiled_by_id[key]
-            for key in remaining_decompiled
-            if decompiled_by_id[key].stack_offsets
-        ]
-        if use_anchors
-        else []
-    )
-    shift = (
-        _stack_shift(
-            source_stack,
-            decompiled_stack,
-            use_size_compatibility=use_size_compatibility,
-        )
-        if use_anchors
-        else None
-    )
-    if shift is None and use_anchors:
+    if shift is None:
         shift = stack_shift_hint
     if shift is not None:
         source_neighbors: dict[str, set[str]] = defaultdict(set)
@@ -566,65 +427,17 @@ def match_variables(
 
     remaining_source_vars = [source_by_id[key] for key in sorted(remaining_source)]
     remaining_decompiled_vars = [decompiled_by_id[key] for key in sorted(remaining_decompiled)]
-    address_weights = (
-        _address_weights(remaining_source_vars, remaining_decompiled_vars)
-        if mode != "usage"
-        else {}
-    )
-    usage_weights = (
-        _usage_weights(remaining_source_vars, remaining_decompiled_vars)
-        if mode != "address"
-        else {}
-    )
+    address_weights = _address_weights(remaining_source_vars, remaining_decompiled_vars)
     edges: dict[tuple[str, str], tuple[float, tuple[int, ...], str, float]] = {}
     for source_var in remaining_source_vars:
         for decompiled_var in remaining_decompiled_vars:
-            address_score, intersection = (
-                _weighted_dice(source_var, decompiled_var, address_weights)
-                if mode != "usage"
-                else (0.0, ())
-            )
-            usage_score = (
-                _usage_similarity(source_var, decompiled_var, usage_weights)
-                if mode != "address"
-                else 0.0
-            )
-            if mode == "address":
-                score = address_score
-                threshold = min_overlap
-                stage = "overlap"
-                margin = ambiguity_margin
-            elif mode == "usage":
-                score = usage_score
-                threshold = min_usage_similarity
-                stage = "usage"
-                margin = usage_ambiguity_margin
-            else:
-                address_available = bool(source_var.addresses and decompiled_var.addresses)
-                usage_available = has_usage_context(source_var) and has_usage_context(
-                    decompiled_var
-                )
-                if address_available and usage_available:
-                    score = address_weight * address_score + (1 - address_weight) * usage_score
-                    stage = "fused"
-                    threshold = min_combined_similarity
-                    margin = fused_margin
-                elif address_available:
-                    score = address_score
-                    stage = "address-only"
-                    threshold = min_overlap
-                    margin = ambiguity_margin
-                else:
-                    score = usage_score
-                    stage = "usage-fallback"
-                    threshold = min_usage_similarity
-                    margin = usage_ambiguity_margin
-            if score >= threshold and (mode == "address" or score > 0):
+            score, intersection = _weighted_dice(source_var, decompiled_var, address_weights)
+            if score >= min_overlap:
                 edges[(source_var.identity, decompiled_var.identity)] = (
                     score,
                     intersection,
-                    stage,
-                    margin,
+                    "overlap",
+                    ambiguity_margin,
                 )
 
     candidates: dict[str, list[tuple[str, float]]] = defaultdict(list)
@@ -668,12 +481,7 @@ def match_variables(
             source_gap = score - source_rows[1][1] if len(source_rows) > 1 else None
             decompiled_gap = score - decompiled_rows[1][1] if len(decompiled_rows) > 1 else None
             gaps = (source_gap, decompiled_gap)
-            ambiguous = (
-                any(gap is not None and gap < margin for gap in gaps)
-                if mode == "address"
-                else any(gap is not None and gap <= margin for gap in gaps)
-            )
-            if ambiguous:
+            if any(gap is not None and gap < margin for gap in gaps):
                 continue
             accept(
                 source_id,
@@ -1081,7 +889,7 @@ def extract_source_evidence(
     include_inlined: bool = False,
     function_address: int | None = None,
     source_lines: Mapping[tuple[str, int], str] | None = None,
-    feature_code: str | None = None,
+    function_code: str | None = None,
     binary_context: SourceBinaryEvidenceContext | None = None,
 ) -> FunctionEvidence:
     source_text = (
@@ -1225,30 +1033,14 @@ def extract_source_evidence(
                 )
 
         walk_scope(function_die, function_ranges)
-        from decbench.metrics.variable_features import (
-            analyze_c_function,
-            extract_c_function,
-        )
+        from decbench.metrics.variable_features import extract_c_function
 
-        selected_code = feature_code
+        selected_code = function_code
         if selected_code is None:
             selected_code = extract_c_function(
                 source_path.read_text(errors="replace"),
                 function_name,
             )
-        if selected_code is not None:
-            analysis = analyze_c_function(
-                selected_code,
-                function_name,
-                (variable.name for variable in raw_variables),
-            )
-            raw_variables = [
-                replace(
-                    variable,
-                    usage_features=analysis.features.get(variable.name, ()),
-                )
-                for variable in raw_variables
-            ]
         line_addresses: dict[int, set[int]] = defaultdict(set)
         for address, (_filename, line) in address_location.items():
             line_addresses[line].add(address)
@@ -1328,21 +1120,6 @@ def extract_ida_evidence(
             )
         )
 
-    from decbench.metrics.variable_features import analyze_c_function
-
-    analysis = analyze_c_function(
-        "\n".join(lines),
-        function_name,
-        (variable.name for variable in variables),
-    )
-    variables = [
-        replace(
-            variable,
-            usage_features=analysis.features.get(variable.name, ()),
-        )
-        for variable in variables
-    ]
-
     function = ida_funcs.get_func(cfunc.entry_ea)
     ida_end = int(function.end_ea) if function is not None else int(cfunc.entry_ea)
     start = (int(cfunc.entry_ea) - image_base) + elf_base
@@ -1420,7 +1197,6 @@ def extract_decompiler_evidence(
                     kind="arg" if getattr(variable, "kind", "") == "arg" else "local",
                     arg_index=getattr(variable, "arg_index", None),
                     lines=tuple(sorted(lines)),
-                    usage_features=analysis.features.get(variable.name, ()),
                 )
             )
     elif infer_code_variables:
@@ -1431,7 +1207,6 @@ def extract_decompiler_evidence(
                     name=variable.name,
                     kind=variable.kind,
                     arg_index=variable.arg_index,
-                    usage_features=analysis.features.get(variable.name, ()),
                     inferred_from_code=True,
                 )
             )

@@ -43,8 +43,8 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
   addresses are omitted. This joins two outputs from the same producer rather
   than matching against source names. The sidecar's variables are deliberately
   ignored: they predate final C transformations and are not final-variable
-  provenance, so type matching still uses the C/usage fallback and reports no
-  native line map.
+  provenance, so type matching falls back to ABI argument and stack anchors and
+  reports no native line map.
 - **Native or containerized Glaurung** (`raw/glaurung_raw.py`: `glaurung`):
   invokes Glaurung's address-scoped JSON CLI natively when `GLAURUNG_BIN`, the
   decompiler config, or `$PATH` resolves it. Otherwise it runs the immutable
@@ -200,19 +200,20 @@ def decompile_binary(
 | `decompiled_code` (C string) | GED, byte_match | **Yes** — without it nothing scores |
 | `address` (ELF-space) | type_match, byte_match | **Yes** |
 | `variables: list[VariableInfo]` | type_match | Recommended (else parsed out of the C) |
-| `line_mappings: list[LineMapping]` | type_match variable correspondence / CFG attribution | Recommended; type-blind usage evidence can supplement or replace it |
+| `line_mappings: list[LineMapping]` | type_match variable correspondence / CFG attribution | Strongly recommended; without it only ABI argument and stack anchors remain |
 | `metadata` (e.g. goto/bool counts) | report extras | Optional |
 
 A backend that only fills `decompiled_code` + correct `address` already scores
 on GED and byte_match, and type_match parses variable declarations in its C
 (signature → ABI-positioned args + locals). This parsing recovers types and variable
 bindings only; production occurrence addresses are never synthesized with a name
-regex. Variables and line maps improve fidelity but are not required. Type_match can
-use type-blind variable-usage evidence either alone or jointly with native
-address/anchor evidence. Each function
-records whether its correspondence evidence was `native`, `mixed`, or `fallback_only`;
-the site marks mixed/fallback-only Type percentages because conservative heuristic
-abstention may undercount recovery.
+regex. Variables and line maps improve fidelity but are not required. Type_match
+correspondence uses address evidence only, so a backend without occurrence
+addresses is matched through ABI argument and stack anchors alone. Each function
+records its correspondence evidence marker (`native` in the current metric; the
+historical `mixed` and `fallback_only` categories are still read for older data),
+and the site marks a Type percentage whose producer occurrence policy was
+`unavailable` or `undeclared`.
 
 #### Native line and variable provenance
 
@@ -248,7 +249,7 @@ parent validates strictly against the unstripped original before evaluation and
 checkpoint persistence. The ordinary in-process pipeline validates strictly at
 its adapter boundary. If the exact binary/function context is unavailable at a
 final boundary, native address claims fail closed while code and structured
-variables remain available to usage/argument/stack matching. Durable metadata
+variables remain available to argument/stack matching. Durable metadata
 contains only aggregate status, counts, and fixed reason counts—never addresses,
 variable/function names, or exception text.
 
@@ -343,7 +344,7 @@ binary metadata proves Thumb state; unavailable or conflicting ARM state fails c
   Requested-address coverage is counted over unique Thumb-bit-normalized entries,
   and a run that recovers none of those entries is an explicit error.
   Reko's renderer has no stable token-to-line callback, so it deliberately emits
-  no line map; older images retain the text/usage fallback. Candidate images can
+  no line map; older images retain the anchor-only fallback. Candidate images can
   be selected with `DECBENCH_REKO_IMAGE` for isolated A/B runs.
 - Kuna accepts additive `line_mappings` entries (`line_number`, `addresses`)
   and variable `line_numbers`/`addresses` in `decompile-all --json`. Missing
@@ -438,11 +439,11 @@ upstream head is still the pinned `b63daf30ccfbcc3a88d7ead117df17e41127f499`.
 
 Their DecBench adapters deliberately emit no native occurrence addresses or
 line maps. Final-name-to-earlier-IR joins would be heuristic, so local-variable
-correspondence uses the type-blind usage fallback. ABI argument anchors still
-apply when the final C signature exposes them. Metric metadata records
-`linemap_present=false`, an `unavailable` producer occurrence policy, and zero
-`decompiler_address_variables`; the report's mixed/fallback caveat covers any
-score that depended on usage evidence.
+correspondence falls back to ABI argument and stack anchors, which apply only when
+the final C signature or a structured stack offset exposes them. Metric metadata
+records `linemap_present=false`, an `unavailable` producer occurrence policy, and
+zero `decompiler_address_variables`; the report's producer-policy caveat covers
+those scores.
 
 The minimal upstream implementation is a provenance-carrying final AST, not a
 post-render text matcher:
@@ -899,7 +900,7 @@ renames the placeholder to the real symbol for function-level evaluation. Missin
 line-maps and variables are fine — GED parses the C directly, and type_match
 parses the C signature into ABI-positioned arguments plus locals and scores them
 through the structured matcher. Missing occurrence provenance remains an explicit
-abstention; address-free usage features provide the correspondence fallback. Before
+abstention; ABI argument positions provide the correspondence fallback. Before
 publishing, refresh the metric overlays as with any newly added
 decompiler — but note `scripts/reeval_ged.py` and `scripts/reeval_bytematch.py`
 hard-code a `DECOMPILERS` tuple that does **not** include the LLM backends
@@ -1050,7 +1051,7 @@ warned), writes `decompiled/<id>_<stem>.c` (+ `.toml`) artifacts, merges the
 checkpoints additively (`--force` to overwrite an existing id), and — with
 `--evaluate`, the default — computes ged/type_match/byte_match inline through
 the same evaluation path the benchmark uses. Ingest discovers both `.i` and
-`.ii` units for TypeMatch source address/usage evidence even in a TypeMatch-only
+`.ii` units for TypeMatch source address evidence even in a TypeMatch-only
 evaluation; it only pays the source-CFG extraction cost when a requested metric
 (currently GED) requires CFGs. The column is marked
 `slice_scoped` in its `DecompilerMetadata.extra`, so `finalize_results.py
@@ -1100,7 +1101,7 @@ decbench site build results/full_run -o site/
   toolchains (a non-scoring result, not a 0) — GED + type_match carry those
   slices, same as for every in-house backend.
 - **type_match parses the submitted code** for its decompiler-side variables
-  and type-blind usage context (submissions carry no `VariableInfo`), while the
+  (submissions carry no `VariableInfo`), while the
   source side receives the tree's preprocessed `.i`/`.ii` units. This matches
   the LLM-backend path; structured variable data from a raw backend can still
   score slightly differently.

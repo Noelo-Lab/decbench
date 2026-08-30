@@ -2370,7 +2370,7 @@ def test_r2_code_inferred_local_joins_pdcj_line_addresses() -> None:
     assert function.variables[0].line_numbers == [2, 3]
     assert function.variables[0].addresses == [0x1004]
     assert variable_occurrence_policy(function.metadata) == "exact"
-    metric = TypeMatchMetric(MetricConfig(extra_options={"variable_match_mode": "address"}))
+    metric = TypeMatchMetric(MetricConfig())
     result = metric.compute_for_function(
         function,
         ground_truth_vars=[

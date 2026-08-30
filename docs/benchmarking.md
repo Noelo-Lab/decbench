@@ -311,7 +311,7 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 
 When `DECBENCH_METRICS` is explicit and omits `ged`, the driver skips Joern
 source-CFG extraction. Preprocessed sources are still forwarded to TypeMatch
-for usage evidence and source-address selection.
+for source-address selection.
 
 ### Per-decompiler wall-clock budgets
 
@@ -653,7 +653,7 @@ experiments for configured sample-only backends such as Glaurung or Manifold mus
 `--scope experimental-full` plus explicit `--backend` selectors. They remain a separate,
 clearly marked plan and are not comparable to the regular full or frozen sample-set plan.
 
-The orchestrator runs `address`, `usage`, `address+usage`, and `auto` in fresh external Python
+The orchestrator runs the single `address` correspondence in fresh external Python
 process groups coordinated by a bounded thread pool; it does not create a fork-based Python
 worker pool. A manifest controls emitted rows, while every selected binary's complete
 producer function set remains available to sanitization and binary-wide stack calibration.
@@ -703,7 +703,7 @@ publishing.
 
 **A reeval can only use what the checkpoint recorded.** `reeval_typematch.py`
 can discard invalid native claims while retaining their valid subsets, but it
-cannot invent missing variables, argument positions, or usage evidence. The
+cannot invent missing variables or argument positions. The
 live case: PR #60 fix 3 corrected IDA's
 `arg_index` from Hex-Rays allocation order to `cfunc.argidx`, but every
 `checkpoints/*.pkl` in `results/full_run` was written BEFORE that fix and still

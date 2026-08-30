@@ -16,6 +16,7 @@ from decbench.models.decompilation import (
 )
 from decbench.results_store import (
     TypeMatchOverlayError,
+    read_typematch_overlay,
     typematch_overlay_provenance,
     write_typematch_overlay_atomic,
 )
@@ -112,22 +113,22 @@ def _fixture_tree(tmp_path: Path) -> tuple[Path, Path]:
 
 def _write_overlay(
     path: Path,
-    mode: str,
+    name: str,
     *,
-    drop_auto_f2: bool = False,
+    drop_candidate_f2: bool = False,
     cache_version: str = "8",
     omit_entry_provenance: bool = False,
 ) -> None:
     a = {
         "proj::O0::xbin::f1": {
-            "value": 0.5 if mode == "address" else 1.0,
-            "variable_match_evidence": "native" if mode == "address" else "mixed",
+            "value": 0.5 if name == "address" else 1.0,
+            "variable_match_evidence": "native" if name == "address" else "mixed",
             "producer_variable_occurrence_policy": "exact",
             "structured_occurrence_mode": "producer",
         },
         "proj::O2::armbin::f2": {
-            "value": 1.0 if mode == "address" else 0.5,
-            "variable_match_evidence": ("native" if mode == "address" else "fallback_only"),
+            "value": 1.0 if name == "address" else 0.5,
+            "variable_match_evidence": ("native" if name == "address" else "fallback_only"),
             "producer_variable_occurrence_policy": "unavailable",
             "structured_occurrence_mode": "producer",
         },
@@ -138,7 +139,7 @@ def _write_overlay(
             "structured_occurrence_mode": "producer",
         },
     }
-    if drop_auto_f2 and mode == "auto":
+    if drop_candidate_f2 and name == "candidate":
         a.pop("proj::O2::armbin::f2")
     if omit_entry_provenance:
         a["proj::O0::xbin::f1"].pop("producer_variable_occurrence_policy")
@@ -155,9 +156,9 @@ def _write_overlay(
         },
     }
     provenance = typematch_overlay_provenance(
-        mode=mode,
-        resolved_mode="address+usage" if mode == "auto" else mode,
-        policy={"min_overlap": 0.1, "address_weight": 0.5},
+        mode="address",
+        resolved_mode="address",
+        policy={"min_overlap": 0.1, "ambiguity_margin": 0.03},
         metric_cache_version=cache_version,
         structured_occurrence_mode="producer",
         variable_occurrence_policy_schema="decbench-variable-occurrence-policy-v1",
@@ -219,16 +220,16 @@ def _report(
 ) -> dict[str, object]:
     function_data, manifest = _fixture_tree(tmp_path)
     address = tmp_path / "address.json"
-    auto = tmp_path / "auto.json"
+    candidate = tmp_path / "candidate.json"
     _write_overlay(address, "address")
-    _write_overlay(auto, "auto", drop_auto_f2=drift)
+    _write_overlay(candidate, "candidate", drop_candidate_f2=drift)
     checkpoints = tmp_path / "checkpoints"
     _write_checkpoints(checkpoints)
     return build_report(
         function_data_path=function_data,
         results_root=tmp_path,
         manifest_path=manifest,
-        modes=(("address", address), ("auto", auto)),
+        modes=(("address", address), ("candidate", candidate)),
         baseline_mode="address",
         checkpoint_dir=checkpoints,
         run_scope=run_scope,
@@ -277,7 +278,7 @@ def test_report_separates_partial_mean_from_shared_perfect_rate(tmp_path: Path) 
     address_o0 = report["modes"]["address"]["optimization_levels"]["O0"]
     assert address_o0["backends"]["a"]["published_perfect"]["rate"] == 0.0
     assert address_o0["backends"]["b"]["published_perfect"]["rate"] == 1.0
-    comparison = report["comparisons"]["auto_minus_address"]["optimization_levels"]
+    comparison = report["comparisons"]["candidate_minus_address"]["optimization_levels"]
     assert comparison["O0"]["backends"]["a"]["published_perfect"] == {
         "baseline_count": 0,
         "candidate_count": 1,
@@ -298,7 +299,7 @@ def test_report_separates_partial_mean_from_shared_perfect_rate(tmp_path: Path) 
 
 def test_report_tracks_regressions_evidence_and_producer_coverage(tmp_path: Path) -> None:
     report = _report(tmp_path)
-    comparison = report["comparisons"]["auto_minus_address"]["overall"]["backends"]["a"]
+    comparison = report["comparisons"]["candidate_minus_address"]["overall"]["backends"]["a"]
 
     assert comparison["paired_partial"]["improved"] == 1
     assert comparison["paired_partial"]["regressed"] == 1
@@ -359,7 +360,7 @@ def test_coverage_drift_is_reported_and_fails_cli_by_default(tmp_path: Path) -> 
     report = _report(tmp_path, drift=True)
     assert report["validation"]["valid_for_apples_to_apples"] is False
     assert report["validation"]["errors"] == ["measured key coverage differs across modes for a"]
-    comparison = report["comparisons"]["auto_minus_address"]["overall"]["backends"]["a"]
+    comparison = report["comparisons"]["candidate_minus_address"]["overall"]["backends"]["a"]
     assert comparison["coverage"]["baseline_only"] == 1
     assert comparison["coverage_loss_examples"] == [
         {"backend": "a", "function_key": "proj::O2::armbin::f2"}
@@ -377,7 +378,7 @@ def test_coverage_drift_is_reported_and_fails_cli_by_default(tmp_path: Path) -> 
             "--mode",
             f"address={tmp_path / 'address.json'}",
             "--mode",
-            f"auto={tmp_path / 'auto.json'}",
+            f"candidate={tmp_path / 'candidate.json'}",
             "--output",
             str(output),
             "--markdown",
@@ -446,3 +447,29 @@ def test_report_json_is_deterministic_with_optimization_levels(tmp_path: Path) -
         "O2": 1,
         "O2-noinline": 1,
     }
+
+
+def test_report_rejects_an_overlay_from_a_retired_correspondence(tmp_path: Path) -> None:
+    function_data, manifest = _fixture_tree(tmp_path)
+    address = tmp_path / "address.json"
+    retired = tmp_path / "retired.json"
+    _write_overlay(address, "address")
+    _write_overlay(retired, "retired")
+    payload, provenance = read_typematch_overlay(retired)
+    assert provenance is not None
+    provenance["mode"] = provenance["resolved_mode"] = "address+usage"
+    write_typematch_overlay_atomic(retired, payload, provenance)
+
+    report = build_report(
+        function_data_path=function_data,
+        results_root=tmp_path,
+        manifest_path=manifest,
+        modes=(("address", address), ("retired", retired)),
+        baseline_mode="address",
+    )
+
+    assert report["validation"]["valid_for_apples_to_apples"] is False
+    assert any(
+        "was not produced by the address correspondence" in error
+        for error in report["validation"]["errors"]
+    )

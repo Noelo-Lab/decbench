@@ -133,23 +133,30 @@ def test_prose_renders_markdown_constructs(content: Content) -> None:
 
 
 def test_type_evidence_note_and_limitation_are_explained(content: Content) -> None:
+    """The asterisk and its limitation must stay explained on the published pages.
+
+    The usage/stacked correspondence modes were removed, so instruction addresses
+    are the only correspondence channel; the negative assertions keep the site
+    from describing a channel the metric no longer has.
+    """
     leaderboard = content.view("leaderboard").body_html
     assert 'id="type-evidence-note"' in leaderboard
     assert "may be conservative" in leaderboard
-    assert "type-blind usage evidence" in leaderboard
-    assert "usage/name evidence" not in leaderboard
+    assert "variable-occurrence provenance" in leaderboard
+    assert "usage" not in leaderboard.lower()
 
     about = content.view("about").outro_html
-    assert "mixed or fallback-only evidence" in about
+    assert "conservatively undercount" in about
     assert "scores or denominators" in about
+    assert "usage" not in about.lower()
 
     type_card = next(
         goal for goal in content.view("about").goals if goal.metric_key == "type_match"
     )
     assert "validated instruction-address overlap" in type_card.body_html
-    assert "type-blind usage" in type_card.body_html
     assert "Names and recovered types are never correspondence evidence" in type_card.body_html
     assert "by exact name" not in type_card.body_html
+    assert "usage" not in type_card.body_html.lower()
 
 
 def test_convention_comments_are_stripped(content: Content) -> None:
