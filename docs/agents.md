@@ -4,6 +4,19 @@ Guidance for coding agents (Claude Code, Codex, …) working in this repository.
 This file holds only the **mandatory** knowledge. Everything else lives
 in `docs/` — read the matching doc before working in an area.
 
+## Mandatory Human Review Before Submission
+
+- AI agents may research, implement, and draft a prospective contribution without
+  prior human approval.
+- **Before finalizing or submitting any contribution to DecBench, an AI agent MUST
+  consult the human contributor, show them the complete proposed changes or
+  content, and obtain their explicit approval to submit it.** This applies to
+  issues, comments (including issue, pull-request, and commit comments), and pull
+  requests.
+- Never submit a contribution through an autonomous end-to-end workflow. The human
+  contributor must review and own the finalized code, prose, analysis, and public
+  communication. See the [README AI Policy](../README.md#ai-policy).
+
 ## Project Overview
 
 DecBench is a benchmarking suite for evaluating decompiler performance. It
@@ -146,7 +159,11 @@ Key conventions:
   date with our changes, found at https://huggingface.co/datasets/noelo-lab/decbench-dataset.
   You can usually find a local clone one directory above this repo in
   `decbench-dataset`, which has results stored in it.
-- Any time any public thing is created fully automatically, it should start with `[AUTOMATED]`. That goes for PRs, Issues (opening and responses). It should also be in the commit message, but can go outside of the tagline and more inside the extended part.
+- **An `[AUTOMATED]` label does not make an autonomous contribution permissible.**
+  After the required human consultation and approval, any public content generated
+  fully automatically must start with `[AUTOMATED]`. This includes pull requests,
+  issues and responses, and commit messages (where the label may appear in the
+  extended message rather than the subject).
 
 ## Coding Standards
 
@@ -160,4 +177,3 @@ Key conventions:
 - Autonomous updates to CHANGELOG.md is illegal. You can make a suggestion in the PR description, but these should be edited by human maintainers.
 - After making changes to code, we should verify that the docs remain up-to-date with those changes.
 - We want to minimize the inline comments we do in our code. Only in the rarest cases where code is especially confusing or a hack should we have inline comments. Comments in the headers of files is ok. Comments in the function prototype is also ok, but should be minimal. 
-
