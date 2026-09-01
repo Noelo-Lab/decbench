@@ -161,3 +161,17 @@ Autonomous research is valuable, but not desired on this project.
 Autonmous contributions may be closed without reason. 
 Again, this is not a ban on AI, but a ban on end-to-end automation (open issue, PR, comments).
 Please be responsible and own the content you write for DecBench.
+
+## Citation
+
+If you use DecBench for research or to improve your tools, consider citing or mentioning it
+in your project. Public acknowledgement helps gain support to keep DecBench it running:
+
+```bibtex
+@misc{decbench2026,
+  author = {{Noelo Lab}},
+  title = {{DecBench}: A Benchmarking Suite for Evaluating Perfect Decompilation},
+  year = {2026},
+  url = {https://github.com/Noelo-Lab/decbench}
+}
+```
