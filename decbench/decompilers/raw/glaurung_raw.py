@@ -32,9 +32,14 @@ with the shared ``common`` helpers, exactly like the other raw backends.
 Architecture support: x86-64, AArch64, and **ARM32/Thumb-2** (the DecBench CPS
 firmware is Cortex-M Thumb, so this covers the ARM slice). ARM32 mode selection
 uses ELF mapping symbols, function-symbol Thumb bits, and bounded decode probes;
-both Thumb-2 and A32 have dedicated round-trip lanes. Structured
-``VariableInfo`` is not emitted yet; type_match uses its C-signature text-parsing
-path over the emitted ``long name(long arg0, …)`` prototype.
+both Thumb-2 and A32 have dedicated round-trip lanes. The pinned revision cannot
+emit sound ``LineMapping`` or ``VariableInfo`` occurrence evidence: its LLIR
+instructions carry machine addresses, but that origin is discarded before the
+final, rewriting AST pipeline. The adapter therefore leaves both fields empty
+instead of joining final C names back to an earlier IR by spelling.
+``type_match`` uses its C-signature and usage fallback over the emitted
+``long name(long arg0, …)`` prototype. The producer-side contract needed to
+unlock native evidence is documented in ``docs/decompilers.md``.
 
 Locate the CLI via ``$GLAURUNG_BIN`` (an explicit path), the DecBench
 decompiler configuration, or ``glaurung`` on ``$PATH``. When no native CLI
@@ -64,14 +69,16 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    with_variable_occurrence_policy,
 )
+from decbench.utils.docker_task import docker_task_label_args
 
 _l = logging.getLogger(__name__)
 
 # Above this many targets we skip the (command-line-length-bounded) --vas form
-# and decompile the whole binary, then narrow. The sample-set takes at most one
-# function per binary, so --vas is the normal path; this is just a safety valve.
-_MAX_VAS_INLINE = 400
+# and decompile the whole binary, then narrow. The current full corpus stays
+# below this limit per binary while keeping the argument list well below ARG_MAX.
+_MAX_VAS_INLINE = 10_000
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DOCKER_DIR = _REPO_ROOT / "docker"
@@ -278,6 +285,7 @@ class RawGlaurungDecompiler(Decompiler):
                         docker,
                         "run",
                         "--rm",
+                        *docker_task_label_args(),
                         "--network",
                         "none",
                         "--entrypoint",
@@ -304,9 +312,9 @@ class RawGlaurungDecompiler(Decompiler):
         except Exception as e:  # noqa: BLE001
             _l.error("glaurung-raw: discover failed on %s: %s", binary_path, e)
             return []
-        text_range = common.elf_text_range(binary_path)
+        code_ranges = common.executable_code_ranges(binary_path)
         out = [(str(r.get("name") or ""), int(r.get("entry_va") or 0)) for r in records]
-        out = [(n, a) for (n, a) in out if not common.should_skip_function(n, a, text_range)]
+        out = [(n, a) for (n, a) in out if not common.should_skip_function(n, a, code_ranges)]
         return sorted(out, key=lambda x: x[1])
 
     def decompile_binary(
@@ -327,7 +335,7 @@ class RawGlaurungDecompiler(Decompiler):
             )
 
         start = time.time()
-        text_range = common.elf_text_range(binary_path)
+        code_ranges = common.executable_code_ranges(binary_path)
         decompiled: dict[str, FunctionDecompilation] = {}
         failed: list[str] = []
         timed_out = False
@@ -382,7 +390,7 @@ class RawGlaurungDecompiler(Decompiler):
             (
                 (n, int(r.get("entry_va") or 0))
                 for n, r in by_name.items()
-                if not common.should_skip_function(n, int(r.get("entry_va") or 0), text_range)
+                if not common.should_skip_function(n, int(r.get("entry_va") or 0), code_ranges)
             ),
             key=lambda x: x[1],
         )
@@ -436,6 +444,9 @@ class RawGlaurungDecompiler(Decompiler):
                 docker,
                 "run",
                 "--rm",
+                *docker_task_label_args(),
+                "--user",
+                f"{os.getuid()}:{os.getgid()}",
                 "--network",
                 "none",
                 "--read-only",
@@ -517,7 +528,7 @@ class RawGlaurungDecompiler(Decompiler):
             if p.poll() is None:
                 self._kill_group(p)
         if p.returncode != 0:
-            tail = (stderr or "")[-500:]
+            tail = (stderr or stdout or "")[-500:]
             raise RuntimeError(f"glaurung exited {p.returncode}: {tail}")
         records = self._parse_records(stdout)
         self._payload_cache[key] = records
@@ -548,9 +559,9 @@ class RawGlaurungDecompiler(Decompiler):
             address=file_addr,
             decompiled_code=code,
             line_count=code.count("\n") + 1,
-            line_mappings=[],  # not emitted; GED parses the C directly
-            variables=[],  # v1: type_match uses the C-signature text path
-            metadata=common.extract_metrics(code),
+            line_mappings=[],
+            variables=[],
+            metadata=with_variable_occurrence_policy(common.extract_metrics(code), "unavailable"),
         )
 
     def _error_result(

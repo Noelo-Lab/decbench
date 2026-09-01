@@ -168,7 +168,8 @@ def strip_decompilers(fd: FunctionData, exclude: Iterable[str]) -> list[str]:
     keyed or tagged by decompiler id):
 
     * ``fd.decompilers``, ``fd.decompiler_versions``, ``fd.compile_rates``
-    * per-function ``values`` / ``perfects`` / ``distances`` / ``decompiled`` /
+    * per-function ``values`` / ``perfects`` / ``metric_evidence`` /
+      ``producer_variable_occurrence_policy`` / ``distances`` / ``decompiled`` /
       ``compiles`` dicts
     * ``fd.samples[*].decompiled`` / ``values`` / ``perfects``
     * ``fd.hardest`` entries whose ``decompiler`` is excluded (dropped)
@@ -196,6 +197,8 @@ def strip_decompilers(fd: FunctionData, exclude: Iterable[str]) -> list[str]:
         for f in g.functions:
             _prune(f.values)
             _prune(f.perfects)
+            _prune(f.metric_evidence)
+            _prune(f.producer_variable_occurrence_policy)
             _prune(f.distances)
             _prune(f.decompiled)
             _prune(f.compiles)

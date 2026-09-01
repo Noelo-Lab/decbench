@@ -44,9 +44,9 @@ structurer was fully retired 2026-07-23; see CHANGELOG.md.)
   PROCESS in its own py3.10 venv at `/home/mahaloz/.virtualenvs/dewolf` with
   the repo at `/home/mahaloz/ctf/tools/dewolf`; see `raw/dewolf_raw.py` +
   `raw/dewolf_driver.py`, configured under `[dewolf.versions.default]`.
-- **RetDec / Reko** — Dockerized (`docker/`); their images are NOT currently
-  built on this machine (`list-decompilers` shows N) — build one with
-  `decbench decompiler-build <name>` first.
+- **RetDec / Reko** — Dockerized (`docker/`); both images are built and
+  `list-decompilers` reports them available on this machine. Rebuild a missing
+  image with `decbench decompiler-build <name>`.
 - **Glaurung** — native address-scoped CLI or the
   `decbench/glaurung:latest` image built by
   `decbench decompiler-build glaurung`. The image is a reproducible raw-only
@@ -294,6 +294,24 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
   runs)
 - `DECBENCH_OPT_LEVELS` (comma list, e.g. `"O0"` to narrow the run)
 - `DECBENCH_METRICS` (comma list, e.g. `"ged"` for a GED-only run)
+- `DECBENCH_RETDEC_KEEP_SIDECARS=1` atomically retains each RetDec binary's exact
+  `out.json` + `out.dsm` pair under its project/optimization `decompiled/`
+  directory. The path is keyed by the analyzed binary and filename digests, and
+  the checkpoint records only the relative path and SHA-256 values. This mode
+  accepts only single-link regular producer files and fails the binary closed if
+  either file is absent, the annotated invocation exits nonzero, or the pair
+  cannot be persisted; use it for auditable RetDec producer runs. A complete
+  interrupted staging pair is rehashed and recovered atomically; partial or
+  conflicting staging is moved to `retdec-sidecars-quarantine/` and fails closed
+  for explicit audit handling.
+- `DECBENCH_SKIP_FINALIZE=1` leaves the completed per-project checkpoints in
+  place without rebuilding root-level derived files. Use it for concurrent
+  runs over disjoint `-- project ...` shards, then run
+  `scripts/finalize_results.py <tree>` once after every shard succeeds.
+
+When `DECBENCH_METRICS` is explicit and omits `ged`, the driver skips Joern
+source-CFG extraction. Preprocessed sources are still forwarded to TypeMatch
+for source-address selection.
 
 ### Per-decompiler wall-clock budgets
 
@@ -308,10 +326,20 @@ big targets (bash, openssh, coreutils, the large ARM firmware).
 | Backend | Default | Why |
 | --- | --- | --- |
 | `angr` | 3600 s | ~15-20 s/function; a big binary legitimately needs ~1 h. |
+| `angr-declib` | 3600 s | declib drives the same angr analysis and exposes no enforceable per-function timeout. |
 | `ghidra` / `binja` / `r2dec` | 1800 s | Fast per function, but a few large binaries overrun 300 s. r2dec's `aaa` analysis alone can run minutes. |
+| `ghidra-declib` / `ida-declib` / `binja-declib` | 1800 s | declib exposes no enforceable per-function timeout, so large binaries need the same bounded headroom. |
+| `retdec` / `reko` / `glaurung` / `manifold` | 1800 s | Whole-program or whole-analysis backends can legitimately overrun the global 300 s budget on large binaries, even when the final result is source-filtered. |
 | `kuna` | 900 s | Emits its JSON only at the very end, so a kill yields ZERO functions; needs a budget above its slowest binary (~450 s on bash). Its per-FUNCTION guard is `--max-fn-seconds`, passed by the backend. |
 | `dewolf` | 1200 s | A z3/sympy simplification pipeline that blows up per function. Capped lower than angr because the cap bounds *hangs*, not a slow-but-progressing decompile. |
 | `codex` / `claude-code` / `kimi-code` | 3600 s | One agentic CLI call per function (~minutes). The backend checkpoints after each function, so a large budget bounds a stuck call while still crediting finished ones. |
+
+Each timed child receives a unique 128-bit task token. Docker-backed decompile
+and version-probe containers carry that token as an exact label. After an outer
+timeout or worker error, the driver lists containers by that label, validates
+full container IDs and the exact label value, then force-removes only those
+verified matches. Killing the local ``docker run`` client alone does not stop
+the daemon-side container.
 
 Resume MERGES per project AND per decompiler:
 `DECBENCH_DECOMPILERS=r2dec python scripts/run_benchmark.py results/full_run`
@@ -339,8 +367,9 @@ DECBENCH_SMALL_DECOMPILERS="angr,ida,ghidra@12.0,ghidra@12.1" python scripts/run
 ### Why the run driver isn't just `decbench run`
 
 Key scaling facts: angr's decompiler is ~15-20 s/function (Ghidra
-~0.5 s/func) and decbench decompiles *all* `.text` functions, ~99% of which
-are bundled gnulib in some binaries. So the driver (a) filters decompilation
+~0.5 s/func) and an ungated backend can discover functions across every
+file-backed executable section, ~99% of which are bundled gnulib in some
+binaries. So the driver (a) filters decompilation
 to the project's own source functions via DWARF `decl_file`
 (`project_source_functions`), (b) imposes a hard per-binary timeout via
 killable subprocess, (c) recovers partial results on timeout
@@ -349,6 +378,10 @@ killable subprocess, (c) recovers partial results on timeout
 non-isomorphic CFGs ≤ `DECBENCH_GED_MAX_NODES` nodes. VJ-GED uses a compiled
 linear-assignment solver with the same cost model as cfgutils' pure-Python
 Munkres implementation. A few still-larger optimized CFGs otherwise dominate.
+Partial-result pickles are atomically refreshed at most once every five seconds;
+the child always writes the complete result when it exits normally. This bounds
+timeout recovery loss without repeatedly serializing the entire growing result
+after every fast IDA/Kuna function.
 These make angr tractable and bound the run; default in-process `decbench run`
 does none of them.
 
@@ -405,6 +438,77 @@ Other driver facts:
   task in a fresh process via `max_tasks_per_child=1`, so JVM/idalib state
   never leaks between tasks.
 
+### Auditing native line and variable provenance
+
+Before using a fresh native-provenance run for a TypeMatch A/B report, audit
+the checkpoint pickles against the original linked binaries:
+
+```bash
+python scripts/audit_native_provenance.py results/native_sample \
+  --manifest results/native_sample/sample_set_manifest.json \
+  --backend ida --backend kuna --backend dewolf --backend reko \
+  --output /tmp/native-provenance-audit.json
+```
+
+The audit is read-only: it never rewrites checkpoints, overlays, artifacts, or
+derived results. It resolves each claimed function by exact DWARF name and
+linked entry address, decodes its ELF/PE x86, ARM/Thumb, or AArch64 ranges, and
+requires every stored mapping/variable address to be an instruction start in
+that exact function. The auditor builds its own immutable DWARF identity index,
+executable-region snapshot, and architecture context once per binary slice, so
+full-corpus validation does not reparse a large binary for every function.
+ARM instruction state must come from an odd linked entry, an unambiguous exact
+or unique-name ELF function symbol, the M-profile attribute, or the PE machine
+type. Missing, conflicting, and non-unique state evidence fails closed instead
+of silently decoding the bytes as A32.
+Line numbers are checked against the precise
+`FunctionDecompilation.decompiled_code` string, and direct variable addresses
+must agree with the selected mapped rows when both forms are present. Dewolf
+and Reko's direct-only variable provenance is valid without a line map after
+the same instruction check. Variable line numbers are not independently useful
+without a validated function line map, so the sanitizer drops them whenever no
+mapped row survives; direct addresses and recovered variable records remain.
+
+`--manifest` is a strict allowlist, not a post-hoc filter: any selected-backend
+function outside it makes the audit fail. This is deliberate—it catches a
+sample gate that silently expanded to the full corpus. A manifest slice that is
+absent from the checkpoints also fails. Ordinary decompiler misses/timeouts are
+reported per backend as `manifest_functions_missing` but do not make valid
+stored evidence false. Omit `--manifest` to audit every stored function, and
+repeat `--checkpoint PATH` to inspect selected pickles instead of the whole
+`checkpoints/` directory.
+
+The JSON records checkpoint, manifest, and resolved compiled-binary SHA-256
+digests, per-backend coverage, format/architecture strata, direct-only counts,
+and bounded detailed findings. Exit status is 0 only when the evidence is
+valid, 1 for audit findings, and 2 for malformed inputs or an unreadable audit
+scope. Without `--output`, JSON is written to stdout and the one-line review
+summary goes to stderr. An explicit output must be outside the audited result
+tree and is atomically replaced, preserving the read-only contract even when a
+path is mistyped or hardlinked to an existing result file.
+
+Fresh runs sanitize provenance before checkpoint persistence. Historical raw
+checkpoints remain immutable: `reeval_typematch.py` relocates and sanitizes a
+deep copy in memory. When a durable audit-ready checkpoint set is useful, make
+an explicit derived copy instead:
+
+```bash
+python scripts/sanitize_native_checkpoints.py \
+  results/full_run /tmp/base-passwd-sanitized-checkpoints base-passwd
+python scripts/audit_native_provenance.py results/full_run \
+  --checkpoint /tmp/base-passwd-sanitized-checkpoints/base-passwd.pkl \
+  --output /tmp/sanitized-native-audit.json
+```
+
+The destination must not exist and must be outside the canonical
+`checkpoints/` directory. The command loads every selected pickle, relocates
+results to the source tree's compiled binaries, sanitizes strictly, writes a
+digest/status manifest, and atomically publishes the whole destination only
+after every checkpoint succeeds. Optional trailing project stems restrict the
+copy. It never rewrites raw checkpoints and its durable sanitizer metadata has
+aggregate counts/reasons only; exact rejected addresses remain confined to the
+explicit audit report.
+
 ## The FULL run
 
 A **full run = EVERY project AND EVERY supported decompiler**: all of
@@ -442,8 +546,10 @@ DECBENCH_WORKERS=40 \
 Notes:
 
 - dewolf is slow + BN-based; for it, prefer several concurrent instances on
-  disjoint project groups + `DECBENCH_DEWOLF_SHARDS` to saturate cores — see
-  the dewolf backend notes. r2dec runs via its Docker image. Resume is
+  disjoint project groups + `DECBENCH_DEWOLF_SHARDS` to saturate cores. Each
+  driver limits Binary Ninja to `DECBENCH_DEWOLF_THREADS` workers (default 2),
+  avoiding nested oversubscription — see the dewolf backend notes. r2dec runs
+  via its Docker image. Resume is
   per-project AND per-decompiler, so a full run can be assembled
   decompiler-by-decompiler.
 - byte_match ABSTAINS (no result, not 0) for ARM/PE on the host (no
@@ -479,6 +585,107 @@ the CFG inputs seen by the historical 60-node evaluator and the corrected
 same-optimization/macro-expanded inputs, graph sizes and methods, and old/new
 score changes against the required frozen `DECBENCH_GED_BASELINE`.
 
+`reeval_typematch.py` keeps its JSON overlay in the legacy raw score-map shape and
+writes a digest-bound `.meta.json` companion with the requested/resolved matcher mode,
+policy schema and values, and metric cache version. A scoped refresh can merge only
+with an overlay carrying identical provenance. Canonical `--emit` promotion occurs
+only after every computation is exception/error-free and its exact
+function/decompiler coverage matches `function_results.json`; failures preserve the
+existing canonical bytes. Noncanonical `--output` paths cannot alias the canonical
+overlay, while explicitly named A/B outputs may remain intentionally partial. Each
+checkpoint decompilation is rebound from its exact `(optimization, project, binary)`
+key to the compiled ELF/PE under the supplied results directory. This makes copied or
+moved result trees self-contained instead of consulting the checkpoint's stale path;
+a missing or ambiguous compiled binary aborts rather than selecting an arbitrary file.
+Repeatable `--backend NAME` selectors are available only for explicitly named A/B
+outputs; canonical `--emit` rejects them so its whole-tree coverage guard cannot be
+bypassed.
+
+TypeMatch offset calibration is binary-wide. A scalable re-evaluation must therefore
+never hash individual functions into shards: filtering half of a binary before scoring
+can select a different stack-offset shift and silently change every function in that
+binary. Build deterministic whole-binary manifests instead:
+
+```bash
+python scripts/shard_typematch_manifest.py \
+  results/full_run/full_selected_manifest.json /tmp/typematch-shards --shards 8
+```
+
+The partitioner assigns each `(project, optimization, binary)` group atomically with a
+deterministic least-loaded policy. `manifest_index.json` binds the source and per-shard
+digests and refuses overlap, missing/unexpected keys, or split binary groups. Give one
+generated manifest to each `reeval_typematch.py` worker and use a fresh cache root when
+replacing an older function-sharded run; cached per-function values can otherwise retain
+the old calibration context. The shard count cannot exceed the number of selected binary
+groups; `--force` replaces the indexed set and removes stale generated shard manifests while
+leaving other files alone. Preserve a rejected run separately as a control rather than merging
+its overlays into corrected output.
+
+For a full four-mode v11 A/B replay, use the guarded orchestrator instead of assembling those
+workers and merges by hand:
+
+```bash
+python scripts/run_typematch_ab_sharded.py \
+  results/full_run results/full_run/full_selected_manifest.json \
+  results/typematch_ab_v11_ida --scope full \
+  --function-data results/full_run/function_results.json \
+  --shards 8 --workers 8 --backend ida
+```
+
+`--scope full` requires the manifest to contain every function key in the frozen
+`function_results.json`. For a cross-tree comparison, pass the same separately frozen
+`--function-data` baseline to every producer root; do not use each root's locally finalized
+file when their function sets differ. The plan digest-binds that baseline and refuses a
+resume after any byte or denominator drift. Full scope rejects backends configured as
+sample-set-only. Evaluate those on
+their frozen denominator in a separate output directory instead:
+
+```bash
+python scripts/run_typematch_ab_sharded.py \
+  results/full_run results/full_run/sample_set_manifest.json \
+  results/typematch_ab_v11_sample --scope sample-set \
+  --shards 8 --workers 8 --backend codex
+```
+
+Sample scope requires an exact copy of that result tree's frozen
+`sample_set_manifest.json`; ordinary full-only trees need not contain one. Full-corpus
+experiments for configured sample-only backends such as Glaurung or Manifold must use
+`--scope experimental-full` plus explicit `--backend` selectors. They remain a separate,
+clearly marked plan and are not comparable to the regular full or frozen sample-set plan.
+
+The orchestrator runs the single `address` correspondence in fresh external Python
+process groups coordinated by a bounded thread pool; it does not create a fork-based Python
+worker pool. A manifest controls emitted rows, while every selected binary's complete
+producer function set remains available to sanitization and binary-wide stack calibration.
+Each backend/mode/shard attempt gets a unique output and empty cache directory. The driver
+records its PID, process-group ID, Linux process start identity, and exact command before work
+begins. An unreceipted retry proceeds only after the exact old process group is proved absent
+or terminated, so an orphan cannot write into the replacement attempt. Failed artifacts are
+preserved under `failed_attempts/`; successful caches are content-inventoried and made
+recursively read-only before promotion.
+
+Shard generation also runs in an attempt-unique stage with a recorded process identity, then
+promotes the complete, audited directory atomically. An interrupted pre-plan shard directory
+is quarantined and regenerated; once `run_plan.json` exists, any shard drift fails closed.
+
+Resume skips a worker only after reconstructing and matching its complete receipt: plan and
+manifest digests, exact command and paths, expected/actual counts and key hashes, v11
+occurrence provenance, stdout/stderr sizes and digests, overlay/sidecar digests, process
+record, and sealed cache inventory. Checkpoint container keys must also agree with the inner
+binary/backend/function model identities. Merges require an exact non-overlapping shard union;
+merge and report stages use attempt-unique directories and receipts, and unreceipted partial
+pairs are quarantined before regeneration. A receipted artifact mismatch fails closed.
+
+The run plan binds checkpoint, compiled-binary, preprocessed-source, Python-code, site scope
+policy, report policy, executable/runtime environment, effective `PYTHONPATH`, installed
+distribution metadata, and scoring-module inventories. Any drift requires a new output
+directory. The output must be outside the evaluated tree and outside dataset/source trees;
+inside a linked DecBench worktree only its `results/` subtree is eligible. Symlinked ancestry,
+special or multiply-linked lock files, and concurrent orchestrators are rejected.
+`--dry-run` performs preflight and whole-binary partition validation without creating the
+analysis directory. All generated overlays are explicitly non-canonical: the driver never
+writes `type_match_new.json`, finalizes results, rebuilds the site, or updates the dataset.
+
 The canonical rebuild is `scripts/finalize_results.py <tree>` (also what
 `run_benchmark.py`'s finalize calls): ALL checkpoints (never scoped — a
 `-- project` resume finalizes the whole tree and writes a full
@@ -494,9 +701,10 @@ coverage (`--allow-drops` / `DECBENCH_ALLOW_DROPS=1` overrides;
 After adding a decompiler, refresh the overlays and re-finalize before
 publishing.
 
-**A reeval can only fix what the checkpoint recorded.** `reeval_typematch.py`
-recomputes the METRIC from `FunctionDecompilation.variables`; it cannot repair a
-backend that stored the wrong thing. The live case: PR #60 fix 3 corrected IDA's
+**A reeval can only use what the checkpoint recorded.** `reeval_typematch.py`
+can discard invalid native claims while retaining their valid subsets, but it
+cannot invent missing variables or argument positions. The
+live case: PR #60 fix 3 corrected IDA's
 `arg_index` from Hex-Rays allocation order to `cfunc.argidx`, but every
 `checkpoints/*.pkl` in `results/full_run` was written BEFORE that fix and still
 carries the scrambled indices, so re-scoring from checkpoints reproduces the old

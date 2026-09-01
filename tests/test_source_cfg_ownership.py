@@ -83,13 +83,22 @@ def test_inline_evaluation_carries_partial_dwarf_tu_ownership(
     )
     seen: dict[str, int] = {}
 
-    def evaluate(_result, source_cfgs, _metric_names):
+    def evaluate(_result, source_cfgs, _metric_names, preprocessed_sources=None):
         seen["main_nodes"] = source_cfgs["main"].number_of_nodes()
         seen["helper_nodes"] = source_cfgs["helper"].number_of_nodes()
         return {}
 
     monkeypatch.setattr("decbench.pipeline.evaluate.evaluate_decompilation", evaluate)
 
-    ingest._evaluate_group(tmp_path, "shadow", "O0", [entry], ["ged"], True, [])
+    ingest._evaluate_group(
+        tmp_path,
+        "shadow",
+        "O0",
+        [entry],
+        ["ged"],
+        True,
+        [],
+        needs_preprocessed_sources=False,
+    )
 
     assert seen == {"main_nodes": 4, "helper_nodes": 7}

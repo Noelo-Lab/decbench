@@ -207,7 +207,14 @@ class GCCCompiler(Compiler):
         except (OSError, struct.error):
             return None
 
-    _PE_MACHINES = {0x14C: "x86", 0x8664: "x86-64", 0xAA64: "aarch64", 0x1C0: "arm"}
+    _PE_MACHINES = {
+        0x14C: "x86",
+        0x8664: "x86-64",
+        0xAA64: "aarch64",
+        0x1C0: "arm",
+        0x1C2: "arm",
+        0x1C4: "arm",
+    }
 
     @staticmethod
     def _is_pe_executable(path: Path) -> bool:

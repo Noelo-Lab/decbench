@@ -43,6 +43,12 @@ def _fd() -> FunctionData:
                         function="f1",
                         values={d: {"ged": 0.0} for d in ("angr", "hiddendec", "ghidra")},
                         perfects={d: {"ged": True} for d in ("angr", "hiddendec", "ghidra")},
+                        metric_evidence={
+                            d: {"type_match": "native"} for d in ("angr", "hiddendec", "ghidra")
+                        },
+                        producer_variable_occurrence_policy={
+                            d: "exact" for d in ("angr", "hiddendec", "ghidra")
+                        },
                         distances={d: {"ged": 0.0} for d in ("angr", "hiddendec", "ghidra")},
                         decompiled={"angr": True, "hiddendec": True, "ghidra": True},
                         datasets=["unoptimized"],
@@ -104,7 +110,14 @@ def test_hidden_decompiler_stripped_everywhere() -> None:
     assert "hiddendec" not in out_fd.decompiler_versions
     assert "hiddendec" not in out_fd.compile_rates
     rec = out_fd.groups[0].functions[0]
-    for m in (rec.values, rec.perfects, rec.distances, rec.decompiled):
+    for m in (
+        rec.values,
+        rec.perfects,
+        rec.metric_evidence,
+        rec.producer_variable_occurrence_policy,
+        rec.distances,
+        rec.decompiled,
+    ):
         assert "hiddendec" not in m and "angr" in m
     s = out_fd.samples[0]
     assert set(s.decompiled) == {"angr", "ghidra"}

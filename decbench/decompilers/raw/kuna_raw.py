@@ -20,7 +20,10 @@ emitting ::
          "variables": [
             {"name": "..", "type": "..", "kind": "arg" | "stack",
              "arg_index": <int> | null, "stack_offset": <int> | null,
-             "size": <int>}]},
+             "size": <int>, "line_numbers": [<1-based int>],
+             "addresses": [<elf-file-space int>]}],
+         "line_mappings": [
+             {"line_number": <1-based int>, "addresses": [<elf-file-space int>]}]},
         ...]}
 
 kuna is a Ghidra-decompiler port, so its addresses are already in the ELF's
@@ -34,6 +37,7 @@ Locate the CLI via ``$KUNA_BIN`` (an explicit path) or ``kuna`` on ``$PATH``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -42,6 +46,7 @@ import shutil
 import signal
 import subprocess
 import time
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +58,7 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
     VariableInfo,
+    with_variable_occurrence_policy,
 )
 
 _l = logging.getLogger(__name__)
@@ -67,7 +73,7 @@ class RawKunaDecompiler(Decompiler):
 
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
-        self._payload_cache: dict[str, Any] = {}
+        self._payload_cache: dict[tuple[str, tuple[int, ...]], Any] = {}
 
     @staticmethod
     def _kuna_bin() -> str | None:
@@ -84,9 +90,7 @@ class RawKunaDecompiler(Decompiler):
         if not kuna:
             return None
         try:
-            p = subprocess.run(
-                [kuna, "--version"], capture_output=True, text=True, timeout=30
-            )
+            p = subprocess.run([kuna, "--version"], capture_output=True, text=True, timeout=30)
             out = (p.stdout or p.stderr or "").strip()
             # Release builds stamp a MAJOR.MINOR version ("kuna 1.121"); dev builds
             # fall back to the three-part Cargo version ("kuna 0.1.0").
@@ -102,7 +106,7 @@ class RawKunaDecompiler(Decompiler):
         binary_path: Path,
         functions: list[tuple[str, int]] | None = None,
         output_dir: Path | None = None,
-        function_names: set[str] | None = None,
+        function_names: set[int] | None = None,
         progress_path: Path | None = None,
     ) -> DecompilationResult:
         """Decompile a whole binary with kuna (one CLI invocation per binary)."""
@@ -113,7 +117,7 @@ class RawKunaDecompiler(Decompiler):
             )
 
         start = time.time()
-        text_range = common.elf_text_ranges(binary_path)
+        code_ranges = common.executable_code_ranges(binary_path)
         addr_targets = common.addr_targets_of(function_names)
         decompiled: dict[str, FunctionDecompilation] = {}
         failed: list[str] = []
@@ -146,8 +150,12 @@ class RawKunaDecompiler(Decompiler):
                 ),
             )
 
+        target_addresses = set(function_names or ())
+        if functions is not None:
+            target_addresses.update(address for _name, address in functions)
+
         try:
-            payload = self._run_decompile_all(binary_path)
+            payload = self._run_decompile_all(binary_path, target_addresses or None)
         except subprocess.TimeoutExpired as e:
             timed_out = True
             _l.warning("kuna-raw timed out on %s: %s", binary_path, e)
@@ -162,7 +170,7 @@ class RawKunaDecompiler(Decompiler):
                 (n, int(r.get("address") or 0))
                 for n, r in records.items()
                 if not common.should_skip_function(
-                    n, int(r.get("address") or 0), text_range, addr_targets
+                    n, int(r.get("address") or 0), code_ranges, addr_targets
                 )
             ),
             key=lambda x: x[1],
@@ -199,10 +207,16 @@ class RawKunaDecompiler(Decompiler):
             result.to_toml(output_dir / f"{self.name}_{binary_path.stem}.toml")
         return result
 
-    def _build_command(self, binary_path: Path) -> list[str]:
+    def _build_command(
+        self,
+        binary_path: Path,
+        target_addresses: Collection[int] | None = None,
+    ) -> list[str]:
         kuna = self._kuna_bin()
         assert kuna is not None
         cmd = [kuna, "decompile-all", str(binary_path), "--json"]
+        for address in sorted(set(target_addresses or ())):
+            cmd += ["--addr", hex(address)]
         # Per-function watchdog. kuna emits its JSON only at the very end, so without a
         # per-function cap one hanging function stalls the binary until the wall-clock
         # SIGKILL loses EVERY function. '0' disables.
@@ -227,14 +241,10 @@ class RawKunaDecompiler(Decompiler):
         try:
             os.killpg(os.getpgid(p.pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError, OSError):
-            try:
+            with contextlib.suppress(Exception):
                 p.kill()
-            except Exception:  # noqa: BLE001
-                pass
-        try:
+        with contextlib.suppress(Exception):
             p.wait(timeout=15)
-        except Exception:  # noqa: BLE001
-            pass
 
     def _timeout_seconds(self) -> float | None:
         """Per-binary timeout: ``$DECBENCH_KUNA_TIMEOUT`` (seconds) if set,
@@ -247,16 +257,20 @@ class RawKunaDecompiler(Decompiler):
                 _l.warning("ignoring non-integer DECBENCH_KUNA_TIMEOUT=%r", env)
         return self.config.binary_timeout_seconds
 
-    def _run_decompile_all(self, binary_path: Path) -> Any:
+    def _run_decompile_all(
+        self,
+        binary_path: Path,
+        target_addresses: Collection[int] | None = None,
+    ) -> Any:
         """Run ``kuna decompile-all --json`` and parse the JSON document.
 
-        Cached per (resolved) binary path so ``discover_functions`` followed by
-        ``decompile_binary`` does not pay for two full loads.
+        Cached per binary path and exact address selection.
         """
-        key = str(binary_path)
+        selected = tuple(sorted(set(target_addresses or ())))
+        key = (str(binary_path), selected)
         if key in self._payload_cache:
             return self._payload_cache[key]
-        cmd = self._build_command(binary_path)
+        cmd = self._build_command(binary_path, selected)
         _l.debug("kuna run: %s", " ".join(cmd))
         # kuna leads its own process group, so an outer harness killpg can no longer
         # reach it — this backend must own the kill on every exit path.
@@ -291,21 +305,84 @@ class RawKunaDecompiler(Decompiler):
         code = rec.get("code")
         if not code:
             return None
+        code = str(code)
+        line_count = code.count("\n") + 1
+        record_addr = self._as_int(rec.get("address"), file_addr)
+        size = self._as_int(rec.get("size"), 0)
+        address_delta = file_addr - record_addr
+
+        def _evidence_address(value: Any) -> int | None:
+            address = self._as_int(value, -1)
+            if address < record_addr:
+                return None
+            if size > 0 and address >= record_addr + size:
+                return None
+            return address + address_delta
+
+        line_to_addresses: dict[int, set[int]] = {}
+        for mapping in rec.get("line_mappings") or []:
+            line_number = self._as_int(mapping.get("line_number"), 0)
+            if not 1 <= line_number <= line_count:
+                continue
+            addresses = sorted(
+                {
+                    rebased
+                    for value in mapping.get("addresses") or []
+                    if (rebased := _evidence_address(value)) is not None
+                }
+            )
+            if addresses:
+                line_to_addresses.setdefault(line_number, set()).update(addresses)
+        line_mappings = common.merge_line_addresses(line_to_addresses)
         return FunctionDecompilation(
             name=name,
             address=file_addr,
-            decompiled_code=str(code),
-            line_count=str(code).count("\n") + 1,
-            line_mappings=[],
-            variables=self._variables(rec),
-            metadata=common.extract_metrics(str(code)),
+            decompiled_code=code,
+            line_count=line_count,
+            line_mappings=line_mappings,
+            variables=self._variables(rec, line_count, _evidence_address),
+            metadata=with_variable_occurrence_policy(common.extract_metrics(code), "exact"),
         )
 
     @staticmethod
-    def _variables(rec: dict[str, Any]) -> list[VariableInfo]:
+    def _as_int(value: Any, default: int) -> int:
+        try:
+            return int(value, 0) if isinstance(value, str) else int(value)
+        except (TypeError, ValueError, OverflowError):
+            return default
+
+    @staticmethod
+    def _variables(
+        rec: dict[str, Any],
+        line_count: int | None = None,
+        address_converter: Any = None,
+    ) -> list[VariableInfo]:
         out: list[VariableInfo] = []
         for v in rec.get("variables") or []:
             kind = str(v.get("kind") or "stack")
+            line_numbers = sorted(
+                {
+                    line_number
+                    for value in v.get("line_numbers") or []
+                    if (line_number := RawKunaDecompiler._as_int(value, 0)) > 0
+                    and (line_count is None or line_number <= line_count)
+                }
+            )
+            addresses = sorted(
+                {
+                    converted
+                    for value in v.get("addresses") or []
+                    if (
+                        converted := (
+                            address_converter(value)
+                            if address_converter is not None
+                            else RawKunaDecompiler._as_int(value, -1)
+                        )
+                    )
+                    is not None
+                    and converted >= 0
+                }
+            )
             out.append(
                 VariableInfo(
                     name=str(v.get("name") or ""),
@@ -315,9 +392,9 @@ class RawKunaDecompiler(Decompiler):
                     ),
                     size=(int(v["size"]) if v.get("size") is not None else None),
                     kind="arg" if kind == "arg" else "stack",
-                    arg_index=(
-                        int(v["arg_index"]) if v.get("arg_index") is not None else None
-                    ),
+                    arg_index=(int(v["arg_index"]) if v.get("arg_index") is not None else None),
+                    line_numbers=line_numbers,
+                    addresses=addresses,
                 )
             )
         return out

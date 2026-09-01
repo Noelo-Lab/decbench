@@ -49,7 +49,14 @@ _ELF_MACHINES = {
     0x14: "ppc",
     0x15: "ppc64",
 }
-_PE_MACHINES = {0x14C: "x86", 0x8664: "x86-64", 0xAA64: "aarch64", 0x1C0: "arm"}
+_PE_MACHINES = {
+    0x14C: "x86",
+    0x8664: "x86-64",
+    0xAA64: "aarch64",
+    0x1C0: "arm",
+    0x1C2: "arm",
+    0x1C4: "arm",
+}
 
 
 @dataclass
@@ -169,7 +176,9 @@ def producer_flags(path: Path) -> list[str]:
     return []
 
 
-def capstone_arch_mode(info: BinInfo, thumb: bool = False):
+def capstone_arch_mode(
+    info: BinInfo, thumb: bool = False, mclass: bool = False
+) -> tuple[int, int] | None:
     """Return (capstone_arch, capstone_mode) for this binary, or None."""
     import capstone
 
@@ -177,10 +186,51 @@ def capstone_arch_mode(info: BinInfo, thumb: bool = False):
         mode = capstone.CS_MODE_64 if info.bits == 64 else capstone.CS_MODE_32
         return capstone.CS_ARCH_X86, mode
     if info.arch == "arm":
-        return capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB if thumb else capstone.CS_MODE_ARM
+        mode = capstone.CS_MODE_THUMB if thumb else capstone.CS_MODE_ARM
+        if thumb and mclass:
+            mode |= capstone.CS_MODE_MCLASS
+        return capstone.CS_ARCH_ARM, mode
     if info.arch == "aarch64":
         return capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM
     return None
+
+
+def executable_regions(path: Path) -> tuple[tuple[int, bytes], ...]:
+    """Return executable virtual-address regions from an ELF or PE binary."""
+    info = detect(path)
+    if info is None:
+        return ()
+    if info.fmt == "elf":
+        try:
+            from elftools.elf.elffile import ELFFile
+
+            with path.open("rb") as stream:
+                elf = ELFFile(stream)
+                regions = [
+                    (int(section["sh_addr"]), section.data())
+                    for section in elf.iter_sections()
+                    if int(section["sh_flags"]) & 0x4 and int(section["sh_size"]) > 0
+                ]
+            return tuple(sorted(regions))
+        except Exception:
+            return ()
+    if info.fmt == "pe":
+        try:
+            import lief
+
+            binary = lief.parse(str(path))
+            if binary is None:
+                return ()
+            image_base = int(binary.optional_header.imagebase)
+            regions = [
+                (image_base + int(section.virtual_address), bytes(section.content))
+                for section in binary.sections
+                if int(section.characteristics) & 0x20000000 and section.content
+            ]
+            return tuple(sorted(regions))
+        except Exception:
+            return ()
+    return ()
 
 
 def elf_function_is_thumb(path: Path, func_name: str, address: int) -> bool:
@@ -202,19 +252,50 @@ def elf_function_is_thumb(path: Path, func_name: str, address: int) -> bool:
             if symtab is None:
                 return False
             symbol_table = cast(Any, symtab)
+            exact_states: list[bool] = []
+            named_states: list[bool] = []
+            expected = address & ~1
             for symbol in symbol_table.iter_symbols():
                 if symbol["st_info"]["type"] != "STT_FUNC" or symbol["st_size"] <= 0:
                     continue
-                raw_address = symbol["st_value"]
-                if (
-                    symbol.name == func_name
-                    or (raw_address & ~1) == address
-                    or raw_address == address
-                ):
-                    return bool(raw_address & 1)
+                raw_address = int(symbol["st_value"])
+                state = bool(raw_address & 1)
+                if (raw_address & ~1) == expected:
+                    exact_states.append(state)
+                if symbol.name == func_name:
+                    named_states.append(state)
+            if exact_states:
+                return exact_states[0] if len(set(exact_states)) == 1 else False
+            if len(named_states) == 1:
+                return named_states[0]
     except Exception:
         pass
     return False
+
+
+def elf_is_arm_mclass(path: Path) -> bool:
+    """Return whether an ARM ELF declares the microcontroller architecture profile."""
+    try:
+        from elftools.elf.elffile import ELFFile
+
+        with path.open("rb") as stream:
+            elf = ELFFile(stream)
+            if elf.header["e_machine"] != "EM_ARM":
+                return False
+            section = elf.get_section_by_name(".ARM.attributes")
+            if section is None or not hasattr(section, "iter_subsections"):
+                return False
+            profiles = {
+                int(attribute.value)
+                for subsection in section.iter_subsections()
+                if subsection.header.vendor_name == "aeabi"
+                for scope in subsection.iter_subsubsections()
+                for attribute in scope.iter_attributes()
+                if attribute.tag == "TAG_CPU_ARCH_PROFILE"
+            }
+            return profiles == {ord("M")}
+    except Exception:
+        return False
 
 
 _DWARF_SECS = (
@@ -292,7 +373,12 @@ def pe_dwarf_info(path: Path):
         return None
     info = detect(path)
     addr_size = 8 if (info and info.bits == 64) else 4
-    march = "x64" if addr_size == 8 else "x86"
+    march = {
+        "x86": "x86",
+        "x86-64": "x64",
+        "arm": "ARM",
+        "aarch64": "AArch64",
+    }.get(info.arch if info is not None else "", "x64" if addr_size == 8 else "x86")
     return _build_dwarfinfo(secs, little_endian=True, addr_size=addr_size, march=march)
 
 

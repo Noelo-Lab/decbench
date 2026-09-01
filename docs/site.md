@@ -533,6 +533,15 @@ button (`#theme-toggle`) flips and persists it at runtime.
       "overall": {"angr": [111, 222]},   // Union column: decompiler -> [perfect, total]
       "errors":  {"angr": [5, 1000]},    // decompiler -> [errored, scope]
       "compile": {"angr": [890, 1000]},  // Compiles rate (data page): decompiler -> [compiled, byte_match-measured]
+      "metric_evidence": {                // sparse measurement provenance; counts only
+        "angr": {                         // finite values produced by this decompiler
+          "type_match": {"native": 80, "mixed": 8,
+                         "fallback_only": 2, "measured": 93}
+        }
+      },
+      "producer_variable_occurrence_policy": { // sparse TypeMatch producer policy counts
+        "angr": {"exact": 70, "direct": 10, "unavailable": 8, "undeclared": 2}
+      },
       "distance": {                      // decompiler -> metric -> stats | null
         "angr": {"ged": {"mean": 3.25, "median": 2, "n": 5000, "at0": 1200}}
       }
@@ -545,6 +554,34 @@ button (`#theme-toggle`) flips and persists it at runtime.
 `per_metric`, `overall`, `errors` and `compile` are `[numerator, denominator]` pairs,
 not percentages: the UI renders `count/total` next to the bar, and computing the
 percentage client-side keeps the JSON small and lossless.
+
+`metric_evidence` is additive and sparse. For `type_match`, `native` means native
+line/address provenance and deterministic anchors were sufficient. `fallback_only` means
+the row was scored by the legacy name-based correspondence, which is what a producer
+carrying no instruction-address provenance at all falls back to
+([metrics.md](metrics.md#two-correspondence-paths)). `mixed` recorded the removed
+type-blind usage channel; the metric no longer emits it and the client still reads it so
+older data stays loadable.
+`measured` counts this
+decompiler's finite values in the active combo. It is deliberately not the shared
+`per_metric` denominator, which can also include a decompiler's missing value as a
+miss. Older `function_results.json` files carry no evidence metadata, so the three
+categories may sum to less than `measured`; the client never guesses a category from
+a decompiler's name. A measured TypeMatch row still contributes to `measured` when
+correspondence accepted no pair and therefore emitted no evidence category.
+
+`producer_variable_occurrence_policy` is also additive and sparse. Its
+`exact` / `direct` / `unavailable` / `undeclared` counts cover finite TypeMatch rows
+whose producer policy was persisted in `FunctionRecord`. Older `function_results.json`
+files omit that field and remain loadable; the aggregate then omits their unknown policy
+instead of guessing it.
+
+The leaderboard adds an asterisk to a Type percentage when its active combo has at
+least one `mixed` or `fallback_only` measurement, or at least one `unavailable` or
+`undeclared` producer policy. Policy is counted independently of accepted-match evidence,
+so the marker also covers a measured row where correspondence accepted no pair and
+`variable_match_evidence` is absent. The marker is explanatory only: sorting,
+percentages, denominators, and Union still read the existing count pairs.
 
 `distance[dec][metric]` is `null` when no function under the combo had a finite
 distance for that metric.

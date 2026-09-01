@@ -6,12 +6,16 @@ each (project, opt) pair in parallel, persisting binaries under
 ``<out>/<opt>/<project>/compiled/`` so a later ``--skip-compile`` decompile
 + evaluate run can reuse them. Prints a per-target binary/preprocessed count
 table and writes ``compile_report.json`` for the orchestrator.
+
+Set ``DECBENCH_OPT_LEVELS`` to a comma-separated list (for example ``O2``)
+when an experiment must build only selected optimization levels.
 """
 
 from __future__ import annotations
 
 import json
 import multiprocessing
+import os
 import struct
 import sys
 import time
@@ -64,6 +68,13 @@ def _is_linked_image(path: Path) -> bool:
         return False
 
 
+def _requested_optimization_levels() -> set[OptimizationLevel] | None:
+    raw = os.environ.get("DECBENCH_OPT_LEVELS")
+    if not raw:
+        return None
+    return {OptimizationLevel(value.strip()) for value in raw.split(",") if value.strip()}
+
+
 def _count_outputs(out_dir: Path, opt: str, name: str) -> tuple[int, int]:
     """Return (linked_binary_count, preprocessed_file_count)."""
 
@@ -83,11 +94,13 @@ def _count_outputs(out_dir: Path, opt: str, name: str) -> tuple[int, int]:
 
 
 def build_tasks(tomls: list[Path], out_dir: Path) -> list[tuple[str, str, str]]:
-    """Build only the optimization levels declared by each project."""
+    """Build the requested subset of each project's declared optimization levels."""
+    requested = _requested_optimization_levels()
     return [
         (str(toml), opt.value, str(out_dir))
         for toml in tomls
         for opt in Project.from_toml(toml).compilation.optimization_levels
+        if requested is None or opt in requested
     ]
 
 

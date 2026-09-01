@@ -10,6 +10,7 @@ fake ``manifold`` and a fake ``docker`` that emit a canned translation unit.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -20,10 +21,13 @@ import pytest
 import decbench.decompilers  # noqa: F401  (registers the raw backends)
 from decbench.decompilers.raw.manifold_raw import (
     ManifoldDecompiler,
+    _clight_function_addresses,
+    _needs_clight_function_addresses,
     parse_translation_unit,
     split_functions,
 )
 from decbench.decompilers.registry import DecompilerRegistry
+from decbench.models.decompilation import variable_occurrence_policy
 
 TINY_C_SOURCE = """
 int add_nums(int a, int b) {
@@ -142,6 +146,19 @@ def tiny_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return binary
 
 
+@pytest.fixture
+def minimal_pe(tmp_path: Path) -> Path:
+    data = bytearray(0x100)
+    pe_offset = 0x80
+    data[:2] = b"MZ"
+    data[0x3C:0x40] = pe_offset.to_bytes(4, "little")
+    data[pe_offset : pe_offset + 4] = b"PE\x00\x00"
+    data[pe_offset + 4 : pe_offset + 6] = (0x14C).to_bytes(2, "little")
+    binary = tmp_path / "tiny.dll"
+    binary.write_bytes(data)
+    return binary
+
+
 def _func_address(binary: Path, name: str) -> int:
     """The ELF-file-space entry address of ``name`` from the symbol table."""
     from elftools.elf.elffile import ELFFile
@@ -160,8 +177,6 @@ def test_decompile_binary_maps_fun_names_to_addresses(
     monkeypatch, tiny_binary: Path, tmp_path: Path
 ) -> None:
     """A fake manifold emits a TU; the backend must key it by ELF-space address."""
-    # Use the fixture's own function addresses so the .text-range filter (which
-    # correctly drops anything outside .text) sees real targets.
     add_nums = _func_address(tiny_binary, "add_nums")
     main = _func_address(tiny_binary, "main")
     tu = SAMPLE_TU.replace("FUN_401136", f"FUN_{add_nums:x}").replace("FUN_4011a0", f"FUN_{main:x}")
@@ -184,6 +199,13 @@ def test_decompile_binary_maps_fun_names_to_addresses(
     assert result.functions[f"FUN_{add_nums:x}"].address == add_nums
     assert result.functions[f"FUN_{main:x}"].address == main
     assert result.functions[f"FUN_{add_nums:x}"].decompiled_code.strip()
+    # The adapter consumes no variable/line lineage from the Clight sidecar.
+    assert all(not function.line_mappings for function in result.functions.values())
+    assert all(not function.variables for function in result.functions.values())
+    assert all(
+        variable_occurrence_policy(function.metadata) == "unavailable"
+        for function in result.functions.values()
+    )
     assert (tmp_path / f"manifold_{tiny_binary.stem}.c").exists()
 
 
@@ -204,6 +226,216 @@ def test_decompile_binary_narrows_to_requested_addresses(
     result = ManifoldDecompiler().decompile_binary(tiny_binary, function_names={add_nums})
 
     assert sorted(result.functions) == [f"FUN_{add_nums:x}"]
+
+
+def test_decompile_binary_maps_literal_main_from_clight_sidecar(
+    monkeypatch, tiny_binary: Path, tmp_path: Path
+) -> None:
+    """A stripped-style literal ``main`` keeps manifold's exact native address."""
+    import decbench.decompilers.raw.manifold_raw as manifold_raw
+
+    main = _func_address(tiny_binary, "main")
+    tu = tmp_path / "tu.c"
+    tu.write_text("int main(void);\n\nint main(void)\n{\n    return 3;\n}\n")
+    sidecar = tmp_path / "tu.clight.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "compcert_clight": True,
+                "functions": [{"name": "main", "address": f"0x{main:x}", "temps": []}],
+            }
+        )
+    )
+    argv_log = tmp_path / "argv.log"
+    fake = tmp_path / "manifold"
+    fake.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib, shutil, sys\n"
+        f"out = pathlib.Path(sys.argv[2])\n"
+        f"shutil.copyfile({str(tu)!r}, out)\n"
+        f"shutil.copyfile({str(sidecar)!r}, out.with_suffix('.clight.json'))\n"
+        f"pathlib.Path({str(argv_log)!r}).write_text('\\n'.join(sys.argv[1:]))\n"
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("MANIFOLD_BIN", str(fake))
+    monkeypatch.setattr(manifold_raw, "_symbol_addresses", lambda _binary: {})
+
+    result = ManifoldDecompiler().decompile_binary(tiny_binary, function_names={main})
+
+    assert list(result.functions) == ["main"]
+    function = result.functions["main"]
+    assert function.address == main
+    assert function.variables == []
+    assert function.line_mappings == []
+    assert result.decompiler.failed_functions == []
+    assert result.decompiler.extra["clight_function_addresses"] == 1
+    assert argv_log.read_text().splitlines()[-1] == "--dump-clight-json"
+
+
+def test_decompile_binary_maps_pe_names_from_clight_sidecar(
+    monkeypatch, minimal_pe: Path, tmp_path: Path
+) -> None:
+    import decbench.decompilers.raw.manifold_raw as manifold_raw
+
+    region_start = 0x400000
+    partial_crc = region_start + 0x120
+    full_crc = region_start + 0x180
+    tu = tmp_path / "tu.c"
+    tu.write_text(
+        "int PartialCRC(int p0);\n"
+        "int FullCRC(int p0);\n\n"
+        "int PartialCRC(int p0)\n{\n    return p0 + 1;\n}\n\n"
+        "int FullCRC(int p0)\n{\n    return p0 + 2;\n}\n"
+    )
+    sidecar = tmp_path / "tu.clight.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "compcert_clight": True,
+                "functions": [
+                    {"name": "PartialCRC", "address": f"0x{partial_crc:x}", "temps": [1]},
+                    {"name": "FullCRC", "address": f"0x{full_crc:x}", "temps": [2]},
+                ],
+            }
+        )
+    )
+    argv_log = tmp_path / "argv.log"
+    fake = tmp_path / "manifold"
+    fake.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib, shutil, sys\n"
+        "out = pathlib.Path(sys.argv[2])\n"
+        f"shutil.copyfile({str(tu)!r}, out)\n"
+        f"shutil.copyfile({str(sidecar)!r}, out.with_suffix('.clight.json'))\n"
+        f"pathlib.Path({str(argv_log)!r}).write_text('\\n'.join(sys.argv[1:]))\n"
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("MANIFOLD_BIN", str(fake))
+    monkeypatch.setattr(
+        manifold_raw.binfmt,
+        "executable_regions",
+        lambda _binary: ((region_start, bytes(0x1000)),),
+    )
+
+    result = ManifoldDecompiler().decompile_binary(
+        minimal_pe,
+        function_names={partial_crc},
+    )
+
+    assert list(result.functions) == ["PartialCRC"]
+    function = result.functions["PartialCRC"]
+    assert function.address == partial_crc
+    assert function.variables == []
+    assert function.line_mappings == []
+    assert result.decompiler.failed_functions == []
+    assert result.decompiler.extra["clight_function_addresses"] == 2
+    assert argv_log.read_text().splitlines()[-1] == "--dump-clight-json"
+
+
+def test_clight_function_addresses_accept_all_unique_relations(tmp_path: Path) -> None:
+    sidecar = tmp_path / "all.clight.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "compcert_clight": True,
+                "functions": [
+                    {"name": "PartialCRC", "address": "0x1120"},
+                    {"name": "FullCRC", "address": "0x1180"},
+                    {"name": "outside", "address": "0x2000"},
+                ],
+            }
+        )
+    )
+
+    assert _clight_function_addresses(
+        sidecar,
+        ((0x1000, 0x1200),),
+        accepted_name=None,
+    ) == {"PartialCRC": 0x1120, "FullCRC": 0x1180}
+    assert (
+        _clight_function_addresses(
+            sidecar,
+            ((0x1000, 0x1200),),
+            accepted_name="main",
+        )
+        == {}
+    )
+
+
+def test_clight_function_addresses_fail_closed(tiny_binary: Path, tmp_path: Path) -> None:
+    from decbench.decompilers.raw import common
+
+    executable_ranges = common.executable_code_ranges(tiny_binary)
+    assert executable_ranges
+    outside = max(end for _start, end in executable_ranges)
+    main = _func_address(tiny_binary, "main")
+    documents = [
+        "not json",
+        json.dumps({"compcert_clight": True, "functions": "not-a-list"}),
+        json.dumps(
+            {
+                "compcert_clight": True,
+                "functions": [{"name": "main", "address": "not-hex"}],
+            }
+        ),
+        json.dumps(
+            {
+                "compcert_clight": True,
+                "functions": [
+                    {"name": "main", "address": f"0x{main:x}"},
+                    {"name": "main", "address": f"0x{main:x}"},
+                ],
+            }
+        ),
+        json.dumps(
+            {
+                "compcert_clight": True,
+                "functions": [
+                    {"name": "main", "address": f"0x{main:x}"},
+                    {"name": "alias", "address": f"0x{main:x}"},
+                ],
+            }
+        ),
+        json.dumps(
+            {
+                "compcert_clight": True,
+                "functions": [{"name": "main", "address": f"0x{outside:x}"}],
+            }
+        ),
+    ]
+    for index, document in enumerate(documents):
+        path = tmp_path / f"bad-{index}.clight.json"
+        path.write_text(document)
+        assert "main" not in _clight_function_addresses(
+            path,
+            executable_ranges,
+            accepted_name=None,
+        )
+    assert (
+        _clight_function_addresses(
+            tmp_path / "missing.clight.json",
+            executable_ranges,
+            accepted_name=None,
+        )
+        == {}
+    )
+    assert _clight_function_addresses(tmp_path, (), accepted_name=None) == {}
+
+
+def test_clight_sidecar_is_requested_for_pe_and_x86_libc_entry(
+    tiny_binary: Path, minimal_pe: Path, tmp_path: Path
+) -> None:
+    assert _needs_clight_function_addresses(tiny_binary) is True
+    assert _needs_clight_function_addresses(minimal_pe) is True
+    arm_header = tmp_path / "tiny-arm"
+    arm_bytes = bytearray(tiny_binary.read_bytes())
+    elf_em_arm = 40
+    arm_bytes[18:20] = elf_em_arm.to_bytes(2, "little")
+    arm_header.write_bytes(arm_bytes)
+    assert _needs_clight_function_addresses(arm_header) is False
+    non_elf = tmp_path / "not-elf"
+    non_elf.write_bytes(b"not an ELF")
+    assert _needs_clight_function_addresses(non_elf) is False
 
 
 def test_decompile_binary_reports_failure_without_output(
@@ -253,7 +485,8 @@ if argv[:1] == ["run"]:
         for i, a in enumerate(argv)
         if a == "-v" and argv[i + 1].endswith(":/work")
     )
-    dest = pathlib.Path(work) / pathlib.Path(argv[-1]).name
+    output_arg = next(a for a in argv if a.startswith("/work/") and a.endswith(".c"))
+    dest = pathlib.Path(work) / pathlib.Path(output_arg).name
     dest.write_text(pathlib.Path(os.environ["FAKE_DOCKER_TU"]).read_text())
     sys.exit(0)
 sys.exit(2)
@@ -342,7 +575,11 @@ def test_docker_run_mounts_the_binary_and_reads_back_the_unit(
     run = next(c for c in _docker_calls(fake_docker) if c[0] == "run" and "--entrypoint" not in c)
     assert f"{tiny_binary.resolve()}:/in/{tiny_binary.name}:ro" in run
     assert "decbench/manifold:latest" in run
-    assert run[-2:] == [f"/in/{tiny_binary.name}", f"/work/{tiny_binary.stem}.c"]
+    assert run[-3:] == [
+        f"/in/{tiny_binary.name}",
+        f"/work/{tiny_binary.stem}.c",
+        "--dump-clight-json",
+    ]
     # MANIFOLD_THREADS caps the container's rayon pool, as it does a native run.
     assert "RAYON_NUM_THREADS=4" in run
 

@@ -12,8 +12,10 @@ This backend therefore:
 * splits the emitted translation unit into per-function definitions with a
   brace/string-aware scanner, and
 * recovers each function's address from the ``FUN_<hex>`` names manifold gives
-  functions in a stripped binary (falling back to the ELF symbol table when the
-  binary still carries symbols).
+  functions in a stripped binary, plus exact final-function name/address
+  relations from manifold's Clight JSON sidecar for PE and for recovered ELF
+  ``main`` (falling back to the ELF symbol table when the binary still carries
+  symbols).
 
 That single run happens over one of two paths, tried in this order:
 
@@ -28,18 +30,25 @@ Both paths write the same whole-program ``.c``, so everything downstream of the
 run is shared. Native wins when both exist: it avoids the container round-trip
 and lets a developer benchmark a working tree.
 
-Addresses are reported in **ELF-file space**, matching the other raw backends:
-manifold reads the ELF's own virtual addresses, so its addresses are already in
-that space and need no rebasing.
+Addresses are reported in the binary's linked address space, matching DWARF and
+the other raw backends. Manifold reads ELF virtual addresses directly; its PE
+sidecar reports ImageBase-plus-RVA addresses. Neither form needs rebasing.
 
-Variables are deliberately left unset: manifold's C output carries declared
-types but no stack offsets, so ``type_match`` scores it through decbench's
-``parse_c_variables`` text path (arguments by ABI position + locals by name),
-exactly as it does for the code-only LLM backends.
+Native line and variable evidence is deliberately left unset. The Clight JSON
+sidecar carries IR variables, but manifold's address-keyed Clight nodes lose
+their node identity when the final C AST is assembled, before later for-loop,
+variable-coalescing, and goto-elision passes. The backend therefore consumes
+only the sidecar's function name/address relation. Joining final C variable names
+to the earlier IR by spelling would not be native provenance. ``type_match``
+scores the declared types through DecBench's C parser and usage fallback
+(arguments by ABI position + locals by name), exactly as it does for the
+code-only LLM backends. The producer-side contract needed to unlock native
+evidence is documented in ``docs/decompilers.md``.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -58,11 +67,16 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    with_variable_occurrence_policy,
 )
+from decbench.utils import binfmt
+from decbench.utils.docker_task import docker_task_label_args
 
 _l = logging.getLogger(__name__)
 
 _FUN_NAME = re.compile(r"^FUN_([0-9a-fA-F]+)$")
+_CLIGHT_ADDRESS = re.compile(r"^0x([0-9a-fA-F]+)$")
+_CLIGHT_JSON_FLAG = "--dump-clight-json"
 
 # manifold_raw.py -> raw -> decompilers -> decbench -> repo root.
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -423,6 +437,96 @@ def _symbol_addresses(binary_path: Path) -> dict[str, int]:
     return out
 
 
+def _needs_clight_function_addresses(binary_path: Path) -> bool:
+    """Whether manifold can emit otherwise-unaddressed exact function names.
+
+    PE recovery names internal functions without preserving their addresses in
+    the printed C, so every PE requests the sidecar. For ELF, upstream's current
+    recovery recognizes only the x86-64 ``__libc_start_main`` convention; the
+    narrower gate keeps the relatively expensive export off ARM firmware,
+    shared libraries, and older/static startup shapes.
+    """
+    info = binfmt.detect(binary_path)
+    if info is not None and info.fmt == "pe":
+        return True
+    if info is None or info.fmt != "elf" or info.arch != "x86-64":
+        return False
+    try:
+        from elftools.elf.elffile import ELFFile
+        from elftools.elf.sections import SymbolTableSection
+
+        with open(binary_path, "rb") as f:
+            elf = ELFFile(f)
+            if not elf["e_entry"]:
+                return False
+            for sec in elf.iter_sections():
+                if not isinstance(sec, SymbolTableSection):
+                    continue
+                if any(
+                    sym.name.split("@", 1)[0] == "__libc_start_main" for sym in sec.iter_symbols()
+                ):
+                    return True
+    except Exception as e:  # noqa: BLE001
+        _l.debug("manifold: cannot inspect startup shape for %s: %s", binary_path, e)
+    return False
+
+
+def _clight_function_addresses(
+    sidecar_path: Path,
+    executable_ranges: tuple[tuple[int, int], ...],
+    *,
+    accepted_name: str | None,
+) -> dict[str, int]:
+    """Read exact final-function name/address relations from manifold.
+
+    ``accepted_name`` restricts ELF recovery to literal ``main``; ``None``
+    accepts every PE producer relation. The sidecar's pre-final-AST variables
+    remain ignored. Names and addresses must each be unique, and every address
+    must lie in a verified executable range from the binary itself.
+    """
+    if not executable_ranges or not sidecar_path.is_file():
+        return {}
+    try:
+        document = json.loads(sidecar_path.read_text())
+    except (OSError, UnicodeError, json.JSONDecodeError) as e:
+        _l.debug("manifold: unreadable Clight sidecar %s: %s", sidecar_path, e)
+        return {}
+    if not isinstance(document, dict) or document.get("compcert_clight") is not True:
+        return {}
+    rows = document.get("functions")
+    if not isinstance(rows, list):
+        return {}
+
+    candidates: list[tuple[str, int]] = []
+    name_counts: dict[str, int] = {}
+    address_counts: dict[int, int] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = row.get("name")
+        encoded = row.get("address")
+        if not isinstance(name, str) or not name:
+            continue
+        if accepted_name is not None and name != accepted_name:
+            continue
+        name_counts[name] = name_counts.get(name, 0) + 1
+        if not isinstance(encoded, str):
+            continue
+        match = _CLIGHT_ADDRESS.fullmatch(encoded)
+        if match is None:
+            continue
+        address = int(match.group(1), 16)
+        address_counts[address] = address_counts.get(address, 0) + 1
+        if not any(start <= address < end for start, end in executable_ranges):
+            continue
+        candidates.append((name, address))
+    return {
+        name: address
+        for name, address in candidates
+        if name_counts[name] == 1 and address_counts[address] == 1
+    }
+
+
 @register_decompiler("manifold")
 class ManifoldDecompiler(Decompiler):
     """Manifold driven as a one-shot whole-binary run, natively or in Docker."""
@@ -539,7 +643,16 @@ class ManifoldDecompiler(Decompiler):
         if docker:
             try:
                 proc = subprocess.run(
-                    [docker, "run", "--rm", "--entrypoint", "cat", image, _IMAGE_REV_FILE],
+                    [
+                        docker,
+                        "run",
+                        "--rm",
+                        *docker_task_label_args(),
+                        "--entrypoint",
+                        "cat",
+                        image,
+                        _IMAGE_REV_FILE,
+                    ],
                     capture_output=True,
                     text=True,
                     timeout=120,
@@ -571,6 +684,7 @@ class ManifoldDecompiler(Decompiler):
             docker,
             "run",
             "--rm",
+            *docker_task_label_args(),
             "-v",
             f"{binary_path.resolve()}:/in/{binary_path.name}:ro",
             "-v",
@@ -582,6 +696,8 @@ class ManifoldDecompiler(Decompiler):
         if threads:
             cmd += ["-e", f"RAYON_NUM_THREADS={threads}"]
         cmd += [self._image, f"/in/{binary_path.name}", f"/work/{out_name}"]
+        if _needs_clight_function_addresses(binary_path):
+            cmd.append(_CLIGHT_JSON_FLAG)
         _l.debug("manifold docker run: %s", " ".join(cmd))
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
 
@@ -594,7 +710,7 @@ class ManifoldDecompiler(Decompiler):
         binary_path: Path,
         functions: list[tuple[str, int]] | None = None,
         output_dir: Path | None = None,
-        function_names: set[str] | None = None,
+        function_names: set[int] | None = None,
         progress_path: Path | None = None,
     ) -> DecompilationResult:
         """Decompile a whole binary in one manifold invocation.
@@ -614,7 +730,9 @@ class ManifoldDecompiler(Decompiler):
 
         start_time = time.time()
         elf_base = common.elf_min_vaddr(binary_path)
-        text_range = common.elf_text_range(binary_path)
+        code_ranges = common.executable_code_ranges(binary_path)
+        binary_info = binfmt.detect(binary_path)
+        is_pe = binary_info is not None and binary_info.fmt == "pe"
         timeout_s = self.config.binary_timeout_seconds
 
         def _meta(failed: list[str], extra: dict[str, Any]) -> DecompilerMetadata:
@@ -646,12 +764,16 @@ class ManifoldDecompiler(Decompiler):
             # The container writes into this same directory (bind-mounted at
             # /work), so both paths read the result back from one place.
             out_c = Path(tmp) / f"{binary_path.stem}.c"
+            needs_clight_addresses = _needs_clight_function_addresses(binary_path)
             try:
                 if mode == "docker":
                     proc = self._run_docker(binary_path, Path(tmp), out_c.name, timeout_s)
                 else:
+                    cmd = [str(exe), str(binary_path), str(out_c)]
+                    if needs_clight_addresses:
+                        cmd.append(_CLIGHT_JSON_FLAG)
                     proc = subprocess.run(
-                        [str(exe), str(binary_path), str(out_c)],
+                        cmd,
                         capture_output=True,
                         text=True,
                         timeout=timeout_s,
@@ -666,6 +788,13 @@ class ManifoldDecompiler(Decompiler):
                 tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-5:]
                 return _error(f"no output (exit {proc.returncode}): {' | '.join(tail)}")
             text = out_c.read_text(errors="replace")
+            clight_addresses = {}
+            if needs_clight_addresses:
+                clight_addresses = _clight_function_addresses(
+                    out_c.with_suffix(".clight.json"),
+                    code_ranges,
+                    accepted_name=None if is_pe else "main",
+                )
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
         unaddressed: list[str] = []
@@ -676,22 +805,26 @@ class ManifoldDecompiler(Decompiler):
             if m:
                 file_addr = int(m.group(1), 16)
             else:
-                # Symbol-named function: the binary was not stripped.
-                if symbols is None:
-                    symbols = _symbol_addresses(binary_path)
-                addr = symbols.get(name)
+                addr = clight_addresses.get(name)
                 if addr is None:
-                    unaddressed.append(name)
-                    continue
+                    # Symbol-named function: the binary was not stripped.
+                    if symbols is None:
+                        symbols = _symbol_addresses(binary_path)
+                    addr = symbols.get(name)
+                    if addr is None:
+                        unaddressed.append(name)
+                        continue
                 file_addr = addr
-            if common.should_skip_function(name, file_addr, text_range):
+            if common.should_skip_function(name, file_addr, code_ranges):
                 continue
             decompiled_functions[name] = FunctionDecompilation(
                 name=name,
                 address=file_addr,
                 decompiled_code=code,
                 line_count=len(code.splitlines()),
-                metadata=common.extract_metrics(code),
+                metadata=with_variable_occurrence_policy(
+                    common.extract_metrics(code), "unavailable"
+                ),
             )
 
         kept = common.narrow_to_source(
@@ -708,7 +841,11 @@ class ManifoldDecompiler(Decompiler):
             binary_name=binary_path.stem,
             decompiler=_meta(
                 unaddressed,
-                {"elf_base": elf_base, "translation_unit_lines": len(text.splitlines())},
+                {
+                    "elf_base": elf_base,
+                    "translation_unit_lines": len(text.splitlines()),
+                    "clight_function_addresses": len(clight_addresses),
+                },
             ),
             functions=decompiled_functions,
             combined_source=text,

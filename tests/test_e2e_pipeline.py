@@ -425,8 +425,20 @@ class TestFunctionData:
                                 decompiler_name="angr",
                                 binary_name="binary1",
                                 function_results={
-                                    "func1": MetricValue(value=1.0),
-                                    "func2": MetricValue(value=0.5),
+                                    "func1": MetricValue(
+                                        value=1.0,
+                                        metadata={
+                                            "variable_match_evidence": "native",
+                                            "producer_variable_occurrence_policy": "exact",
+                                        },
+                                    ),
+                                    "func2": MetricValue(
+                                        value=0.5,
+                                        metadata={
+                                            "variable_match_evidence": "fallback_only",
+                                            "producer_variable_occurrence_policy": "unavailable",
+                                        },
+                                    ),
                                 },
                             ),
                         },
@@ -462,11 +474,15 @@ class TestFunctionData:
         f1 = funcs["func1"]
         assert f1.values == {"angr": {"ged": 0.0, "type_match": 1.0}}
         assert f1.perfects == {"angr": {"ged": True, "type_match": True}}
+        assert f1.metric_evidence == {"angr": {"type_match": "native"}}
+        assert f1.producer_variable_occurrence_policy == {"angr": "exact"}
         assert f1.labels == ["O2", "optimized", "firmware"]
 
         f2 = funcs["func2"]
         assert f2.values == {"angr": {"ged": 2.0, "type_match": 0.5}}
         assert f2.perfects == {"angr": {"ged": False, "type_match": False}}
+        assert f2.metric_evidence == {"angr": {"type_match": "fallback_only"}}
+        assert f2.producer_variable_occurrence_policy == {"angr": "unavailable"}
 
     def test_function_data_json_round_trip(self, tmp_path) -> None:
         from decbench.models.function_data import FunctionData
@@ -487,6 +503,37 @@ class TestFunctionData:
         assert loaded.perfect_values == fd.perfect_values
         assert len(loaded.groups) == len(fd.groups)
         assert loaded.groups[0].functions[0].perfects == (fd.groups[0].functions[0].perfects)
+        assert loaded.groups[0].functions[0].metric_evidence == (
+            fd.groups[0].functions[0].metric_evidence
+        )
+        assert loaded.groups[0].functions[0].producer_variable_occurrence_policy == (
+            fd.groups[0].functions[0].producer_variable_occurrence_policy
+        )
+
+    def test_function_data_without_occurrence_policy_remains_loadable(self, tmp_path: Path) -> None:
+        import json
+
+        from decbench.models.function_data import FunctionData
+        from decbench.models.project import Project, ProjectConfig
+        from decbench.scoring.function_data_builder import build_function_data
+
+        fd = build_function_data(
+            self._eval_results(),
+            [Project(config=ProjectConfig(name="test_project"))],
+        )
+        payload = fd.model_dump(mode="json")
+        for group in payload["groups"]:
+            for function in group["functions"]:
+                function.pop("producer_variable_occurrence_policy")
+        path = tmp_path / "legacy_function_results.json"
+        path.write_text(json.dumps(payload))
+
+        loaded = FunctionData.from_json(path)
+        assert all(
+            not function.producer_variable_occurrence_policy
+            for group in loaded.groups
+            for function in group.functions
+        )
 
 
 @pytest.mark.skipif(

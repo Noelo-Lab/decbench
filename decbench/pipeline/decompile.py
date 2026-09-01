@@ -7,6 +7,7 @@ from multiprocessing import cpu_count
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from decbench.decompilers.provenance import sanitize_native_provenance
 from decbench.decompilers.registry import DecompilerRegistry
 from decbench.models.project import OptimizationLevel, Project
 
@@ -21,8 +22,9 @@ def decompile_binary(
     output_dir: Path | None = None,
     functions: list[tuple[str, int]] | None = None,
     config: DecompilerConfig | None = None,
-    function_names: set[str] | None = None,
+    function_names: set[int] | None = None,
     progress_path: Path | None = None,
+    defer_provenance_validation: bool = False,
 ) -> DecompilationResult:
     """Decompile a single binary.
 
@@ -32,10 +34,13 @@ def decompile_binary(
         output_dir: Directory for output files
         functions: Optional list of (name, address) to decompile
         config: Decompiler configuration
-        function_names: Optional set of source function names to restrict
-            decompilation to (skips bundled filler; large speedup for angr).
+        function_names: Optional set of linked source-function addresses to
+            restrict decompilation to (skips bundled filler; large speedup for angr).
         progress_path: Optional path to pickle partial results to after each
             function (so a timeout-kill preserves completed work).
+        defer_provenance_validation: Preserve native evidence when this worker
+            intentionally receives a stripped binary. Its parent must validate
+            against the unstripped original before evaluation or persistence.
 
     Returns:
         DecompilationResult with all function decompilations
@@ -45,13 +50,19 @@ def decompile_binary(
     if not decompiler.is_available():
         raise RuntimeError(f"Decompiler '{decompiler_name}' is not available")
 
-    return decompiler.decompile_binary(
+    result = decompiler.decompile_binary(
         binary_path,
         functions=functions,
         output_dir=output_dir,
         function_names=function_names,
         progress_path=progress_path,
     )
+    sanitize_native_provenance(
+        result,
+        binary_path,
+        defer_unavailable=defer_provenance_validation,
+    )
+    return result
 
 
 def decompile_project(
@@ -81,9 +92,7 @@ def decompile_project(
         optimization = OptimizationLevel(optimization)
 
     if optimization not in project.compiled_binaries:
-        raise ValueError(
-            f"Project '{project.name}' not compiled at {optimization.value}"
-        )
+        raise ValueError(f"Project '{project.name}' not compiled at {optimization.value}")
 
     binaries = project.compiled_binaries[optimization]
 
@@ -104,9 +113,7 @@ def decompile_project(
         # Fresh process per task: isolates JVM (Ghidra) and idalib (IDA)
         # state between decompiler backends. Requires Python 3.11+.
         try:
-            executor_ctx = ProcessPoolExecutor(
-                max_workers=workers, max_tasks_per_child=1
-            )
+            executor_ctx = ProcessPoolExecutor(max_workers=workers, max_tasks_per_child=1)
         except TypeError:
             executor_ctx = ProcessPoolExecutor(max_workers=workers)
 
@@ -132,7 +139,7 @@ def decompile_project(
                     if binary_name not in results:
                         results[binary_name] = {}
                     results[binary_name][dec_name] = result
-                except Exception as e:
+                except Exception:
                     from decbench.models.decompilation import (
                         DecompilationResult,
                         DecompilerMetadata,
@@ -161,7 +168,7 @@ def decompile_project(
                         dec_output_dir,
                         config=config,
                     )
-                except Exception as e:
+                except Exception:
                     from decbench.models.decompilation import (
                         DecompilationResult,
                         DecompilerMetadata,

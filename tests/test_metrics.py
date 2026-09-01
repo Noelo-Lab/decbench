@@ -459,7 +459,12 @@ class TestTypeMatchMetric:
         func = FunctionDecompilation(
             name="test",
             address=0x1000,
-            decompiled_code="int x;\nchar y;\nlong long z;\n",
+            decompiled_code="// structured variables",
+            variables=[
+                VariableInfo(name="renamed_0", type="int", stack_offset=-4),
+                VariableInfo(name="renamed_1", type="char", stack_offset=-5),
+                VariableInfo(name="renamed_2", type="long long", stack_offset=-16),
+            ],
         )
 
         gt_vars = [
@@ -479,7 +484,11 @@ class TestTypeMatchMetric:
         func = FunctionDecompilation(
             name="test",
             address=0x1000,
-            decompiled_code="int x;\nint y;\n",
+            decompiled_code="// structured variables",
+            variables=[
+                VariableInfo(name="renamed_0", type="int", stack_offset=-4),
+                VariableInfo(name="renamed_1", type="int", stack_offset=-5),
+            ],
         )
 
         gt_vars = [
@@ -609,8 +618,8 @@ int main() {
         assert result.metadata["fp"] == 1
         assert result.value == 0.0
 
-    def test_register_local_matches_by_name(self) -> None:
-        """O2-style register local (no offsets anywhere) matches by name."""
+    def test_register_local_does_not_match_by_name(self) -> None:
+        """Names cannot rescue a register local without type-blind evidence."""
         from decbench.metrics.type_match import TypeMatchMetric
 
         func = FunctionDecompilation(
@@ -627,8 +636,9 @@ int main() {
 
         metric = TypeMatchMetric()
         result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
-        assert result.value == 1.0
-        assert result.metadata["matched_by_name"] == 1
+        assert result.value == 0.0
+        assert result.metadata["matched_by_name"] == 0
+        assert result.metadata["unobservable_source_count"] == 1
 
     def test_o2_ground_truth_keeps_register_vars(self, tmp_path) -> None:
         """At -O2, register-located vars must still appear in ground truth."""
@@ -708,8 +718,8 @@ int main() {
         ]
         assert _calibrate_shift_multi(pairs) == 0
 
-    def test_offset_miss_rescued_by_name(self) -> None:
-        """GT stack var promoted to an arg (no offset) is rescued by name."""
+    def test_offset_miss_is_not_rescued_by_name(self) -> None:
+        """An unrelated name match cannot supplement a valid stack match."""
         from decbench.metrics.type_match import TypeMatchMetric
 
         func = FunctionDecompilation(
@@ -728,10 +738,10 @@ int main() {
 
         metric = TypeMatchMetric()
         result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
-        assert result.value == 1.0
+        assert result.value == 0.5
         assert result.metadata["matched_by"] == "structured"
-        assert result.metadata["tp"] == 2
-        assert result.metadata["fn"] == 0
+        assert result.metadata["tp"] == 1
+        assert result.metadata["fn"] == 1
 
     def test_offset_constant_shift_calibration(self) -> None:
         """Decompiled offsets shifted +16 from GT (2 vars) -> shift -16, perfect."""
@@ -779,8 +789,8 @@ int main() {
         assert result.value == 0.0
         assert result.metadata["matched_by"] == "structured"
 
-    def test_name_fallback_no_offsets(self) -> None:
-        """Structured vars without stack offsets -> fall back to name matching."""
+    def test_name_only_fallback_is_rejected(self) -> None:
+        """Structured vars without anchors or usage do not match by name."""
         from decbench.metrics.type_match import TypeMatchMetric
 
         func = FunctionDecompilation(
@@ -798,11 +808,12 @@ int main() {
         metric = TypeMatchMetric()
         result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
         assert result.metadata["matched_by"] == "structured"
-        assert result.value == 1.0
-        assert result.metadata["tp"] == 1
+        assert result.value == 0.0
+        assert result.metadata["tp"] == 0
+        assert result.metadata["fn"] == 1
 
-    def test_code_parsed_local_no_variables(self) -> None:
-        """No structured variables -> parse the C, match the local by name."""
+    def test_code_parsed_local_without_usage_is_unmatched(self) -> None:
+        """Parsing a declaration does not restore the old name-only matcher."""
         from decbench.metrics.type_match import TypeMatchMetric
 
         func = FunctionDecompilation(
@@ -818,7 +829,8 @@ int main() {
         metric = TypeMatchMetric()
         result = metric.compute_for_function(func, ground_truth_vars=gt_vars)
         assert result.metadata["matched_by"] == "structured"
-        assert result.value == 1.0
+        assert result.value == 0.0
+        assert result.metadata["fn"] == 1
 
     def test_code_parsed_arguments_by_position(self) -> None:
         """A code-only decompiler (no structured vars) gets ABI-position credit

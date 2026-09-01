@@ -9,9 +9,9 @@ leakage.
 
 Usage: decompile_one.py <binary> <decompiler> <out_dir> <pickle_out> [names_json]
 
-names_json (optional): path to a JSON list of source function names. When given
-and non-empty, decompilation is restricted to those functions (skips bundled
-gnulib/static filler), a large speedup for slow decompilers.
+names_json (optional): path to a JSON list of linked source-function addresses.
+When given and non-empty, decompilation is restricted to those functions (skips
+bundled gnulib/static filler), a large speedup for slow decompilers.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ def main() -> int:
         Path(out_dir),
         function_names=target_addrs,
         progress_path=Path(pkl_out),
+        defer_provenance_validation=True,
     )
     Path(pkl_out).write_bytes(pickle.dumps(result))
     return 0

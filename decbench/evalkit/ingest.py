@@ -13,7 +13,8 @@ kit's ``package.py`` — see :mod:`decbench.evalkit.kit_package`) into a new
   aggregation never stamps unattempted functions as failures);
 * optionally the three metrics are evaluated inline through the same
   :func:`decbench.pipeline.evaluate.evaluate_decompilation` path the run
-  driver uses, with source CFGs from the tree's ``.i`` files.
+  driver uses, with source CFGs and TypeMatch source evidence from the tree's
+  preprocessed ``.i``/``.ii`` files.
 
 All evaluation imports are lazy: ``evaluate=False`` never touches pyjoern.
 
@@ -42,6 +43,7 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    with_variable_occurrence_policy,
 )
 from decbench.utils.langs import preprocessed_by_stem
 
@@ -408,7 +410,7 @@ def _build_entry(
             address=low_pc,
             decompiled_code=code,
             line_count=code.count("\n") + 1,
-            metadata=extract_metrics(code),
+            metadata=with_variable_occurrence_policy(extract_metrics(code), "unavailable"),
         )
 
     failed = sorted(allowed - set(kept))
@@ -560,14 +562,18 @@ def _evaluate_group(
     opt: str,
     entries: list[_Entry],
     metric_names: list[str],
-    needs_source: bool,
+    needs_source_cfg: bool,
     warnings: list[str],
+    *,
+    needs_preprocessed_sources: bool,
 ) -> dict[str, dict[str, MetricResult]]:
     """Evaluate one (project, opt) group; returns ``{stem: {metric: MetricResult}}``.
 
     Reuses the run driver's evaluation path: source CFGs come from the tree's
-    ``.i`` files (restricted to the TUs holding the target functions), matched
-    TU-aware exactly like ``pipeline.evaluate.evaluate_project``.
+    ``.i``/``.ii`` files (restricted to the TUs holding the target functions),
+    matched TU-aware exactly like ``pipeline.evaluate.evaluate_project``.
+    TypeMatch receives all preprocessed units even though it does not require a
+    source CFG, matching the normal project-evaluation path.
     """
     from decbench.pipeline.evaluate import evaluate_decompilation
     from decbench.utils.cfg import (
@@ -579,36 +585,45 @@ def _evaluate_group(
     src_by_stem: dict[str, dict] = {}
     owners_by_binary: dict[str, dict[int, tuple[str, str]]] = {}
     best: dict = {}
-    if needs_source:
+    i_by_stem: dict[str, Path] = {}
+    if needs_source_cfg or needs_preprocessed_sources:
         compiled = tree / opt / project / "compiled"
         i_by_stem = preprocessed_by_stem(compiled)
         if not i_by_stem:
+            affected: list[str] = []
+            if needs_source_cfg:
+                affected.append("source-CFG metrics (GED) will not score")
+            if needs_preprocessed_sources:
+                affected.append("TypeMatch will use fallback-only source evidence")
             _warn(
                 warnings,
                 f"{project}/{opt}: no preprocessed .i/.ii sources in {compiled} — "
-                f"source-CFG metrics (GED) will not score",
+                f"{'; '.join(affected)}",
             )
-        else:
-            needed: set[str] = set()
-            parse_all = False
-            for e in entries:
-                got = _function_owners_for_addrs(e.binary, e.addrs, set(i_by_stem))
-                owners_by_binary[e.stem] = got
-                if set(got) != e.addrs:
-                    parse_all = True
-                needed.update(tu_stem for _name, tu_stem in got.values())
-            if parse_all:
-                needed = set(i_by_stem)
-            for stem in sorted(needed):
-                try:
-                    src_by_stem[stem] = extract_cfgs_from_source(i_by_stem[stem]) or {}
-                except Exception as exc:  # noqa: BLE001
-                    _warn(
-                        warnings,
-                        f"{project}/{opt}: source CFG extraction failed for {stem}.i: {exc}",
-                    )
-                    src_by_stem[stem] = {}
-            best = best_source_by_name(src_by_stem)
+
+    if needs_source_cfg and i_by_stem:
+        needed: set[str] = set()
+        parse_all = False
+        for e in entries:
+            got = _function_owners_for_addrs(e.binary, e.addrs, set(i_by_stem))
+            owners_by_binary[e.stem] = got
+            if set(got) != e.addrs:
+                parse_all = True
+            needed.update(tu_stem for _name, tu_stem in got.values())
+        if parse_all:
+            needed = set(i_by_stem)
+        for stem in sorted(needed):
+            try:
+                src_by_stem[stem] = extract_cfgs_from_source(i_by_stem[stem]) or {}
+            except Exception as exc:  # noqa: BLE001
+                _warn(
+                    warnings,
+                    f"{project}/{opt}: source CFG extraction failed for {stem}.i: {exc}",
+                )
+                src_by_stem[stem] = {}
+        best = best_source_by_name(src_by_stem)
+
+    preprocessed_sources = list(i_by_stem.values()) if needs_preprocessed_sources else None
 
     out: dict[str, dict[str, MetricResult]] = {}
     for e in entries:
@@ -619,11 +634,16 @@ def _evaluate_group(
                 best,
                 function_owners=owners_by_binary.get(e.stem),
             )
-            if needs_source
+            if needs_source_cfg
             else None
         )
         try:
-            out[e.stem] = evaluate_decompilation(e.result, src, metric_names)
+            out[e.stem] = evaluate_decompilation(
+                e.result,
+                src,
+                metric_names,
+                preprocessed_sources=preprocessed_sources,
+            )
         except Exception as exc:  # noqa: BLE001
             _warn(warnings, f"{project}/{opt}/{e.stem}: evaluation failed: {exc}")
     return out
@@ -779,13 +799,21 @@ def ingest_submission(
         from decbench.metrics.registry import MetricRegistry
 
         metric_names = list(metrics) if metrics else MetricRegistry.list_registered()
-        needs_source = any(MetricRegistry.get(m).requires_source_cfg for m in metric_names)
+        needs_source_cfg = any(MetricRegistry.get(m).requires_source_cfg for m in metric_names)
+        needs_preprocessed_sources = "type_match" in metric_names
         groups: dict[tuple[str, str], list[_Entry]] = {}
         for e in entries:
             groups.setdefault((e.project, e.opt), []).append(e)
         for (project, opt), ents in sorted(groups.items()):
             evals[(project, opt)] = _evaluate_group(
-                tree, project, opt, ents, metric_names, needs_source, warnings
+                tree,
+                project,
+                opt,
+                ents,
+                metric_names,
+                needs_source_cfg,
+                warnings,
+                needs_preprocessed_sources=needs_preprocessed_sources,
             )
 
     # Re-read the checkpoint rather than reusing the pre-conflict-check copy: inline

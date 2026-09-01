@@ -28,6 +28,7 @@ from decbench.models.scoreboard import Scoreboard
 from decbench.results_store import (
     load_sample_manifest,
     read_ged_overlay,
+    read_typematch_overlay,
     update_byte_match,
     update_ged,
     update_type_match,
@@ -220,7 +221,7 @@ def main() -> None:
     )
 
     if tm_mode:
-        new = json.loads((root / "type_match_new.json").read_text())
+        new, _provenance = read_typematch_overlay(root / "type_match_new.json")
         n = update_type_match(fd, new)
         print(f"[rebuild] merged type_match for {n} (function,decompiler) entries", flush=True)
     elif ged_mode:

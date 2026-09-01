@@ -16,7 +16,7 @@ import pytest
 
 from decbench.decompilers import llm_dec
 from decbench.decompilers.registry import DecompilerRegistry
-from decbench.models.decompilation import DecompilationResult
+from decbench.models.decompilation import DecompilationResult, variable_occurrence_policy
 
 
 def test_backends_register():
@@ -93,6 +93,9 @@ def test_cost_cap_truncates(monkeypatch, tmp_path):
     res = dec.decompile_binary(fake_bin, function_names={i for i in range(20)})
     assert isinstance(res, DecompilationResult)
     assert len(calls) == 3
+    assert {
+        variable_occurrence_policy(function.metadata) for function in res.functions.values()
+    } == {"unavailable"}
 
 
 def test_disasm_hint_on_real_binary():

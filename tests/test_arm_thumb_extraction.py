@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from decbench.decompilers.dockerized import _reko_architecture_mode
 from decbench.metrics.byte_match import _disassemble_bytes
 from decbench.utils import binfmt
 
@@ -56,6 +57,7 @@ def thumb_artifacts(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Pat
             "arm-none-eabi-gcc",
             "-mcpu=cortex-m4",
             "-mthumb",
+            "-g",
             "-O1",
             "-c",
             str(source),
@@ -93,6 +95,7 @@ def arm_elf(tmp_path_factory: pytest.TempPathFactory) -> Path:
             "arm-none-eabi-gcc",
             "-march=armv7-a",
             "-marm",
+            "-g",
             "-O1",
             "-nostdlib",
             "-Wl,--entry=lcd_add",
@@ -166,6 +169,87 @@ def test_thumb_functions_decode_in_thumb_mode(
 
 def test_a32_function_is_not_classified_as_thumb(arm_elf: Path) -> None:
     assert binfmt.elf_function_is_thumb(arm_elf, "lcd_add", _TEXT_BASE) is False
+
+
+def test_arm_elf_attributes_select_mclass_only_for_cortex_m(
+    thumb_artifacts: tuple[Path, Path], arm_elf: Path
+) -> None:
+    assert binfmt.elf_is_arm_mclass(thumb_artifacts[1]) is True
+    assert binfmt.elf_is_arm_mclass(arm_elf) is False
+
+
+def test_reko_uses_odd_entry_state_before_normalization(
+    thumb_artifacts: tuple[Path, Path],
+) -> None:
+    assert _reko_architecture_mode(thumb_artifacts[1]) == (
+        "auto",
+        "elf-arm-entry-thumb-bit",
+    )
+
+
+def test_reko_forces_thumb_for_even_entry_mclass(
+    thumb_artifacts: tuple[Path, Path], tmp_path: Path
+) -> None:
+    binary = bytearray(thumb_artifacts[1].read_bytes())
+    assert binary[4] == 1
+    byteorder = "little" if binary[5] == 1 else "big"
+    entry = int.from_bytes(binary[24:28], byteorder)
+    binary[24:28] = (entry & ~1).to_bytes(4, byteorder)
+    even_entry = tmp_path / "even-entry.elf"
+    even_entry.write_bytes(binary)
+
+    assert binfmt.elf_is_arm_mclass(even_entry) is True
+    assert _reko_architecture_mode(even_entry) == (
+        "thumb",
+        "elf-arm-attributes-m-profile",
+    )
+
+
+def test_reko_keeps_even_entry_a32_in_auto_mode(arm_elf: Path) -> None:
+    assert _reko_architecture_mode(arm_elf) == ("auto", "elf-arm-default")
+
+
+@pytest.mark.parametrize("name", sorted(_EXPECTED))
+def test_source_instruction_addresses_select_thumb_mode(
+    thumb_artifacts: tuple[Path, Path],
+    name: str,
+) -> None:
+    from decbench.metrics.variable_match import (
+        _die_ranges,
+        instruction_addresses,
+        open_source_binary_context,
+    )
+
+    elf_path = thumb_artifacts[1]
+    context = open_source_binary_context(elf_path)
+    try:
+        ((_identity, (_cu, die)),) = [
+            item for item in context.functions.items() if item[0][0] == name
+        ]
+        ranges = _die_ranges(die, context.dwarfinfo)
+        start = min(begin for begin, _end in ranges)
+        end = max(finish for _begin, finish in ranges)
+
+        addresses = instruction_addresses(
+            context.elf,
+            start,
+            end,
+            context,
+            function_name=name,
+        )
+    finally:
+        context.close()
+
+    expected_bytes, _expected_asm = _EXPECTED[name]
+    assert addresses[0] == start
+    assert addresses[-1] < end
+    assert len(addresses) == len(
+        _disassemble_bytes(
+            expected_bytes,
+            start,
+            binfmt.capstone_arch_mode(binfmt.BinInfo("elf", "arm", 32), thumb=True),
+        )
+    )
 
 
 def test_wrong_mode_is_silently_not_instruction_equivalent(

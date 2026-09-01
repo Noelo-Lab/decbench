@@ -5,8 +5,8 @@ These backends drive the native decompiler APIs directly — angr's
 ``idalib``/``idapro``, and Binary Ninja's headless API — instead of going
 through the unified ``declib`` interface. They produce the exact same
 :class:`~decbench.models.decompilation.DecompilationResult` shape as
-``declib_dec`` (ELF-file-space addresses, ``VariableInfo`` lists, line
-mappings, gotos/bools metadata).
+``declib_dec`` (ELF-file-space addresses, optional ``VariableInfo`` and line
+provenance, gotos/bools metadata).
 
 Importing this package registers the raw backends under the canonical
 ``angr`` / ``ghidra`` / ``ida`` / ``binja`` names. The declib-backed

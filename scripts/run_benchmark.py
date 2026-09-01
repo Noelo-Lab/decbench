@@ -17,6 +17,7 @@ Env:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import multiprocessing
 import os
@@ -37,6 +38,7 @@ if multiprocessing.get_start_method(allow_none=True) != "spawn":
     multiprocessing.set_start_method("spawn", force=True)
 
 import decbench.metrics  # noqa: F401,E402
+from decbench.decompilers.provenance import sanitize_native_provenance  # noqa: E402
 from decbench.models.decompilation import DecompilationResult, DecompilerMetadata  # noqa: E402
 from decbench.models.project import OptimizationLevel, Project  # noqa: E402
 from decbench.pipeline.evaluate import evaluate_project  # noqa: E402
@@ -45,6 +47,12 @@ from decbench.results_store import PROJECT_DIRS  # noqa: F401,E402
 from decbench.results_store import gather_project_tomls as gather_tomls
 from decbench.utils import binfmt  # noqa: E402
 from decbench.utils.cfg import extract_cfgs_from_source  # noqa: E402
+from decbench.utils.docker_task import (  # noqa: E402
+    DOCKER_TASK_TOKEN_ENV,
+    new_docker_task_token,
+    remove_docker_task_containers,
+)
+from decbench.utils.native_code import NativeCodeResolver  # noqa: E402
 
 OPT_LEVELS = [
     OptimizationLevel.O0,
@@ -60,6 +68,17 @@ if os.environ.get("DECBENCH_OPT_LEVELS"):
 METRICS = [
     m.strip() for m in (os.environ.get("DECBENCH_METRICS") or "").split(",") if m.strip()
 ] or None
+
+
+def needs_source_cfgs(metrics: list[str] | None) -> bool:
+    return metrics is None or "ged" in metrics
+
+
+def skip_finalize() -> bool:
+    return os.environ.get("DECBENCH_SKIP_FINALIZE", "").lower() in {"1", "true", "yes", "on"}
+
+
+NEEDS_SOURCE_CFGS = needs_source_cfgs(METRICS)
 DECOMPILERS = (os.environ.get("DECBENCH_DECOMPILERS") or "angr,ghidra").split(",")
 WORKERS = int(os.environ.get("DECBENCH_WORKERS") or "40")
 # Hard per-(binary, decompiler) budget; an overrun is recorded as a decompiler
@@ -71,10 +90,18 @@ DECOMPILE_TIMEOUT = int(os.environ.get("DECBENCH_DECOMPILE_TIMEOUT") or "300")
 DECOMPILER_TIMEOUT = {
     "kuna": int(os.environ.get("DECBENCH_KUNA_TIMEOUT") or "900"),
     "angr": int(os.environ.get("DECBENCH_ANGR_TIMEOUT") or "3600"),
+    "angr-declib": int(os.environ.get("DECBENCH_ANGR_DECLIB_TIMEOUT") or "3600"),
     "ghidra": int(os.environ.get("DECBENCH_GHIDRA_TIMEOUT") or "1800"),
+    "ghidra-declib": int(os.environ.get("DECBENCH_GHIDRA_DECLIB_TIMEOUT") or "1800"),
     "binja": int(os.environ.get("DECBENCH_BINJA_TIMEOUT") or "1800"),
+    "binja-declib": int(os.environ.get("DECBENCH_BINJA_DECLIB_TIMEOUT") or "1800"),
+    "ida-declib": int(os.environ.get("DECBENCH_IDA_DECLIB_TIMEOUT") or "1800"),
     "dewolf": int(os.environ.get("DECBENCH_DEWOLF_TIMEOUT") or "1200"),
     "r2dec": int(os.environ.get("DECBENCH_R2DEC_TIMEOUT") or "1800"),
+    "retdec": int(os.environ.get("DECBENCH_RETDEC_TIMEOUT") or "1800"),
+    "reko": int(os.environ.get("DECBENCH_REKO_TIMEOUT") or "1800"),
+    "glaurung": int(os.environ.get("DECBENCH_GLAURUNG_TIMEOUT") or "1800"),
+    "manifold": int(os.environ.get("DECBENCH_MANIFOLD_TIMEOUT") or "1800"),
     "codex": int(os.environ.get("DECBENCH_CODEX_TIMEOUT") or "3600"),
     "claude-code": int(os.environ.get("DECBENCH_CLAUDE_CODE_TIMEOUT") or "3600"),
     "kimi-code": int(os.environ.get("DECBENCH_KIMI_CODE_TIMEOUT") or "3600"),
@@ -83,12 +110,27 @@ _HERE = Path(__file__).resolve().parent
 _DECOMPILE_ONE = _HERE / "decompile_one.py"
 
 
+def decompiler_timeout(name: str) -> int:
+    """Return the configured per-binary timeout for a decompiler spec."""
+    return DECOMPILER_TIMEOUT.get(
+        name,
+        DECOMPILER_TIMEOUT.get(name.split("@", 1)[0], DECOMPILE_TIMEOUT),
+    )
+
+
+def format_decompiler_timeouts(names: list[str]) -> str:
+    """Format the effective timeout shown in benchmark progress output."""
+    return ", ".join(f"{name}={decompiler_timeout(name)}s" for name in names)
+
+
 def _load_sampleset_manifest() -> dict[tuple[str, str, str], set[str]] | None:
     """Load the ``DECBENCH_SAMPLESET_MANIFEST`` gate, or ``None`` if unset.
 
     Restricts the whole run to the frozen ``sample-set`` slice (see
     ``scripts/export_sample_set.py``): a decompiler is only ever asked to
     decompile the listed function *names*, per ``(project, opt, binary_stem)``.
+    A configured gate is a hard scope boundary, so malformed or empty input
+    aborts the run instead of silently expanding it to the full corpus.
     This is the cost gate for the LLM backends — with it set,
     codex/claude-code/kimi-code run on ~250 functions instead of the whole corpus.
     """
@@ -98,14 +140,28 @@ def _load_sampleset_manifest() -> dict[tuple[str, str, str], set[str]] | None:
     try:
         data = json.loads(Path(path).read_text())
     except Exception as e:  # noqa: BLE001
-        print(f"[sampleset] WARNING: could not read {path}: {e}; gate DISABLED", flush=True)
-        return None
+        raise RuntimeError(f"could not read sample-set manifest {path}: {e}") from e
+    rows = data.get("functions") if isinstance(data, dict) else None
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError(f"sample-set manifest {path} has no function rows")
     gate: dict[tuple[str, str, str], set[str]] = {}
-    for e in data.get("functions", []):
-        gate.setdefault((e["project"], e["opt"], e["binary"]), set()).add(e["function"])
+    for index, entry in enumerate(rows):
+        try:
+            project, opt, binary, function = (
+                str(entry[key]).strip() for key in ("project", "opt", "binary", "function")
+            )
+        except (KeyError, TypeError) as exc:
+            raise RuntimeError(
+                f"sample-set manifest {path} has an invalid function row at index {index}"
+            ) from exc
+        if not all((project, opt, binary, function)):
+            raise RuntimeError(
+                f"sample-set manifest {path} has an empty field at function row {index}"
+            )
+        gate.setdefault((project, opt, binary), set()).add(function)
     if multiprocessing.current_process().name == "MainProcess":
         print(
-            f"[sampleset] gate ACTIVE: {len(data.get('functions', []))} functions "
+            f"[sampleset] gate ACTIVE: {len(rows)} functions "
             f"across {len(gate)} binaries from {path}",
             flush=True,
         )
@@ -128,14 +184,10 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except (ProcessLookupError, PermissionError, OSError):
-        try:
+        with contextlib.suppress(Exception):
             proc.kill()
-        except Exception:  # noqa: BLE001
-            pass
-    try:
+    with contextlib.suppress(Exception):
         proc.wait(timeout=15)
-    except Exception:  # noqa: BLE001
-        pass
 
 
 def project_source_functions(
@@ -256,15 +308,59 @@ def _relabel_to_dwarf(
     # Pre-fix PE decompiles stored bare RVAs; adding the ImageBase recovers the
     # DWARF key. Harmless for ELF, where the base is already folded into fd.address.
     base = common.elf_min_vaddr(unstripped)
+    thumb_names: dict[int, tuple[int, str]] = {}
+    blocked_thumb_addresses: set[int] = set()
+    info = binfmt.detect(unstripped)
+    if info is not None and info.arch == "arm":
+        try:
+            resolver = NativeCodeResolver(unstripped)
+        except Exception:  # noqa: BLE001
+            resolver = None
+        if resolver is not None:
+            for address, name in addr2name.items():
+                try:
+                    thumb = resolver.uses_thumb(name, address)
+                except Exception:  # noqa: BLE001
+                    continue
+                if not thumb:
+                    continue
+                canonical = address & ~1
+                prior = thumb_names.get(canonical)
+                binding = (address, name)
+                if prior is not None and prior != binding:
+                    blocked_thumb_addresses.add(canonical)
+                else:
+                    thumb_names[canonical] = binding
+    for address in blocked_thumb_addresses:
+        thumb_names.pop(address, None)
+
     new_funcs: dict[str, object] = {}
+    dropped = 0
     for fd in list(result.functions.values()):
         addr = int(fd.address)
-        dn = (
-            addr2name.get(addr)
-            or addr2name.get(addr & ~1)
-            or addr2name.get(addr + base)
-            or addr2name.get((addr + base) & ~1)
+        candidates = (addr,) if not base else (addr, addr + base)
+        binding = next(
+            (
+                (candidate, addr2name[candidate])
+                for candidate in candidates
+                if candidate in addr2name
+            ),
+            None,
         )
+        if binding is None:
+            binding = next(
+                (
+                    thumb_names[canonical]
+                    for candidate in candidates
+                    if (canonical := candidate & ~1) in thumb_names
+                ),
+                None,
+            )
+        if binding is None:
+            dropped += 1
+            continue
+        matched_address, dn = binding
+        fd.address = matched_address
         if dn and dn != fd.name:
             fd.decompiled_code = re.sub(r"\b" + re.escape(fd.name) + r"\b", dn, fd.decompiled_code)
             fd.name = dn
@@ -275,6 +371,27 @@ def _relabel_to_dwarf(
             new_funcs[fd.name] = fd
     result.functions = new_funcs  # type: ignore[assignment]
     result.binary_path = unstripped
+    if dropped:
+        result.decompiler.extra = {
+            **(result.decompiler.extra or {}),
+            "source_filter_unmatched_dropped": dropped,
+        }
+
+
+def _decompilation_outcome(result: DecompilationResult) -> str:
+    """Classify a completed driver task for its aggregate progress counters."""
+
+    extra = result.decompiler.extra or {}
+    failure = extra.get("failure") or extra.get("error") or ""
+    if extra.get("recovered_partial"):
+        return "partial"
+    if (
+        result.decompiler.timeout_occurred
+        or extra.get("timed_out")
+        or str(failure).startswith("timeout")
+    ):
+        return "timeout"
+    return "error" if failure else "ok"
 
 
 def _timed_decompile(
@@ -283,8 +400,9 @@ def _timed_decompile(
     """Decompile one binary via a timed, killable subprocess.
 
     Returns the unpickled DecompilationResult, or a 'timeout'/'error' result if
-    the subprocess overran DECOMPILE_TIMEOUT or failed. ``names_file`` is a JSON
-    list of source function names to restrict to ("NONE" = all functions).
+    the subprocess overran its resolved per-backend budget or failed.
+    ``names_file`` is a JSON list of source-function addresses to restrict to
+    ("NONE" = all functions).
     """
     pkl = out_dir / f"{dec_name}_{binary.stem}.result.pkl"
     cmd = [
@@ -296,12 +414,14 @@ def _timed_decompile(
         str(pkl),
         names_file,
     ]
-    timeout_s = DECOMPILER_TIMEOUT.get(
-        dec_name, DECOMPILER_TIMEOUT.get(dec_name.split("@", 1)[0], DECOMPILE_TIMEOUT)
-    )
+    timeout_s = decompiler_timeout(dec_name)
     failure = ""
     timed_out = False
+    cleanup_needed = False
     proc = None
+    task_token = new_docker_task_token()
+    child_env = os.environ.copy()
+    child_env[DOCKER_TASK_TOKEN_ENV] = task_token
     try:
         # The worker leads its own process group so a timeout can kill the WHOLE group
         # (worker plus the kuna/JVM/IDA process it spawned).
@@ -310,6 +430,7 @@ def _timed_decompile(
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=child_env,
         )
         try:
             rc = proc.wait(timeout=timeout_s)
@@ -323,6 +444,14 @@ def _timed_decompile(
                 try:
                     result = pickle.loads(pkl.read_bytes())
                     pkl.unlink(missing_ok=True)
+                    extra = result.decompiler.extra or {}
+                    cleanup_needed = bool(
+                        result.decompiler.timeout_occurred
+                        or extra.get("error")
+                        or extra.get("failure")
+                        or extra.get("timeout")
+                        or extra.get("timed_out")
+                    )
                     return result
                 except Exception as e:  # noqa: BLE001
                     failure = f"unpickle: {e}"
@@ -333,6 +462,14 @@ def _timed_decompile(
     finally:
         if proc is not None and proc.poll() is None:
             _kill_process_group(proc)
+        if failure or cleanup_needed:
+            removed = remove_docker_task_containers(task_token)
+            if removed:
+                print(
+                    f"[docker-cleanup] removed {len(removed)} container(s) "
+                    f"for failed task {dec_name}/{binary.name}",
+                    flush=True,
+                )
 
     partial = None
     if pkl.exists():
@@ -342,6 +479,7 @@ def _timed_decompile(
             partial = None
     pkl.unlink(missing_ok=True)
     if partial is not None and partial.functions:
+        partial.decompiler.timeout_occurred = partial.decompiler.timeout_occurred or timed_out
         partial.decompiler.extra = {
             **(partial.decompiler.extra or {}),
             "failure": failure,
@@ -354,6 +492,7 @@ def _timed_decompile(
         binary_name=binary.stem,
         decompiler=DecompilerMetadata(
             decompiler_name=dec_name,
+            timeout_occurred=timed_out,
             failed_functions=["all"],
             extra={"failure": failure, "timed_out": timed_out},
         ),
@@ -425,21 +564,11 @@ def decompile_project_timed(
                         _relabel_to_dwarf(res, amap, orig)
                     else:
                         res.binary_path = orig
-                    try:
+                    sanitize_native_provenance(res, orig)
+                    with contextlib.suppress(Exception):
                         res.to_c_file(dec_out / f"{dec_name}_{stem}.c")
-                    except Exception:  # noqa: BLE001
-                        pass
                 results[stem][dec_name] = res
-                extra = res.decompiler.extra or {}
-                failure = extra.get("failure", "")
-                if not failure:
-                    stats["ok"] += 1
-                elif extra.get("recovered_partial"):
-                    stats["partial"] += 1
-                elif failure.startswith("timeout"):
-                    stats["timeout"] += 1
-                else:
-                    stats["error"] += 1
+                stats[_decompilation_outcome(res)] += 1
     finally:
         shutil.rmtree(names_dir, ignore_errors=True)
     return results, stats
@@ -476,7 +605,9 @@ def main() -> int:
             "  -- project    limit to the named projects\n\n"
             "Env: DECBENCH_DECOMPILERS, DECBENCH_REDO_DECOMPILERS, DECBENCH_WORKERS,\n"
             "     DECBENCH_DECOMPILE_TIMEOUT, DECBENCH_{KUNA,ANGR,GHIDRA,BINJA}_TIMEOUT,\n"
-            "     DECBENCH_KUNA_MAX_FN_SECONDS, DECBENCH_DECOMPILE_ONLY, GHIDRA_INSTALL_DIR,\n"
+            "     DECBENCH_KUNA_MAX_FN_SECONDS, DECBENCH_DECOMPILE_ONLY, "
+            "DECBENCH_SKIP_FINALIZE,\n"
+            "     GHIDRA_INSTALL_DIR,\n"
             "     DECBENCH_SAMPLESET_MANIFEST (gate the run to the frozen sample-set slice;\n"
             "       required for the LLM backends codex/claude-code/kimi-code — see\n"
             "       docs/decompilers.md)."
@@ -579,7 +710,7 @@ def main() -> int:
             project.compiled_binaries[opt] = kept_binaries
             n = len(kept_binaries)
 
-            if os.environ.get("DECBENCH_DECOMPILE_ONLY") == "1":
+            if os.environ.get("DECBENCH_DECOMPILE_ONLY") == "1" or not NEEDS_SOURCE_CFGS:
                 src_cfgs = {}
             else:
                 src_cfgs = extract_source_cfgs(
@@ -596,7 +727,7 @@ def main() -> int:
             td = time.time()
             print(
                 f"[{name}/{opt.value}] decompiling {n} binaries x {to_run} "
-                f"(timeout {DECOMPILE_TIMEOUT}s)...",
+                f"(timeouts {format_decompiler_timeouts(to_run)})...",
                 flush=True,
             )
             try:
@@ -661,6 +792,11 @@ def main() -> int:
             f"(checkpointed)",
             flush=True,
         )
+
+    if skip_finalize():
+        print("\nCheckpoint-only run complete; finalization skipped.", flush=True)
+        print("RUN_DRIVER_CHECKPOINTS_DONE", flush=True)
+        return 0
 
     # The canonical rebuild: regenerates derived files from EVERY checkpoint in the
     # tree, so a scoped resume can no longer silently shrink function_results.json.

@@ -11,10 +11,8 @@ decompiler API directly:
   a frame location), with argument POSITIONS taken from ``cfunc.argidx`` —
   ``get_lvars()`` enumerates in allocation order, not declared order
 
-IDA is **not functional on this machine** (only an unusable IDA 8.0 exists and
-``idapro`` imports but cannot open a database here), so this backend is written
-to be correct but ``is_available()`` reports ``False`` unless a real, working
-IDA 9+ ``idalib`` is present. The module never imports IDA at import time.
+Availability is detected at runtime and requires a working IDA 9+ ``idalib``.
+The module never imports IDA at import time.
 """
 
 from __future__ import annotations
@@ -33,6 +31,7 @@ from decbench.models.decompilation import (
     FunctionDecompilation,
     LineMapping,
     VariableInfo,
+    with_variable_occurrence_policy,
 )
 
 _l = logging.getLogger(__name__)
@@ -110,7 +109,7 @@ class RawIDADecompiler(Decompiler):
         binary_path: Path,
         functions: list[tuple[str, int]] | None = None,
         output_dir: Path | None = None,
-        function_names: set[str] | None = None,
+        function_names: set[int] | None = None,
         progress_path: Path | None = None,
     ) -> DecompilationResult:
         if not self.is_available():
@@ -121,7 +120,7 @@ class RawIDADecompiler(Decompiler):
 
         start_time = time.time()
         elf_base = common.elf_min_vaddr(binary_path)
-        text_range = common.elf_text_ranges(binary_path)
+        code_ranges = common.executable_code_ranges(binary_path)
         addr_targets = common.addr_targets_of(function_names)
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
@@ -156,20 +155,20 @@ class RawIDADecompiler(Decompiler):
             if not ida_hexrays.init_hexrays_plugin():
                 raise RuntimeError("Hex-Rays decompiler not available")
             try:
-                enumerated = self._enumerate(elf_base, text_range, addr_targets)
+                enumerated = self._enumerate(elf_base, code_ranges, addr_targets)
                 if functions is not None:
                     requested = {n for (n, _a) in functions}
                     enumerated = [(n, a) for (n, a) in enumerated if n in requested]
                 enumerated = common.narrow_to_source(
-                    enumerated, function_names, backend="ida",
+                    enumerated,
+                    function_names,
+                    backend="ida",
                     binary_name=binary_path.name,
                 )
                 for func_name, file_addr in enumerated:
                     func_result = None
                     try:
-                        func_result = self._decompile_one(
-                            func_name, file_addr, elf_base
-                        )
+                        func_result = self._decompile_one(func_name, file_addr, elf_base)
                     except Exception as e:  # noqa: BLE001
                         _l.debug("ida-raw: failed to decompile %s: %s", func_name, e)
                     if func_result is not None:
@@ -222,7 +221,7 @@ class RawIDADecompiler(Decompiler):
     def _enumerate(
         self,
         elf_base: int,
-        text_range: common.TextRanges,
+        code_ranges: common.CodeRangeFilter,
         addr_targets: set[int] | None = None,
     ) -> list[tuple[str, int]]:
         """Enumerate (name, ELF-space addr) for benchmarkable functions.
@@ -246,7 +245,7 @@ class RawIDADecompiler(Decompiler):
                 continue
             name = ida_name.get_ea_name(ea) or ""
             file_addr = (int(ea) - image_base) + elf_base
-            if common.should_skip_function(name, file_addr, text_range, addr_targets):
+            if common.should_skip_function(name, file_addr, code_ranges, addr_targets):
                 continue
             out.append((name, file_addr))
         return sorted(out, key=lambda x: x[1])
@@ -268,9 +267,26 @@ class RawIDADecompiler(Decompiler):
         if not code:
             return None
 
-        variables = self._extract_variables(cfunc)
-        line_mappings = self._extract_line_mappings(cfunc, code)
-        metadata = common.extract_metrics(code)
+        variables, local_indices = self._extract_variables_with_indices(cfunc)
+        line_mappings = self._extract_line_mappings(
+            cfunc,
+            elf_base,
+            self._ida_image_base(),
+        )
+        line_count = code.count("\n") + 1
+        line_mappings = [
+            mapping for mapping in line_mappings if 1 <= mapping.line_number <= line_count
+        ]
+        line_addresses = {mapping.line_number: set(mapping.addresses) for mapping in line_mappings}
+        for local_index, lines in self._extract_variable_lines(cfunc).items():
+            index = local_indices.get(local_index)
+            if index is None:
+                continue
+            variables[index].line_numbers = sorted(lines)
+            variables[index].addresses = sorted(
+                {address for line in lines for address in line_addresses.get(line, set())}
+            )
+        metadata = with_variable_occurrence_policy(common.extract_metrics(code), "exact")
 
         return FunctionDecompilation(
             name=func_name,
@@ -310,6 +326,13 @@ class RawIDADecompiler(Decompiler):
 
     @staticmethod
     def _extract_variables(cfunc: Any) -> list[VariableInfo]:
+        variables, _local_indices = RawIDADecompiler._extract_variables_with_indices(cfunc)
+        return variables
+
+    @staticmethod
+    def _extract_variables_with_indices(
+        cfunc: Any,
+    ) -> tuple[list[VariableInfo], dict[int, int]]:
         """Pull arguments (ABI order) and stack locals from ``cfunc.lvars``.
 
         Hex-Rays ``lvar_t`` objects expose ``is_arg_var``, ``name``, ``width``
@@ -319,13 +342,18 @@ class RawIDADecompiler(Decompiler):
         the enumeration order (see :meth:`_arg_positions`).
         """
         variables: list[VariableInfo] = []
+        local_indices: dict[int, int] = {}
         try:
             lvars = cfunc.get_lvars()
         except Exception:  # noqa: BLE001
-            return variables
+            return variables, local_indices
 
         arg_positions = RawIDADecompiler._arg_positions(cfunc, lvars)
         fallback_position = len(arg_positions)
+        try:
+            stack_delta = int(cfunc.get_stkoff_delta())
+        except Exception:  # noqa: BLE001
+            stack_delta = 0
         for lvar_index, lvar in enumerate(lvars):
             try:
                 name = str(getattr(lvar, "name", "") or "")
@@ -349,6 +377,7 @@ class RawIDADecompiler(Decompiler):
                 if position is None:
                     position = fallback_position
                     fallback_position += 1
+                local_indices[lvar_index] = len(variables)
                 variables.append(
                     VariableInfo(
                         name=name,
@@ -364,9 +393,10 @@ class RawIDADecompiler(Decompiler):
                 try:
                     loc = lvar.location
                     if loc is not None and loc.is_stkoff():
-                        stack_offset = int(loc.stkoff())
+                        stack_offset = int(loc.stkoff()) - stack_delta
                 except Exception:  # noqa: BLE001
                     stack_offset = None
+                local_indices[lvar_index] = len(variables)
                 variables.append(
                     VariableInfo(
                         name=name,
@@ -376,36 +406,75 @@ class RawIDADecompiler(Decompiler):
                         kind="stack",
                     )
                 )
-        return variables
+        return variables, local_indices
 
     @staticmethod
-    def _extract_line_mappings(cfunc: Any, code: str) -> list[LineMapping]:
-        """Best-effort line mappings from the Hex-Rays pseudocode item map.
-
-        Each ``cfunc.get_pseudocode()`` line carries a syntax tree; the
-        ``cfunc.treeitems`` / ``ctree_item`` machinery maps tree items to EAs.
-        IDA's EA == ELF-file-space address, so no translation is needed. This
-        is best-effort and returns ``[]`` if the API shape differs.
-        """
+    def _extract_line_mappings(
+        cfunc: Any,
+        elf_base: int,
+        image_base: int,
+    ) -> list[LineMapping]:
+        """Map 1-based pseudocode lines to ELF-file-space instruction addresses."""
         try:
-            sv = cfunc.get_pseudocode()
+            pseudocode = cfunc.get_pseudocode()
+            if not pseudocode:
+                return []
+            eamap = cfunc.get_eamap()
         except Exception:  # noqa: BLE001
-            return []
-        if not sv:
             return []
 
         line_to_addrs: dict[int, set[int]] = {}
         try:
-            import ida_hexrays
-            import ida_lines
-
-            for line_no in range(len(sv)):
-                line = sv[line_no].line
-                anchor = ida_hexrays.ctree_anchor_t()
-                _ = (line, anchor, ida_lines)
+            entry_ea = int(cfunc.entry_ea)
+            if entry_ea >= image_base:
+                line_to_addrs[1] = {(entry_ea - image_base) + elf_base}
         except Exception:  # noqa: BLE001
-            return []
+            pass
+        try:
+            import ida_idaapi
 
-        # IDA exposes EA -> citems but not citem -> line, so leave line mappings empty
-        # rather than emit incorrect data.
+            badaddr = int(ida_idaapi.BADADDR)
+        except Exception:  # noqa: BLE001
+            badaddr = (1 << 64) - 1
+
+        try:
+            entries = list(eamap.items())
+        except Exception:  # noqa: BLE001
+            entries = []
+        for ida_ea, items in entries:
+            try:
+                tool_addr = int(ida_ea)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if tool_addr == badaddr or tool_addr < image_base:
+                continue
+            file_addr = (tool_addr - image_base) + elf_base
+            for item in items:
+                try:
+                    _x, zero_based_line = cfunc.find_item_coords(item)
+                    line_no = int(zero_based_line) + 1
+                except Exception:  # noqa: BLE001
+                    continue
+                if line_no >= 1:
+                    line_to_addrs.setdefault(line_no, set()).add(file_addr)
+
         return common.merge_line_addresses(line_to_addrs)
+
+    @staticmethod
+    def _extract_variable_lines(cfunc: Any) -> dict[int, set[int]]:
+        try:
+            import ida_hexrays
+        except Exception:  # noqa: BLE001
+            return {}
+
+        variable_lines: dict[int, set[int]] = {}
+        for item in cfunc.treeitems:
+            try:
+                if item.op != ida_hexrays.cot_var:
+                    continue
+                index = int(item.cexpr.v.idx)
+                _x, zero_based_line = cfunc.find_item_coords(item)
+                variable_lines.setdefault(index, set()).add(int(zero_based_line) + 1)
+            except Exception:  # noqa: BLE001
+                continue
+        return variable_lines

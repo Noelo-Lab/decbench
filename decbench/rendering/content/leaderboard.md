@@ -52,3 +52,5 @@ more information about these metrics, datasets, and methodology on the
 on the [view page](https://decbench.com/view/?dataset=sample-set&tier=sample-set&dec=codex&metric=ged&fn=base-passwd%2FO0%2Fupdate-passwd%3A%3Aread_shadow).
 
 <div id="leaderboard-dataset-desc"></div>
+
+<p id="type-evidence-note" class="view-desc evidence-note" hidden><span class="evidence-mark" aria-hidden="true">*</span> Some Type measurements came from a producer that could not expose or declare sound variable-occurrence provenance. A producer with no instruction-address provenance at all is measured by the older name-based variable correspondence instead, which is weaker evidence and not comparable like-for-like. The marker also covers measured rows with no accepted variable correspondence. These limitations can leave plausible matches unmatched, so the reported recovery rate may be conservative. Scores and denominators are calculated identically.</p>

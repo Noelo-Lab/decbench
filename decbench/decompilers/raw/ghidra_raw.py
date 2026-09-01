@@ -43,6 +43,7 @@ from decbench.models.decompilation import (
     FunctionDecompilation,
     LineMapping,
     VariableInfo,
+    with_variable_occurrence_policy,
 )
 
 _l = logging.getLogger(__name__)
@@ -216,7 +217,7 @@ class RawGhidraDecompiler(Decompiler):
         binary_path: Path,
         functions: list[tuple[str, int]] | None = None,
         output_dir: Path | None = None,
-        function_names: set[str] | None = None,
+        function_names: set[int] | None = None,
         progress_path: Path | None = None,
     ) -> DecompilationResult:
         """Decompile a binary with Ghidra natively (one program/JVM per process)."""
@@ -225,7 +226,7 @@ class RawGhidraDecompiler(Decompiler):
 
         start_time = time.time()
         elf_base = common.elf_min_vaddr(binary_path)
-        text_range = common.elf_text_ranges(binary_path)
+        code_ranges = common.executable_code_ranges(binary_path)
         addr_targets = common.addr_targets_of(function_names)
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
@@ -266,7 +267,7 @@ class RawGhidraDecompiler(Decompiler):
 
                 requested = {n for (n, _a) in functions} if functions is not None else None
 
-                enumerated = self._enumerate(program, elf_base, text_range, addr_targets)
+                enumerated = self._enumerate(program, elf_base, code_ranges, addr_targets)
                 if requested is not None:
                     enumerated = [(n, a) for (n, a) in enumerated if n in requested]
 
@@ -345,7 +346,7 @@ class RawGhidraDecompiler(Decompiler):
         self,
         program: Any,
         elf_base: int,
-        text_range: common.TextRanges,
+        code_ranges: common.CodeRangeFilter,
         addr_targets: set[int] | None = None,
     ) -> list[tuple[str, int]]:
         """Enumerate (name, ELF-space addr) for benchmarkable functions.
@@ -364,7 +365,7 @@ class RawGhidraDecompiler(Decompiler):
             name = g_func.getName() or ""
             offset = int(g_func.getEntryPoint().getOffset())
             file_addr = (offset - image_base) + elf_base
-            if common.should_skip_function(name, file_addr, text_range, addr_targets):
+            if common.should_skip_function(name, file_addr, code_ranges, addr_targets):
                 continue
             out.append((name, file_addr))
         return sorted(out, key=lambda x: x[1])
@@ -401,9 +402,27 @@ class RawGhidraDecompiler(Decompiler):
             return None
 
         high = res.getHighFunction()
-        variables = self._extract_variables(high)
-        line_mappings = self._extract_line_mappings(res, code, elf_base, image_base)
-        metadata = common.extract_metrics(code)
+        variables, symbol_indices = self._extract_variables_with_symbols(high)
+        try:
+            function_body = g_func.getBody()
+        except Exception:  # noqa: BLE001
+            function_body = None
+        line_mappings, variable_lines = self._extract_markup_evidence(
+            res,
+            high,
+            symbol_indices,
+            elf_base,
+            image_base,
+            code=code,
+            function_body=function_body,
+        )
+        line_addresses = {mapping.line_number: set(mapping.addresses) for mapping in line_mappings}
+        for index, lines in variable_lines.items():
+            variables[index].line_numbers = sorted(lines)
+            variables[index].addresses = sorted(
+                {address for line in lines for address in line_addresses.get(line, set())}
+            )
+        metadata = with_variable_occurrence_policy(common.extract_metrics(code), "exact")
 
         return FunctionDecompilation(
             name=func_name,
@@ -417,30 +436,39 @@ class RawGhidraDecompiler(Decompiler):
 
     @staticmethod
     def _extract_variables(high: Any) -> list[VariableInfo]:
+        variables, _symbol_indices = RawGhidraDecompiler._extract_variables_with_symbols(high)
+        return variables
+
+    @staticmethod
+    def _extract_variables_with_symbols(
+        high: Any,
+    ) -> tuple[list[VariableInfo], dict[int, int]]:
         """Pull arguments (ABI order) and stack locals from the HighFunction.
 
         Parameters are emitted first (ordered by their parameter ordinal, so
         ``arg_index`` matches DWARF's formal-parameter order); the rest become
-        stack/locals. Stack offset comes from the variable's storage when it is
-        stack-resident.
+        stack/locals. The returned symbol-id map connects Clang variable tokens
+        back to their ``VariableInfo`` entry.
         """
         variables: list[VariableInfo] = []
+        symbol_indices: dict[int, int] = {}
         if high is None:
-            return variables
+            return variables, symbol_indices
         try:
             lsm = high.getLocalSymbolMap()
         except Exception:  # noqa: BLE001
-            return variables
+            return variables, symbol_indices
         if lsm is None:
-            return variables
+            return variables, symbol_indices
 
-        params: list[tuple[int, VariableInfo]] = []
-        locals_: list[VariableInfo] = []
+        params: list[tuple[int, int, VariableInfo]] = []
+        locals_: list[tuple[int, VariableInfo]] = []
 
         syms = lsm.getSymbols()
         while syms.hasNext():
             sym = syms.next()
             try:
+                symbol_id = int(sym.getId())
                 name = str(sym.getName() or "")
                 dtype = sym.getDataType()
                 type_str = str(dtype.getDisplayName()) if dtype is not None else ""
@@ -463,6 +491,7 @@ class RawGhidraDecompiler(Decompiler):
                 params.append(
                     (
                         ordinal,
+                        symbol_id,
                         VariableInfo(
                             name=name,
                             type=type_str,
@@ -475,21 +504,27 @@ class RawGhidraDecompiler(Decompiler):
                 )
             else:
                 locals_.append(
-                    VariableInfo(
-                        name=name,
-                        type=type_str,
-                        stack_offset=stack_offset,
-                        size=size,
-                        kind="stack",
+                    (
+                        symbol_id,
+                        VariableInfo(
+                            name=name,
+                            type=type_str,
+                            stack_offset=stack_offset,
+                            size=size,
+                            kind="stack",
+                        ),
                     )
                 )
 
         params.sort(key=lambda t: t[0])
-        for position, (_ord, vi) in enumerate(params):
+        for position, (_ord, symbol_id, vi) in enumerate(params):
             vi.arg_index = position
+            symbol_indices[symbol_id] = len(variables)
             variables.append(vi)
-        variables.extend(locals_)
-        return variables
+        for symbol_id, vi in locals_:
+            symbol_indices[symbol_id] = len(variables)
+            variables.append(vi)
+        return variables, symbol_indices
 
     @staticmethod
     def _extract_line_mappings(
@@ -498,56 +533,94 @@ class RawGhidraDecompiler(Decompiler):
         elf_base: int,
         image_base: int,
     ) -> list[LineMapping]:
-        """Best-effort line mappings from the Clang C-code markup.
+        line_mappings, _variable_lines = RawGhidraDecompiler._extract_markup_evidence(
+            res,
+            None,
+            {},
+            elf_base,
+            image_base,
+        )
+        return line_mappings
 
-        Walks the ``ClangTokenGroup`` returned by ``getCCodeMarkup()``, reading
-        each token's line number (from ``getLineParent().getLineNumber()``) and
-        the instruction ``Address`` attached to its ``ClangNode``'s min-address.
-        Returns ``[]`` if the markup or addresses are unavailable.
-        """
+    @staticmethod
+    def _extract_markup_evidence(
+        res: Any,
+        high: Any,
+        symbol_indices: dict[int, int],
+        elf_base: int,
+        image_base: int,
+        *,
+        code: str | None = None,
+        function_body: Any = None,
+    ) -> tuple[list[LineMapping], dict[int, set[int]]]:
         try:
             markup = res.getCCodeMarkup()
         except Exception:  # noqa: BLE001
-            return []
+            return [], {}
         if markup is None:
-            return []
+            return [], {}
 
         line_to_addrs: dict[int, set[int]] = {}
+        variable_lines: dict[int, set[int]] = {}
+        line_count = code.count("\n") + 1 if code is not None else None
 
         def _addr_to_file(addr: Any) -> int | None:
             try:
                 if addr is None:
                     return None
+                get_address_space = getattr(addr, "getAddressSpace", None)
+                if callable(get_address_space):
+                    address_space = get_address_space()
+                    if address_space is not None and not bool(address_space.isMemorySpace()):
+                        return None
+                if function_body is not None and not bool(function_body.contains(addr)):
+                    return None
                 off = int(addr.getOffset())
-                return (off - image_base) + elf_base
+                if off < image_base:
+                    return None
+                file_addr = (off - image_base) + elf_base
+                return file_addr if file_addr >= elf_base else None
             except Exception:  # noqa: BLE001
                 return None
 
         def _walk(node: Any) -> None:
             try:
-                from ghidra.app.decompiler import ClangToken, ClangTokenGroup
+                child_count = int(node.numChildren())
             except Exception:  # noqa: BLE001
                 return
-            if isinstance(node, ClangTokenGroup):
-                for i in range(node.numChildren()):
-                    _walk(node.Child(i))
+            if child_count:
+                for i in range(child_count):
+                    try:
+                        _walk(node.Child(i))
+                    except Exception:  # noqa: BLE001
+                        continue
                 return
-            if isinstance(node, ClangToken):
-                try:
-                    line_parent = node.getLineParent()
-                    if line_parent is None:
-                        return
-                    line_no = int(line_parent.getLineNumber())
-                    addr = node.getMinAddress()
-                    fa = _addr_to_file(addr)
+            try:
+                line_parent = node.getLineParent()
+                if line_parent is None:
+                    return
+                line_no = int(line_parent.getLineNumber())
+                if line_no <= 0 or (line_count is not None and line_no > line_count):
+                    return
+                for address_getter in ("getMinAddress", "getMaxAddress"):
+                    getter = getattr(node, address_getter, None)
+                    fa = _addr_to_file(getter()) if callable(getter) else None
                     if fa is not None:
                         line_to_addrs.setdefault(line_no, set()).add(fa)
-                except Exception:  # noqa: BLE001
+                if high is None or not bool(node.isVariableRef()):
                     return
+                symbol = node.getHighSymbol(high)
+                if symbol is None:
+                    return
+                index = symbol_indices.get(int(symbol.getId()))
+                if index is not None:
+                    variable_lines.setdefault(index, set()).add(line_no)
+            except Exception:  # noqa: BLE001
+                return
 
         try:
             _walk(markup)
         except Exception:  # noqa: BLE001
-            return []
+            return [], {}
 
-        return common.merge_line_addresses(line_to_addrs)
+        return common.merge_line_addresses(line_to_addrs), variable_lines

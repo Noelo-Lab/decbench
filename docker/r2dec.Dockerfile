@@ -13,11 +13,13 @@
 # Run (decbench's R2DecDecompiler._decompile_docker does this):
 #   docker run --rm \
 #     -v /path/to/bin:/in/bin:ro -v /tmp/out:/work \
+#     -v /path/to/repo/docker/r2dec-decompile.py:/opt/r2dec-decompile.py:ro \
 #     decbench/r2dec:latest /in/bin /work/out.json [/work/targets.json]
 # targets.json (optional) is a JSON list of ELF-file-space addresses to
-# restrict to (matched Thumb-bit tolerant); out.json is a JSON list of
-# {addr, baddr, name, code} entries — one per function, from radare2's own
-# analysis, so it works on fully stripped binaries.
+# restrict to (matched Thumb-bit tolerant); out.json is a versioned object with
+# a functions list — one entry per function from radare2's own analysis — so it
+# works on fully stripped binaries. The bind mount keeps the source driver in
+# sync with the host parser without rebuilding the toolchain image.
 
 FROM ubuntu:22.04
 

@@ -13,17 +13,20 @@ This directory is decbench's single Docker home. Four images package
 Unlike the canonical raw backends (angr/ghidra/ida/binja — declib-free drivers
 of each tool's own API, `decbench/decompilers/raw/`), these ship as standalone
 CLIs, so decbench runs them in a container. **RetDec and Reko** emit whole-
-program C that decbench splits into per-function snippets; function **names and
-addresses** come from the binary's ELF symbol table (pyelftools), so addresses
-are in ELF file space and match DWARF — the same convention as the raw
-backends. **r2dec** is different: its container driver returns address-keyed
-per-function JSON straight from radare2's **own** analysis (`aaa` + `aflj`), so
-it needs no symbol table and works on fully stripped binaries.
+program C that decbench splits into per-function snippets. Reko's native sidecar
+retains exact function entry addresses and final-variable identities, including
+for stripped inputs. RetDec uses its annotated token stream to retain function
+identities and native addresses. All stored addresses use the binary's linked
+ELF/PE address space and match DWARF. **r2dec** is different: its container driver
+returns address-keyed per-function JSON straight from radare2's **own** analysis
+(`aaa` + `aflj`), so it needs no symbol table and works on fully stripped binaries.
 
-These tools do not expose stack variables / line mappings uniformly, so the
-`FunctionDecompilation.variables` and `.line_mappings` lists are empty. The
-metrics degrade gracefully: GED still parses the recovered C, byte_match
-recompiles it, and type_match falls back to regex/name matching.
+The tools do not expose stack variables / line mappings uniformly. RetDec fills
+both fields from its annotated JSON and DSM outputs, r2dec returns best-effort
+native line offsets and variable records, and Reko supplies direct variable
+addresses but no stable rendered line map. The metrics degrade gracefully when
+provenance is absent: GED still parses the recovered C, byte_match recompiles it,
+and type_match falls back to type-blind syntax and usage evidence.
 
 ## Building an image
 
@@ -34,19 +37,24 @@ Images are **never auto-built** (building is a multi-minute side effect).
 DockerizedDecompiler.is_available()  # docker present AND `docker image inspect <image>` ok
 ```
 
-Build explicitly with the CLI (which calls `DockerizedDecompiler.build_image()`):
+Build explicitly with the CLI. For Dockerized backends it calls the instance's
+`DockerizedDecompiler.build_configured_image()`, which preserves the image
+resolved for a versioned spec or explicit override:
 
 ```bash
 decbench decompiler-build retdec
+decbench decompiler-build retdec@5.0
 decbench decompiler-build reko
 decbench decompiler-build r2dec
 decbench decompiler-build glaurung
 ```
 
-`build_image()` runs `docker build -f docker/<dockerfile> -t <image> docker/`
-(build context = this `docker/` directory, since the helper scripts live here)
-and returns the `docker build` exit code. Each Dockerfile's header shows its
-own equivalent `docker build` command.
+`build_configured_image()` delegates to `build_image()` with the realized image
+without mutating the backend's class-level `:latest` default. `build_image()`
+runs `docker build -f docker/<dockerfile> -t <image> docker/` (build context =
+this `docker/` directory, since the helper scripts live here) and returns the
+`docker build` exit code. Each Dockerfile's header shows its own equivalent
+`docker build` command.
 
 ## How each backend is invoked
 
@@ -55,19 +63,42 @@ decbench's `DockerizedDecompiler._run_docker` mounts the binary **read-only** at
 
 ### RetDec
 
-The image's `ENTRYPOINT` is `retdec-decompiler`, invoked as
-`/in/<bin> -o /work/out.c`; decbench reads `/work/out.c` back as whole-program
-C. Built from the pinned RetDec **v5.0** Linux release tarball (`avast/retdec`),
-so the build is fast and reproducible.
+The image's `ENTRYPOINT` is `retdec-decompiler`, first invoked as
+`/in/<bin> -f json -o /work/out.json --cleanup`. Concatenating every token's
+`val` field reconstructs the exact whole-program C, while inherited token
+addresses supply 1-based line mappings and variable occurrences. DecBench
+accepts only addresses that also appear as machine-instruction rows inside the
+same function's `/work/out.dsm` range, filtering data symbols and leaked address
+state. A local identifier temporarily carries its LLVM origin address; DecBench
+recognizes the surrounding address transition and attributes that occurrence to
+its enclosing statement instead. It derives argument positions and recovered
+types from the exact function snippet, and abstains from attaching occurrence
+evidence to duplicate or shadowed identifiers. Older RetDec builds without
+annotated JSON automatically retry plain-C output. The image uses the pinned
+RetDec **v5.0** Linux release tarball (`avast/retdec`).
 
 ### Reko
 
 The image ships `/opt/reko/decompile.sh` (`reko-decompile.sh` in this dir),
-invoked as `/in/<bin> /work/out.c`; it runs Reko's headless CmdLine driver and
-concatenates every emitted `*.c` into `/work/out.c`. Reko is built from source
-with the **.NET 8 SDK** (multi-stage build →
-`mcr.microsoft.com/dotnet/runtime:8.0` runtime). Heavy build (clones +
-`dotnet publish`).
+invoked as `/in/<bin> /work/out.c /work/native-provenance.json <auto|thumb>`; it
+runs Reko's headless CmdLine driver and concatenates every emitted `*.c` into
+`/work/out.c`. ARM ELFs with an odd entry stay in `auto` mode so Reko consumes
+the ABI Thumb bit before normalizing the address. An even-entry ELF is forced to
+Thumb only when `.ARM.attributes` authoritatively declares the M profile; an
+A-profile binary such as U-Boot remains in A32 mode.
+The pinned build also emits a sidecar by retaining exact final-identifier object
+identity across Reko's lower IR and structured AST. DecBench uses its direct
+instruction addresses for variable correspondence and exact function entry
+addresses to bind stripped names. Ambiguous names are omitted. Reko is built
+from source with the **.NET 8 SDK** (multi-stage build →
+`mcr.microsoft.com/dotnet/runtime:8.0` runtime). Heavy build (clones + `dotnet
+publish`). The wrapper also writes `reko-status.json` and `reko.log`; failed CLI
+invocations, a reported mode that disagrees with the host-selected mode, and zero
+recovered unique Thumb-bit-normalized requested addresses are recorded as
+benchmark errors instead of plain successful tasks. Set `DECBENCH_REKO_IMAGE` to
+exercise an isolated candidate tag without replacing `decbench/reko:latest`.
+That explicit override takes precedence over per-version configuration,
+including a malformed lower-priority image entry.
 
 ### r2dec
 
@@ -80,12 +111,27 @@ the benchmark path: it builds radare2 **from source** so the real r2dec plugin
 compiles. `is_available()` is true if **either** native radare2+r2pipe is
 present **or** the Docker image exists.
 
-The in-container driver `r2dec-decompile.py` is invoked as
+That preference order applies to the bare `r2dec` spec. When an `image` is
+configured for a versioned spec such as `r2dec@6.0`, the image is an explicit
+pin: availability requires that exact image, selection always uses Docker even
+when a native plugin is installed, and result metadata reports the realized
+image tag or digest.
+
+The checked-in `r2dec-decompile.py` driver is bind-mounted read-only over the
+copy baked into the image, so source-side provenance changes cannot silently
+run against an older driver from an existing image. Its output carries a schema
+version that the host validates before accepting any functions. Rebuild the
+image when changing the pinned radare2 or r2dec plugin, but not for Python-only
+driver changes.
+
+The in-container driver is invoked as
 `/in/<bin> /work/out.json [/work/targets.json]`. `targets.json` (optional) is a
 JSON list of ELF-file-space addresses to restrict to (matched Thumb-bit
-tolerant); `out.json` is a JSON list of `{"addr", "baddr", "name", "code"}`
-entries — one per function, keyed by radare2's own analysis addresses, so
-nothing is split by symbol.
+tolerant); `out.json` is a versioned object containing the selected `pdd`/`pdc`
+command and a `functions` list. Each function contains `addr`, `baddr`, `name`,
+`code`, and best-effort `line_mappings` / `variables` from `pddj` and `afv*`.
+Entries are keyed by radare2's own analysis addresses, so nothing is split by
+symbol.
 
 ### Glaurung
 
@@ -137,7 +183,8 @@ manually (no `decompiler-build` hook); see `docs/decompilers.md`.
 - On the dev machine, the native r2dec plugin **cannot** build (no radare2 dev
   headers, no sudo), so `_select_path` lands on the Docker image — there the
   image, not native `pdc`, is the benchmark path.
-- Reko / RetDec CLI flags vary slightly across versions; the helper scripts run
-  permissively and gather any `*.c` output. Bump `RETDEC_VERSION`/`REKO_REF` args
-  and retag the image to change versions (the dockerized backends do not read
-  per-version settings from `decompilers.toml`).
+- Reko / RetDec CLI flags vary slightly across versions. The Reko wrapper tries
+  both supported forms, preserves any partial `*.c` output, and reports failure
+  if neither invocation succeeds. Bump `RETDEC_VERSION`/`REKO_REF` args and
+  retag the image to change the image contents. Map versioned specs to those
+  tags under each backend's `versions` table in `decompilers.toml`.

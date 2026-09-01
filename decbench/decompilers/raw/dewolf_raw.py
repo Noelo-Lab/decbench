@@ -8,6 +8,12 @@ analysis once per binary and streams one JSON object per function back on stdout
 which this backend turns into :class:`FunctionDecompilation` objects with
 ELF-file-space addresses (so they line up with DWARF for scoring).
 
+The driver also returns dewolf's final structured variables. For each surviving
+variable, it follows the retained Binary Ninja SSA identity through phi nodes
+and eliminated SSA copies, then reports only verified machine-instruction starts
+as direct ``VariableInfo.addresses``. dewolf's renderer has no stable token/line
+map, so ``line_mappings`` and variable ``line_numbers`` remain empty.
+
 Configuration (``~/.config/decbench/decompilers.toml`` ``[dewolf.versions."X"]``
 or the environment):
 
@@ -16,6 +22,7 @@ or the environment):
   ``PYTHONPATH`` so ``import decompile`` resolves).
 * ``astyle_path`` / ``DECBENCH_DEWOLF_ASTYLE`` — optional dir prepended to
   ``PATH`` so dewolf finds ``astyle`` for output indentation.
+* ``DECBENCH_DEWOLF_THREADS`` — Binary Ninja workers per driver (default 2).
 
 Like the other raw backends it drives a fully-stripped binary and filters to the
 project's source functions BY ADDRESS (``function_names`` is a set of ints), with
@@ -28,10 +35,12 @@ single core for a long time. Because Binary Ninja parallelizes across PROCESSES
 (verified: concurrent headless sessions run in parallel, the single-seat license
 notwithstanding), :meth:`decompile_binary` splits the target addresses into up to
 ``DECBENCH_DEWOLF_SHARDS`` (default 8) shards and runs one driver per shard
-concurrently, each its own BN session on a disjoint subset, then merges. Sharding
-kicks in only when there are enough functions to amortize each shard's BN-load
-cost. The shard drivers inherit the decompile task's process group, so the run
-driver's per-binary-timeout killpg reaps them together.
+concurrently, each its own BN session on a disjoint subset, then merges. Each
+driver caps Binary Ninja's worker pool with ``DECBENCH_DEWOLF_THREADS`` so the
+two levels of parallelism do not oversubscribe the host. Sharding kicks in only
+when there are enough functions to amortize each shard's BN-load cost. The shard
+drivers inherit the decompile task's process group, so the run driver's
+per-binary-timeout killpg reaps them together.
 """
 
 from __future__ import annotations
@@ -53,6 +62,8 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    VariableInfo,
+    with_variable_occurrence_policy,
 )
 
 _l = logging.getLogger(__name__)
@@ -119,6 +130,51 @@ class RawDewolfDecompiler(Decompiler):
             env["PATH"] = astyle + os.pathsep + env.get("PATH", "")
         return env
 
+    @staticmethod
+    def _parse_variables(payload: Any) -> list[VariableInfo]:
+        """Validate the out-of-process driver's additive variable sidecar."""
+        if not isinstance(payload, list):
+            return []
+        variables: list[VariableInfo] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "")
+            if not name:
+                continue
+            kind = "arg" if item.get("kind") == "arg" else "stack"
+            arg_index = item.get("arg_index")
+            if isinstance(arg_index, bool) or not isinstance(arg_index, int) or arg_index < 0:
+                arg_index = None
+            size = item.get("size")
+            if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+                size = None
+            raw_addresses = item.get("addresses")
+            addresses = (
+                sorted(
+                    {
+                        address
+                        for address in raw_addresses
+                        if isinstance(address, int)
+                        and not isinstance(address, bool)
+                        and address >= 0
+                    }
+                )
+                if isinstance(raw_addresses, list)
+                else []
+            )
+            variables.append(
+                VariableInfo(
+                    name=name,
+                    type=str(item.get("type") or ""),
+                    size=size,
+                    kind=kind,
+                    arg_index=arg_index if kind == "arg" else None,
+                    addresses=addresses,
+                )
+            )
+        return variables
+
     def is_available(self) -> bool:
         python = self._python()
         if not python or not Path(python).exists():
@@ -159,6 +215,7 @@ class RawDewolfDecompiler(Decompiler):
 
         decompiled_functions: dict[str, FunctionDecompilation] = {}
         failed_functions: list[str] = []
+        driver_worker_threads: set[int] = set()
         lock = threading.Lock()
 
         target_addrs = sorted(
@@ -172,6 +229,10 @@ class RawDewolfDecompiler(Decompiler):
             if error:
                 extra["error"] = error
                 extra["failure"] = error
+            if len(driver_worker_threads) == 1:
+                extra["worker_threads_per_driver"] = next(iter(driver_worker_threads))
+            elif driver_worker_threads:
+                extra["worker_threads_per_driver"] = sorted(driver_worker_threads)
             return DecompilerMetadata(
                 decompiler_name=self.id,
                 decompiler_version=self.get_version(),
@@ -224,7 +285,16 @@ class RawDewolfDecompiler(Decompiler):
                     except json.JSONDecodeError:
                         continue
                     kind = obj.get("type")
-                    if kind == "func":
+                    if kind == "meta":
+                        worker_threads = obj.get("worker_threads")
+                        if (
+                            isinstance(worker_threads, int)
+                            and not isinstance(worker_threads, bool)
+                            and worker_threads > 0
+                        ):
+                            with lock:
+                                driver_worker_threads.add(worker_threads)
+                    elif kind == "func":
                         name = str(obj.get("name") or "")
                         code = obj.get("code") or ""
                         if not name or not code:
@@ -235,8 +305,10 @@ class RawDewolfDecompiler(Decompiler):
                             decompiled_code=code,
                             line_count=code.count("\n") + 1,
                             line_mappings=[],
-                            variables=[],
-                            metadata=common.extract_metrics(code),
+                            variables=self._parse_variables(obj.get("variables")),
+                            metadata=with_variable_occurrence_policy(
+                                common.extract_metrics(code), "direct"
+                            ),
                         )
                         with lock:
                             decompiled_functions[name] = fd

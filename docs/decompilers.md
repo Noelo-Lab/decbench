@@ -19,17 +19,32 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
   `binja_raw.py`, plus `kuna_raw.py` and `dewolf_raw.py` +
   `dewolf_driver.py`, an out-of-process backend running in its own venv):
   drive the tools' own APIs directly, **no declib**. `raw/common.py`
-  centralises the ELF bookkeeping (`elf_min_vaddr`, `.text` range,
+  centralises the linked-binary bookkeeping (`elf_min_vaddr`, disjoint ELF/PE
+  executable code ranges,
   CRT/PLT/thunk skip sets, `narrow_to_source` function filter, atomic
   `dump_progress` checkpoint, line-mapping helpers). This is the path
   benchmark runs use now.
+  Dewolf's independent Binary Ninja sessions are bounded by
+  `DECBENCH_DEWOLF_SHARDS` and `DECBENCH_DEWOLF_THREADS` (default 8 × 2) so
+  process-level sharding does not multiply Binary Ninja's worker pool without
+  limit.
 - **Whole-binary** (`raw/manifold_raw.py`: `manifold`): a tool with no
   per-function entry point — one call per binary emits one C translation unit,
   which the backend splits into per-function definitions. It runs manifold
   natively if an executable resolves (`MANIFOLD_BIN` / config / `$PATH`),
   otherwise in the `decbench/manifold` image (`docker/manifold.Dockerfile`,
   built by `decbench decompiler-build manifold`), so a host that only has
-  Docker needs nothing else installed.
+  Docker needs nothing else installed. For x86-64 ELF executables importing
+  `__libc_start_main`, the same temporary run requests manifold's Clight JSON
+  sidecar and consumes only its exact literal-`main` address relation, so that
+  function remains addressable after stripping. PE inputs request the same
+  sidecar and consume every unique exact final-function name/address relation;
+  addresses must lie in an executable PE section, and duplicate names or
+  addresses are omitted. This joins two outputs from the same producer rather
+  than matching against source names. The sidecar's variables are deliberately
+  ignored: they predate final C transformations and are not final-variable
+  provenance, so type matching falls back to ABI argument and stack anchors and
+  reports no native line map.
 - **Native or containerized Glaurung** (`raw/glaurung_raw.py`: `glaurung`):
   invokes Glaurung's address-scoped JSON CLI natively when `GLAURUNG_BIN`, the
   decompiler config, or `$PATH` resolves it. Otherwise it runs the immutable
@@ -60,12 +75,16 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
 
 Key conventions (all families):
 
-- Addresses are stored in **ELF-file-space** (`lifted + min PT_LOAD vaddr`) so
-  they match DWARF; raw backends normalise per-tool load bases (angr
+- Addresses are stored in the binary's **linked file space** so they match
+  DWARF: ELF uses `lifted + min PT_LOAD vaddr`, while PE uses
+  `ImageBase + RVA`. Raw backends normalise per-tool load bases (angr
   `0x400000`, Ghidra `0x100000`, IDA `0x0`) for PIE binaries.
-- Functions outside `.text` (PLT/thunks) and CRT helpers are skipped.
+- Functions outside file-backed executable sections, plus PLT/thunks and CRT
+  helpers, are skipped.
 - `FunctionDecompilation.variables` (`VariableInfo`) carries stack vars/args
-  for the type metric; line maps are best-effort (angr/Ghidra populate them).
+  for the type metric. The canonical angr, Binary Ninja, Ghidra, and IDA
+  adapters also attach native, 1-based per-function line/address evidence;
+  Kuna ingests the same additive evidence from its JSON when available.
   `VariableInfo.arg_index` must be the **ABI position**, not the order the tool
   happens to enumerate its locals in — type_match pairs arguments by that index
   (see [metrics.md](metrics.md#argument-positions-must-be-abi-positions)).
@@ -138,9 +157,10 @@ def decompile_binary(
   project's own source functions; see `scripts/decompile_one.py`). The driver
   hands your backend a *stripped* copy of the binary, so functions are known
   only by address; filter with `narrow_to_source`, which matches by address
-  (tolerating the ARM Thumb bit) and falls back to *all* functions if nothing
-  matches. The driver uses this to skip bundled libc/gnulib and speed up slow
-  decompilers. Only the dockerized whole-program backends additionally honor
+  (tolerating the ARM Thumb bit) and fails closed if nothing matches. The parent
+  driver also drops any returned function outside the requested address set, so
+  a backend mismatch cannot expand a sample or source-only run to unrelated
+  functions. Only the dockerized whole-program backends additionally honor
   string names here.
 - **`progress_path`** — when set, **atomically pickle a partial
   `DecompilationResult` after each function** so a killed process is still
@@ -149,28 +169,36 @@ def decompile_binary(
 
 ### Output requirements that matter for scoring
 
-- **Addresses are ELF-file-space.** Many decompilers report addresses relative
-  to a lifted/0-based image. Convert with
-  `address = lifted_addr + elf_base`, where `elf_base = min(PT_LOAD vaddr)`.
-  This is what makes your addresses line up with DWARF (used by `type_match`).
-  Helpers live in `decbench/decompilers/raw/common.py`.
+- **Addresses are linked file-space.** Many decompilers report addresses
+  relative to a lifted/0-based image. For ELF, convert with
+  `address = lifted_addr + elf_base`, where `elf_base = min(PT_LOAD vaddr)`;
+  PE addresses use the header-encoded `ImageBase + RVA`. This is what makes
+  addresses line up with DWARF (used by `type_match`). Helpers live in
+  `decbench/decompilers/raw/common.py`.
 - **Skip non-source functions.** Drop PLT stubs/thunks and CRT helpers
   (`_start`, `__libc_csu_init`, `register_tm_clones`, …) and anything outside
-  the `.text` family. Do not roll your own filter — call
-  `common.should_skip_function(name, file_addr, text_range, addr_targets)`,
+  the binary's disjoint file-backed executable ELF/PE sections. Do not roll your
+  own filter — call
+  `common.should_skip_function(name, file_addr, code_ranges, addr_targets)`,
   which is the ONE rule every backend shares:
   1. a function whose address is in `addr_targets` (the driver's DWARF `low_pc`
      set — get it with `common.addr_targets_of(function_names)`) is a verified
      real function and is **always kept**, whatever section it landed in;
-  2. otherwise `SKIP_NAMES` / `SKIP_PREFIXES` and the section ranges from
-     `common.elf_text_ranges()` apply.
+  2. otherwise `SKIP_NAMES` / `SKIP_PREFIXES` and the ranges from
+     `common.executable_code_ranges()` apply.
 
-  `elf_text_ranges()` covers **every** `SHF_EXECINSTR` section whose name starts
-  with `.text`, not just the one literally named `.text`: real binaries split
-  their code (`-ffunction-sections` → one `.text.<fn>` per function; custom
-  linker scripts → `.text` + `.text_rest`). It returns `None` — meaning
-  "unknown, fall back to the name filter" — for non-ELF inputs, a binary with no
-  section headers, and a degenerate zero-size `.text`.
+  `executable_code_ranges()` covers **every** file-backed `SHF_EXECINSTR` ELF
+  section except the linkage scaffolding (`.init`, `.fini`, `.iplt`, `.plt*`),
+  plus the executable sections of a PE. That is what accepts real code layouts
+  the old literal-`.text` filter discarded: `-ffunction-sections` (one
+  `.text.<fn>` per function), custom linker scripts (`.text` + `.text_rest`),
+  and firmware regions (`ER_ROM1`, `.efi_runtime`). Do not replace those ranges
+  with one min/max envelope: gaps and intervening data are not code.
+
+  The result is **fail-closed** — an unreadable or unsupported binary yields an
+  empty range collection that rejects every address, rather than silently
+  treating the whole address space as code. Rule 1 is what keeps that from
+  zeroing a run: the driver's DWARF targets survive an empty range set.
 - **Set `decompiler_name = self.id`.** The `id` property is your registered
   name, or `name@version` when a version is pinned (see §4). Using `self.id`
   keeps versioned runs as distinct, comparable columns everywhere downstream.
@@ -182,13 +210,330 @@ def decompile_binary(
 | `decompiled_code` (C string) | GED, byte_match | **Yes** — without it nothing scores |
 | `address` (ELF-space) | type_match, byte_match | **Yes** |
 | `variables: list[VariableInfo]` | type_match | Recommended (else parsed out of the C) |
-| `line_mappings: list[LineMapping]` | (CFG line attribution) | Optional / best-effort |
+| `line_mappings: list[LineMapping]` | type_match variable correspondence / CFG attribution | Strongly recommended; a producer with no address provenance at all is scored by the caveated legacy name correspondence |
 | `metadata` (e.g. goto/bool counts) | report extras | Optional |
 
 A backend that only fills `decompiled_code` + correct `address` already scores
-on GED and byte_match, and type_match parses its C (signature → ABI-positioned
-args + locals; name-based regex only as a last resort). Variables and line maps
-improve fidelity but are not required.
+on GED and byte_match, and type_match parses variable declarations in its C
+(signature → ABI-positioned args + locals). This parsing recovers types and variable
+bindings only; production occurrence addresses are never synthesized with a name
+regex. Variables and line maps improve fidelity but are not required.
+
+Type_match picks its correspondence per producer output. A backend whose output carries
+instruction-address provenance anywhere (variable `addresses`, or variable `line_numbers`
+plus an addressed line map) is scored by the address correspondence: address evidence,
+ABI argument positions, and explicit stack offsets, with variable names never used. A
+backend that carries none at all — Glaurung, Manifold, the LLM/coding-agent backends,
+imported eval-kit C — is scored by the legacy name correspondence instead of losing its
+residual variables entirely: ABI position, then calibrated stack offset (including one
+recovered from a `local_XX`/`var_XX` name), then exact variable name. Each function
+records `correspondence` (`address`/`legacy_name`) and its evidence marker: `native` on
+the address path, `fallback_only` on the legacy path (the historical `mixed` category is
+still read for older data). `fallback_only` marks the Type percentage with the site's
+asterisk, as does a producer occurrence policy of `unavailable` or `undeclared`.
+See [metrics.md](metrics.md#two-correspondence-paths).
+
+#### Native line and variable provenance
+
+`LineMapping.line_number` is 1-based in the exact
+`FunctionDecompilation.decompiled_code` string stored beside it, not in the
+aggregate `.c` file written by `DecompilationResult.to_c_file` (that artifact
+adds function headers and preceding bodies). Structured evidence survives in
+checkpoint pickles; the standalone `.c` and TOML exports do not preserve it.
+Every mapped address is normalized to the binary's linked ELF/PE address space
+and should identify a machine instruction in that function. A backend must
+collect text and mappings from the same render pass; pairing a Pseudo-C render
+with independently enumerated IL rows produces invalid line numbers.
+
+The in-process pipeline and scalable driver pass each complete
+`DecompilationResult` through the shared native-provenance sanitizer. It indexes
+DWARF function identities and executable regions once per binary, resolves each
+function by exact name plus entry address (including split DWARF ranges), and
+retains only exact Capstone instruction starts. ARM Thumb-state bits are
+normalized only when the cleared address is an exact start; ELF M-profile
+attributes enable the Cortex-M decoder mode. ARM instruction state comes from
+an odd entry address, an exact or unique named ELF function symbol, or a known
+PE ARM machine type. Missing, conflicting, or non-unique state fails closed;
+M-profile is a Thumb fallback only when no symbol is available and rejects an
+explicit ARM-state symbol. Valid subsets and direct-only variable addresses
+survive independently. Empty mapping rows are removed, but variables and
+decompiled code are never discarded merely because their address evidence
+fails validation. Unmapped signature/declaration line numbers also survive; a
+variable line number is removed only when its original mapped row is removed.
+
+The scalable driver intentionally decompiles a stripped worker copy, so its
+worker records validation as deferred. After address-to-DWARF relabeling, the
+parent validates strictly against the unstripped original before evaluation and
+checkpoint persistence. The ordinary in-process pipeline validates strictly at
+its adapter boundary. If the exact binary/function context is unavailable at a
+final boundary, native address claims fail closed while code and structured
+variables remain available to argument/stack matching. Durable metadata
+contains only aggregate status, counts, and fixed reason counts—never addresses,
+variable/function names, or exception text.
+
+Fresh checkpoint evidence can be checked independently with
+`scripts/audit_native_provenance.py`; its strict sample-manifest and
+architecture-aware validation contract is documented in
+[benchmarking.md](benchmarking.md#auditing-native-line-and-variable-provenance).
+
+The canonical raw adapters use these native sources:
+
+- angr joins `map_ast_to_pos` variable identities to the line-level
+  `map_pos_to_addr` evidence, expanding AIL statement addresses to their VEX
+  instruction starts. When the identity map is unavailable it uses exact,
+  unique C identifiers and abstains on duplicate names. For stripped ARM
+  firmware only, the adapter also recognizes the invalid GNU-ld copy-down
+  layout where a writable, allocated `.relocate` section has `SHT_REL` but no
+  linked symbol table. It retypes that section as ordinary data in an ephemeral
+  angr-only copy, preserving the benchmark artifact, section bytes, addresses,
+  and the no-symbols invariant; every other ELF layout fails closed unchanged.
+- Binary Ninja renders token text and collects row/token expression addresses
+  in one Pseudo-C `LinearViewCursor` walk. Structural and warning rows are
+  excluded before assigning the global 1-based output line.
+- dewolf's out-of-process sidecar walks the final pseudo variables' retained
+  Binary Ninja `ssa_name` origins. A name/version origin is accepted only when
+  it resolves to one Binary Ninja variable identifier; ambiguous origins are
+  omitted. It follows phi/version edges only within that identifier and emits
+  the resulting verified machine-instruction starts as direct
+  `VariableInfo.addresses` in ELF space. Cross-identifier copies are recorded
+  only at the copy instruction and are not treated as identity. Its renderer
+  exposes no stable token-to-line map, so it deliberately leaves
+  `line_mappings` and variable `line_numbers` empty.
+- Ghidra walks the `ClangToken` tree belonging to the same decompile result as
+  `getC()`, using HighSymbol IDs for variable occurrences and both token range
+  endpoints.
+- IDA uses `cfunc_t.get_eamap()` and `find_item_coords()` from the same Hex-Rays
+  pseudocode object; one bad item or `BADADDR` is skipped without losing prior
+  evidence.
+- r2dec stores the exact `pddj` line strings and their instruction offsets, and
+  supplements `afvj` variable metadata with all-variable `afvRj` / `afvWj`
+  access addresses. Native and container paths apply the same function-range,
+  image-base, and ARM Thumb normalization. When the plugin is absent, radare2's
+  `pdcj` annotations provide the same line contract; unavailable JSON commands
+  transparently fall back to plain `pdd` / `pdc` text. If `afvj` is unavailable
+  but JSON line evidence survives, variables parsed from the emitted C are
+  joined to those native rows by exact identifier occurrence. The container
+  bind-mounts this repository's driver over the image copy and validates its
+  versioned output schema, preventing an older image driver from silently
+  dropping newly added provenance fields.
+- RetDec reconstructs exact C from its annotated JSON token values and validates
+  inherited token addresses against DSM instruction starts and function ranges.
+  Local identifier tokens carry their LLVM origin address, so the adapter
+  recognizes RetDec's validated origin push/pop sequence and attributes each
+  occurrence to its enclosing statement address instead.
+  If a definition has no usable function-token address, the adapter accepts only
+  one exact `function_<hex>` definition whose suffix is a unique DSM function-range
+  start and decoded instruction address. Malformed, duplicate, ambiguous, or
+  conflicting exact token/name bindings remain unscored; a stray token address
+  that is not itself a DSM function entry is treated as missing. Unique annotated
+  addresses are merged before the stripped binary's dynamic-symbol filter;
+  unrelated dynamic symbols cannot hide them, while name/address conflicts and
+  duplicate binding addresses abstain. Binding and requested-address filters keep
+  exact addresses for x86, AArch64, and every other non-ARM target. They ignore
+  the ARM state bit only when the binary is ARM and an odd entry or ELF M-profile
+  attributes prove Thumb execution, so adjacent non-ARM addresses remain distinct.
+  The shared native-provenance sanitizer still verifies the relabeled DWARF
+  function range and every retained line or variable address.
+  Its exact snippet supplies recovered types and ABI argument positions; duplicate
+  or shadowed identifiers abstain from variable-occurrence evidence. Missing or
+  malformed annotated output falls back to the older plain-C path.
+  For audit runs, `DECBENCH_RETDEC_KEEP_SIDECARS=1` publishes the exact JSON/DSM
+  pair as one per-binary artifact directory before temporary output is removed.
+  Producer outputs must be single-link regular files; missing or conflicting
+  artifacts and nonzero annotated invocations fail closed. Result metadata stores
+  only relative paths and SHA-256 digests rather than raw bytes. Published files
+  are re-opened and rehashed; complete interrupted staging is recovered, while
+  partial staging is quarantined and rejected.
+
+The benchmark driver's stripped-to-DWARF relabeling also preserves exact non-ARM
+addresses. It accepts an even/odd alias only for a source function whose unstripped
+binary metadata proves Thumb state; unavailable or conflicting ARM state fails closed.
+- Reko's pinned image captures exact `Identifier` object identities and their
+  lower-IR `Statement.Address` values immediately before structuring, then
+  intersects them with the identifiers that survive into the final Absyn tree.
+  Synthetic def/use/phi/alias statements are excluded and duplicate final names
+  abstain. The resulting sidecar carries direct variable addresses and binds
+  stripped Reko function names to requested targets by exact entry address. For
+  ARM ELF, Reko preserves an odd `e_entry` until its Thumb architecture is
+  attached. Even entries use Thumb only when `.ARM.attributes` declares the M
+  profile; unknown and A-profile inputs retain Reko's A32 default. The wrapper's
+  structured status distinguishes successful output from failed CLI attempts;
+  DecBench rejects a status whose mode differs from the host-selected mode.
+  Requested-address coverage is counted over unique Thumb-bit-normalized entries,
+  and a run that recovers none of those entries is an explicit error.
+  Reko's renderer has no stable token-to-line callback, so it deliberately emits
+  no line map; older images retain the anchor-only fallback. Candidate images can
+  be selected with `DECBENCH_REKO_IMAGE` for isolated A/B runs.
+- Kuna accepts additive `line_mappings` entries (`line_number`, `addresses`)
+  and variable `line_numbers`/`addresses` in `decompile-all --json`. Missing
+  fields remain empty for compatibility with older Kuna builds. When the
+  benchmark driver supplies its linked source-function addresses, the backend
+  forwards them as sorted `--addr` selections so Kuna analyzes only the
+  benchmarkable functions in that binary.
+
+Each function records a versioned `variable_occurrence_policy` declaration for
+diagnostics. Raw angr, Binary Ninja, Ghidra, IDA, Kuna, and annotated RetDec declare
+`exact`; dewolf and Reko declare `direct` because they provide sound variable addresses
+without final render rows. r2dec declares `direct` when native variable-access records
+survive, `exact` only for its uniquely bound final-C/render-line join, and `unavailable`
+when neither source exists. Plain-C RetDec fallback, Glaurung, Manifold, LLM/code-agent
+output, imported eval-kit C, and marker-materialized C also declare `unavailable`. An
+empty occurrence field remains authoritative under every policy: `exact` describes the
+producer contract, not a promise that every variable has an unambiguous surviving
+occurrence.
+
+The legacy declib adapters apply a separate fail-closed contract. angr and
+Ghidra expose 1-based rows in the exact returned C; IDA exposes zero-based
+Hex-Rays coordinates, which DecBench shifts while preserving declib's synthetic
+function-entry row. For those three backends, exact parsed identifier bindings
+join uniquely named structured variables to validated rows. Duplicate or
+shadowed names, C parse errors, malformed rows, addresses outside the function,
+and lines outside the rendered text all abstain. Current declib releases can
+double-lift angr's line addresses on PIE binaries; `angr-declib` tests both the
+reported coordinate and that coordinate plus angr's runtime load base, accepting
+an address only when exactly one candidate falls inside the function. Binary
+Ninja's declib renderer counts skipped `LinearView` header/warning rows in its
+map, so its offsets can drift within a function; `binja-declib` deliberately
+emits neither line nor variable-occurrence provenance until declib supplies an
+exact-row map. The first three adapters therefore declare the `exact` occurrence
+policy, while `binja-declib` declares `unavailable`.
+
+Phoenix is retired and is not a registered backend, but its frozen angr 9.2.213
+checkpoints remain reproducible inputs. The former raw Phoenix adapter obtained
+both `codegen.text` and `map_pos_to_addr` from the same angr code-generator
+object. During TypeMatch checkpoint reevaluation only, DecBench first sanitizes
+those saved rows against the selected binary and then joins uniquely bound
+identifiers in that unchanged final C to the surviving rows. The join requires
+the frozen metadata triplet `decompiler_version="9.2.213"`, `extra.backend="angr"`,
+and `extra.via="raw"`; a Phoenix-like name without that origin marker abstains. It
+also requires one exact function definition, parseable C, a single declaration and structured
+record for the name, unique valid line rows, and at least one mapped occurrence.
+It preserves any existing variable evidence and never rewrites the checkpoint.
+The join reads only the decompiler's final C, structured variable names, and
+sanitized native rows; source/DWARF variable names and recovered or ground-truth
+types are not inputs. The established function label is used only to reject a
+mismatched final definition. Its `exact` occurrence-policy declaration records the
+historical producer contract; the metric independently treats every empty structured
+occurrence field as an authoritative abstention.
+This historical exception does not restore Phoenix as a producer and is not
+applied to another backend merely because it has C text and line-like metadata.
+
+DecLib's lifted zero for PE is backend-dependent: a fresh import may use the
+PE ImageBase/header mapping or the start of an encoded section. The adapters
+therefore read `deci.binary_base_addr` only after opening the project, require
+it to equal the header ImageBase or `ImageBase + section RVA`, and use that
+validated origin consistently for target lowering and emitted function/line
+addresses. An unreadable PE header, malformed origin, or arbitrary backend
+rebase fails closed. ELF continues to use the file's lowest PT_LOAD address,
+so a tool's runtime PIE base cannot leak into stored addresses.
+
+##### Glaurung and Manifold: final-AST lineage blockers
+
+An address attached to an early IR statement is not native evidence for a
+variable in the final C. The variable can be renamed, folded into another
+expression, coalesced with another local, cloned, or deleted before printing.
+The final renderer must still know which variable identity and machine
+instructions produced each occurrence. Two audited backends do not currently
+retain that information:
+
+- Glaurung `fb4ee6ba5966e0e4a7fe001b523231fc5fcd43f4` stores a machine VA on
+  `LlirInstr`, but `ir/ast.rs::lower_block` calls `lower_op(&ins.op, ...)` and
+  drops `ins.va`. Its `Expr` and `Stmt` nodes have no origin field, after which
+  expression reconstruction, copy propagation, DCE, condition folding, and
+  the DecBench preparation passes rewrite the tree. The JSON command emits
+  only `name`, `entry_va`, and `pseudocode`.
+- Manifold `b63daf30ccfbcc3a88d7ead117df17e41127f499` keeps instruction-address
+  `Node` keys through `SelectedFunction.statements: HashMap<Node, ClightStmt>`.
+  Clight emission then assembles those statements into a C tree whose
+  `CExpr::Var` contains only a string and whose `CStmt` has no node identity.
+  `ForLoopPass`, `VarReducePass`, and `GotoElidePass` run afterward;
+  `VarReducePass` applies and discards a local-name coalescing map. The coverage
+  audit tracks exact syntax persistence, not node-to-final-variable lineage.
+
+The same blockers remain in the audited upstream heads: Glaurung
+`5e16879802d4f1594bf9e8c8286ae420cf3ae869` adds a MIR `source_va`, but its
+final `Expr`/`Stmt` nodes and JSON renderer still carry no origin; Manifold's
+upstream head is still the pinned `b63daf30ccfbcc3a88d7ead117df17e41127f499`.
+
+Their DecBench adapters deliberately emit no native occurrence addresses or
+line maps. Final-name-to-earlier-IR joins would be heuristic, so these producers carry no
+address provenance at all and type_match scores them through the legacy name
+correspondence: ABI argument position, calibrated stack offset (including one recovered
+from a `local_XX`/`var_XX` name), then exact variable name. Metric metadata records
+`correspondence=legacy_name`, `variable_match_evidence=fallback_only`,
+`linemap_present=false`, an `unavailable` producer occurrence policy, and zero
+`decompiler_address_variables`; the report's evidence and producer-policy caveats both
+cover those scores.
+
+The minimal upstream implementation is a provenance-carrying final AST, not a
+post-render text matcher:
+
+1. Seed every lowered statement/expression with its set of real machine
+   instruction VAs and give every variable a stable identity independent of
+   its printed name.
+2. Preserve those identities and origin sets through every rewrite. Moving or
+   cloning a node preserves its origin; combining nodes unions proven origins;
+   deletion drops them. An intentional variable coalescing creates one final
+   identity with the union of its members. A synthetic or ambiguous node has no
+   mapping.
+3. During the same final render that produces the measured C, record the
+   1-based output line for each proven statement and variable occurrence.
+   Never recover occurrences afterward by matching identifier text.
+4. Emit only instruction starts inside the function, normalized to linked
+   ELF/PE space. Invalid, out-of-range, duplicate-identity, or stale-render
+   evidence must be omitted rather than repaired approximately.
+
+Glaurung can extend each existing per-function JSON record without changing
+the CLI shape:
+
+```json
+{
+  "name": "target",
+  "entry_va": 4198400,
+  "size": 64,
+  "pseudocode": "long target(long arg0) { ... }",
+  "line_mappings": [
+    {"line_number": 2, "addresses": [4198404]}
+  ],
+  "variables": [
+    {
+      "variable_id": "v3",
+      "name": "count",
+      "type": "long",
+      "kind": "stack",
+      "arg_index": null,
+      "stack_offset": null,
+      "line_numbers": [2],
+      "addresses": [4198404]
+    }
+  ]
+}
+```
+
+Manifold needs a sidecar because its current CLI emits one C translation unit.
+Writing `<output.c>.decbench.json` keeps the existing interface and works for
+both native and bind-mounted Docker runs. The sidecar must contain a schema
+version, SHA-256 of the exact output bytes, and per-function records with
+`name`, `entry_va`, exclusive `end_va`, and the same `line_mappings` and
+`variables` arrays. Its line numbers are 1-based in the whole translation unit,
+and each function record includes its final definition's `start_line` and
+`end_line`. The adapter can then verify the hash and translate body lines after
+adding DecBench's per-function preamble. Direct variable `addresses` remain
+required, so a preamble transformation cannot create variable provenance.
+
+Variable addresses normally come from native occurrence-line evidence. r2dec's
+`afvRj` / `afvWj` access lists are stronger than its rendered line offsets and
+are therefore retained directly; `line_numbers` records exact address joins
+when r2dec emits one. This deliberately supports local-variable matching
+without requiring source/decompiler variable names to agree.
+
+Most adapters derive variable addresses from the native addresses on each
+occurrence line. RetDec can be narrower: its token stream exposes a temporary
+`statement -> variable origin -> statement` address transition around local
+identifiers, so the enclosing statement address is retained for each individual
+occurrence. This supports local-variable matching without requiring
+source/decompiler variable names to agree while avoiding unrelated addresses on
+multi-address lines.
 
 ## 2. Minimal working example
 
@@ -212,20 +557,20 @@ class MyDecompiler(Decompiler):
     def decompile_binary(self, binary_path, functions=None, output_dir=None,
                          function_names=None, progress_path=None):
         from decbench.decompilers.raw.common import (
-            elf_min_vaddr, elf_text_range, should_skip_function,
+            elf_min_vaddr, executable_code_ranges, should_skip_function,
             narrow_to_source, dump_progress,
         )
         import mydec, time
 
         elf_base = elf_min_vaddr(binary_path)           # add to lifted -> ELF-space
-        text_range = elf_text_range(binary_path)
+        code_ranges = executable_code_ranges(binary_path)
         proj = mydec.open(str(binary_path))
 
         # Discover functions, drop CRT/PLT/thunks, narrow to the source targets.
         targets = []
         for name, lifted in proj.functions():           # however your tool enumerates
             file_addr = lifted + elf_base
-            if should_skip_function(name, file_addr, text_range):
+            if should_skip_function(name, file_addr, code_ranges):
                 continue
             targets.append((name, file_addr))           # ELF-space, for narrowing
         targets = narrow_to_source(                     # matches by ADDRESS
@@ -270,7 +615,8 @@ class MyDecompiler(Decompiler):
 it to `dump_progress` (see `decbench/decompilers/raw/angr_raw.py` for the real
 pattern). The shared helpers in `decbench/decompilers/raw/common.py` include
 `elf_min_vaddr` (format-aware: returns the PE ImageBase for MZ binaries, so PE
-addresses line up with DWARF too), `elf_text_range`, `should_skip_function`,
+addresses line up with DWARF too), `executable_code_ranges`,
+`should_skip_function`,
 `narrow_to_source`, `dump_progress`, and line-mapping utilities.
 
 That is the whole integration. Run it:
@@ -308,7 +654,12 @@ scoreboard, and report. You get this for free:
 
 Example: the Ghidra backend reads `version_settings("ghidra",
 self.requested_version)` and launches the `install_dir` it names, falling back
-to `$GHIDRA_INSTALL_DIR` when the config has none.
+to `$GHIDRA_INSTALL_DIR` when the config has none. Dockerized backends resolve
+the configured `image` after the registry binds the requested version, so both
+availability checks and runs use that exact image. `DECBENCH_REKO_IMAGE` remains
+a higher-priority, explicit override for isolated Reko A/B runs. A configured
+r2dec image forces the Docker path; an unversioned r2dec spec retains its normal
+native-with-plugin preference and Docker fallback.
 
 Configure versions in `~/.config/decbench/decompilers.toml` (or
 `$DECBENCH_DECOMPILERS_CONFIG`):
@@ -318,7 +669,21 @@ Configure versions in `~/.config/decbench/decompilers.toml` (or
 install_dir = "/opt/ghidra_12.0"
 [ghidra.versions."12.1"]
 install_dir = "/opt/ghidra_12.1"
+
+[retdec.versions."5.0"]
+image = "decbench/retdec:5.0"
+
+[reko.versions."0.11"]
+image = "decbench/reko:0.11"
+
+[r2dec.versions."6.0"]
+image = "decbench/r2dec:6.0"
 ```
+
+`decbench decompiler-build retdec@5.0` builds and tags the image resolved for
+that exact spec without changing RetDec's unversioned `:latest` default. The
+same applies to other Dockerized specs, including a Reko image selected through
+the higher-priority `DECBENCH_REKO_IMAGE` override.
 
 Then `decbench run ... -d ghidra@12.0 -d ghidra@12.1` produces two comparable
 columns. (`scripts/ingest_history.py` can additionally fold a versioned run into
@@ -330,9 +695,10 @@ view renders them today.)
 When a decompiler isn't a Python library (Reko, RetDec, …), subclass
 `decbench.decompilers.dockerized.DockerizedDecompiler`. Provide the image tag,
 a Dockerfile under `docker/`, and a method that maps the tool's whole-program C
-output back onto per-function `FunctionDecompilation`s (pull function
-names/addresses from the ELF symbol table so addresses stay ELF-space). Build
-the image with:
+output back onto per-function `FunctionDecompilation`s. A backend may return an
+annotated representation when its CLI exposes native provenance; otherwise pull
+function names/addresses from the ELF symbol table so addresses stay ELF-space.
+Build the image with:
 
 ```bash
 decbench decompiler-build retdec
@@ -359,7 +725,9 @@ at `/opt/glaurung.rev`, so results report the code actually executed. An
 invalid explicit `GLAURUNG_BIN` is treated as a configuration error and never
 silently falls through to another executable. The default ref is the exact
 Glaurung revision used for the submitted sample-set evaluation; set
-`GLAURUNG_REF` explicitly to benchmark a different revision.
+`GLAURUNG_REF` explicitly to benchmark a different revision. Container runs
+use the invoking user's UID and GID so caller-readable binaries remain readable
+when their mode is more restrictive than `0644`.
 
 ## 6. Testing your backend
 
@@ -548,11 +916,12 @@ sees no symbols — the honest RE setting, identical to what Ghidra/IDA get); th
 backend also hands the agent an anonymized `target.bin` copy, so the filename
 (`grep`, `nuttx`, …) can't tip an LLM off to recall the source from memory. The
 backend labels each function `sub_<addr>`; `run_benchmark._relabel_to_dwarf`
-renames the placeholder to the real symbol for name-based evaluation. Missing
+renames the placeholder to the real symbol for function-level evaluation. Missing
 line-maps and variables are fine — GED parses the C directly, and type_match
-parses the C signature into ABI-positioned arguments plus locals and scores
-them through the structured matcher (name-based text parsing only as a last
-resort). Before publishing, refresh the metric overlays as with any newly added
+parses the C signature into ABI-positioned arguments plus locals and scores them
+through the structured matcher. Missing occurrence provenance remains an explicit
+abstention; ABI argument positions provide the correspondence fallback. Before
+publishing, refresh the metric overlays as with any newly added
 decompiler — but note `scripts/reeval_ged.py` and `scripts/reeval_bytematch.py`
 hard-code a `DECOMPILERS` tuple that does **not** include the LLM backends
 (`codex`/`claude-code`/`kimi-code`):
@@ -701,7 +1070,10 @@ function whose address is not on the manifest for that slice** (counted +
 warned), writes `decompiled/<id>_<stem>.c` (+ `.toml`) artifacts, merges the
 checkpoints additively (`--force` to overwrite an existing id), and — with
 `--evaluate`, the default — computes ged/type_match/byte_match inline through
-the same evaluation path the benchmark uses. The column is marked
+the same evaluation path the benchmark uses. Ingest discovers both `.i` and
+`.ii` units for TypeMatch source address evidence even in a TypeMatch-only
+evaluation; it only pays the source-CFG extraction cost when a requested metric
+(currently GED) requires CFGs. The column is marked
 `slice_scoped` in its `DecompilerMetadata.extra`, so `finalize_results.py
 --audit` expects only manifest-slice coverage from it.
 
@@ -783,10 +1155,11 @@ submission zip out of git too (`private/` is ignored for exactly this).
 - **byte_match abstains for ARM/PE** on hosts without the cross/MinGW
   toolchains (a non-scoring result, not a 0) — GED + type_match carry those
   slices, same as for every in-house backend.
-- **type_match uses the code-only parser** (signature → ABI-positioned args +
-  locals): submissions carry no `VariableInfo`, so they are scored on the same
-  footing as the LLM backends — fair, but structured variable data from a raw
-  backend can score slightly differently.
+- **type_match parses the submitted code** for its decompiler-side variables
+  (submissions carry no `VariableInfo`), while the
+  source side receives the tree's preprocessed `.i`/`.ii` units. This matches
+  the LLM-backend path; structured variable data from a raw backend can still
+  score slightly differently.
 - **Sample-set only.** The column renders only on the `sample-set` preset;
   on every other preset its near-zero coverage would be misleading (that is
   exactly what `sample_set_only` gates).

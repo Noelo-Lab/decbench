@@ -198,14 +198,16 @@ def main() -> int:
                     print(f"    [{spec}] decompile produced no result")
                     continue
                 dec_id = res.decompiler.decompiler_name
-                metric_results = evaluate_decompilation(res, src_cfgs)
+                metric_results = evaluate_decompilation(
+                    res,
+                    src_cfgs,
+                    preprocessed_sources=list(sources.values()),
+                )
                 evaluation[project_name][opt][stem][dec_id] = metric_results
                 decompiled[project_name][opt][stem][dec_id] = res
                 got = res.successful_count
                 scored = {
-                    m: f"{r.mean:.2f}"
-                    for m, r in metric_results.items()
-                    if r.mean is not None
+                    m: f"{r.mean:.2f}" for m, r in metric_results.items() if r.mean is not None
                 }
                 dt = time.time() - t0
                 print(f"    [{dec_id}] {got} funcs in {dt:.0f}s scored={scored}")

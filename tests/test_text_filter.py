@@ -1,4 +1,4 @@
-"""Tests for the shared ``.text``-family / DWARF-target function filter.
+"""Tests for the shared executable-section / DWARF-target function filter.
 
 Every backend (raw, declib, dockerized r2dec) routes its "is this function
 benchmarkable?" question through ``raw.common.should_skip_function``. These
@@ -6,8 +6,15 @@ tests pin the section layouts that broke it: the single-``.text`` binary that
 must stay unchanged, u-boot's ``.text`` + ``.text_rest`` split, freertos'
 ``-ffunction-sections`` fan-out, and a degenerate zero-size ``.text``.
 
+The range reader is :func:`common.executable_code_ranges`, which accepts every
+file-backed ``SHF_EXECINSTR`` section except the linkage scaffolding
+(``.init``/``.fini``/``.iplt``/``.plt*``). It is fail-closed: an unreadable or
+unsupported binary yields an EMPTY range collection that rejects every address,
+and the DWARF-target exemption is what keeps that from zeroing a run.
+
 The ELFs are built byte-by-byte here rather than taken from the results tree so
-the tests are hermetic.
+the tests are hermetic. Sections carry real file-backed content because the
+range reader measures a section by the bytes it actually has.
 """
 
 from __future__ import annotations
@@ -37,9 +44,9 @@ def _write_elf(
 ) -> Path:
     """Write a minimal ELF64 whose section table lists ``sections``.
 
-    Each entry is ``(name, sh_addr, sh_size, sh_flags, sh_type)``. Only the
-    section header table is meaningful — no program headers, no real content —
-    which is all the filter reads.
+    Each entry is ``(name, sh_addr, sh_size, sh_flags, sh_type)``. Every
+    non-NOBITS section gets ``sh_size`` real bytes at a real ``sh_offset`` so
+    the reader measures the size the caller asked for.
     """
     names = [""] + [s[0] for s in sections] + [".shstrtab"]
     shstrtab = b"\x00".join(n.encode() for n in names) + b"\x00"
@@ -52,13 +59,24 @@ def _write_elf(
     ehsize = 64
     shentsize = 64
     shstrtab_off = ehsize
-    body_off = shstrtab_off + len(shstrtab)
-    shoff = body_off
 
-    shdrs = [(b"", 0, 0, 0, 0, SHT_NULL)]
-    for nm, addr, size, flags, stype in sections:
-        shdrs.append((nm.encode(), name_off[nm], addr, size, flags, stype))
-    shdrs.append((b".shstrtab", name_off[".shstrtab"], 0, len(shstrtab), 0, SHT_STRTAB))
+    body = bytearray()
+    body_off = shstrtab_off + len(shstrtab)
+    data_offsets: dict[int, int] = {}
+    for index, (_nm, _addr, size, _flags, stype) in enumerate(sections):
+        if stype == SHT_NOBITS or size <= 0:
+            data_offsets[index] = 0
+            continue
+        data_offsets[index] = body_off + len(body)
+        body += bytes(size)
+    shoff = body_off + len(body)
+
+    shdrs = [(b"", 0, 0, 0, 0, SHT_NULL, 0)]
+    for index, (nm, addr, size, flags, stype) in enumerate(sections):
+        shdrs.append((nm.encode(), name_off[nm], addr, size, flags, stype, data_offsets[index]))
+    shdrs.append(
+        (b".shstrtab", name_off[".shstrtab"], 0, len(shstrtab), 0, SHT_STRTAB, shstrtab_off)
+    )
 
     shnum = len(shdrs)
     shstrndx = shnum - 1
@@ -83,8 +101,7 @@ def _write_elf(
     assert len(ehdr) == ehsize
 
     table = b""
-    for _nm, noff, addr, size, flags, stype in shdrs:
-        data_off = shstrtab_off if stype == SHT_STRTAB else 0
+    for _nm, noff, addr, size, flags, stype, data_off in shdrs:
         table += struct.pack(
             "<IIQQQQIIQQ",
             noff,
@@ -99,7 +116,7 @@ def _write_elf(
             0,  # sh_entsize
         )
 
-    path.write_bytes(ehdr + shstrtab + table)
+    path.write_bytes(ehdr + shstrtab + bytes(body) + table)
     return path
 
 
@@ -155,11 +172,11 @@ def _zero_size_text(tmp_path: Path) -> Path:
 def test_single_text_binary_is_unchanged(tmp_path: Path) -> None:
     """The common case must behave exactly as it did before multi-section support."""
     elf = _single_text(tmp_path)
-    ranges = common.elf_text_ranges(elf)
-    assert ranges == [(0x1100, 0x1900)]
+    ranges = common.executable_code_ranges(elf)
+    assert ranges == ((0x1100, 0x1900),)
 
     assert not common.should_skip_function("do_work", 0x1200, ranges)
-    # PLT stubs / .init / .fini stay outside the family and stay dropped.
+    # PLT stubs / .init / .fini stay scaffolding and stay dropped.
     assert common.should_skip_function("puts", 0x1030, ranges)
     assert common.should_skip_function("frame_dummy", 0x1005, ranges)
     assert common.should_skip_function("_fini", 0x1900, ranges)
@@ -169,7 +186,7 @@ def test_single_text_binary_is_unchanged(tmp_path: Path) -> None:
 
 def test_single_text_name_filter_still_off_inside_text(tmp_path: Path) -> None:
     """A user function called ``j_compress`` inside .text is not a thunk."""
-    ranges = common.elf_text_ranges(_single_text(tmp_path))
+    ranges = common.executable_code_ranges(_single_text(tmp_path))
     assert not common.should_skip_function("j_compress", 0x1200, ranges)
     assert common.should_skip_function("_start", 0x1200, ranges)
 
@@ -177,69 +194,71 @@ def test_single_text_name_filter_still_off_inside_text(tmp_path: Path) -> None:
 def test_text_rest_split_is_covered(tmp_path: Path) -> None:
     """u-boot's 486 KB .text_rest is code, not a data section."""
     elf = _uboot_like(tmp_path)
-    ranges = common.elf_text_ranges(elf)
-    assert ranges == [(0x60800000, 0x608003A8), (0x60801720, 0x60801720 + 486208)]
+    ranges = common.executable_code_ranges(elf)
+    # .text, .efi_runtime and .text_rest abut, so they coalesce into one span.
+    assert ranges == ((0x60800000, 0x60801720 + 486208),)
 
     assert not common.should_skip_function("board_init", 0x60801720, ranges)
     assert not common.should_skip_function("do_bootm", 0x60870000, ranges)
-    # .efi_runtime is not in the .text family, so the section rule still drops it,
-    # ...
-    assert common.should_skip_function("efi_reset_system", 0x608003A8, ranges)
-    # ...unless the driver asked for that exact address.
-    assert not common.should_skip_function("efi_reset_system", 0x608003A8, ranges, {0x608003A8})
+    # .efi_runtime is executable u-boot code, so it is benchmarkable too.
+    assert not common.should_skip_function("efi_reset_system", 0x608003A8, ranges)
+    # Anything past the last executable section is still rejected.
+    assert common.should_skip_function("blob", 0x60801720 + 486208, ranges)
 
 
 def test_function_sections_are_covered(tmp_path: Path) -> None:
     """-ffunction-sections spreads code over one .text.<fn> per function."""
     elf = _function_sections(tmp_path)
-    ranges = common.elf_text_ranges(elf)
+    ranges = common.executable_code_ranges(elf)
     # Adjacent .text.fnN sections coalesce into one span next to .text.
-    assert ranges is not None
-    assert common.in_text(0x78, ranges)
+    assert ranges == ((0x78, 0x78 + 2935), (0xBF0, 0xBF0 + 40 * 0x40))
+    assert common.in_executable_code(0x78, ranges)
     for i in range(40):
-        assert common.in_text(0xBF0 + i * 0x40, ranges), f"fn{i}"
+        assert common.in_executable_code(0xBF0 + i * 0x40, ranges), f"fn{i}"
         assert not common.should_skip_function(f"fn{i}", 0xBF0 + i * 0x40, ranges)
-    assert not common.in_text(0xBF0 + 40 * 0x40, ranges)
+    assert not common.in_executable_code(0xBF0 + 40 * 0x40, ranges)
 
 
-def test_zero_size_text_is_treated_as_unknown(tmp_path: Path) -> None:
-    """A degenerate empty .text must not become an empty range that drops all."""
-    ranges = common.elf_text_ranges(_zero_size_text(tmp_path))
-    assert ranges is None
-    # Falls back to the name filter: real functions kept, thunks dropped.
+def test_zero_size_text_does_not_hide_the_real_rom_section(tmp_path: Path) -> None:
+    """A degenerate empty .text must not shadow the section that holds the code."""
+    ranges = common.executable_code_ranges(_zero_size_text(tmp_path))
+    assert ranges == ((0x14000000, 0x14000000 + 0x983C),)
     assert not common.should_skip_function("SWD_Sequence", 0x14001000, ranges)
-    assert common.should_skip_function("thunk_memcpy", 0x14001000, ranges)
+    # CRT names are still dropped by name wherever they sit.
+    assert common.should_skip_function("_start", 0x14001000, ranges)
 
 
-def test_no_text_family_section(tmp_path: Path) -> None:
+def test_non_text_named_code_section(tmp_path: Path) -> None:
+    """A firmware ROM region is code even though it is not called ``.text``."""
     elf = _write_elf(tmp_path / "norom.elf", [("ER_ROM1", 0x14000000, 0x100, AX, SHT_PROGBITS)])
-    assert common.elf_text_ranges(elf) is None
+    assert common.executable_code_ranges(elf) == ((0x14000000, 0x14000100),)
 
 
-def test_no_section_headers(tmp_path: Path) -> None:
+def test_no_section_headers_is_fail_closed(tmp_path: Path) -> None:
+    """No section table => empty ranges => every non-target address is rejected."""
     elf = _write_elf(
         tmp_path / "noshdr.elf",
         [(".text", 0x1000, 0x100, AX, SHT_PROGBITS)],
         with_section_headers=False,
     )
-    assert common.elf_text_ranges(elf) is None
+    ranges = common.executable_code_ranges(elf)
+    assert ranges == ()
+    assert common.should_skip_function("do_work", 0x1000, ranges)
+    # The DWARF-target exemption is what keeps fail-closed from zeroing a run.
+    assert not common.should_skip_function("do_work", 0x1000, ranges, {0x1000})
 
 
-def test_non_elf_inputs(tmp_path: Path) -> None:
-    """PE / Mach-O / garbage must degrade to the name filter, not crash."""
-    pe = tmp_path / "a.exe"
-    pe.write_bytes(b"MZ" + b"\x00" * 128)
-    assert common.elf_text_ranges(pe) is None
-
+def test_non_elf_inputs_are_fail_closed(tmp_path: Path) -> None:
+    """Mach-O / garbage / missing files yield empty ranges, and must not crash."""
     macho = tmp_path / "a.dylib"
     macho.write_bytes(b"\xcf\xfa\xed\xfe" + b"\x00" * 64)
-    assert common.elf_text_ranges(macho) is None
+    assert common.executable_code_ranges(macho) == ()
 
-    assert common.elf_text_ranges(tmp_path / "does-not-exist") is None
+    assert common.executable_code_ranges(tmp_path / "does-not-exist") == ()
 
 
-def test_data_and_nobits_text_sections_are_ignored(tmp_path: Path) -> None:
-    """A non-executable or NOBITS ``.text*`` section contributes no range."""
+def test_data_and_nobits_sections_are_ignored(tmp_path: Path) -> None:
+    """A non-executable or NOBITS section contributes no range."""
     elf = _write_elf(
         tmp_path / "odd.elf",
         [
@@ -248,7 +267,7 @@ def test_data_and_nobits_text_sections_are_ignored(tmp_path: Path) -> None:
             (".text.bss", 0x3000, 0x100, AX, SHT_NOBITS),
         ],
     )
-    assert common.elf_text_ranges(elf) == [(0x1000, 0x1100)]
+    assert common.executable_code_ranges(elf) == ((0x1000, 0x1100),)
 
 
 def test_overlapping_sections_merge(tmp_path: Path) -> None:
@@ -261,16 +280,16 @@ def test_overlapping_sections_merge(tmp_path: Path) -> None:
             (".text.gap", 0x9000, 0x100, AX, SHT_PROGBITS),
         ],
     )
-    assert common.elf_text_ranges(elf) == [(0x1000, 0x1400), (0x9000, 0x9100)]
-    ranges = common.elf_text_ranges(elf)
-    assert common.in_text(0x13FF, ranges)
-    assert not common.in_text(0x1400, ranges)
-    assert not common.in_text(0x8FFF, ranges)
-    assert common.in_text(0x9000, ranges)
+    ranges = common.executable_code_ranges(elf)
+    assert ranges == ((0x1000, 0x1400), (0x9000, 0x9100))
+    assert common.in_executable_code(0x13FF, ranges)
+    assert not common.in_executable_code(0x1400, ranges)
+    assert not common.in_executable_code(0x8FFF, ranges)
+    assert common.in_executable_code(0x9000, ranges)
 
 
 def test_dwarf_target_exemption_beats_the_section_rule(tmp_path: Path) -> None:
-    ranges = common.elf_text_ranges(_single_text(tmp_path))
+    ranges = common.executable_code_ranges(_single_text(tmp_path))
     far_away = 0x50000
     assert common.should_skip_function("mystery", far_away, ranges)
     assert not common.should_skip_function("mystery", far_away, ranges, {far_away})
@@ -280,22 +299,29 @@ def test_dwarf_target_exemption_beats_the_section_rule(tmp_path: Path) -> None:
 
 def test_dwarf_target_exemption_tolerates_the_thumb_bit(tmp_path: Path) -> None:
     """DWARF low_pc is even; ARM tools report a Thumb entry with the LSB set."""
-    ranges = common.elf_text_ranges(_single_text(tmp_path))
+    ranges = common.executable_code_ranges(_single_text(tmp_path))
     assert not common.should_skip_function("thumb_fn", 0x40001, ranges, {0x40000})
     assert not common.should_skip_function("thumb_fn", 0x40000, ranges, {0x40001})
 
 
 @pytest.mark.parametrize("targets", [None, set(), {0x1234}])
 def test_no_targets_keeps_the_old_behaviour(tmp_path: Path, targets) -> None:
-    ranges = common.elf_text_ranges(_single_text(tmp_path))
+    ranges = common.executable_code_ranges(_single_text(tmp_path))
     assert common.should_skip_function("puts", 0x1030, ranges, targets)
     assert not common.should_skip_function("do_work", 0x1200, ranges, targets)
 
 
-def test_in_text_accepts_a_legacy_single_range() -> None:
+def test_unknown_ranges_still_fall_back_to_the_name_filter() -> None:
+    """``None`` (not ``()``) is the legacy "ranges unknown" signal."""
+    assert common.in_executable_code(0x1200, None)
+    assert not common.should_skip_function("SWD_Sequence", 0x14001000, None)
+    assert common.should_skip_function("thunk_memcpy", 0x14001000, None)
+
+
+def test_in_executable_code_accepts_a_legacy_single_range() -> None:
+    assert common.in_executable_code(0x1200, (0x1100, 0x1900))
+    assert not common.in_executable_code(0x1000, (0x1100, 0x1900))
     assert common.in_text(0x1200, (0x1100, 0x1900))
-    assert not common.in_text(0x1000, (0x1100, 0x1900))
-    assert common.in_text(0x1200, None)
 
 
 def test_addr_targets_of_keeps_only_ints() -> None:
@@ -307,11 +333,12 @@ def test_addr_targets_of_keeps_only_ints() -> None:
 
 
 def test_every_backend_shares_one_rule() -> None:
-    """r2dec's exemption and the raw path are literally the same function now."""
-    from decbench.decompilers import declib_dec, dockerized
+    """r2dec's exemption and the raw path resolve to the same shared filter."""
+    from decbench.decompilers import dockerized
 
-    assert dockerized._skip_r2_function is common.should_skip_function
     assert dockerized._addr_targets_of is common.addr_targets_of
-    assert dockerized._elf_text_range is common.elf_text_ranges
-    assert declib_dec._elf_text_range is common.elf_text_ranges
-    assert common.elf_text_range is common.elf_text_ranges
+    # r2dec's wrapper forwards straight through to the shared filter, exemption
+    # and all, so the two paths cannot drift apart again.
+    assert dockerized._skip_r2_function("puts", 0x1030, ((0x1100, 0x1900),))
+    assert not dockerized._skip_r2_function("puts", 0x1030, ((0x1100, 0x1900),), {0x1030})
+    assert common.in_text is not None

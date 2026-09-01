@@ -24,6 +24,7 @@ import decbench.decompilers  # noqa: F401  (registers plugins)
 from decbench.decompilers.raw import common
 from decbench.decompilers.raw.glaurung_raw import RawGlaurungDecompiler
 from decbench.decompilers.registry import DecompilerRegistry
+from decbench.models.decompilation import variable_occurrence_policy
 
 TINY_C_SOURCE = """
 #include <stdio.h>
@@ -261,10 +262,21 @@ class TestDockerInstall:
                 ]
             ),
         )
+        monkeypatch.setattr(
+            common,
+            "executable_code_ranges",
+            lambda _binary: ((target, target + 4),),
+        )
 
         result = RawGlaurungDecompiler().decompile_binary(tiny_binary, function_names={target})
 
-        assert result.functions["add_nums"].address == target
+        function = result.functions["add_nums"]
+        assert function.address == target
+        # The current producer has no final-AST lineage. Do not manufacture
+        # native evidence by joining this C spelling to an earlier IR.
+        assert function.line_mappings == []
+        assert function.variables == []
+        assert variable_occurrence_policy(function.metadata) == "unavailable"
         assert result.decompiler.extra["run_via"] == "docker"
         run = next(
             call
@@ -272,9 +284,21 @@ class TestDockerInstall:
             if call[0] == "run" and "--entrypoint" not in call
         )
         assert "--network" in run and "none" in run
+        assert run[run.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
         assert f"{tiny_binary.resolve()}:/in/{tiny_binary.name}:ro" in run
         assert "decbench/glaurung:latest" in run
         assert run[-2:] == ["--vas", hex(target)]
+
+    def test_full_corpus_target_set_stays_address_scoped(
+        self, fake_docker: Path, tiny_binary: Path
+    ) -> None:
+        target = _func_address(tiny_binary, "add_nums")
+        targets = {target + offset * 4 for offset in range(401)}
+
+        command = RawGlaurungDecompiler()._build_command(tiny_binary, targets)
+
+        assert "--vas" in command
+        assert "--all" not in command
 
     def test_nonzero_exit_with_json_fails_closed(
         self,

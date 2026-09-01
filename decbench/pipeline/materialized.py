@@ -33,6 +33,7 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    with_variable_occurrence_policy,
 )
 from decbench.utils.results_tree import OPT_LEVELS, compiled_dir, resolve_binary
 
@@ -68,6 +69,7 @@ def load_decompilation(
             address=int(m.group(2), 16),
             decompiled_code=code,
             line_count=len(code.splitlines()),
+            metadata=with_variable_occurrence_policy({}, "unavailable"),
         )
 
     version: str | None = None
