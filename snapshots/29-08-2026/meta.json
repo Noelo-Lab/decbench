@@ -52,7 +52,7 @@
     "kuna": "v1.121",
     "manifold": "v1",
     "r2dec": "r2 6.0.8",
-    "ventris": "decompiler_v8_postpp_brace_fix"
+    "ventris": "v8.0.0"
   },
   "metrics": [
     "byte_match",
