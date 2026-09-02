@@ -92,7 +92,7 @@ EXTERNAL_DECOMPILERS: tuple[ExternalSpec, ...] = (
         id="ventris",
         display_name="Ventris",
         url="https://reveng.ai/",
-        version="decompiler_v8_postpp_brace_fix",
+        version="v8.0.0",
     ),
 )
 
