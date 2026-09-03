@@ -45,6 +45,7 @@ from decbench.results_store import PROJECT_DIRS  # noqa: F401,E402
 from decbench.results_store import gather_project_tomls as gather_tomls
 from decbench.utils import binfmt  # noqa: E402
 from decbench.utils.cfg import extract_cfgs_from_source  # noqa: E402
+from decbench.utils.dwarf_policy import dwarf_follow_abstract_origin  # noqa: E402
 
 OPT_LEVELS = [
     OptimizationLevel.O0,
@@ -165,7 +166,9 @@ def project_source_functions(
     symbols), where decompilers only know functions by address. Returns an empty
     map if there is no usable DWARF (caller then falls back to all functions).
     """
-    owners = binfmt.source_function_owners(binary_path, source_stems)
+    owners = binfmt.source_function_owners(
+        binary_path, source_stems, follow_abstract_origin=dwarf_follow_abstract_origin()
+    )
     if stem_out is not None:
         stem_out.update({addr: stem for addr, (_name, stem) in owners.items()})
     return {addr: name for addr, (name, _stem) in owners.items()}

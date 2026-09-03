@@ -12,6 +12,7 @@ from decbench.metrics.registry import MetricRegistry
 from decbench.models.metrics import MetricResult
 from decbench.models.project import OptimizationLevel, Project
 from decbench.utils.cfg import extract_cfgs_from_decompilation, extract_cfgs_from_source
+from decbench.utils.dwarf_policy import dwarf_follow_abstract_origin
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +162,9 @@ def evaluate_project(
                 for decompilation in dec_results.values()
                 for function in decompilation.functions.values()
             }
-            owners = binfmt.source_function_owners(binary, source_stems)
+            owners = binfmt.source_function_owners(
+                binary, source_stems, follow_abstract_origin=dwarf_follow_abstract_origin()
+            )
             function_owners[binary_name] = {
                 addr: owner for addr, owner in owners.items() if addr in target_addrs
             }

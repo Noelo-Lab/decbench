@@ -210,7 +210,7 @@ def test_dwarf_owned_translation_unit_precedes_name_fallback(
     monkeypatch.setattr(
         cfg_export.binfmt,
         "source_function_owners",
-        lambda *_args: {0x12DA: ("main", "new_subid_range-new_subid_range")},
+        lambda *_args, **_kwargs: {0x12DA: ("main", "new_subid_range-new_subid_range")},
     )
 
     cfg_export.export_project_cfgs(

@@ -310,6 +310,11 @@ def _parse_function_die(die: Any, dwarfinfo: Any) -> tuple[str | None, list[dict
     the in-class declaration it references. C subprograms always name themselves
     on the defining DIE, so the chase never fires and C ground truth is byte-for-
     byte what it was.
+
+    ``DECBENCH_DWARF_ABSTRACT_ORIGIN`` deliberately does not reach here: this map
+    is keyed by name and already reads the abstract instance's parameters, so
+    chasing the origin would let a concrete instance overwrite that entry and move
+    type_match ground truth.
     """
     from decbench.utils import binfmt
 

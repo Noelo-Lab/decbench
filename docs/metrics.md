@@ -224,12 +224,30 @@ declaration. The two reference attributes are NOT equivalent:
   in-class declaration). Following it can never change a C result, so it is
   always followed.
 - **`DW_AT_abstract_origin`** is used in C too — for the out-of-line copy gcc
-  keeps of a function it also inlined. Following it in C would newly surface
-  ~10-20% more functions in the pinned corpus (measured on grep at O2: 262 ->
-  314 DWARF subprograms). It is therefore followed **only in a C++
-  compilation unit** (`binfmt.cu_is_cxx`, on `DW_AT_language`), which keeps
-  every existing C binary bit-identical. Enabling it for C is a deliberate,
-  corpus-invalidating change that has not been made.
+  and clang keep of a function they also inlined. Following it in C newly
+  surfaces ~10-20% more functions in the pinned corpus (measured on grep at O2:
+  262 -> 314 named subprograms across the whole binary, 56 -> 66 after the
+  project-TU `decl_file` filter that `source_function_owners` applies). It is
+  therefore followed **unconditionally only in a C++ compilation unit**
+  (`binfmt.cu_is_cxx`, on `DW_AT_language`), which keeps every existing C binary
+  bit-identical.
+
+  Enabling it for C is a deliberate, corpus-invalidating change, so it is an
+  opt-in switch rather than a default: `DECBENCH_DWARF_ABSTRACT_ORIGIN=1` turns
+  it on for the function-discovery walk
+  (`binfmt.source_function_owners`) and everything that mirrors it — the run
+  driver's target set, `pipeline/evaluate.py`, `scripts/reeval_ged.py`, the
+  source-CFG export and the eval kit. Unset, the walk returns exactly what it
+  returned before the switch existed. Rationale and public measurements:
+  [`docs/benchmarking.md`](benchmarking.md).
+
+  **The switch deliberately does not reach `type_match`.**
+  `extract_ground_truth_types` keys its map by function NAME and the abstract
+  instance already supplies the parameters, so the entry is present with or
+  without the hop. Chasing the origin there would merely let a concrete instance
+  overwrite that entry with the same name — moving type_match ground truth for no
+  gain. `_parse_function_die` therefore keeps the plain `die_str_attr` read, and
+  type_match's `cache_version` is untouched by this switch.
 
 ## Recompilation Bytematch — `metrics/byte_match.py`
 

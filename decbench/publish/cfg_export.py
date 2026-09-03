@@ -48,6 +48,7 @@ from decbench.utils.cfg import (
     resolved_source_for_binary,
     strip_system_headers,
 )
+from decbench.utils.dwarf_policy import dwarf_follow_abstract_origin
 from decbench.utils.results_tree import OPT_LEVELS, compiled_dir, resolve_binary
 
 if TYPE_CHECKING:
@@ -210,7 +211,13 @@ def _resolved_cfgs_for_opt(
     out: dict[str, dict[str, CfgSerial]] = {}
     for stem in stems:
         binary = resolve_binary(compiled_dir(root, opt, project), stem)
-        owners = binfmt.source_function_owners(binary, set(by_tu)) if binary is not None else None
+        owners = (
+            binfmt.source_function_owners(
+                binary, set(by_tu), follow_abstract_origin=dwarf_follow_abstract_origin()
+            )
+            if binary is not None
+            else None
+        )
         out[stem] = {
             name: _serialize(cfg)
             for name, cfg in resolved_source_for_binary(
