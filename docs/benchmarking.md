@@ -294,6 +294,43 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
   runs)
 - `DECBENCH_OPT_LEVELS` (comma list, e.g. `"O0"` to narrow the run)
 - `DECBENCH_METRICS` (comma list, e.g. `"ged"` for a GED-only run)
+- `DECBENCH_DWARF_ABSTRACT_ORIGIN` (default off; set to exactly `1` — `0`,
+  `true` and any other value are off) — follow `DW_AT_abstract_origin` when
+  discovering functions in a **C** compilation unit.
+
+### `DECBENCH_DWARF_ABSTRACT_ORIGIN` — recovering inlined-and-out-of-line C bodies
+
+gcc and clang split a C function that is both inlined at some call site and still
+emitted out-of-line into two DIEs: an abstract instance root (`DW_AT_name` +
+`DW_AT_inline`, no `low_pc`) and a concrete out-of-line instance (`DW_AT_low_pc`,
+no name, only `DW_AT_abstract_origin`). The function-discovery walk wants a
+`low_pc` and then a name, so neither half qualifies and the real body is invisible
+to the decompile target set, to `_relabel_to_dwarf`'s address->name map (the body
+stays `sub_XXXX` and is dropped as unresolved), and to `evaluate_project`'s
+`source_function_owners`. Setting the knob takes the `DW_AT_abstract_origin` hop
+in C units and recovers those bodies. C++ units already take the hop
+unconditionally (`DW_AT_specification` chasing is what makes C++ functions visible
+at all), so the knob does not change any C++ result.
+
+Measured over the public corpus (`projects/{sailr,cps,malware}`, 40 projects, 288
+binaries) at `-O2`, DWARF-resolved source-function owners go 26,346 -> 29,956
+(+13.7%; +19.0% on the sailr corpus alone), recovering bodies such as zlib's
+`gz_read` and `inflateReset`, bzip2's `BZ2_bzWriteOpen`, grep's `treenext` and
+tar's `chdir_do`. At `-O0` the sailr and malware corpora are unchanged; three
+`always_inline`-heavy firmware targets move by 12 owners in total. `O2-noinline`
+still gains 4.8% — it is **not** a null control, because `-fno-inline` suppresses
+neither `always_inline` nor the abstract-instance shape emitted for header-defined
+statics.
+
+**It is off by default because turning it on moves published numbers.** With it
+unset, the walk returns exactly what it returned before the knob existed, so every
+existing result tree stays bit-identical. Turn it on and the scored function set
+grows, so a tree built with it on is not comparable to one built with it off —
+treat it like any other change that moves scores (snapshot first, see
+`docs/site.md`). The knob is read process-wide by the run driver, `pipeline`
+evaluation, `scripts/reeval_ged.py`, the source-CFG export and the eval kit, so
+those all agree on one function set; it deliberately does **not** reach
+`metrics/type_match.py` (see `docs/metrics.md`).
 
 ### Per-decompiler wall-clock budgets
 

@@ -549,8 +549,11 @@ def _function_owners_for_addrs(
     if not stems or not addrs:
         return {}
     from decbench.utils import binfmt
+    from decbench.utils.dwarf_policy import dwarf_follow_abstract_origin
 
-    owners = binfmt.source_function_owners(binary, stems)
+    owners = binfmt.source_function_owners(
+        binary, stems, follow_abstract_origin=dwarf_follow_abstract_origin()
+    )
     return {addr: owner for addr, owner in owners.items() if addr in addrs}
 
 

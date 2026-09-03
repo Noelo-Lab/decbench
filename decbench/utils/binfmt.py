@@ -348,7 +348,7 @@ def cu_is_cxx(cu) -> bool:
     return attr is not None and attr.value in _CXX_LANGS
 
 
-def die_attr_owner(die, name: str):
+def die_attr_owner(die, name: str, *, follow_abstract_origin: bool = False):
     """``(attribute, owning DIE)`` for ``name``, following DIE reference chains.
 
     gcc splits an out-of-line C++ member definition in two: the defining DIE
@@ -359,18 +359,29 @@ def die_attr_owner(die, name: str):
     visible at all.
 
     ``DW_AT_specification`` is a C++-only construct, so following it can never
-    change a C result. ``DW_AT_abstract_origin`` is NOT — in C, gcc uses it for
-    the out-of-line copy it keeps of a function it also inlined, and following
-    it would newly surface ~10-20% more functions in the existing C corpus
-    (measured: grep at O2 goes 262 -> 314). That hop is therefore taken only in
-    a C++ compilation unit, which leaves every C binary bit-identical.
+    change a C result. ``DW_AT_abstract_origin`` is NOT — in C, gcc and clang use
+    it for the out-of-line copy they keep of a function they also inlined, and
+    following it newly surfaces ~10-20% more functions in the existing C corpus
+    (measured on grep at O2: 262 -> 314 named subprograms across the whole
+    binary, 56 -> 66 after this function's project-TU ``decl_file`` filter). That
+    hop is therefore taken only in a C++ compilation unit by default, which
+    leaves every C binary bit-identical.
+
+    ``follow_abstract_origin=True`` takes that hop in C units too. gcc and clang
+    split a C function that is BOTH inlined somewhere and kept out-of-line into
+    an abstract instance root (``DW_AT_name`` + ``DW_AT_inline``, no ``low_pc``)
+    and a concrete out-of-line instance (``DW_AT_low_pc``, no name, only
+    ``DW_AT_abstract_origin``). Without the hop the concrete body is invisible
+    to any name-keyed walk. OFF by default so every existing C result stays
+    bit-identical; opt in per call site, or process-wide via
+    :func:`decbench.utils.dwarf_policy.dwarf_follow_abstract_origin`.
 
     The owning DIE is returned because a CU-relative attribute value such as
     ``DW_AT_decl_file`` must be read against ITS CU's line program, not the
     starting DIE's.
     """
     cur = die
-    refs = _SPEC_AND_ORIGIN if cu_is_cxx(die.cu) else _SPEC_ONLY
+    refs = _SPEC_AND_ORIGIN if follow_abstract_origin or cu_is_cxx(die.cu) else _SPEC_ONLY
     for _ in range(_DIE_REF_MAX_HOPS + 1):
         attr = cur.attributes.get(name)
         if attr is not None:
@@ -389,14 +400,14 @@ def die_attr_owner(die, name: str):
     return None, None
 
 
-def die_attr(die, name: str):
+def die_attr(die, name: str, *, follow_abstract_origin: bool = False):
     """The attribute ``name``, following DIE reference chains (:func:`die_attr_owner`)."""
-    return die_attr_owner(die, name)[0]
+    return die_attr_owner(die, name, follow_abstract_origin=follow_abstract_origin)[0]
 
 
-def die_str_attr(die, name: str) -> str | None:
+def die_str_attr(die, name: str, *, follow_abstract_origin: bool = False) -> str | None:
     """:func:`die_attr` decoded to ``str``, or None when absent."""
-    attr = die_attr(die, name)
+    attr = die_attr(die, name, follow_abstract_origin=follow_abstract_origin)
     if attr is None:
         return None
     val = attr.value
@@ -427,12 +438,19 @@ def cu_file_table(dwarfinfo, cu, cache: dict[int, list] | None = None) -> list:
     return files
 
 
-def source_function_owners(path: Path, source_stems: set[str]) -> dict[int, tuple[str, str]]:
+def source_function_owners(
+    path: Path, source_stems: set[str], *, follow_abstract_origin: bool = False
+) -> dict[int, tuple[str, str]]:
     """Map DWARF function addresses to ``(name, defining source-TU stem)``.
 
     Only definitions whose ``DW_AT_decl_file`` matches one of ``source_stems``
     are returned. Object-prefixed preprocessed stems such as ``program-main``
     match a declaration file named ``main.c``.
+
+    ``follow_abstract_origin=True`` also resolves a C concrete out-of-line
+    instance through its ``DW_AT_abstract_origin`` (see :func:`die_attr_owner`),
+    which is the only way to see a function the compiler both inlined and emitted
+    out-of-line at ``-O2``. Default OFF: every existing result is unchanged.
     """
     if not source_stems:
         return {}
@@ -454,10 +472,14 @@ def source_function_owners(path: Path, source_stems: set[str]) -> dict[int, tupl
             for die in cu.iter_DIEs():
                 if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
                     continue
-                name = die_str_attr(die, "DW_AT_name")
+                name = die_str_attr(
+                    die, "DW_AT_name", follow_abstract_origin=follow_abstract_origin
+                )
                 if name is None:
                     continue
-                fi, owner = die_attr_owner(die, "DW_AT_decl_file")
+                fi, owner = die_attr_owner(
+                    die, "DW_AT_decl_file", follow_abstract_origin=follow_abstract_origin
+                )
                 if fi is None:
                     continue
                 files = cu_file_table(dw, owner.cu, file_tables)

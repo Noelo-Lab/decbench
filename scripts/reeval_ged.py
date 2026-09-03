@@ -814,13 +814,18 @@ def eval_one(
         resolved_source_for_binary,
         sanitize_decompiled_c,
     )
+    from decbench.utils.dwarf_policy import dwarf_follow_abstract_origin
     from decbench.utils.results_tree import resolve_binary
 
     per_stem, best_by_name = _load_src(src_pkl)
     compiled = Path(c_path).parent.parent / "compiled"
     binary = resolve_binary(compiled, stem)
     function_owners = (
-        binfmt.source_function_owners(binary, set(per_stem)) if binary is not None else None
+        binfmt.source_function_owners(
+            binary, set(per_stem), follow_abstract_origin=dwarf_follow_abstract_origin()
+        )
+        if binary is not None
+        else None
     )
     src_cfgs = resolved_source_for_binary(
         stem,

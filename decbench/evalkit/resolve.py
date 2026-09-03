@@ -26,6 +26,7 @@ import os
 import struct
 from pathlib import Path
 
+from decbench.utils.dwarf_policy import dwarf_follow_abstract_origin
 from decbench.utils.langs import PREPROC_EXTS, build_stem_index, strip_source_ext
 
 _l = logging.getLogger(__name__)
@@ -53,7 +54,13 @@ def _dwarf_addr_to_name(binary: Path, stems: set[str] | None) -> dict[int, str]:
     ``main.c``). When ``stems`` is None the decl-file filter is skipped and every
     named subprogram with a ``low_pc`` is kept. Returns an empty map when the
     binary has no usable DWARF.
+
+    The ``DW_AT_abstract_origin`` chase for C concrete out-of-line instances
+    follows the same opt-in policy as the run driver
+    (:func:`decbench.utils.dwarf_policy.dwarf_follow_abstract_origin`), so the
+    eval kit resolves the same function set the run scored.
     """
+    follow = dwarf_follow_abstract_origin()
     from decbench.utils import binfmt
 
     try:
@@ -71,11 +78,13 @@ def _dwarf_addr_to_name(binary: Path, stems: set[str] | None) -> dict[int, str]:
             for die in cu.iter_DIEs():
                 if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
                     continue
-                name = binfmt.die_str_attr(die, "DW_AT_name")
+                name = binfmt.die_str_attr(die, "DW_AT_name", follow_abstract_origin=follow)
                 if name is None:
                     continue
                 if stems is not None:
-                    fi, owner = binfmt.die_attr_owner(die, "DW_AT_decl_file")
+                    fi, owner = binfmt.die_attr_owner(
+                        die, "DW_AT_decl_file", follow_abstract_origin=follow
+                    )
                     if fi is None:
                         continue
                     files = binfmt.cu_file_table(dw, owner.cu, file_tables)

@@ -775,7 +775,7 @@ def test_eval_one_uses_dwarf_tu_ownership_for_corrected_source(
     )
     monkeypatch.setattr(
         "decbench.utils.binfmt.source_function_owners",
-        lambda *_args: {0x12DA: ("main", "new_subid_range-new_subid_range")},
+        lambda *_args, **_kwargs: {0x12DA: ("main", "new_subid_range-new_subid_range")},
     )
     monkeypatch.setattr(
         "decbench.utils.cfg.extract_cfgs_from_source",
