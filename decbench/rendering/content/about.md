@@ -8,7 +8,7 @@ This benchmark is also _living_: as new decompiler/LLMs are released, their scor
 
 It is created by the [Noelo Lab at the University of Georgia](https://github.com/Noelo-Lab), led by [Dr. Zion Leonahenahe Basque](https://www.zionbasque.com/). 
 The project's [code](https://github.com/noelo-lab/decbench) and [data](https://huggingface.co/datasets/noelo-lab/decbench-dataset) are open source. 
-Email `decbench@mahaloz.re` to get your decompiler added to the public site.
+Email `decbench@zionbasque.com` to get your decompiler added to the public site.
 
 ## why
 
