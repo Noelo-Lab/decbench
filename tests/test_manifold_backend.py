@@ -340,6 +340,9 @@ def test_docker_run_mounts_the_binary_and_reads_back_the_unit(
     assert result.decompiler.extra["image"] == "decbench/manifold:latest"
 
     run = next(c for c in _docker_calls(fake_docker) if c[0] == "run" and "--entrypoint" not in c)
+    limit = str(16 * 1024**3)
+    assert run[run.index("--memory") + 1] == limit
+    assert run[run.index("--memory-swap") + 1] == limit
     assert f"{tiny_binary.resolve()}:/in/{tiny_binary.name}:ro" in run
     assert "decbench/manifold:latest" in run
     assert run[-2:] == [f"/in/{tiny_binary.name}", f"/work/{tiny_binary.stem}.c"]

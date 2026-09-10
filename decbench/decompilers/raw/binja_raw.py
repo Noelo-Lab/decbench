@@ -1,4 +1,4 @@
-"""Raw Binary Ninja decompiler backend (no declib), via the headless API.
+"""Native Binary Ninja decompiler backend via the headless API.
 
 Drives Binary Ninja's headless API directly:
 
@@ -40,7 +40,7 @@ _l = logging.getLogger(__name__)
 
 @register_decompiler("binja")
 class RawBinjaDecompiler(Decompiler):
-    """Binary Ninja driven natively via the headless API, without declib."""
+    """Binary Ninja driven natively via the headless API."""
 
     name = "binja"
     display_name = "Binary Ninja"

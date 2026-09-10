@@ -9,9 +9,6 @@ from decbench.decompilers.registry import DecompilerRegistry, register_decompile
 # Imported for their @register_decompiler side effects. Heavy decompiler imports
 # happen lazily inside each plugin, so these never fail on a missing backend.
 with contextlib.suppress(ImportError):
-    from decbench.decompilers import declib_dec  # noqa: F401
-
-with contextlib.suppress(ImportError):
     from decbench.decompilers import raw  # noqa: F401
 
 with contextlib.suppress(ImportError):

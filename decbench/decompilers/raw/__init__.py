@@ -1,16 +1,14 @@
-"""Raw (declib-free) decompiler backends.
+"""Native decompiler backends.
 
 These backends drive the native decompiler APIs directly — angr's
 ``analyses.Decompiler``, Ghidra via ``pyghidra``, IDA's Hex-Rays via
-``idalib``/``idapro``, and Binary Ninja's headless API — instead of going
-through the unified ``declib`` interface. They produce the exact same
-:class:`~decbench.models.decompilation.DecompilationResult` shape as
-``declib_dec`` (ELF-file-space addresses, ``VariableInfo`` lists, line
-mappings, gotos/bools metadata).
+``idalib``/``idapro``, and Binary Ninja's headless API. They all produce the
+shared :class:`~decbench.models.decompilation.DecompilationResult` shape with
+ELF-file-space addresses, ``VariableInfo`` lists, line mappings, and structure
+metadata.
 
 Importing this package registers the raw backends under the canonical
-``angr`` / ``ghidra`` / ``ida`` / ``binja`` names. The declib-backed
-implementations remain available for comparison under ``angr-declib`` etc.
+``angr`` / ``ghidra`` / ``ida`` / ``binja`` names.
 """
 
 from __future__ import annotations

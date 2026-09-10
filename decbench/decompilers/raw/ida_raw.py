@@ -1,4 +1,4 @@
-"""Raw IDA Pro / Hex-Rays decompiler backend (no declib), via ``idalib``.
+"""Native IDA Pro / Hex-Rays decompiler backend via ``idalib``.
 
 Drives IDA's headless library (``idapro``/``idalib``, IDA 9+) and the Hex-Rays
 decompiler API directly:
@@ -37,7 +37,7 @@ from decbench.models.decompilation import (
 
 _l = logging.getLogger(__name__)
 
-# Order matters (__int64 before __int). Mirrors declib_dec.IDADeclibDecompiler
+# Order matters (__int64 before __int).
 # so byte_match can recompile the output.
 _CODE_REPLACEMENTS = (
     ("unsigned __int64", "unsigned long long"),
@@ -64,7 +64,7 @@ _CODE_REPLACEMENTS = (
 
 @register_decompiler("ida")
 class RawIDADecompiler(Decompiler):
-    """IDA Pro (Hex-Rays) driven natively via idalib, without declib."""
+    """IDA Pro (Hex-Rays) driven natively via idalib."""
 
     name = "ida"
     display_name = "IDA Pro"
@@ -161,15 +161,15 @@ class RawIDADecompiler(Decompiler):
                     requested = {n for (n, _a) in functions}
                     enumerated = [(n, a) for (n, a) in enumerated if n in requested]
                 enumerated = common.narrow_to_source(
-                    enumerated, function_names, backend="ida",
+                    enumerated,
+                    function_names,
+                    backend="ida",
                     binary_name=binary_path.name,
                 )
                 for func_name, file_addr in enumerated:
                     func_result = None
                     try:
-                        func_result = self._decompile_one(
-                            func_name, file_addr, elf_base
-                        )
+                        func_result = self._decompile_one(func_name, file_addr, elf_base)
                     except Exception as e:  # noqa: BLE001
                         _l.debug("ida-raw: failed to decompile %s: %s", func_name, e)
                     if func_result is not None:

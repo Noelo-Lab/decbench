@@ -126,9 +126,8 @@ Key conventions:
 - **The site's prose/CSS/JS is NOT in `html.py`** (skeleton assembly only) —
   edit `decbench/rendering/content/` + `assets/` and re-render; content edits
   never need a benchmark re-run. See `docs/site.md`.
-- **Canonical decompiler names are the raw (declib-free) backends**; the
-  declib ones are `*-declib`. Drivers must `import decbench.decompilers` (the
-  whole package) so every backend registers.
+- **Canonical decompiler names use their native backends.** Drivers must
+  `import decbench.decompilers` (the whole package) so every backend registers.
 - **When pushing to the website**, first verify that nothing extreme has changed. 
   An example is a decompiler in the new site have 50% less functions decompiled 
   than in the last update, or drastically changing rank. This can happen, but

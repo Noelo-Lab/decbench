@@ -742,7 +742,7 @@ def _calibrate_shift(gt_offsets: list[int], decomp_offsets: list[int]) -> int | 
 
     Args:
         gt_offsets: Ground-truth stack offsets.
-        decomp_offsets: Decompiled (declib-lifted) stack offsets.
+        decomp_offsets: Decompiled native-backend stack offsets.
 
     Returns:
         The best shift ``k``, or ``None`` if no shift aligns anything.

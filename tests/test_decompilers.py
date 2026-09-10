@@ -1,4 +1,4 @@
-"""Tests for the declib-backed decompiler plugins."""
+"""Tests for the canonical native decompiler plugins."""
 
 from __future__ import annotations
 
@@ -65,6 +65,7 @@ class TestRegistry:
         registered = DecompilerRegistry.list_registered()
         for name in ALL_DECOMPILERS:
             assert name in registered, f"{name} missing from registry"
+        assert not {"angr-declib", "ida-declib", "ghidra-declib", "binja-declib"} & set(registered)
 
     def test_backends_instantiate(self) -> None:
         for name in ALL_DECOMPILERS:

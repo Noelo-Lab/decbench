@@ -1,4 +1,4 @@
-"""Raw kuna decompiler backend (no declib), via the kuna CLI.
+"""Native kuna decompiler backend via the kuna CLI.
 
 Unlike the angr/ghidra/ida/binja raw backends — which import a native Python
 module (angr, pyghidra, idalib, binaryninja) and decompile in-process — kuna
@@ -34,6 +34,7 @@ Locate the CLI via ``$KUNA_BIN`` (an explicit path) or ``kuna`` on ``$PATH``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -60,7 +61,7 @@ _l = logging.getLogger(__name__)
 
 @register_decompiler("kuna")
 class RawKunaDecompiler(Decompiler):
-    """kuna (Rust Ghidra-decompiler port) driven via its CLI, without declib."""
+    """kuna (Rust Ghidra-decompiler port) driven via its CLI."""
 
     name = "kuna"
     display_name = "kuna"
@@ -84,9 +85,7 @@ class RawKunaDecompiler(Decompiler):
         if not kuna:
             return None
         try:
-            p = subprocess.run(
-                [kuna, "--version"], capture_output=True, text=True, timeout=30
-            )
+            p = subprocess.run([kuna, "--version"], capture_output=True, text=True, timeout=30)
             out = (p.stdout or p.stderr or "").strip()
             # Release builds stamp a MAJOR.MINOR version ("kuna 1.121"); dev builds
             # fall back to the three-part Cargo version ("kuna 0.1.0").
@@ -206,7 +205,9 @@ class RawKunaDecompiler(Decompiler):
         # Per-function watchdog. kuna emits its JSON only at the very end, so without a
         # per-function cap one hanging function stalls the binary until the wall-clock
         # SIGKILL loses EVERY function. '0' disables.
-        max_fn = os.environ.get("DECBENCH_KUNA_MAX_FN_SECONDS", "120")
+        max_fn = os.environ.get("DECBENCH_KUNA_MAX_FN_SECONDS")
+        if max_fn in (None, ""):
+            max_fn = str(int(self.config.function_timeout_seconds))
         if max_fn:
             cmd += ["--max-fn-seconds", str(int(max_fn))]
         mode = os.environ.get("DECBENCH_KUNA_MODE")
@@ -227,14 +228,10 @@ class RawKunaDecompiler(Decompiler):
         try:
             os.killpg(os.getpgid(p.pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError, OSError):
-            try:
+            with contextlib.suppress(Exception):
                 p.kill()
-            except Exception:  # noqa: BLE001
-                pass
-        try:
+        with contextlib.suppress(Exception):
             p.wait(timeout=15)
-        except Exception:  # noqa: BLE001
-            pass
 
     def _timeout_seconds(self) -> float | None:
         """Per-binary timeout: ``$DECBENCH_KUNA_TIMEOUT`` (seconds) if set,
@@ -315,9 +312,7 @@ class RawKunaDecompiler(Decompiler):
                     ),
                     size=(int(v["size"]) if v.get("size") is not None else None),
                     kind="arg" if kind == "arg" else "stack",
-                    arg_index=(
-                        int(v["arg_index"]) if v.get("arg_index") is not None else None
-                    ),
+                    arg_index=(int(v["arg_index"]) if v.get("arg_index") is not None else None),
                 )
             )
         return out

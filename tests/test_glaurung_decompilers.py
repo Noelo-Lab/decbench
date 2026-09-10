@@ -5,7 +5,7 @@ never require the tool, plus a live decompile smoke test that skips gracefully
 when the ``glaurung`` CLI is not on the machine (``$GLAURUNG_BIN`` / PATH).
 
 Glaurung emits parseable-C (a real ``long name(long arg0, …)`` signature) rather
-than the declib-shaped ``VariableInfo`` list, so — unlike the angr/ghidra/ida
+than a structured ``VariableInfo`` list, so — unlike the angr/ghidra/ida
 smoke test — this asserts on the signature text, not recovered variables.
 """
 
@@ -272,9 +272,13 @@ class TestDockerInstall:
             if call[0] == "run" and "--entrypoint" not in call
         )
         assert "--network" in run and "none" in run
+        limit = str(16 * 1024**3)
+        assert run[run.index("--memory") + 1] == limit
+        assert run[run.index("--memory-swap") + 1] == limit
         assert f"{tiny_binary.resolve()}:/in/{tiny_binary.name}:ro" in run
         assert "decbench/glaurung:latest" in run
-        assert run[-2:] == ["--vas", hex(target)]
+        assert run[run.index("--vas") + 1] == hex(target)
+        assert run[-2:] == ["--timeout-ms", "600000"]
 
     def test_nonzero_exit_with_json_fails_closed(
         self,

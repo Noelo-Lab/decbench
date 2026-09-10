@@ -21,16 +21,15 @@ class LineMapping(BaseModel):
 class VariableInfo(BaseModel):
     """Structured variable info recovered by a decompiler.
 
-    Stack offsets are in declib's canonical (lifted) stack-offset space,
-    which is rbp-relative-ish with locals at negative offsets. The
-    type_match metric calibrates against DWARF offsets at compare time.
+    Stack offsets use each backend's native stack-offset space. The type_match
+    metric calibrates them against DWARF offsets at compare time.
     """
 
     name: str = Field(default="", description="Variable name in decompiled output")
     type: str = Field(default="", description="Variable type as a C type string")
     stack_offset: int | None = Field(
         default=None,
-        description="Stack offset (declib-lifted); None for register vars/args",
+        description="Native backend stack offset; None for register vars/args",
     )
     size: int | None = Field(default=None, description="Size in bytes")
     kind: str = Field(default="stack", description="'stack' or 'arg'")

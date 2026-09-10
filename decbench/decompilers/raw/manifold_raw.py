@@ -51,6 +51,11 @@ from pathlib import Path
 from typing import Any
 
 from decbench.decompilers.base import Decompiler
+from decbench.decompilers.limits import (
+    cleanup_docker_invocation,
+    docker_memory_args,
+    docker_tracking_args,
+)
 from decbench.decompilers.raw import common
 from decbench.decompilers.registry import register_decompiler
 from decbench.decompilers.spec import load_versions_config, version_settings
@@ -571,6 +576,8 @@ class ManifoldDecompiler(Decompiler):
             docker,
             "run",
             "--rm",
+            *docker_tracking_args(),
+            *docker_memory_args(),
             "-v",
             f"{binary_path.resolve()}:/in/{binary_path.name}:ro",
             "-v",
@@ -583,7 +590,11 @@ class ManifoldDecompiler(Decompiler):
             cmd += ["-e", f"RAYON_NUM_THREADS={threads}"]
         cmd += [self._image, f"/in/{binary_path.name}", f"/work/{out_name}"]
         _l.debug("manifold docker run: %s", " ".join(cmd))
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            cleanup_docker_invocation(cmd)
+            raise
 
     def discover_functions(self, binary_path: Path) -> list[tuple[str, int]]:
         result = self.decompile_binary(binary_path)

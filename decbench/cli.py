@@ -296,7 +296,7 @@ def list_decompilers() -> None:
     from rich.console import Console
     from rich.table import Table
 
-    import decbench.decompilers.declib_dec  # noqa: F401
+    import decbench.decompilers  # noqa: F401
     from decbench.decompilers.registry import DecompilerRegistry
 
     console = Console()

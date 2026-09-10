@@ -57,6 +57,11 @@ from pathlib import Path
 from typing import Any
 
 from decbench.decompilers.base import Decompiler, DecompilerConfig
+from decbench.decompilers.limits import (
+    cleanup_docker_invocation,
+    docker_memory_args,
+    docker_tracking_args,
+)
 from decbench.decompilers.raw import common
 from decbench.decompilers.registry import register_decompiler
 from decbench.decompilers.spec import load_versions_config, version_settings
@@ -436,6 +441,8 @@ class RawGlaurungDecompiler(Decompiler):
                 docker,
                 "run",
                 "--rm",
+                *docker_tracking_args(),
+                *docker_memory_args(),
                 "--network",
                 "none",
                 "--read-only",
@@ -458,12 +465,11 @@ class RawGlaurungDecompiler(Decompiler):
         else:
             limit = os.environ.get("DECBENCH_GLAURUNG_LIMIT", "30000")
             cmd += ["--all", "--limit", str(int(limit))]
-        # Optional per-function analysis budget (ms). Glaurung bounds each
-        # function's lift/structure work; this caps a pathological single
-        # function without failing the batch.
+        # Glaurung accepts milliseconds while DecBench's shared policy uses seconds.
         fn_ms = os.environ.get("DECBENCH_GLAURUNG_TIMEOUT_MS")
-        if fn_ms:
-            cmd += ["--timeout-ms", str(int(fn_ms))]
+        if fn_ms in (None, ""):
+            fn_ms = str(int(self.config.function_timeout_seconds * 1000))
+        cmd += ["--timeout-ms", str(int(fn_ms))]
         return cmd
 
     @staticmethod
@@ -516,6 +522,7 @@ class RawGlaurungDecompiler(Decompiler):
         finally:
             if p.poll() is None:
                 self._kill_group(p)
+                cleanup_docker_invocation(cmd)
         if p.returncode != 0:
             tail = (stderr or "")[-500:]
             raise RuntimeError(f"glaurung exited {p.returncode}: {tail}")
