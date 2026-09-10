@@ -28,6 +28,7 @@ from decbench.results_store import (
     read_ged_overlay,
     update_byte_match,
     update_ged,
+    update_type_match,
     write_function_data_guarded,
 )
 
@@ -158,6 +159,36 @@ def test_merge_typematch_overlay() -> None:
     assert merged["kuna"]["a::O0::b::g"] == {"value": 0.1}
     assert merged["angr"]["a::O0::b::f"] == {"value": 0.2}
     assert existing["kuna"]["a::O0::b::f"] == {"value": 0.5}
+
+
+def test_type_match_overlay_preserves_correspondence_evidence() -> None:
+    fd = FunctionData(
+        decompilers=["angr"],
+        groups=[
+            BinaryGroup(
+                project="proj",
+                opt_level="O0",
+                binary="bin",
+                functions=[FunctionRecord(function="func")],
+            )
+        ],
+    )
+    count = update_type_match(
+        fd,
+        {
+            "angr": {
+                "proj::O0::bin::func": {
+                    "value": 0.5,
+                    "dist": 1,
+                    "variable_match_evidence": "native",
+                }
+            }
+        },
+    )
+
+    record = fd.groups[0].functions[0]
+    assert count == 1
+    assert record.metric_evidence == {"angr": {"type_match": "native"}}
 
 
 def test_coverage_guard_catches_column_drop() -> None:

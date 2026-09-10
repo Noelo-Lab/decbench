@@ -52,3 +52,5 @@ more information about these metrics, datasets, and methodology on the
 on the [view page](https://decbench.com/view/?dataset=sample-set&tier=sample-set&dec=codex&metric=ged&fn=base-passwd%2FO0%2Fupdate-passwd%3A%3Aread_shadow).
 
 <div id="leaderboard-dataset-desc"></div>
+
+<p id="type-evidence-note" class="view-desc evidence-note" hidden><span class="evidence-mark" aria-hidden="true">*</span> Some Type measurements used the older name-based variable correspondence because the producer is outside the seven address-reporting backends, or are historical rows whose evidence category was not recorded. Name matching is weaker evidence and not comparable like-for-like. A native row with no accepted variable pair does not receive this marker. Scores and denominators are calculated identically.</p>

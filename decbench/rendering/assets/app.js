@@ -465,7 +465,17 @@ function totalFunctions() { return (AGG && AGG.totals && AGG.totals.functions) |
 
 function pairOf(map, key) { const c = map && map[key]; return c || [0, 0]; }
 function metricCell(result, d, m) { return pairOf((result.per_metric || {})[d], m); }
-
+function metricEvidence(result, d, m) {
+    const byDec = (result.metric_evidence || {})[d] || {};
+    return byDec[m] || null;
+}
+function evidenceUsesHeuristic(evidence) {
+    if (!evidence) return false;
+    const nativeCount = evidence.native || 0;
+    const fallbackCount = evidence.fallback_only || 0;
+    const measured = evidence.measured || 0;
+    return fallbackCount > 0 || measured > nativeCount + fallbackCount;
+}
 // Decompilers to render as rows for the CURRENT preset. AGG.sample_set_only
 // backends ran on the sample-set slice only, so they render there and, on the
 // data page, below a partial-coverage break (splitDecs) — never elsewhere.
@@ -549,11 +559,27 @@ function showBannerHtml(viewId, html) {
     if (b) b.innerHTML = html;
 }
 
-function cellPctHtml(cell) {
+function cellPctHtml(cell, evidence) {
     const p = pct(cell);
+    const marker = evidenceUsesHeuristic(evidence)
+        ? '<a class="evidence-mark" href="#type-evidence-note" ' +
+          'aria-label="Type-score measurement note" aria-describedby="type-evidence-note" ' +
+          'title="This Type score includes legacy or uncategorized correspondence evidence.">*</a>'
+        : "";
     return '<span class="bar-ascii">' + asciiBar(p, 8) + '</span> ' +
-        '<span class="cell-pct pct-' + pctClass(p) + '">' + p.toFixed(1) + '%</span> ' +
+        '<span class="cell-pct pct-' + pctClass(p) + '">' + p.toFixed(1) + '%' + marker +
+        '</span> ' +
         '<span class="cell-count">(' + cell[0] + '/' + cell[1] + ')</span>';
+}
+function metricPctHtml(result, d, m) {
+    const evidence = m === "type_match" ? metricEvidence(result, d, m) : null;
+    return cellPctHtml(metricCell(result, d, m), evidence);
+}
+function updateTypeEvidenceNote(result) {
+    const note = document.getElementById("type-evidence-note");
+    if (!note) return;
+    note.hidden = !visibleDecs().some(d =>
+        evidenceUsesHeuristic(metricEvidence(result, d, "type_match")));
 }
 function errPctClass(p) { return p < 2 ? "high" : (p < 10 ? "mid" : "low"); }
 function errRate(cell) { return cell && cell[1] > 0 ? (cell[0] / cell[1]) * 100 : 0; }
@@ -594,7 +620,7 @@ function buildLeaderboard(result) {
             '<td class="lb-name lb-name-stacked" title="' + escapeHtml(decTip(d)) + '">' +
             decNameHtml(d, {stacked: true}) + '</td>';
         row += '<td class="metric-cell col-overall" data-label="Union">' + cellPctHtml(overallCell(result, d)) + '</td>';
-        for (const m of metrics) row += '<td class="metric-cell" data-label="' + escapeHtml(metricShort(m)) + '">' + cellPctHtml(metricCell(result, d, m)) + '</td>';
+        for (const m of metrics) row += '<td class="metric-cell" data-label="' + escapeHtml(metricShort(m)) + '">' + metricPctHtml(result, d, m) + '</td>';
         row += '<td class="metric-cell" data-label="Errors">' + errorCellHtml(errorCell(result, d)) + '</td>';
         row += '</tr>';
         body += row;
@@ -621,7 +647,7 @@ function buildMetricsTable(result) {
     let body = "";
     for (const d of decs) {
         let row = '<tr><td class="lb-name" title="' + escapeHtml(decTip(d)) + '">' + decNameHtml(d) + '</td>';
-        for (const m of metrics) row += '<td class="metric-cell" data-label="' + escapeHtml(metricShort(m)) + '">' + cellPctHtml(metricCell(result, d, m)) + '</td>';
+        for (const m of metrics) row += '<td class="metric-cell" data-label="' + escapeHtml(metricShort(m)) + '">' + metricPctHtml(result, d, m) + '</td>';
         row += '<td class="metric-cell col-overall" data-label="Union">' + cellPctHtml(overallCell(result, d)) + '</td>';
         row += '<td class="metric-cell" data-label="Errors">' + errorCellHtml(errorCell(result, d)) + '</td>';
         row += '</tr>';
@@ -771,6 +797,7 @@ function refresh() {
     buildMetricsTable(lastResult);
     buildDistance(lastResult);
     buildCompile(lastResult);
+    updateTypeEvidenceNote(lastResult);
     updateStats(lastResult);
     renderDatasetProjects();
 }

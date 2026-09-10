@@ -233,7 +233,11 @@ def main() -> int:
                     print(f"    [{spec}] decompile produced no result")
                     continue
                 dec_id = res.decompiler.decompiler_name
-                metric_results = evaluate_decompilation(res, src_cfgs)
+                metric_results = evaluate_decompilation(
+                    res,
+                    src_cfgs,
+                    preprocessed_sources=list(sources.values()),
+                )
                 evaluation[project_name][opt][stem][dec_id] = metric_results
                 decompiled[project_name][opt][stem][dec_id] = res
                 got = res.successful_count

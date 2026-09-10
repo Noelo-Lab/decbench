@@ -108,6 +108,45 @@ def test_metric_unmeasurable_for_everyone_leaves_every_denominator() -> None:
     assert combo["overall"]["alpha"] == [2, 2]
 
 
+def test_type_match_evidence_distinguishes_native_and_fallback_rows() -> None:
+    record = _func(
+        "scored",
+        values={d: {"type_match": 0.5} for d in DECS},
+        perfects={d: {"type_match": False} for d in DECS},
+    )
+    record.metric_evidence = {
+        "alpha": {"type_match": "native"},
+        "beta": {"type_match": "fallback_only"},
+    }
+
+    combo = _build(_data([record]))["combos"][combo_key("full", False)]
+
+    assert combo["metric_evidence"]["alpha"]["type_match"] == {
+        "native": 1,
+        "fallback_only": 0,
+        "measured": 1,
+    }
+    assert combo["metric_evidence"]["beta"]["type_match"] == {
+        "native": 0,
+        "fallback_only": 1,
+        "measured": 1,
+    }
+
+
+def test_historical_type_rows_preserve_an_uncategorized_measured_count() -> None:
+    record = _func(
+        "historical",
+        values={"alpha": {"type_match": 0.5}},
+        perfects={"alpha": {"type_match": False}},
+    )
+
+    combo = _build(_data([record]))["combos"][combo_key("full", False)]
+
+    assert combo["metric_evidence"]["alpha"]["type_match"] == {
+        "native": 0,
+        "fallback_only": 0,
+        "measured": 1,
+    }
 def test_source_parse_failure_drops_ged_for_everyone() -> None:
     """No source CFG => GED unmeasurable. Joern failing on the SOURCE is our fault.
 
