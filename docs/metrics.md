@@ -69,9 +69,11 @@ dataset/publish family — `publish/cfg_export.py`, `publish/layout.py`,
 `dataset.py`, `scripts/compute_dataset_info.py` — which is why a C++ project is
 not publishable to the dataset yet (see benchmarking.md).
 
-byte_match/type_match don't use the preprocessed units
-(`requires_source_cfg = False`; gcc-recompile and DWARF respectively), and
-sample source extraction only *falls back* to them. So do NOT disable
+Neither byte_match nor type_match needs a Joern source CFG
+(`requires_source_cfg = False`; gcc-recompile and DWARF respectively), but
+type_match now uses the preprocessed units to identify source-level variable
+occurrences and join their DWARF line rows to native instruction addresses.
+Sample source extraction also *falls back* to them. So do NOT disable
 `Project.emit_preprocessed` (default True, `models/project.py`) or
 `-save-temps=obj` in the default `base_flags` (`compilers/gcc.py`). The only
 preprocessed-free evaluation path is the published-dataset `--source-cfgs`
@@ -112,12 +114,13 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="6"`, bumped for the narrowed pointee rule below — the
-only one of the normalization rules that changes an existing C value. The
-per-function key covers the decompiled variables and the DWARF ground truth but
-NOT `normalize_type`, so only a normalization change can serve stale values;
-a change to what DWARF yields mints a new key on its own and must NOT bump
-(see [Metric caching](#metric-caching)).
+Current `cache_version="15"`, bumped for the address-correspondence algorithm
+and its producer/fallback policy. The per-function key covers source and
+decompiler address evidence, argument/stack anchors, recovered types, source
+selection diagnostics, and the matching thresholds.
+It still does NOT contain the implementation of `normalize_type`, so a
+normalization-policy change must bump the version (see
+[Metric caching](#metric-caching)).
 
 **The ground-truth payload must be ORDER-STABLE.** `_parse_variable_die` returns
 `type` and `rbp_offset` as SORTED lists. They land in the cache key through
@@ -128,19 +131,45 @@ bzip2/ghidra, 108 functions: cold 5 hits / 103 misses, then a second process at
 the default random seed 25/83 and a third 51/57 — versus 108/0 with sorted
 lists). Any new list in that payload must be sorted too.
 
-Unified 3-pass matching against `FunctionDecompilation.variables`:
+The full-dataset backends `angr`, `binja`, `dewolf`, `ghidra`, `ida`, `kuna`,
+and `r2dec` use one type-blind, three-stage correspondence against
+`FunctionDecompilation.variables`:
 
 1. **Arguments by ABI position** — DWARF formal-parameter order ↔
    `VariableInfo.arg_index`; name-independent, so angr's `a0`/`a1` get fair
    credit.
 2. **Stack vars by auto-calibrated offset shift.**
-3. **Rest by exact name.**
+3. **Residual variables by instruction-address overlap.** Source occurrences
+   come from the selected preprocessed translation unit plus DWARF line and
+   location information. Decompiler occurrences come from validated
+   pseudocode-line mappings. A reciprocal best match must clear both the
+   minimum-overlap threshold and the ambiguity margin.
 
-Regex text parsing is the last-resort fallback (and the scoring path for
-backends that carry no `VariableInfo`, e.g. LLM agents and external
-submissions: the C signature is parsed into ABI-positioned args + locals). At
-`-O2`, register locals that decompilers fold into expressions count as misses
+Names, types, and sizes are not correspondence evidence on this path; types are
+examined only after a source/decompiler pair is fixed. Inferred variables parsed
+from plain C cannot invent native occurrences and can participate only through
+an ABI argument or stack anchor.
+
+Any producer outside that positive seven-backend allowlist remains evaluable
+through the older, explicitly caveated fallback: ABI argument position,
+calibrated stack offset, then exact variable name (with regex parsing when no
+structured variables were stored). Its Type result records
+`variable_match_evidence = "fallback_only"`; supported address rows record
+`"native"`, including a conservative zero-match result. The site marks fallback
+rows with an asterisk. Capability is chosen from the producer identity once per
+result, not inferred from whether one particular function happened to carry an
+address.
+
+At `-O2`, register locals that decompilers fold into expressions count as misses
 for everyone uniformly.
+
+Every native address is passed through
+`decompilers/provenance.py` before evaluation. The sanitizer resolves the
+function from DWARF and accepts only exact decoded instruction starts inside
+that function (normalizing the Thumb bit where appropriate); invalid rows and
+variable addresses are dropped fail-closed. Backends may provide a precise
+pseudocode line map or directly emit each variable's native occurrence
+addresses.
 
 A subprogram's name is read through `binfmt.die_attr` rather than straight off
 the DIE, because gcc keeps a C++ out-of-line member definition's `DW_AT_name`

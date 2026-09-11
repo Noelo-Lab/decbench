@@ -63,7 +63,11 @@ Key conventions (all families):
   `0x400000`, Ghidra `0x100000`, IDA `0x0`) for PIE binaries.
 - Functions outside `.text` (PLT/thunks) and CRT helpers are skipped.
 - `FunctionDecompilation.variables` (`VariableInfo`) carries stack vars/args
-  for the type metric; line maps are best-effort (angr/Ghidra populate them).
+  for the type metric. For the seven full-dataset producers supported by native
+  variable matching (`angr`, `binja`, `dewolf`, `ghidra`, `ida`, `kuna`, and
+  `r2dec`), each variable also carries pseudocode `line_numbers` and/or validated
+  ELF-file-space instruction `addresses`; `line_mappings` joins pseudocode lines
+  to native addresses.
   `VariableInfo.arg_index` must be the **ABI position**, not the order the tool
   happens to enumerate its locals in — type_match pairs arguments by that index
   (see [metrics.md](metrics.md#argument-positions-must-be-abi-positions)).
@@ -179,14 +183,32 @@ def decompile_binary(
 | --- | --- | --- |
 | `decompiled_code` (C string) | GED, byte_match | **Yes** — without it nothing scores |
 | `address` (ELF-space) | type_match, byte_match | **Yes** |
-| `variables: list[VariableInfo]` | type_match | Recommended (else parsed out of the C) |
-| `line_mappings: list[LineMapping]` | (CFG line attribution) | Optional / best-effort |
+| `variables: list[VariableInfo]` | type_match | Recommended (else the fallback parses C) |
+| `VariableInfo.line_numbers` / `.addresses` | type_match variable correspondence | Required for native residual-variable matching |
+| `line_mappings: list[LineMapping]` | type_match variable correspondence | Required unless the backend directly supplies each variable's addresses |
 | `metadata` (e.g. goto/bool counts) | report extras | Optional |
 
 A backend that only fills `decompiled_code` + correct `address` already scores
-on GED and byte_match, and type_match parses its C (signature → ABI-positioned
-args + locals; name-based regex only as a last resort). Variables and line maps
-improve fidelity but are not required.
+on GED and byte_match. It also remains evaluable on type_match through the
+caveated legacy fallback (signature → ABI-positioned arguments and locals,
+then stack/name matching), but it does not join the native-evidence comparison
+used by the seven full-dataset backends.
+
+### Native variable-occurrence contract
+
+The address-based Type matcher is intentionally enabled only for `angr`,
+`binja`, `dewolf`, `ghidra`, `ida`, `kuna`, and `r2dec`. These backends must
+populate each variable's instruction occurrences either directly in
+`VariableInfo.addresses` or through precise `VariableInfo.line_numbers` and
+`LineMapping.addresses` entries.
+
+The pipeline validates all reported addresses with
+`decompilers/provenance.py`. It accepts only decoded instruction starts in the
+DWARF-resolved function and otherwise drops the evidence. Do not derive an
+address from line numbers, source positions, guessed ranges, or the nearest
+instruction. The generic fallback exists so unsupported backends can still run
+an evaluation; adding a backend to the native allowlist requires implementing
+and testing this contract first.
 
 ## 2. Minimal working example
 
@@ -553,8 +575,9 @@ backend labels each function `sub_<addr>`; `run_benchmark._relabel_to_dwarf`
 renames the placeholder to the real symbol for name-based evaluation. Missing
 line-maps and variables are fine — GED parses the C directly, and type_match
 parses the C signature into ABI-positioned arguments plus locals and scores
-them through the structured matcher (name-based text parsing only as a last
-resort). Before publishing, refresh the metric overlays as with any newly added
+them through the caveated legacy stack/name fallback. It remains evaluable,
+but is not presented as native address evidence. Before publishing, refresh the
+metric overlays as with any newly added
 decompiler — but note `scripts/reeval_ged.py` and `scripts/reeval_bytematch.py`
 hard-code a `DECOMPILERS` tuple that does **not** include the LLM backends
 (`codex`/`claude-code`/`kimi-code`):
@@ -785,10 +808,11 @@ submission zip out of git too (`private/` is ignored for exactly this).
 - **byte_match abstains for ARM/PE** on hosts without the cross/MinGW
   toolchains (a non-scoring result, not a 0) — GED + type_match carry those
   slices, same as for every in-house backend.
-- **type_match uses the code-only parser** (signature → ABI-positioned args +
-  locals): submissions carry no `VariableInfo`, so they are scored on the same
-  footing as the LLM backends — fair, but structured variable data from a raw
-  backend can score slightly differently.
+- **type_match uses the caveated fallback.** The code-only parser recovers the
+  signature as ABI-positioned arguments plus locals, then the legacy matcher
+  uses stack/name evidence. Submissions carry no native occurrence mapping, so
+  the site marks their Type percentage rather than treating it as like-for-like
+  with the seven address-supported full-dataset backends.
 - **Sample-set only.** The column renders only on the `sample-set` preset;
   on every other preset its near-zero coverage would be misleading (that is
   exactly what `sample_set_only` gates).

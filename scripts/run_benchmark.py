@@ -48,6 +48,7 @@ from decbench.decompilers.limits import (  # noqa: E402
     resource_scope_memory_events,
     resource_scope_oom_killed,
 )
+from decbench.decompilers.provenance import sanitize_native_provenance  # noqa: E402
 from decbench.models.decompilation import DecompilationResult, DecompilerMetadata  # noqa: E402
 from decbench.models.project import OptimizationLevel, Project  # noqa: E402
 from decbench.pipeline.evaluate import evaluate_project  # noqa: E402
@@ -57,6 +58,7 @@ from decbench.results_store import gather_project_tomls as gather_tomls
 from decbench.utils import binfmt  # noqa: E402
 from decbench.utils.cfg import extract_cfgs_from_source  # noqa: E402
 from decbench.utils.dwarf_policy import dwarf_follow_abstract_origin  # noqa: E402
+from decbench.utils.native_code import NativeCodeResolver  # noqa: E402
 
 OPT_LEVELS = [
     OptimizationLevel.O0,
@@ -256,18 +258,64 @@ def _relabel_to_dwarf(
     # Pre-fix PE decompiles stored bare RVAs; adding the ImageBase recovers the
     # DWARF key. Harmless for ELF, where the base is already folded into fd.address.
     base = common.elf_min_vaddr(unstripped)
+    thumb_names: dict[int, tuple[int, str]] = {}
+    blocked_thumb_addresses: set[int] = set()
+    info = binfmt.detect(unstripped)
+    if info is not None and info.arch == "arm":
+        try:
+            resolver = NativeCodeResolver(unstripped)
+        except Exception:  # noqa: BLE001
+            resolver = None
+        if resolver is not None:
+            for address, name in addr2name.items():
+                try:
+                    thumb = resolver.uses_thumb(name, address)
+                except Exception:  # noqa: BLE001
+                    continue
+                if not thumb:
+                    continue
+                canonical = address & ~1
+                prior = thumb_names.get(canonical)
+                binding = (address, name)
+                if prior is not None and prior != binding:
+                    blocked_thumb_addresses.add(canonical)
+                else:
+                    thumb_names[canonical] = binding
+    for address in blocked_thumb_addresses:
+        thumb_names.pop(address, None)
+
     new_funcs: dict[str, object] = {}
+    dropped = 0
     for fd in list(result.functions.values()):
         addr = int(fd.address)
-        dn = (
-            addr2name.get(addr)
-            or addr2name.get(addr & ~1)
-            or addr2name.get(addr + base)
-            or addr2name.get((addr + base) & ~1)
+        candidates = (addr,) if not base else (addr, addr + base)
+        binding = next(
+            (
+                (candidate, addr2name[candidate])
+                for candidate in candidates
+                if candidate in addr2name
+            ),
+            None,
         )
-        if dn and dn != fd.name:
-            fd.decompiled_code = re.sub(r"\b" + re.escape(fd.name) + r"\b", dn, fd.decompiled_code)
-            fd.name = dn
+        if binding is None:
+            binding = next(
+                (
+                    thumb_names[canonical]
+                    for candidate in candidates
+                    if (canonical := candidate & ~1) in thumb_names
+                ),
+                None,
+            )
+        if binding is None:
+            dropped += 1
+            continue
+        matched_address, dwarf_name = binding
+        fd.address = matched_address
+        if dwarf_name != fd.name:
+            fd.decompiled_code = re.sub(
+                r"\b" + re.escape(fd.name) + r"\b", dwarf_name, fd.decompiled_code
+            )
+            fd.name = dwarf_name
         prev = new_funcs.get(fd.name)
         if prev is None or len(fd.decompiled_code or "") >= len(
             getattr(prev, "decompiled_code", "") or ""
@@ -275,6 +323,11 @@ def _relabel_to_dwarf(
             new_funcs[fd.name] = fd
     result.functions = new_funcs  # type: ignore[assignment]
     result.binary_path = unstripped
+    if dropped:
+        result.decompiler.extra = {
+            **(result.decompiler.extra or {}),
+            "source_filter_unmatched_dropped": dropped,
+        }
 
 
 def _timed_decompile(
@@ -471,6 +524,7 @@ def decompile_project_timed(
                         _relabel_to_dwarf(res, amap, orig)
                     else:
                         res.binary_path = orig
+                    sanitize_native_provenance(res, orig)
                     with contextlib.suppress(Exception):
                         res.to_c_file(dec_out / f"{dec_name}_{stem}.c")
                 results[stem][dec_name] = res

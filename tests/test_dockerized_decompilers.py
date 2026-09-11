@@ -8,12 +8,17 @@ semantics are always exercised.
 
 from __future__ import annotations
 
+import json
 import shutil
+import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from decbench.decompilers.dockerized import (
+    _DOCKER_DIR,
+    _R2_DRIVER_CONTAINER_PATH,
     DockerizedDecompiler,
     R2DecDecompiler,
     RekoDecompiler,
@@ -21,6 +26,9 @@ from decbench.decompilers.dockerized import (
     _func_ident_in_code,
     _r2_bare_name,
     _r2_is_import,
+    _r2_json_annotations,
+    _r2_json_lines,
+    _r2_variable_records,
     elf_function_symbols,
     split_c_functions,
 )
@@ -134,20 +142,84 @@ def test_split_keeps_first_definition_of_duplicate_name() -> None:
 class _FakeR2:
     """Minimal r2pipe stand-in returning canned ``ij`` / ``aflj`` / ``pdd``."""
 
-    def __init__(self, aflj: list[dict], baddr: int = 0) -> None:
+    def __init__(self, aflj: list[dict], baddr: int = 0, json_decompile: bool = True) -> None:
         self._aflj = aflj
         self._baddr = baddr
+        self._json_decompile = json_decompile
 
     def cmdj(self, cmd: str):  # noqa: ANN201
         if cmd == "aflj":
             return self._aflj
         if cmd == "ij":
-            return {"bin": {"baddr": self._baddr}}
+            return {"bin": {"baddr": self._baddr, "arch": "x86"}}
+        if "@" not in cmd:
+            return None
+        command, target = (part.strip() for part in cmd.split("@", 1))
+        addr = int(target, 0)
+        if command == "pddj":
+            if not self._json_decompile:
+                raise ValueError("JSON command unavailable")
+            return {
+                "lines": [
+                    {"str": "/* r2dec pseudo code output */"},
+                    {"str": f"int64_t fcn_{addr:08x}(int32_t arg1) {{", "offset": addr},
+                    {"str": "    int32_t local;", "offset": addr},
+                    {"str": "    local = arg1;", "offset": addr + 4},
+                    {"str": "    return local;", "offset": addr + 8},
+                    {"str": "}"},
+                ]
+            }
+        if command == "pdcj":
+            if not self._json_decompile:
+                raise ValueError("JSON command unavailable")
+            code = (
+                "\n"
+                f"int64_t fcn_{addr:08x}(int32_t arg1) {{\n"
+                "    int32_t local = arg1;\n"
+                "    return local;\n"
+                "}\n"
+            )
+            return {
+                "code": code,
+                "annotations": [
+                    {
+                        "start": code.index("local ="),
+                        "end": code.index("local ="),
+                        "offset": addr + 4,
+                        "type": "offset",
+                    }
+                ],
+            }
+        if command == "afij":
+            return [{"addr": addr, "size": 0x20, "bits": 64}]
+        if command == "afvj":
+            return {
+                "reg": [{"name": "arg1", "kind": "reg", "type": "int32_t", "ref": "rdi"}],
+                "sp": [],
+                "bp": [
+                    {
+                        "name": "local",
+                        "kind": "var",
+                        "type": "int32_t",
+                        "ref": {"base": "rbp", "offset": -4},
+                    }
+                ],
+            }
+        if command == "afvRj":
+            return [
+                {"name": "arg1", "addrs": [addr + 4]},
+                {"name": "local", "addrs": [addr + 8]},
+            ]
+        if command == "afvWj":
+            return [{"name": "local", "addrs": [addr + 4]}]
+        if command == "afcfj":
+            return [{"args": [{"name": "arg1", "type": "int32_t"}]}]
         return None
 
     def cmd(self, cmd: str) -> str:
         if cmd.startswith(("pdd", "pdc")) and "@" in cmd:
-            addr = int(cmd.rsplit("@", 1)[1].strip(), 0)
+            target = cmd.rsplit("@", 1)[1].strip()
+            addr = 0 if target == "entry0" else int(target, 0)
             return (
                 "/* r2dec pseudo code output (r2 6.0.8) */\n"
                 "#include <stdint.h>\n\n"
@@ -237,6 +309,291 @@ def test_r2_make_function_names_from_code_and_relabels() -> None:
     assert fd2 is not None and fd2.name == "realname"
     assert "realname" in fd2.decompiled_code and "foo(" not in fd2.decompiled_code
     assert R2DecDecompiler._make_function("fcn.x", 0x1, "   ", None) is None
+
+
+def test_r2_json_lines_and_variable_records() -> None:
+    r = _FakeR2([], baddr=0x4000)
+    parsed = _r2_json_lines(r.cmdj("pddj @ 0x4100"))
+    assert parsed is not None
+    code, mappings = parsed
+    assert code.splitlines()[1].startswith("int64_t fcn_00004100")
+    assert mappings[0] == {"line_number": 2, "addresses": [0x4100]}
+
+    variables = _r2_variable_records(r, 0x4100, mappings)
+    assert variables[0]["name"] == "arg1"
+    assert variables[0]["kind"] == "arg"
+    assert variables[0]["arg_index"] == 0
+    assert variables[0]["addresses"] == [0x4104]
+    assert variables[1]["name"] == "local"
+    assert variables[1]["stack_offset"] == -4
+    assert variables[1]["addresses"] == [0x4104, 0x4108]
+
+
+def test_r2_pdcj_annotations_map_the_exact_trimmed_code_lines() -> None:
+    r = _FakeR2([])
+    parsed = _r2_json_annotations(r.cmdj("pdcj @ 0x4100"))
+    assert parsed is not None
+    code, mappings = parsed
+    assert code.splitlines()[1] == "    int32_t local = arg1;"
+    assert mappings == [{"line_number": 2, "addresses": [0x4104]}]
+
+
+def test_r2_make_function_rebases_and_filters_thumb_provenance() -> None:
+    provenance = {
+        "addr": 0x5001,
+        "size": 0x10,
+        "is_thumb": True,
+        "line_mappings": [
+            {"line_number": 1, "addresses": [0x5001, 0x5004, 0x6000]},
+            {"line_number": 99, "addresses": [0x5008]},
+        ],
+        "variables": [
+            {
+                "name": "renamed",
+                "type": "int",
+                "kind": "stack",
+                "stack_offset": -4,
+                "line_numbers": [1, 99],
+                "addresses": [0x5003, 0x5004, 0x6000],
+            }
+        ],
+    }
+    function = R2DecDecompiler._make_function(
+        "fcn.5001",
+        0x9001,
+        "int f(void) { return 0; }",
+        None,
+        provenance,
+        r2_addr=0x5001,
+        baddr=0x4000,
+        elf_base=0x8000,
+    )
+    assert function is not None
+    assert function.address == 0x9000
+    assert [mapping.model_dump() for mapping in function.line_mappings] == [
+        {"line_number": 1, "addresses": [0x9000, 0x9004]}
+    ]
+    assert function.variables[0].line_numbers == [1]
+    assert function.variables[0].addresses == [0x9002, 0x9004]
+
+
+def test_r2_make_function_rejects_malformed_variable_fields() -> None:
+    provenance = {
+        "addr": 0x1000,
+        "size": 0x10,
+        "variables": [
+            {
+                "name": "",
+                "addresses": [0x1004],
+            },
+            {
+                "name": "local",
+                "size": 0,
+                "kind": "stack",
+                "arg_index": 2,
+                "line_numbers": [-1, 0, 1, 99],
+                "addresses": [0x1004],
+            },
+            {
+                "name": "arg1",
+                "size": -4,
+                "kind": "arg",
+                "arg_index": -1,
+                "addresses": [0x1008],
+            },
+        ],
+    }
+    function = R2DecDecompiler._make_function(
+        "fcn.1000",
+        0x1000,
+        "int f(int arg1) {\n    int local = arg1;\n    return local;\n}",
+        None,
+        provenance,
+        r2_addr=0x1000,
+    )
+    assert function is not None
+    assert [variable.name for variable in function.variables] == ["local", "arg1"]
+    assert function.variables[0].size is None
+    assert function.variables[0].arg_index is None
+    assert function.variables[0].line_numbers == [1]
+    assert function.variables[1].size is None
+    assert function.variables[1].arg_index is None
+
+
+def test_r2_native_falls_back_to_text_when_pddj_unavailable() -> None:
+    r = _FakeR2([], json_decompile=False)
+    record = R2DecDecompiler._decompile_one_native(r, "pdd", 0x1000)
+    assert record is not None
+    assert record["code"]
+    assert record["line_mappings"] == []
+    assert record["variables"]
+
+
+def test_r2_native_pdc_uses_json_annotations() -> None:
+    record = R2DecDecompiler._decompile_one_native(_FakeR2([]), "pdc", 0x1000)
+    assert record is not None
+    assert record["line_mappings"] == [{"line_number": 2, "addresses": [0x1004]}]
+
+
+def test_r2_code_inferred_local_joins_pdcj_line_addresses() -> None:
+    from decbench.metrics.base import MetricConfig
+    from decbench.metrics.type_match import TypeMatchMetric
+
+    provenance = {
+        "addr": 0x1000,
+        "size": 0x10,
+        "line_mappings": [{"line_number": 2, "addresses": [0x1004]}],
+    }
+    function = R2DecDecompiler._make_function(
+        "fcn.1000",
+        0x1000,
+        "int target(void) {\n    int renamed = 1;\n    return renamed;\n}",
+        None,
+        provenance,
+        r2_addr=0x1000,
+    )
+    assert function is not None
+    assert function.variables[0].line_numbers == [2, 3]
+    assert function.variables[0].addresses == [0x1004]
+    metric = TypeMatchMetric(MetricConfig())
+    result = metric.compute_for_function(
+        function,
+        ground_truth_vars=[
+            {
+                "identity": "source:0",
+                "name": "original",
+                "type": ["int"],
+                "rbp_offset": [],
+                "addresses": [0x1004],
+            }
+        ],
+        backend="r2dec",
+    )
+    assert result.value == 1.0
+    assert result.metadata["match_stage_counts"] == {"overlap": 1}
+    assert result.metadata["decompiler_address_variables"] == 1
+
+
+def test_r2_code_inferred_variables_abstain_on_shadowed_names() -> None:
+    provenance = {
+        "addr": 0x1000,
+        "size": 0x20,
+        "line_mappings": [
+            {"line_number": 2, "addresses": [0x1004]},
+            {"line_number": 3, "addresses": [0x1008]},
+            {"line_number": 4, "addresses": [0x100C]},
+        ],
+    }
+    function = R2DecDecompiler._make_function(
+        "fcn.1000",
+        0x1000,
+        "int target(void) {\n"
+        "    int shadow = 0;\n"
+        "    { int shadow = 1; shadow++; }\n"
+        "    return shadow;\n"
+        "}\n",
+        None,
+        provenance,
+        r2_addr=0x1000,
+    )
+
+    assert function is not None
+    assert [variable.name for variable in function.variables] == ["shadow"]
+    assert all(variable.line_numbers == [] for variable in function.variables)
+    assert all(variable.addresses == [] for variable in function.variables)
+
+
+def test_r2_docker_payload_populates_native_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dec = R2DecDecompiler()
+    monkeypatch.setattr(dec, "_image_present", lambda _image: True)
+
+    def fake_run(**kwargs: Any) -> subprocess.CompletedProcess[str]:
+        work_dir = kwargs["work_dir"]
+        assert kwargs["args"] == ["/in/bin", "/work/out.json", "/work/targets.json"]
+        assert json.loads((work_dir / "targets.json").read_text()) == [0x1000]
+        assert kwargs["readonly_mounts"] == [
+            (_DOCKER_DIR / "r2dec-decompile.py", _R2_DRIVER_CONTAINER_PATH)
+        ]
+        payload = {
+            "schema_version": 1,
+            "command": "pdd",
+            "functions": [
+                {
+                    "addr": 0x1000,
+                    "baddr": 0,
+                    "name": "fcn.00001000",
+                    "code": "int f(int arg1) {\n    return arg1;\n}",
+                    "size": 0x10,
+                    "line_mappings": [{"line_number": 2, "addresses": [0x1004]}],
+                    "variables": [
+                        {
+                            "name": "arg1",
+                            "type": "int",
+                            "kind": "arg",
+                            "arg_index": 0,
+                            "addresses": [0x1004],
+                            "line_numbers": [2],
+                        }
+                    ],
+                },
+                {
+                    "addr": 0x2000,
+                    "baddr": 0,
+                    "name": "fcn.00002000",
+                    "code": "int unrelated(void) { return 0; }",
+                    "size": 0x10,
+                    "line_mappings": [],
+                    "variables": [],
+                },
+            ],
+        }
+        (work_dir / "out.json").write_text(json.dumps(payload))
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(dec, "_run_docker", fake_run)
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.raw_common.elf_min_vaddr",
+        lambda _path: 0,
+    )
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.raw_common.elf_text_ranges",
+        lambda _path: [(0x1000, 0x1010)],
+    )
+    result = dec._decompile_docker(Path("/nonexistent/bin"), None, None, {0x1000}, None)
+    assert {function.address for function in result.functions.values()} == {0x1000}
+    function = next(iter(result.functions.values()))
+    assert function.line_mappings[0].addresses == [0x1004]
+    assert function.variables[0].addresses == [0x1004]
+    assert function.variables[0].arg_index == 0
+    assert result.decompiler.extra["command"] == "pdd"
+
+
+def test_r2_docker_rejects_legacy_unversioned_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dec = R2DecDecompiler()
+    monkeypatch.setattr(dec, "_image_present", lambda _image: True)
+
+    def fake_run(**kwargs: Any) -> subprocess.CompletedProcess[str]:
+        legacy_payload = [
+            {
+                "addr": 0x1000,
+                "baddr": 0,
+                "name": "fcn.00001000",
+                "code": "int f(void) { return 0; }",
+            }
+        ]
+        (kwargs["work_dir"] / "out.json").write_text(json.dumps(legacy_payload))
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(dec, "_run_docker", fake_run)
+    result = dec._decompile_docker(Path("/nonexistent/bin"), None, None, {0x1000}, None)
+
+    assert result.functions == {}
+    assert result.decompiler.failed_functions == ["all"]
+    assert "legacy driver payload" in result.decompiler.extra["error"]
 
 
 def test_r2_decompile_native_int_filter_mocked(monkeypatch: pytest.MonkeyPatch) -> None:

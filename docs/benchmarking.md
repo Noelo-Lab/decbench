@@ -518,6 +518,21 @@ corrected values (sanitized decompiled parses, DWARF-owned per-TU source
 matching, non-finite dropped, compilability fixup); the per-project checkpoints still
 hold the ORIGINAL inline values from each decompiler's first evaluation.
 
+The type_match refresh additionally rebinds every checkpoint's binary path to
+the selected results tree, validates decompiler occurrence addresses against
+that compiled binary, and passes the tree's preprocessed translation units to
+the source-side address extractor:
+
+```bash
+python scripts/reeval_typematch.py results/full_run --emit
+```
+
+A project-scoped invocation merges its rows into an existing
+`type_match_new.json`; it does not replace other projects. Old checkpoints that
+predate `VariableInfo.line_numbers` / `.addresses` cannot manufacture native
+provenance during reevaluation. Re-run the affected decompiler first when its
+producer data is missing or wrong.
+
 `reeval_ged.py` signs each per-slice checkpoint with the GED cache version,
 node limit, audit schema, historical source basis, and frozen-score evidence
 digest, so a metric, provenance, or baseline change invalidates the old
@@ -547,8 +562,9 @@ After adding a decompiler, refresh the overlays and re-finalize before
 publishing.
 
 **A reeval can only fix what the checkpoint recorded.** `reeval_typematch.py`
-recomputes the METRIC from `FunctionDecompilation.variables`; it cannot repair a
-backend that stored the wrong thing. The live case: PR #60 fix 3 corrected IDA's
+recomputes the METRIC from `FunctionDecompilation.variables`, line mappings,
+and native occurrence addresses; it cannot repair a backend that stored the
+wrong thing. The live case: PR #60 fix 3 corrected IDA's
 `arg_index` from Hex-Rays allocation order to `cfunc.argidx`, but every
 `checkpoints/*.pkl` in `results/full_run` was written BEFORE that fix and still
 carries the scrambled indices, so re-scoring from checkpoints reproduces the old

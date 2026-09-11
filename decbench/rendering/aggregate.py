@@ -34,7 +34,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from decbench.models.function_data import FunctionData, FunctionRecord
+from decbench.models.function_data import (
+    VARIABLE_MATCH_EVIDENCE,
+    FunctionData,
+    FunctionRecord,
+)
 from decbench.models.scoreboard import Scoreboard
 from decbench.rendering.content import Category, Content, load_content
 
@@ -53,6 +57,8 @@ ALL_PRESET = "__all__"
 
 # Mirrors app.js's SAMPLE_SET_PRESET; the two must stay in sync.
 SAMPLE_SET_PRESET = "sample-set"
+
+_EVIDENCE_ORDER = ("native", "fallback_only")
 
 # Do NOT reintroduce rounding here. The client re-renders some values at fewer
 # places than they are stored, so pre-rounding manufactures half-boundaries that
@@ -221,6 +227,8 @@ class _FunctionFacts:
     union_perfect: tuple[bool, ...]
     distances: tuple[tuple[float | None, ...], ...]
     compiles: tuple[bool | None, ...]
+    metric_evidence: tuple[tuple[str | None, ...], ...]
+    metric_measured: tuple[tuple[bool, ...], ...]
 
 
 def _function_facts(
@@ -240,6 +248,8 @@ def _function_facts(
     union_perfect: list[bool] = []
     distances: list[tuple[float | None, ...]] = []
     compiles: list[bool | None] = []
+    metric_evidence: list[tuple[str | None, ...]] = []
+    metric_measured: list[tuple[bool, ...]] = []
     all_decompiled = True
     all_full_coverage_decompiled = True
 
@@ -272,6 +282,28 @@ def _function_facts(
         bm = (func.values.get(dec) or {}).get("byte_match")
         compiles.append(bool(func.compiles.get(dec)) if bm is not None else None)
 
+        values = func.values.get(dec) or {}
+        metric_measured.append(
+            tuple(
+                (
+                    isinstance(value, (int, float)) and math.isfinite(value)
+                    if (value := values.get(metric)) is not None
+                    else False
+                )
+                for metric in metrics
+            )
+        )
+        evidence_by_metric = func.metric_evidence.get(dec) or {}
+        metric_evidence.append(
+            tuple(
+                (
+                    evidence
+                    if (evidence := evidence_by_metric.get(metric)) in VARIABLE_MATCH_EVIDENCE
+                    else None
+                )
+                for metric in metrics
+            )
+        )
     return _FunctionFacts(
         datasets=frozenset(func.datasets),
         all_decompiled=all_decompiled,
@@ -284,6 +316,8 @@ def _function_facts(
         union_perfect=tuple(union_perfect),
         distances=tuple(distances),
         compiles=tuple(compiles),
+        metric_evidence=tuple(metric_evidence),
+        metric_measured=tuple(metric_measured),
     )
 
 
@@ -342,6 +376,10 @@ class _ComboAccumulator:
         self._distances: list[list[list[float]]] = [
             [[] for _ in range(n_dist)] for _ in range(n_dec)
         ]
+        self._metric_evidence = [
+            [[0] * len(_EVIDENCE_ORDER) for _ in range(n_met)] for _ in range(n_dec)
+        ]
+        self._metric_measured = [[0] * n_met for _ in range(n_dec)]
 
     def add(self, facts: _FunctionFacts) -> None:
         """Fold one active function into this combo."""
@@ -356,6 +394,11 @@ class _ComboAccumulator:
             dec_total = self._total[di]
             dec_perfect_counts = self._perfect[di]
             for mi in range(len(self._metrics)):
+                if facts.metric_measured[di][mi]:
+                    self._metric_measured[di][mi] += 1
+                    evidence = facts.metric_evidence[di][mi]
+                    if evidence is not None:
+                        self._metric_evidence[di][mi][_EVIDENCE_ORDER.index(evidence)] += 1
                 if not facts.measurable[mi]:
                     continue
                 dec_total[mi] += 1
@@ -383,6 +426,20 @@ class _ComboAccumulator:
 
     def result(self) -> dict[str, Any]:
         """Emit this combo per the schema (counts as ``[numerator, denominator]``)."""
+        metric_evidence: dict[str, dict[str, dict[str, int]]] = {}
+        for di, dec in enumerate(self._decompilers):
+            per_metric: dict[str, dict[str, int]] = {}
+            for mi, metric in enumerate(self._metrics):
+                counts = self._metric_evidence[di][mi]
+                measured = self._metric_measured[di][mi]
+                if not any(counts) and (metric != "type_match" or not measured):
+                    continue
+                per_metric[metric] = {
+                    **dict(zip(_EVIDENCE_ORDER, counts, strict=True)),
+                    "measured": measured,
+                }
+            if per_metric:
+                metric_evidence[dec] = per_metric
         return {
             "functions": self.functions,
             "binaries": self.binaries,
@@ -405,6 +462,7 @@ class _ComboAccumulator:
                 dec: [self._compiled[di], self._compile_total[di]]
                 for di, dec in enumerate(self._decompilers)
             },
+            "metric_evidence": metric_evidence,
             "distance": {
                 dec: {
                     metric: _distance_stats(self._distances[di][mi])
