@@ -17,6 +17,7 @@ Env:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import multiprocessing
 import os
@@ -37,6 +38,16 @@ if multiprocessing.get_start_method(allow_none=True) != "spawn":
     multiprocessing.set_start_method("spawn", force=True)
 
 import decbench.metrics  # noqa: F401,E402
+from decbench.decompilers.limits import (  # noqa: E402
+    BINARY_MEMORY_LIMIT_BYTES,
+    binary_timeout_seconds,
+    cleanup_docker_scope,
+    kill_resource_scope,
+    require_resource_scopes,
+    resource_scope_command,
+    resource_scope_memory_events,
+    resource_scope_oom_killed,
+)
 from decbench.models.decompilation import DecompilationResult, DecompilerMetadata  # noqa: E402
 from decbench.models.project import OptimizationLevel, Project  # noqa: E402
 from decbench.pipeline.evaluate import evaluate_project  # noqa: E402
@@ -63,23 +74,6 @@ METRICS = [
 ] or None
 DECOMPILERS = (os.environ.get("DECBENCH_DECOMPILERS") or "angr,ghidra").split(",")
 WORKERS = int(os.environ.get("DECBENCH_WORKERS") or "40")
-# Hard per-(binary, decompiler) budget; an overrun is recorded as a decompiler
-# timeout (no functions credited) rather than silently dropped.
-DECOMPILE_TIMEOUT = int(os.environ.get("DECBENCH_DECOMPILE_TIMEOUT") or "300")
-# Per-decompiler budgets (seconds). Every backend gets enough time to finish the
-# largest source-function set, so a slow-but-working one is not truncated into
-# thousands of spurious failures. Rationale per backend: docs/benchmarking.md.
-DECOMPILER_TIMEOUT = {
-    "kuna": int(os.environ.get("DECBENCH_KUNA_TIMEOUT") or "900"),
-    "angr": int(os.environ.get("DECBENCH_ANGR_TIMEOUT") or "3600"),
-    "ghidra": int(os.environ.get("DECBENCH_GHIDRA_TIMEOUT") or "1800"),
-    "binja": int(os.environ.get("DECBENCH_BINJA_TIMEOUT") or "1800"),
-    "dewolf": int(os.environ.get("DECBENCH_DEWOLF_TIMEOUT") or "1200"),
-    "r2dec": int(os.environ.get("DECBENCH_R2DEC_TIMEOUT") or "1800"),
-    "codex": int(os.environ.get("DECBENCH_CODEX_TIMEOUT") or "3600"),
-    "claude-code": int(os.environ.get("DECBENCH_CLAUDE_CODE_TIMEOUT") or "3600"),
-    "kimi-code": int(os.environ.get("DECBENCH_KIMI_CODE_TIMEOUT") or "3600"),
-}
 _HERE = Path(__file__).resolve().parent
 _DECOMPILE_ONE = _HERE / "decompile_one.py"
 
@@ -90,8 +84,8 @@ def _load_sampleset_manifest() -> dict[tuple[str, str, str], set[str]] | None:
     Restricts the whole run to the frozen ``sample-set`` slice (see
     ``scripts/export_sample_set.py``): a decompiler is only ever asked to
     decompile the listed function *names*, per ``(project, opt, binary_stem)``.
-    This is the cost gate for the LLM backends — with it set,
-    codex/claude-code/kimi-code run on ~250 functions instead of the whole corpus.
+    This is the scope gate used for separate Glaurung and LLM backend passes.
+    With it set, they run on ~250 functions instead of the whole corpus.
     """
     path = os.environ.get("DECBENCH_SAMPLESET_MANIFEST")
     if not path:
@@ -116,27 +110,30 @@ def _load_sampleset_manifest() -> dict[tuple[str, str, str], set[str]] | None:
 SAMPLESET_GATE = _load_sampleset_manifest()
 
 
-def _kill_process_group(proc: subprocess.Popen) -> None:
-    """SIGKILL the worker's whole process group.
+def _cleanup_scope_containers(scope_unit: str) -> None:
+    """Remove daemon-owned containers after their originating scope has stopped."""
+    cleanup_docker_scope(scope_unit)
 
-    The worker is spawned with ``start_new_session=True`` so it leads its own
-    group (pgid == pid). Killing the GROUP reaps not just the Python worker but
-    every tool it launched (kuna, the Ghidra/kuna JVMs, IDA, ...). A plain
-    ``proc.kill()`` (what ``subprocess.run(timeout=)`` does) kills only the direct
-    child, letting a hung decompiler ORPHAN and spin forever — which is exactly
-    how kuna leaked 9 processes burning 100% CPU for 4+ hours.
+
+def _kill_process_group(proc: subprocess.Popen, scope_unit: str | None = None) -> None:
+    """SIGKILL the worker's cgroup and process group.
+
+    The cgroup reaches children that start a new session. The process-group kill
+    remains a fallback if the transient scope has already disappeared.
     """
+    if scope_unit is not None:
+        with contextlib.suppress(Exception):
+            kill_resource_scope(scope_unit)
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except (ProcessLookupError, PermissionError, OSError):
-        try:
+        with contextlib.suppress(Exception):
             proc.kill()
-        except Exception:  # noqa: BLE001
-            pass
-    try:
+    with contextlib.suppress(Exception):
         proc.wait(timeout=15)
-    except Exception:  # noqa: BLE001
-        pass
+    if scope_unit is not None:
+        with contextlib.suppress(Exception):
+            _cleanup_scope_containers(scope_unit)
 
 
 def project_source_functions(
@@ -285,11 +282,12 @@ def _timed_decompile(
 ) -> DecompilationResult:
     """Decompile one binary via a timed, killable subprocess.
 
-    Returns the unpickled DecompilationResult, or a 'timeout'/'error' result if
-    the subprocess overran DECOMPILE_TIMEOUT or failed. ``names_file`` is a JSON
-    list of source function names to restrict to ("NONE" = all functions).
+    Returns the unpickled DecompilationResult, or a timeout/memory/error result.
+    ``names_file`` is a JSON list of source function names to restrict to
+    ("NONE" = all functions).
     """
     pkl = out_dir / f"{dec_name}_{binary.stem}.result.pkl"
+    timeout_s = binary_timeout_seconds(dec_name)
     cmd = [
         sys.executable,
         str(_DECOMPILE_ONE),
@@ -298,30 +296,54 @@ def _timed_decompile(
         str(out_dir),
         str(pkl),
         names_file,
+        str(timeout_s),
     ]
-    timeout_s = DECOMPILER_TIMEOUT.get(
-        dec_name, DECOMPILER_TIMEOUT.get(dec_name.split("@", 1)[0], DECOMPILE_TIMEOUT)
-    )
+    cmd, scope_unit = resource_scope_command(cmd, timeout_s)
     failure = ""
     timed_out = False
+    memory_exceeded = False
+    scope_cleaned = False
+    memory_events = None
     proc = None
+    deadline = time.monotonic() + timeout_s
     try:
-        # The worker leads its own process group so a timeout can kill the WHOLE group
-        # (worker plus the kuna/JVM/IDA process it spawned).
         proc = subprocess.Popen(
             cmd,
             start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        try:
-            rc = proc.wait(timeout=timeout_s)
-        except subprocess.TimeoutExpired:
+        memory_events = resource_scope_memory_events(proc.pid, scope_unit)
+        while (rc := proc.poll()) is None:
+            if resource_scope_oom_killed(memory_events):
+                failure = f"memory>{BINARY_MEMORY_LIMIT_BYTES // 1024**3}GiB"
+                memory_exceeded = True
+                _kill_process_group(proc, scope_unit)
+                scope_cleaned = True
+                break
+            if time.monotonic() >= deadline:
+                failure = f"timeout>{timeout_s}s"
+                timed_out = True
+                _kill_process_group(proc, scope_unit)
+                scope_cleaned = True
+                break
+            time.sleep(0.5)
+        if not memory_exceeded and resource_scope_oom_killed(memory_events):
+            failure = f"memory>{BINARY_MEMORY_LIMIT_BYTES // 1024**3}GiB"
+            memory_exceeded = True
+        elif (
+            rc
+            in (
+                -signal.SIGTERM,
+                128 + signal.SIGTERM,
+                -signal.SIGKILL,
+                128 + signal.SIGKILL,
+            )
+            and time.monotonic() >= deadline
+        ):
             failure = f"timeout>{timeout_s}s"
             timed_out = True
-            _kill_process_group(proc)
-            rc = None
-        if not timed_out:
+        if not timed_out and not memory_exceeded:
             if rc == 0 and pkl.exists():
                 try:
                     result = pickle.loads(pkl.read_bytes())
@@ -335,7 +357,14 @@ def _timed_decompile(
         failure = f"{type(e).__name__}: {e}"
     finally:
         if proc is not None and proc.poll() is None:
-            _kill_process_group(proc)
+            _kill_process_group(proc, scope_unit)
+            scope_cleaned = True
+        elif (timed_out or memory_exceeded) and not scope_cleaned:
+            with contextlib.suppress(Exception):
+                _cleanup_scope_containers(scope_unit)
+        if memory_events is not None:
+            with contextlib.suppress(OSError):
+                memory_events.close()
 
     partial = None
     if pkl.exists():
@@ -348,8 +377,10 @@ def _timed_decompile(
         partial.decompiler.extra = {
             **(partial.decompiler.extra or {}),
             "failure": failure,
+            "memory_limit_exceeded": memory_exceeded,
             "recovered_partial": True,
         }
+        partial.decompiler.timeout_occurred = timed_out
         return partial
 
     return DecompilationResult(
@@ -357,8 +388,13 @@ def _timed_decompile(
         binary_name=binary.stem,
         decompiler=DecompilerMetadata(
             decompiler_name=dec_name,
+            timeout_occurred=timed_out,
             failed_functions=["all"],
-            extra={"failure": failure, "timed_out": timed_out},
+            extra={
+                "failure": failure,
+                "timed_out": timed_out,
+                "memory_limit_exceeded": memory_exceeded,
+            },
         ),
     )
 
@@ -390,7 +426,14 @@ def decompile_project_timed(
     strip_dir = out_dir / opt.value / project.name / "stripped"
 
     results: dict[str, dict[str, DecompilationResult]] = {b.stem: {} for b in binaries}
-    stats = {"ok": 0, "partial": 0, "timeout": 0, "error": 0, "filtered": 0}
+    stats = {
+        "ok": 0,
+        "partial": 0,
+        "timeout": 0,
+        "oom": 0,
+        "error": 0,
+        "filtered": 0,
+    }
     tasks = [(b, d) for b in binaries for d in decs]
     if not tasks:
         return results, stats
@@ -428,10 +471,8 @@ def decompile_project_timed(
                         _relabel_to_dwarf(res, amap, orig)
                     else:
                         res.binary_path = orig
-                    try:
+                    with contextlib.suppress(Exception):
                         res.to_c_file(dec_out / f"{dec_name}_{stem}.c")
-                    except Exception:  # noqa: BLE001
-                        pass
                 results[stem][dec_name] = res
                 extra = res.decompiler.extra or {}
                 failure = extra.get("failure", "")
@@ -441,6 +482,8 @@ def decompile_project_timed(
                     stats["partial"] += 1
                 elif failure.startswith("timeout"):
                     stats["timeout"] += 1
+                elif failure.startswith("memory"):
+                    stats["oom"] += 1
                 else:
                     stats["error"] += 1
     finally:
@@ -478,13 +521,18 @@ def main() -> int:
             "  RESULTS_DIR   output tree (default results/sailr_full)\n"
             "  -- project    limit to the named projects\n\n"
             "Env: DECBENCH_DECOMPILERS, DECBENCH_REDO_DECOMPILERS, DECBENCH_WORKERS,\n"
-            "     DECBENCH_DECOMPILE_TIMEOUT, DECBENCH_{KUNA,ANGR,GHIDRA,BINJA}_TIMEOUT,\n"
+            "     DECBENCH_DECOMPILE_TIMEOUT, DECBENCH_<DECOMPILER>_TIMEOUT,\n"
             "     DECBENCH_KUNA_MAX_FN_SECONDS, DECBENCH_DECOMPILE_ONLY, GHIDRA_INSTALL_DIR,\n"
             "     DECBENCH_SAMPLESET_MANIFEST (gate the run to the frozen sample-set slice;\n"
-            "       required for the LLM backends codex/claude-code/kimi-code — see\n"
+            "       required for glaurung and the LLM backends — see\n"
             "       docs/decompilers.md)."
         )
         return 0
+    try:
+        require_resource_scopes()
+    except RuntimeError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
     out_dir = Path(args[0]) if args else Path("results/sailr_full")
     only = set(args[2:]) if len(args) > 2 and args[1] == "--" else set()
 
@@ -500,7 +548,8 @@ def main() -> int:
     projects = [Project.from_toml(t) for t in tomls]
     print(
         f"Benchmark: {len(projects)} projects x {len(OPT_LEVELS)} opts, "
-        f"decompilers={DECOMPILERS} -> {out_dir}",
+        f"decompilers={DECOMPILERS}, memory={BINARY_MEMORY_LIMIT_BYTES // 1024**3}GiB/binary "
+        f"-> {out_dir}",
         flush=True,
     )
 
@@ -599,7 +648,7 @@ def main() -> int:
             td = time.time()
             print(
                 f"[{name}/{opt.value}] decompiling {n} binaries x {to_run} "
-                f"(timeout {DECOMPILE_TIMEOUT}s)...",
+                f"(timeout {max(binary_timeout_seconds(d) for d in to_run)}s max)...",
                 flush=True,
             )
             try:
@@ -616,7 +665,8 @@ def main() -> int:
             print(
                 f"[{name}/{opt.value}] decompiled in {time.time() - td:.0f}s "
                 f"(ok={dstats.get('ok', 0)} partial={dstats.get('partial', 0)} "
-                f"timeout={dstats.get('timeout', 0)} error={dstats.get('error', 0)} "
+                f"timeout={dstats.get('timeout', 0)} oom={dstats.get('oom', 0)} "
+                f"error={dstats.get('error', 0)} "
                 f"filtered={dstats.get('filtered', 0)})",
                 flush=True,
             )

@@ -1,4 +1,4 @@
-"""Raw angr decompiler backend (no declib).
+"""Native angr decompiler backend.
 
 Drives angr's native decompilation pipeline directly:
 
@@ -6,8 +6,7 @@ Drives angr's native decompilation pipeline directly:
 * ``proj.analyses.CFGFast(normalize=True)`` for function discovery
 * ``proj.analyses.Decompiler(func, cfg=cfg.model)`` per function
 
-and produces the same :class:`DecompilationResult` shape as the declib-backed
-``AngrDeclibDecompiler``:
+and produces the shared :class:`DecompilationResult` shape:
 
 * function addresses translated to **ELF-file space** (``lifted + elf_base``),
 * :class:`VariableInfo` for arguments (with ABI ``arg_index``) and stack/locals,
@@ -38,7 +37,7 @@ _l = logging.getLogger(__name__)
 
 @register_decompiler("angr")
 class RawAngrDecompiler(Decompiler):
-    """angr's decompiler driven natively, without declib."""
+    """angr's decompiler driven through its native API."""
 
     name = "angr"
     display_name = "angr"
@@ -74,9 +73,9 @@ class RawAngrDecompiler(Decompiler):
     ) -> DecompilationResult:
         """Decompile a binary with angr natively.
 
-        Args mirror ``declib_dec``: ``function_names`` narrows to the project's
-        own source functions; ``progress_path`` atomically pickles the partial
-        result after each function so a killed process is recoverable.
+        ``function_names`` narrows to the project's own source functions;
+        ``progress_path`` atomically pickles the partial result after each
+        function so a killed process is recoverable.
         """
         if not self.is_available():
             raise RuntimeError(f"Decompiler '{self.name}' is not available")

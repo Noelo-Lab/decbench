@@ -27,7 +27,7 @@
 # Lookup is by exact id first, then by the base name before '@' — so a versioned
 # id like `ghidra@12.1` resolves to the `ghidra` entry (its version comes from the
 # run's own decompiler_versions, then through version_overrides). Ids with no
-# entry fall back to the raw id, unlinked (e.g. the `*-declib` comparison backends).
+# entry fall back to the raw id, unlinked.
 
 [[decompiler]]
 id = "angr"

@@ -1,4 +1,4 @@
-"""Raw Ghidra decompiler backend (no declib), driven via ``pyghidra``.
+"""Native Ghidra decompiler backend driven via ``pyghidra``.
 
 Drives Ghidra's headless decompiler directly:
 
@@ -50,7 +50,7 @@ _l = logging.getLogger(__name__)
 
 @register_decompiler("ghidra")
 class RawGhidraDecompiler(Decompiler):
-    """Ghidra driven natively via pyghidra, without declib."""
+    """Ghidra driven natively via pyghidra."""
 
     name = "ghidra"
     display_name = "Ghidra"

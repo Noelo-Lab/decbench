@@ -8,6 +8,7 @@ isolation also sidesteps the fork-after-threads deadlock and any JVM/angr state
 leakage.
 
 Usage: decompile_one.py <binary> <decompiler> <out_dir> <pickle_out> [names_json]
+                        [binary_timeout_seconds]
 
 names_json (optional): path to a JSON list of source function names. When given
 and non-empty, decompilation is restricted to those functions (skips bundled
@@ -21,7 +22,8 @@ import pickle
 import sys
 from pathlib import Path
 
-import decbench.decompilers  # noqa: F401  (registers raw + declib + dockerized backends)
+import decbench.decompilers  # noqa: F401  (registers all runnable backends)
+from decbench.decompilers.base import DecompilerConfig
 from decbench.pipeline.decompile import decompile_binary
 
 
@@ -36,12 +38,16 @@ def main() -> int:
             target_addrs = {int(a) for a in loaded} or None
         except Exception:
             target_addrs = None
+    config = None
+    if len(sys.argv) > 6:
+        config = DecompilerConfig(binary_timeout_seconds=float(sys.argv[6]))
     # Partial progress goes straight to the output pickle so a timeout kill still
     # leaves the finished functions recoverable; the final write replaces it.
     result = decompile_binary(
         Path(binary),
         dec_name,
         Path(out_dir),
+        config=config,
         function_names=target_addrs,
         progress_path=Path(pkl_out),
     )

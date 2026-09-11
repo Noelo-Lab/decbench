@@ -14,12 +14,12 @@ A decompiler column appears on the leaderboard by one of three routes:
 Backends subclass the `Decompiler` ABC (`base.py`) and register via
 `@register_decompiler`:
 
-- **Raw / native** (`decompilers/raw/`, the canonical
+- **Native APIs** (`decompilers/raw/`, the canonical
   `angr`/`ghidra`/`ida`/`binja` in `angr_raw.py`/`ghidra_raw.py`/`ida_raw.py`/
   `binja_raw.py`, plus `kuna_raw.py` and `dewolf_raw.py` +
   `dewolf_driver.py`, an out-of-process backend running in its own venv):
-  drive the tools' own APIs directly, **no declib**. `raw/common.py`
-  centralises the ELF bookkeeping (`elf_min_vaddr`, `.text` range,
+  drive the tools' own APIs directly. `raw/common.py` centralises the ELF
+  bookkeeping (`elf_min_vaddr`, `.text` range,
   CRT/PLT/thunk skip sets, `narrow_to_source` function filter, atomic
   `dump_progress` checkpoint, line-mapping helpers). This is the path
   benchmark runs use now.
@@ -39,8 +39,6 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
   `glaurung` column does not come from this backend: it is an external
   sample-set submission (Part III) at `git-fb4ee6b`, flagged
   `external_submission` in its metadata.
-- **declib** (`declib_dec.py`, registered as `angr-declib`/`ghidra-declib`/…):
-  the original declib-driven backends, kept for comparison.
 - **Dockerized** (`dockerized.py`: `reko`/`retdec`/`r2dec`): run a tool in a
   container (or natively for r2dec) and split whole-program C into
   per-function results. Build images with `decbench decompiler-build <name>`;
@@ -289,9 +287,9 @@ at least once. Backends shipped in-tree are imported from
 before calling the registry). Out-of-tree plugins just need to be imported by
 your own entry point.
 
-Worked examples in the tree: the raw backends (`decompilers/raw/`), the
-Docker-backed backends (`dockerized.py`, §5), the LLM backends (`llm_dec.py`,
-Part II), and the legacy declib backends (`declib_dec.py`).
+Worked examples in the tree: the native backends (`decompilers/raw/`), the
+Docker-backed backends (`dockerized.py`, §5), and the LLM backends
+(`llm_dec.py`, Part II).
 
 ## 4. Supporting multiple versions
 
@@ -347,10 +345,14 @@ address-scoped backend:
 ```bash
 decbench decompiler-build glaurung
 decbench list-decompilers
-decbench run projects/sailr/bzip2.toml -O O0 -d glaurung
+DECBENCH_DECOMPILERS=glaurung \
+DECBENCH_REDO_DECOMPILERS=glaurung \
+DECBENCH_SAMPLESET_MANIFEST=results/full_run/sample_set_manifest.json \
+python scripts/run_benchmark.py results/full_run
 ```
 
-The backend prefers a native executable, then falls back to the image. Set
+Glaurung is sample-set-only for now, so production runs use the frozen manifest
+gate above. The backend prefers a native executable, then falls back to the image. Set
 `GLAURUNG_BIN` to an exact executable to force the native route;
 `GLAURUNG_IMAGE` retags the container; and `GLAURUNG_REPO` / `GLAURUNG_REF`
 select the source revision at build time. `decompiler-build` resolves a branch
@@ -457,7 +459,7 @@ two independent guards:
 ```toml
 [codex.versions.default]
 model = "gpt-5.6-sol"  # the gpt-5.6 variant a ChatGPT-account login allows
-# timeout = 900        # per-function agent wall-clock budget (seconds)
+# timeout = 600        # per-function agent wall-clock budget (seconds)
 # max_funcs = 8        # per-binary hard cap (runaway guard)
 # fn_workers = 4       # decompile this many of a binary's functions concurrently
 # docker_image = "decbench/llm-agents:latest"   # run in a container (below)
@@ -474,8 +476,8 @@ Env equivalents: `DECBENCH_LLM_MODEL`, `DECBENCH_LLM_TIMEOUT`,
 `DECBENCH_LLM_MAX_FUNCS`, `DECBENCH_LLM_FN_WORKERS` (decompile a binary's
 sampled functions concurrently), `DECBENCH_LLM_DOCKER_IMAGE`. Per-decompiler
 wall-clock in the driver: `DECBENCH_CODEX_TIMEOUT` /
-`DECBENCH_CLAUDE_CODE_TIMEOUT` / `DECBENCH_KIMI_CODE_TIMEOUT` (default 3600s
-per binary).
+`DECBENCH_CLAUDE_CODE_TIMEOUT` / `DECBENCH_KIMI_CODE_TIMEOUT` (shared default
+3600s per binary).
 
 **Traces.** Every agent call is traced by default (disable with
 `DECBENCH_LLM_SAVE_TRACES=0` / `save_traces = false`): the prompt, transcript,

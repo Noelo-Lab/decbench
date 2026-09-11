@@ -5,7 +5,7 @@ Unlike ``run_benchmark.py`` (the full resilient sailr driver), this runs a tiny
 slice — a few functions of one or two already-compiled binaries — through the
 *new* machinery so the whole stack can be exercised in a couple of minutes:
 
-  * raw decompiler backends (no declib): ``angr``, ``ghidra@12.0``, ``ghidra@12.1``
+  * native decompiler backends: ``angr``, ``ghidra@12.0``, ``ghidra@12.1``
   * **multiple versions** of one decompiler as distinct, comparable columns
   * **metric caching** (a 2nd identical run is served from the content cache)
   * the redesigned **report** with the *hardest functions* and *historical*
@@ -21,14 +21,17 @@ Env:
     DECBENCH_SMALL_DECOMPILERS  default "angr,ghidra@12.0,ghidra@12.1"
     DECBENCH_SMALL_MAXFUNCS     default 4 (functions per binary)
     DECBENCH_SMALL_MAXBINS      default 1 (binaries per opt)
+    DECBENCH_SMALL_TIMEOUT      default 3600 (seconds per binary)
     GHIDRA_INSTALL_DIR          fallback Ghidra for an unversioned spec
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import pickle
+import signal
 import subprocess
 import sys
 import tempfile
@@ -41,6 +44,13 @@ sys.path.insert(0, str(REPO))
 
 import decbench.decompilers  # noqa: E402,F401  (register backends)
 from decbench.caching import get_cache  # noqa: E402
+from decbench.decompilers.limits import (  # noqa: E402
+    BINARY_TIMEOUT_SECONDS,
+    cleanup_docker_scope,
+    kill_resource_scope,
+    require_resource_scopes,
+    resource_scope_command,
+)
 from decbench.models.decompilation import DecompilationResult  # noqa: E402
 from decbench.models.project import OptimizationLevel, Project, ProjectConfig  # noqa: E402
 from decbench.pipeline.evaluate import evaluate_decompilation  # noqa: E402
@@ -94,12 +104,30 @@ def _decompile_subproc(
         str(out_dir),
         str(pkl),
         names_json,
+        str(timeout),
     ]
+    cmd, scope_unit = resource_scope_command(cmd, timeout)
+    process = None
+    cleanup_containers = False
     try:
-        subprocess.run(cmd, timeout=timeout, check=False, cwd=str(REPO))
+        process = subprocess.Popen(cmd, cwd=str(REPO), start_new_session=True)
+        process.wait(timeout=timeout + 2)
+        cleanup_containers = process.returncode != 0
     except subprocess.TimeoutExpired:
+        cleanup_containers = True
         print(f"    [{spec}] TIMEOUT after {timeout}s (recovering partial)")
     finally:
+        if process is not None and process.poll() is None:
+            cleanup_containers = True
+            with contextlib.suppress(Exception):
+                kill_resource_scope(scope_unit)
+            with contextlib.suppress(Exception):
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            with contextlib.suppress(Exception):
+                process.wait(timeout=15)
+        if cleanup_containers:
+            with contextlib.suppress(Exception):
+                cleanup_docker_scope(scope_unit)
         Path(names_json).unlink(missing_ok=True)
     if pkl.exists():
         try:
@@ -141,6 +169,11 @@ def _source_cfgs(sources: dict[str, Path]) -> dict:
 
 
 def main() -> int:
+    try:
+        require_resource_scopes()
+    except RuntimeError as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 2
     results_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else REPO / "results" / "sailr_full"
     project_name = sys.argv[2] if len(sys.argv) > 2 else "gzip"
     opts = sys.argv[3].split(",") if len(sys.argv) > 3 else ["O0"]
@@ -192,7 +225,9 @@ def main() -> int:
                     spec,
                     out_dir / opt_str / spec.replace("@", "_"),
                     names,
-                    timeout=int(os.environ.get("DECBENCH_SMALL_TIMEOUT", "300")),
+                    timeout=int(
+                        os.environ.get("DECBENCH_SMALL_TIMEOUT", str(BINARY_TIMEOUT_SECONDS))
+                    ),
                 )
                 if res is None:
                     print(f"    [{spec}] decompile produced no result")
@@ -203,9 +238,7 @@ def main() -> int:
                 decompiled[project_name][opt][stem][dec_id] = res
                 got = res.successful_count
                 scored = {
-                    m: f"{r.mean:.2f}"
-                    for m, r in metric_results.items()
-                    if r.mean is not None
+                    m: f"{r.mean:.2f}" for m, r in metric_results.items() if r.mean is not None
                 }
                 dt = time.time() - t0
                 print(f"    [{dec_id}] {got} funcs in {dt:.0f}s scored={scored}")

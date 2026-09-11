@@ -1,7 +1,7 @@
 """Container-backed and external-tool decompiler plugins.
 
-This module hosts decompilers that decbench does **not** drive through declib,
-because they ship as standalone CLIs rather than Python libraries:
+This module hosts decompilers that ship as standalone CLIs rather than Python
+libraries:
 
 - **Reko** (``reko``) — .NET decompiler, run inside a Docker image.
 - **RetDec** (``retdec``) — LLVM-based decompiler, run inside a Docker image.
@@ -23,7 +23,7 @@ Common design (:class:`DockerizedDecompiler`):
     decompiler emits whole-program C, which we then split into per-function
     snippets. Function *names and addresses* come from the binary's ELF symbol
     table (via pyelftools), so addresses live in **ELF file space** and line up
-    with DWARF and the rest of decbench — the same convention declib_dec uses.
+    with DWARF and the rest of decbench.
 
     These tools do not expose stack variables / line mappings uniformly, so
     ``FunctionDecompilation.variables`` and ``.line_mappings`` are left empty.
@@ -51,6 +51,12 @@ from pathlib import Path
 from typing import Any
 
 from decbench.decompilers.base import Decompiler, DecompilerConfig
+from decbench.decompilers.limits import (
+    BINARY_TIMEOUT_SECONDS,
+    cleanup_docker_invocation,
+    docker_memory_args,
+    docker_tracking_args,
+)
 from decbench.decompilers.raw import common as raw_common
 from decbench.decompilers.registry import register_decompiler
 from decbench.models.decompilation import (
@@ -76,7 +82,7 @@ def elf_function_symbols(binary_path: Path) -> list[tuple[str, int]]:
     """Enumerate ``(name, address)`` for benchmarkable functions via ELF symbols.
 
     Addresses are in **ELF file space** (``st_value``), which matches DWARF and
-    the declib-backed decompilers. CRT/compiler helpers, import thunks, and
+    the native API decompilers. CRT/compiler helpers, import thunks, and
     anything outside the ``.text`` family are filtered out. Returned sorted by
     address.
     """
@@ -185,12 +191,11 @@ class DockerizedDecompiler(Decompiler):
 
     image: str = ""
     dockerfile: str = ""
-    container_timeout: float = 1800.0
+    container_timeout: float = float(BINARY_TIMEOUT_SECONDS)
 
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
-        if config is not None and config.binary_timeout_seconds:
-            self.container_timeout = float(config.binary_timeout_seconds)
+        self.container_timeout = float(self.config.binary_timeout_seconds)
 
     @staticmethod
     def _docker_bin() -> str | None:
@@ -287,6 +292,8 @@ class DockerizedDecompiler(Decompiler):
             docker,
             "run",
             "--rm",
+            *docker_tracking_args(),
+            *docker_memory_args(),
             "-v",
             f"{binary_path.resolve()}:/in/{binary_path.name}:ro",
             "-v",
@@ -295,12 +302,16 @@ class DockerizedDecompiler(Decompiler):
             *args,
         ]
         _l.debug("docker run: %s", " ".join(cmd))
-        return subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout or self.container_timeout,
-        )
+        try:
+            return subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout or self.container_timeout,
+            )
+        except subprocess.TimeoutExpired:
+            cleanup_docker_invocation(cmd)
+            raise
 
     def decompile_binary(
         self,
@@ -315,9 +326,9 @@ class DockerizedDecompiler(Decompiler):
         Args:
             functions: optional ``(name, address)`` allowlist (addresses in ELF
                 space). When None, all ELF-symbol functions are considered.
-            function_names: optional name filter (restricts to a project's own
-                source functions, like declib_dec).
-            output_dir / progress_path: parity with the declib path; outputs are
+            function_names: optional name filter restricting the run to a
+                project's own source functions.
+            output_dir / progress_path: shared backend contract; outputs are
                 written to ``output_dir`` if given. ``progress_path`` is accepted
                 for driver compatibility (whole-program tools run atomically, so
                 there is no per-function checkpoint to write).

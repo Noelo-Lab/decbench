@@ -1,6 +1,6 @@
 """Tests for the shared ``.text``-family / DWARF-target function filter.
 
-Every backend (raw, declib, dockerized r2dec) routes its "is this function
+Every backend (native APIs, standalone tools, dockerized r2dec) routes its "is this function
 benchmarkable?" question through ``raw.common.should_skip_function``. These
 tests pin the section layouts that broke it: the single-``.text`` binary that
 must stay unchanged, u-boot's ``.text`` + ``.text_rest`` split, freertos'
@@ -308,10 +308,9 @@ def test_addr_targets_of_keeps_only_ints() -> None:
 
 def test_every_backend_shares_one_rule() -> None:
     """r2dec's exemption and the raw path are literally the same function now."""
-    from decbench.decompilers import declib_dec, dockerized
+    from decbench.decompilers import dockerized
 
     assert dockerized._skip_r2_function is common.should_skip_function
     assert dockerized._addr_targets_of is common.addr_targets_of
     assert dockerized._elf_text_range is common.elf_text_ranges
-    assert declib_dec._elf_text_range is common.elf_text_ranges
     assert common.elf_text_range is common.elf_text_ranges

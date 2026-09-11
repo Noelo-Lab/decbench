@@ -304,6 +304,10 @@ def test_private_artifacts_defaults_off_and_is_parsed(content: Content) -> None:
     assert content.private_artifact_decompilers == frozenset({"ventris"})
 
 
+def test_glaurung_is_sample_set_only(content: Content) -> None:
+    assert "glaurung" in content.site.sample_set_only_decompilers
+
+
 def test_decompiler_lookup_matches_base_name_for_versioned_ids(content: Content) -> None:
     """A versioned id (ghidra@12.1) with no exact entry resolves to its base."""
     spec = content.decompiler("ghidra@12.1")
@@ -314,7 +318,7 @@ def test_decompiler_lookup_matches_base_name_for_versioned_ids(content: Content)
 
 def test_decompiler_lookup_returns_none_for_unknown_id(content: Content) -> None:
     """An id the registry never heard of falls back (caller uses the raw id)."""
-    assert content.decompiler("angr-declib") is None
+    assert content.decompiler("retired-backend") is None
 
 
 def test_decompiler_url_is_optional() -> None:

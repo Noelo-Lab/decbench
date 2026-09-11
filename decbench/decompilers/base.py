@@ -8,6 +8,11 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
+from decbench.decompilers.limits import (
+    BINARY_TIMEOUT_SECONDS,
+    FUNCTION_TIMEOUT_SECONDS,
+)
+
 if TYPE_CHECKING:
     from decbench.models.decompilation import DecompilationResult
 
@@ -16,14 +21,13 @@ class DecompilerConfig(BaseModel):
     """Configuration for a decompiler."""
 
     function_timeout_seconds: float = Field(
-        default=600.0,
+        default=float(FUNCTION_TIMEOUT_SECONDS),
         description="Timeout per function in seconds",
     )
     binary_timeout_seconds: float = Field(
-        default=3600.0,
+        default=float(BINARY_TIMEOUT_SECONDS),
         description="Timeout per binary in seconds",
     )
-
     dump_line_mappings: bool = Field(
         default=True,
         description="Generate line-to-address mappings",

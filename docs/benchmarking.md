@@ -16,13 +16,12 @@ decompiler in [decompilers.md](decompilers.md).
 - Docker works here (no sudo needed); used for the RetDec/Reko/r2dec images
   and the `decbench-compile` cross-compile image.
 - `pygraphviz` builds against the system `libgraphviz-dev` (installed).
-- `declib` (4.0.1, PyPI) is still installed and the `*-declib` backends still
-  use it, but the **canonical** `angr`/`ghidra`/`ida`/`binja` backends are now
-  native (declib-free) implementations under `decbench/decompilers/raw/`.
+- The canonical `angr`/`ghidra`/`ida`/`binja` backends drive each tool's native
+  API under `decbench/decompilers/raw/`.
 
 ### Decompiler backends available and working
 
-Verified via the raw, declib-free interfaces; `decbench list-decompilers`
+Verified via the native interfaces; `decbench list-decompilers`
 shows live availability. The core benchmark set is **angr, ghidra, ida,
 binja** (+ kuna in the full run); **r2dec** and **dewolf** are the newest
 additions. (The former angr-variant backend that forced a non-default
@@ -50,7 +49,8 @@ structurer was fully retired 2026-07-23; see CHANGELOG.md.)
 - **Glaurung** — native address-scoped CLI or the
   `decbench/glaurung:latest` image built by
   `decbench decompiler-build glaurung`. The image is a reproducible raw-only
-  install and requires no API credentials.
+  install and requires no API credentials. Its published results remain
+  sample-set-only for now.
 - **codex / claude-code / kimi-code** — LLM coding-agent backends,
   sample-set-only; see [decompilers.md](decompilers.md). codex and
   claude-code are logged in and available; kimi-code shows N until a Kimi
@@ -289,7 +289,7 @@ DECBENCH_WORKERS=40 GHIDRA_INSTALL_DIR=/home/mahaloz/bin/ghidra_12.1 \
 `run_benchmark.py` knobs (env):
 
 - `DECBENCH_DECOMPILERS` (default `angr,ghidra`)
-- `DECBENCH_DECOMPILE_TIMEOUT` (s, default 300)
+- `DECBENCH_DECOMPILE_TIMEOUT` (s, default 3600 for every backend)
 - `DECBENCH_GED_MAX_NODES` (200; read in `metrics/ged.py`, takes effect during
   runs)
 - `DECBENCH_OPT_LEVELS` (comma list, e.g. `"O0"` to narrow the run)
@@ -332,23 +332,42 @@ evaluation, `scripts/reeval_ged.py`, the source-CFG export and the eval kit, so
 those all agree on one function set; it deliberately does **not** reach
 `metrics/type_match.py` (see `docs/metrics.md`).
 
-### Per-decompiler wall-clock budgets
+### Per-binary resource budgets
 
-`DECOMPILER_TIMEOUT` in `scripts/run_benchmark.py` overrides
-`DECBENCH_DECOMPILE_TIMEOUT` per backend (each with its own
-`DECBENCH_<NAME>_TIMEOUT` env override). The fairness principle: every backend
-gets enough time to finish the largest source-function set, so a slow-but-working
-one is not truncated and counted as thousands of failures while a faster one
-finishes. Small binaries finish in seconds, so these defaults only bite the ~10
-big targets (bash, openssh, coreutils, the large ARM firmware).
+Every `(binary, decompiler)` run gets the same hard **3600-second** wall-clock
+budget, matching the budget required by angr on the largest source-function
+sets. `DECBENCH_DECOMPILE_TIMEOUT` changes the shared budget, and a deliberate
+backend-specific experiment can override it with
+`DECBENCH_<DECOMPILER>_TIMEOUT` (hyphens become underscores, so Claude Code is
+`DECBENCH_CLAUDE_CODE_TIMEOUT`). New and versioned backends inherit the shared
+default automatically.
 
-| Backend | Default | Why |
-| --- | --- | --- |
-| `angr` | 3600 s | ~15-20 s/function; a big binary legitimately needs ~1 h. |
-| `ghidra` / `binja` / `r2dec` | 1800 s | Fast per function, but a few large binaries overrun 300 s. r2dec's `aaa` analysis alone can run minutes. |
-| `kuna` | 900 s | Emits its JSON only at the very end, so a kill yields ZERO functions; needs a budget above its slowest binary (~450 s on bash). Its per-FUNCTION guard is `--max-fn-seconds`, passed by the backend. |
-| `dewolf` | 1200 s | A z3/sympy simplification pipeline that blows up per function. Capped lower than angr because the cap bounds *hangs*, not a slow-but-progressing decompile. |
-| `codex` / `claude-code` / `kimi-code` | 3600 s | One agentic CLI call per function (~minutes). The backend checkpoints after each function, so a large budget bounds a stuck call while still crediting finished ones. |
+Each canonical full-run task also has a hard **16 GiB memory ceiling** with swap
+disabled. The driver launches `decompile_one.py` in a transient user systemd
+scope so the ceiling includes the worker and native descendants, even when a
+tool starts a new session. Container backends additionally receive their own
+16 GiB Docker `--memory` / `--memory-swap` ceiling because daemon-owned
+containers live outside the worker's scope; this is a separate container limit,
+not one aggregate cgroup with its small Python client. LLM Docker invocations
+divide that container allowance across their configured function concurrency.
+Containers carry unique run/scope labels so timeout cleanup removes the exact
+daemon-owned containers too. The driver fails closed during startup unless
+cgroup v2 and `systemd-run --user` can enforce the native-process policy. A
+cgroup memory kill is recorded separately from a timeout and partial
+per-function checkpoints are still recovered.
+
+The shared function-analysis budget is **600 seconds** where a backend exposes a
+per-function watchdog: Ghidra, Kuna, Glaurung, and the coding-agent backends.
+angr, IDA, Binary Ninja, dewolf, and whole-binary tools have no safely killable
+per-function API, so their 3600-second outer binary scope remains the hard bound.
+`DECBENCH_KUNA_MAX_FN_SECONDS`, `DECBENCH_GLAURUNG_TIMEOUT_MS`, and
+`DECBENCH_LLM_TIMEOUT` remain explicit experimental overrides.
+
+The ceiling is per concurrent binary, not machine-wide: `DECBENCH_WORKERS=40`
+can still admit up to 40 limited workers, so size the worker pool for host RAM.
+The cgroup process-tree guarantee applies to the canonical full-run driver and
+`scripts/run_small.py`. Low-level in-process calls such as `decbench run` do not
+create a cgroup; Docker-backed calls still receive their container limit.
 
 Resume MERGES per project AND per decompiler:
 `DECBENCH_DECOMPILERS=r2dec python scripts/run_benchmark.py results/full_run`
@@ -431,13 +450,9 @@ Other driver facts:
   simultaneous autotools builds — the `configure` storm contends badly; ~16
   workers is plenty.
 - `scripts/decompile_one.py` must `import decbench.decompilers` (the whole
-  package) to register raw+declib+dockerized — importing just `declib_dec`
-  would miss the canonical names.
-- `DecompilerConfig.function_timeout_seconds` is advisory: declib exposes no
-  per-function decompile timeout.
+  package) to register native, dockerized, agent, and external backends.
 - angr vendors ailment as `angr.ailment`; the standalone `ailment` package is
-  a different module — `isinstance` checks against the wrong one silently fail
-  (this bit declib's line mapping once; fixed in ~/github/declib).
+  a different module — `isinstance` checks against the wrong one silently fail.
 - The in-process pipeline (`pipeline/decompile.py`) also runs each decompile
   task in a fresh process via `max_tasks_per_child=1`, so JVM/idalib state
   never leaks between tasks.
@@ -446,8 +461,8 @@ Other driver facts:
 
 A **full run = EVERY project AND EVERY supported decompiler**: all of
 `projects/{sailr,cps,malware}/*.toml` decompiled by all backends available on
-this machine — angr, ghidra, ida, binja, kuna, r2dec, and dewolf (+ the LLM
-sample-set-only backends on their slice). If a new project or decompiler is
+this machine — angr, ghidra, ida, binja, kuna, r2dec, and dewolf (+ Glaurung and
+the LLM sample-set-only backends on their slice). If a new project or decompiler is
 added, "full run" includes it too; scope down only for a deliberate partial
 pass. (sailr x86 + cps ARM + malware ARM/PE.)
 
@@ -488,8 +503,8 @@ Notes:
   column is Union (perfect on ≥1 measurable metric, over functions with ≥1
   measurable metric), so abstained byte_match isn't a failure and ARM/PE still
   count via GED/types.
-- The LLM backends run as a separate, sample-set-gated invocation — see
-  [decompilers.md](decompilers.md).
+- Glaurung and the LLM backends run in a separate sample-set-gated invocation —
+  see [decompilers.md](decompilers.md).
 
 ## Overlays, finalize, and rebuilds — where the published numbers come from
 

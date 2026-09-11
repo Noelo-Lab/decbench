@@ -10,7 +10,7 @@ This directory is decbench's single Docker home. Four images package
 | r2dec    | `r2dec`  | `decbench/r2dec:latest`  | `r2dec.Dockerfile`   | **yes** (radare2)    |
 | Glaurung | `glaurung` | `decbench/glaurung:latest` | `glaurung.Dockerfile` | **yes** |
 
-Unlike the canonical raw backends (angr/ghidra/ida/binja — declib-free drivers
+Unlike the canonical native API backends (angr/ghidra/ida/binja — in-process drivers
 of each tool's own API, `decbench/decompilers/raw/`), these ship as standalone
 CLIs, so decbench runs them in a container. **RetDec and Reko** emit whole-
 program C that decbench splits into per-function snippets; function **names and

@@ -1,8 +1,7 @@
-"""Shared helpers for the raw (declib-free) decompiler backends.
+"""Shared helpers for native decompiler backends.
 
-This module re-implements the ELF / address bookkeeping that
-``decbench.decompilers.declib_dec`` performs, so the raw backends can match
-its output contract exactly *without* depending on declib:
+This module centralizes the ELF and address bookkeeping needed for every native
+backend to produce the same output contract:
 
 * ``elf_min_vaddr`` — lowest ``PT_LOAD`` virtual address; adding it to a
   decompiler's lifted (0-based / image-base-relative) address yields the
@@ -13,13 +12,12 @@ its output contract exactly *without* depending on declib:
   own sections.
 * ``SKIP_NAMES`` / ``SKIP_PREFIXES`` — CRT/compiler-generated functions and
   thunk/import name prefixes that are never benchmarked.
-* ``should_skip_function`` / ``in_text`` — the name + section filter that
-  ``declib_dec._enumerate_functions`` applies, with the DWARF-target exemption
-  that keeps a function the driver explicitly asked for. Address comparisons
-  tolerate the ARM Thumb T-bit (DWARF ``low_pc`` is even; angr reports Thumb
-  entries odd).
-* ``narrow_to_source`` — the optional ``function_names`` restriction (with the
-  same "fall back to everything if nothing matched" behaviour as declib_dec).
+* ``should_skip_function`` / ``in_text`` — the shared name + section filter,
+  with the DWARF-target exemption that keeps a function the driver explicitly
+  asked for. Address comparisons tolerate the ARM Thumb T-bit (DWARF ``low_pc``
+  is even; angr reports Thumb entries odd).
+* ``narrow_to_source`` — the optional ``function_names`` restriction, falling
+  back to everything if no requested address matches.
 * ``dump_progress`` — the atomic partial-result pickle used by the run driver
   to recover a process that is killed by a hard timeout.
 * ``extract_metrics`` — the gotos/bools structure counts.
@@ -230,7 +228,7 @@ def should_skip_function(
     text_range: TextRanges | tuple[int, int],
     addr_targets: set[int] | None = None,
 ) -> bool:
-    """Replicate ``declib_dec._enumerate_functions`` filtering for one function.
+    """Apply the shared source-function filtering rule to one function.
 
     A function whose address is one of ``addr_targets`` (the DWARF ``low_pc``
     source functions the benchmark driver asked for) is a VERIFIED real function
@@ -318,7 +316,7 @@ def _addr_matches(addr: int, target_addrs: set[int]) -> bool:
 
 
 def extract_metrics(code: str) -> dict[str, Any]:
-    """Extract basic structure metrics (matches ``declib_dec._extract_metrics``)."""
+    """Extract basic structure metrics from decompiled code."""
     return {
         "gotos": code.count("goto "),
         "bools": code.count(" && ") + code.count(" || "),

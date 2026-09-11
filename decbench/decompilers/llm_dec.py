@@ -34,10 +34,12 @@ the real symbol for evaluation, exactly as it does for angr/Ghidra.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -47,6 +49,12 @@ from pathlib import Path
 from typing import Any
 
 from decbench.decompilers.base import Decompiler, DecompilerConfig
+from decbench.decompilers.limits import (
+    BINARY_MEMORY_LIMIT_BYTES,
+    cleanup_docker_invocation,
+    docker_memory_args,
+    docker_tracking_args,
+)
 from decbench.decompilers.raw import common
 from decbench.decompilers.registry import register_decompiler
 from decbench.decompilers.spec import version_settings
@@ -59,8 +67,6 @@ from decbench.models.decompilation import (
 _l = logging.getLogger(__name__)
 
 _DEFAULT_MAX_FUNCS = 8
-
-_DEFAULT_TIMEOUT = 900
 
 _OUTFILE = "decompiled.c"
 
@@ -282,9 +288,15 @@ class _AgentDecompiler(Decompiler):
 
     def _timeout(self) -> int:
         try:
-            return int(self._opt("timeout", "DECBENCH_LLM_TIMEOUT", _DEFAULT_TIMEOUT))
+            return int(
+                self._opt(
+                    "timeout",
+                    "DECBENCH_LLM_TIMEOUT",
+                    self.config.function_timeout_seconds,
+                )
+            )
         except (TypeError, ValueError):
-            return _DEFAULT_TIMEOUT
+            return int(self.config.function_timeout_seconds)
 
     def _fn_workers(self) -> int:
         """How many of a binary's functions to decompile concurrently (>=1)."""
@@ -496,19 +508,30 @@ class _AgentDecompiler(Decompiler):
             argv, run_kwargs = self._invocation(workdir, prompt, local)
             stdout = ""
             timed_out = False
+            process = subprocess.Popen(
+                argv,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                **run_kwargs,
+            )
             try:
-                proc = subprocess.run(
-                    argv,
-                    capture_output=True,
-                    text=True,
-                    stdin=subprocess.DEVNULL,
-                    timeout=self._timeout(),
-                    **run_kwargs,
-                )
-                stdout = (proc.stdout or "") + "\n" + (proc.stderr or "")
+                process_stdout, process_stderr = process.communicate(timeout=self._timeout())
+                stdout = (process_stdout or "") + "\n" + (process_stderr or "")
             except subprocess.TimeoutExpired as e:
                 stdout = (e.stdout or "") if isinstance(e.stdout, str) else ""
                 timed_out = True
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                except (ProcessLookupError, PermissionError, OSError):
+                    with contextlib.suppress(Exception):
+                        process.kill()
+                with contextlib.suppress(Exception):
+                    process_stdout, process_stderr = process.communicate(timeout=15)
+                    stdout = (process_stdout or "") + "\n" + (process_stderr or "")
+                cleanup_docker_invocation(argv)
                 _l.warning("llm/%s: agent timed out on %s @ 0x%x", self.name, name, addr)
 
             code = None
@@ -638,6 +661,10 @@ class _AgentDecompiler(Decompiler):
             shutil.which("docker") or "docker",
             "run",
             "--rm",
+            *docker_tracking_args(),
+            *docker_memory_args(
+                BINARY_MEMORY_LIMIT_BYTES // max(1, min(self._fn_workers(), self._max_funcs()))
+            ),
             "-v",
             f"{workdir.resolve()}:/work",
             "-w",
@@ -746,8 +773,6 @@ class CodexDecompiler(_AgentDecompiler):
 
     def _isolated_codex_home(self) -> Path:
         """A decbench-owned CODEX_HOME with no skills (enforces the decompiler ban)."""
-        import contextlib
-
         override = self._opt("codex_home", "DECBENCH_CODEX_HOME", "")
         home = Path(override) if override else Path.home() / ".cache" / "decbench" / "codex-home"
         home.mkdir(parents=True, exist_ok=True)
@@ -833,8 +858,6 @@ class ClaudeCodeDecompiler(_AgentDecompiler):
         every use (atomically), so each call reads a currently-valid access token
         and never needs to refresh with a rotated-out token.
         """
-        import contextlib
-
         override = self._opt("claude_config_dir", "DECBENCH_CLAUDE_CONFIG_DIR", "")
         cfg = Path(override) if override else Path.home() / ".cache" / "decbench" / "claude-config"
         cfg.mkdir(parents=True, exist_ok=True)
@@ -918,8 +941,6 @@ class KimiCodeDecompiler(_AgentDecompiler):
 
     def _isolated_kimi_home(self) -> Path:
         """A decbench-owned KIMI_CODE_HOME: no skills, synced auth + config."""
-        import contextlib
-
         override = self._opt("kimi_code_home", "DECBENCH_KIMI_CODE_HOME", "")
         home = (
             Path(override) if override else Path.home() / ".cache" / "decbench" / "kimi-code-home"
