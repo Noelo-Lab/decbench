@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
@@ -96,6 +96,15 @@ class PipelineConfig(BaseModel):
         default=None,
         description="Tree root holding published <opt>/<project>/source_cfgs/"
         "<stem>.json to use instead of extracting source CFGs from .i files",
+    )
+
+    cfg_extraction_policy: Literal[1] = Field(
+        default=1,
+        description="Cindergraph CFG extraction policy version recorded in GED provenance",
+    )
+    cfg_schema_version: Literal[1] = Field(
+        default=1,
+        description="Serialized Cindergraph CFG schema accepted by this fork",
     )
 
 
@@ -326,7 +335,7 @@ class PipelineExecutor:
 
                 if binaries:
                     project.compiled_binaries[opt] = binaries
-                    print(f"Discovered {len(binaries)} binaries for " f"{project.name}/{opt.value}")
+                    print(f"Discovered {len(binaries)} binaries for {project.name}/{opt.value}")
                 else:
                     print(f"Warning: no ELF binaries found in {compiled_dir}")
 

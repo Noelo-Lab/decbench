@@ -453,7 +453,7 @@ def test_replay_propagates_strict_parser_failure(
     artifact.write_text("// Function: f @ 0x1000\nint f(void) { return 0; }\n")
 
     def fail_parse(*_args: object, **_kwargs: object) -> dict:
-        raise RuntimeError("strict Joern failure")
+        raise RuntimeError("strict CFG extraction failure")
 
     monkeypatch.setattr(historical_iso, "extract_cfgs_from_source", fail_parse)
     record = _record(
@@ -469,7 +469,7 @@ def test_replay_propagates_strict_parser_failure(
         {},
     )
 
-    with pytest.raises(RuntimeError, match="strict Joern failure"):
+    with pytest.raises(RuntimeError, match="strict CFG extraction failure"):
         historical_iso.eval_historical_iso_one(task)
 
 

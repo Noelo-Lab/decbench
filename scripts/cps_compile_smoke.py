@@ -9,7 +9,7 @@ run inside the ARM-toolchain image (see docker/compile.Dockerfile).
 Usage:
     PYTHONPATH=<repo> python scripts/cps_compile_smoke.py <project.toml> <out_dir> [opt]
 
-Only imports the (light) compile path, so it runs without angr/ghidra/pyjoern.
+Only imports the light compile path, so it runs without analysis dependencies.
 """
 
 from __future__ import annotations

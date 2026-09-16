@@ -17,14 +17,13 @@ degeneracy verdict recorded. :func:`rebuild_cfg` reconstructs a GED-ready
 reproducible offline through :class:`decbench.metrics.ged.GEDMetric`.
 
 A project-wide, name-keyed, last-writer-wins union is NOT a valid export: a
-declaration-only view of a function (Joern emits a single ``Nop`` block for it)
+declaration-only view of a function (a degenerate one-block graph)
 overwrites the defining TU's real body whenever it sorts later, and every binary
 of a project ends up with an identical map, so per-program functions (``main``,
 ``usage``, static helpers) are scored against another binary's body. That was
 the bug behind decbench#50 — it silently capped offline GED coverage at ~39%.
 
-Cost model: Joern spawns a JVM per parse, so parsing dominates. We therefore
-**deduplicate parses by stripped-content hash** — each unique translation unit
+Extraction is deduplicated by stripped-content hash — each unique translation unit
 (shared across opt levels and binaries) is parsed once and cached. Output is
 resumable: an existing ``<stem>.json`` is left untouched unless ``overwrite``.
 """
@@ -43,12 +42,14 @@ from typing import TYPE_CHECKING
 from decbench.utils import binfmt
 from decbench.utils.cfg import (
     best_source_by_name,
-    extract_cfgs_from_source,
+    cfg_extractor_info,
+    extract_cfg_records_from_source,
     is_degenerate_source_cfg,
     resolved_source_for_binary,
     strip_system_headers,
 )
 from decbench.utils.dwarf_policy import dwarf_follow_abstract_origin
+from decbench.utils.langs import preprocessed_by_stem
 from decbench.utils.results_tree import OPT_LEVELS, compiled_dir, resolve_binary
 
 if TYPE_CHECKING:
@@ -64,37 +65,23 @@ CfgSerial = tuple[list[int], list[list[int]], dict[str, str], list[int], list[in
 FunctionFilter = Mapping[tuple[str, str], Collection[str]]
 
 
-class RealStatement:
-    """Marker statement standing in for a rebuilt node's real (non-``Nop``) content.
-
-    :func:`decbench.utils.cfg.is_degenerate_source_cfg` decides a single-block CFG
-    by looking for a non-``Nop`` statement, which serialization drops. Rebuilt
-    non-degenerate nodes carry one of these so that verdict survives the round
-    trip; without it every rebuilt 1-block function reads as an empty prototype.
-    """
-
-    __slots__ = ()
-
-
 class CfgNode:
     """A minimal CFG node exposing the two role flags GED reads.
 
     Rebuilt graphs use these so GED reproduces exactly; identity is the node id.
     """
 
-    __slots__ = ("id", "is_entrypoint", "is_exitpoint", "statements")
+    __slots__ = ("id", "is_entrypoint", "is_exitpoint")
 
     def __init__(
         self,
         id: int,
         is_entrypoint: bool = False,
         is_exitpoint: bool = False,
-        statements: tuple[RealStatement, ...] = (),
     ) -> None:
         self.id = id
         self.is_entrypoint = is_entrypoint
         self.is_exitpoint = is_exitpoint
-        self.statements = statements
 
     def __hash__(self) -> int:
         return hash(self.id)
@@ -124,23 +111,45 @@ def relabel_cfg(cfg: DiGraph) -> CfgSerial:  # type: ignore[type-arg]
     return node_ids, edges, labels, entry, exit_, is_degenerate_source_cfg(cfg)
 
 
-def rebuild_cfg(func_cfg: dict) -> DiGraph:  # type: ignore[type-arg]
+def rebuild_cfg(
+    func_cfg: dict,
+    generator: object | None = None,
+    extraction: Mapping[str, object] | None = None,
+) -> DiGraph:  # type: ignore[type-arg]
     """Reconstruct a GED-ready ``nx.DiGraph`` from one serialized function CFG.
 
     Nodes are :class:`CfgNode` instances carrying the stored entry/exit flags, so
     :class:`decbench.metrics.ged.GEDMetric` can reproduce the pipeline's score
     when given this source graph and the corresponding decompiled CFG. A CFG
-    recorded as non-degenerate also gets :class:`RealStatement` markers so
-    :func:`decbench.utils.cfg.is_degenerate_source_cfg` agrees offline (JSONs
-    written before that field existed simply keep the old behaviour).
+    The explicit ``degenerate`` graph attribute keeps denominator behavior
+    stable for genuine and declaration-only one-block graphs.
     """
     import networkx as nx
 
     entry = set(func_cfg.get("entry", []))
     exit_ = set(func_cfg.get("exit", []))
-    statements = () if func_cfg.get("degenerate", True) else (RealStatement(),)
-    node_by_id = {i: CfgNode(i, i in entry, i in exit_, statements) for i in func_cfg["nodes"]}
+    node_by_id = {i: CfgNode(i, i in entry, i in exit_) for i in func_cfg["nodes"]}
     graph = nx.DiGraph()
+    if isinstance(generator, dict):
+        extractor = generator.get("name", "legacy-unknown")
+        extractor_version = generator.get("version")
+        cfg_schema = generator.get("cfg_schema")
+        extraction_policy = generator.get("extraction_policy")
+    else:
+        extractor = generator or "legacy-unknown"
+        extractor_version = None
+        cfg_schema = None
+        extraction_policy = None
+    graph.graph.update(
+        degenerate=bool(func_cfg.get("degenerate", True)),
+        cfg_extractor=extractor,
+        cfg_extractor_version=extractor_version,
+        cfg_schema=cfg_schema,
+        extraction_policy=extraction_policy,
+        cfg_language=(extraction or {}).get("language"),
+        diagnostic_count=(extraction or {}).get("diagnostic_count", 0),
+        partial_recovery=bool((extraction or {}).get("partial_recovery", False)),
+    )
     graph.add_nodes_from(node_by_id.values())
     for u, v in func_cfg["edges"]:
         graph.add_edge(node_by_id[u], node_by_id[v])
@@ -148,9 +157,10 @@ def rebuild_cfg(func_cfg: dict) -> DiGraph:  # type: ignore[type-arg]
 
 
 def _stripped_sha(i_path: Path) -> str:
-    """SHA-256 of a ``.i`` file after stripping inlined system headers."""
+    """Language-separated SHA-256 after stripping preprocessed headers."""
     stripped = strip_system_headers(i_path.read_text(errors="replace"))
-    return hashlib.sha256(stripped.encode("utf-8", "replace")).hexdigest()
+    payload = f"{i_path.suffix}\0{stripped}".encode("utf-8", "replace")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _parse_tus_for_opt(
@@ -159,7 +169,7 @@ def _parse_tus_for_opt(
     opt: str,
     cache: dict[str, dict[str, DiGraph]],  # type: ignore[type-arg]
 ) -> dict[str, dict[str, DiGraph]]:  # type: ignore[type-arg]
-    """Parse a project's ``.i`` files at ``opt`` into ``{tu_stem: {function: CFG}}``.
+    """Parse a project's ``.i``/``.ii`` units into ``{tu_stem: {function: CFG}}``.
 
     Keyed by ``.i`` stem exactly as the live pipeline keys
     ``project.preprocessed_sources`` (``pipeline/compile.py`` uses the source
@@ -171,15 +181,19 @@ def _parse_tus_for_opt(
     comp = compiled_dir(root, opt, project)
     if not comp.is_dir():
         return by_tu
-    for i_path in sorted(comp.glob("*.i")):
+    for tu_stem, i_path in sorted(preprocessed_by_stem(comp).items()):
         sha = _stripped_sha(i_path)
         if sha not in cache:
-            try:
-                cache[sha] = extract_cfgs_from_source(i_path)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("CFG parse failed for %s: %s", i_path, exc)
+            extraction = extract_cfg_records_from_source(i_path)
+            if extraction.status == "ok":
+                from decbench.cfg import graphs_from_extraction
+
+                cache[sha] = graphs_from_extraction(extraction)
+            else:
+                details = "; ".join(item.message for item in extraction.diagnostics)
+                logger.warning("CFG extraction %s for %s: %s", extraction.status, i_path, details)
                 cache[sha] = {}
-        by_tu[i_path.stem] = cache[sha]
+        by_tu[tu_stem] = cache[sha]
     return by_tu
 
 
@@ -238,7 +252,7 @@ def _write_cfg_json(
     project: str,
     stem: str,
     resolved: dict[str, CfgSerial],
-    generator: str,
+    generator: dict[str, object],
 ) -> None:
     """Serialize a binary's resolved ``function -> CFG`` map (contract §5)."""
     functions = {
@@ -257,6 +271,11 @@ def _write_cfg_json(
         "project": project,
         "binary": stem,
         "generator": generator,
+        "extraction": {
+            "language": "c",
+            "diagnostic_count": 0,
+            "partial_recovery": False,
+        },
         "functions": functions,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -271,7 +290,7 @@ def export_project_cfgs(
     *,
     functions: FunctionFilter | None = None,
     overwrite: bool = False,
-    generator: str = "pyjoern",
+    generator: dict[str, object] | None = None,
 ) -> dict[tuple[str, str], str]:
     """Write source-CFG JSONs for one project's binaries; return ``{(opt, stem): rel}``.
 
@@ -286,6 +305,8 @@ def export_project_cfgs(
     AFTER resolution so it never changes which body a name resolves to. Omit it
     to store the whole project-wide name set in every binary's JSON.
     """
+    if generator is None:
+        generator = cfg_extractor_info()
     out: dict[tuple[str, str], str] = {}
     cache: dict[str, dict[str, DiGraph]] = {}  # type: ignore[type-arg]
     for opt in [o for o in OPT_LEVELS if o in stems_by_opt]:
@@ -314,7 +335,7 @@ def export_all_cfgs(
     workers: int = 1,
     functions: dict[tuple[str, str, str], Collection[str]] | None = None,
     overwrite: bool = False,
-    generator: str = "pyjoern",
+    generator: dict[str, object] | None = None,
     log: Logger = print,
 ) -> dict[tuple[str, str, str], str]:
     """Export source CFGs for many projects; return ``{(opt, project, stem): rel}``.

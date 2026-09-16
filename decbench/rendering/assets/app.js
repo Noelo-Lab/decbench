@@ -814,11 +814,11 @@ function buildDataset(ds) {
 }
 
 function buildPipelineHealth(ds) {
-    const joern = ds.joern || {};
-    const src = joern.source || {}, spot = joern.spot_check || {};
+    const frontend = ds.cfg_frontend || {};
+    const src = frontend.source || {}, spot = frontend.spot_check || {};
     const srcTotal = src.total || 0, srcLost = src.lost || 0;
     const srcPct = srcTotal ? (100 * srcLost / srcTotal) : 0;
-    const js = document.getElementById("joern-source");
+    const js = document.getElementById("cfg-frontend-source");
     if (js) {
         js.innerHTML = '<div class="goal-body"><div class="perfect">' +
             'No source CFG (GED unmeasurable — our source front-end failed/timed out): ' +
@@ -833,11 +833,11 @@ function buildPipelineHealth(ds) {
                 '.</div>') : '') +
             '</div>';
     }
-    const out = joern.output || {};
-    const jt = document.getElementById("joern-output-table");
+    const out = frontend.output || {};
+    const jt = document.getElementById("cfg-frontend-output-table");
     if (jt) {
         jt.querySelector("thead tr").innerHTML =
-            "<th>decompiler</th><th>Joern failed on output</th>";
+            "<th>decompiler</th><th>Cindergraph failed on output</th>";
         jt.querySelector("tbody").innerHTML = Object.keys(out).sort((a, b) =>
             errRate(out[a]) - errRate(out[b])
         ).map(d => {
@@ -1260,7 +1260,7 @@ function initThemeToggle() {
 // is exactly what a bad ?snapshot= sends people to, so it must survive one.
 const LAZY_VIEWS = {
     about: {file: "dataset", body: "dataset-summary", render: buildDataset},
-    data: {file: "dataset", body: "joern-source", render: buildPipelineHealth},
+    data: {file: "dataset", body: "cfg-frontend-source", render: buildPipelineHealth},
     view: {file: "samples", body: "view-body", render: initView},
     snapshots: {file: "snapshots", body: "snapshots-body", render: buildSnapshots,
                 independent: true}

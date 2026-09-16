@@ -228,8 +228,7 @@ class FunctionData(BaseModel):
     )
     dataset_presets: list[DatasetPreset] = Field(
         default_factory=list,
-        description="The selectable dataset views "
-        "(unoptimized/optimized/inlined/large/sample-set)",
+        description="The selectable dataset views (unoptimized/optimized/inlined/large/sample-set)",
     )
     hardest: list[HardestEntry] = Field(
         default_factory=list,
@@ -248,7 +247,7 @@ class FunctionData(BaseModel):
     dataset_info: dict = Field(
         default_factory=dict,
         description="Dataset overview for the About/Dataset page: total source "
-        "lines of code, per-project LOC, and Joern source-parse failure rates "
+        "lines of code, per-project LOC, and CFG-front-end failure rates "
         "(how much of the GED pipeline fails due to our own tooling). Software-"
         "type categories are derived client-side from per-binary labels.",
     )

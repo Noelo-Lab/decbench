@@ -28,7 +28,7 @@ As such, this is a living project, widely different from a paper and more simila
 
 ## the three metrics
 
-We define three metrics that explore the three areas we believe are representative of "perfect" decompilation.
+We define three separable goals, measured by three metrics, that explore the areas we believe are representative of "perfect" decompilation.
 1. Code Structure
 2. Types (args and vars)
 3. Byte-match Recompilability
@@ -41,7 +41,7 @@ That speaks to the difficulty of measuring this field.
 Find the extended metrics limitations [below](#metric-limitations).
 
 ## [1] Control-flow structure correctness
-metric: Graph Edit Distance
+metric: Structural Correctness (GED)
 
 Does the decompiled code branch and loop the same way the source does? We compare the control-flow graphs of the source and the decompilation with a Graph Edit Distance (GED) — the number of node/edge insertions, deletions, and substitutions needed to turn one CFG into the other.
 
@@ -53,7 +53,7 @@ Does the decompiled code branch and loop the same way the source does? We compar
 <div class="viz-rowlabel">A &middot; lift the source to a control-flow graph</div>
 <div class="viz-pipe">
 <span class="viz-chip is-in">source .c</span>
-<span class="viz-parrow">&mdash;<b>&nbsp;joern&nbsp;</b>&rarr;</span>
+<span class="viz-parrow">&mdash;<b>&nbsp;cindergraph&nbsp;</b>&rarr;</span>
 <span class="viz-chip is-out">control-flow graph</span>
 <span class="viz-dim">&nbsp;(same lift is applied to every decompiler's C output)</span>
 </div>
@@ -171,7 +171,7 @@ GED = <span class="n">3</span> &nbsp;&mdash;&nbsp; 1 node insertion + 2 edge ins
 
 </div>
 
-<p class="viz-note">Structural Correctness (GED): Joern lifts both the original source and each decompiler's C output to control-flow graphs, then counts the fewest node/edge edits needed to make them isomorphic &mdash; <code>0</code> means an identical shape. Only control structure is scored, so the signal is fair across decompilers.</p>
+<p class="viz-note">Structural Correctness (GED): Cindergraph lifts both the original source and each decompiler's C output to control-flow graphs, then counts the fewest node/edge edits needed to make them isomorphic &mdash; <code>0</code> means an identical shape. Only control structure is scored, so the signal is fair across decompilers.</p>
 
 </div>
 </details>
@@ -383,8 +383,8 @@ Like most GED algorithms, VJ-GED is an approximation and can report more distanc
 Larger non-isomorphic graphs use a nonzero lower bound from their node and edge count differences.
 
 There are other ways to inject error here.
-We largely use [Joern](https://joern.io/) to parse the decompilation of each project.
-If Joern fails, we fail.
+We use [Cindergraph](https://github.com/mjbommar/cindergraph) to extract control-flow graphs from the source and each decompiler's C output.
+An extraction failure remains visible as missing GED coverage rather than being silently scored as a match.
 There is also ways the `.i` files, which we parse, can have false information left behind by the compiler.
 When we sampled this process, we found it was small.
 

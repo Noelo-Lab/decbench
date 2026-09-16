@@ -175,7 +175,7 @@ def strip_decompilers(fd: FunctionData, exclude: Iterable[str]) -> list[str]:
     * ``fd.history`` points whose ``decompiler`` is excluded (dropped)
 
     ``fd.dataset_info`` is left alone: it is decompiler-agnostic (corpus LOC +
-    Joern source-parse health). Returns the sorted subset of ``exclude`` that
+    source-CFG extraction health). Returns the sorted subset of ``exclude`` that
     actually had a trace removed; a second call is a no-op returning ``[]``.
     """
     targets = set(exclude)

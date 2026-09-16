@@ -11,7 +11,7 @@ decompiler in [decompilers.md](decompilers.md).
 - Use the `decbench` virtualenv at `/home/mahaloz/.virtualenvs/decbench`
   (Python 3.14; decbench installed editable). Activate with
   `source /home/mahaloz/.virtualenvs/decbench/bin/activate`. (The package
-  itself supports >=3.10 per pyproject.toml; only the dewolf sidecar venv
+  itself supports >=3.12 per pyproject.toml; only the dewolf sidecar venv
   still runs 3.10.)
 - Docker works here (no sudo needed); used for the RetDec/Reko/r2dec images
   and the `decbench-compile` cross-compile image.
@@ -38,7 +38,7 @@ structurer was fully retired 2026-07-23; see CHANGELOG.md.)
   for headless use, and it must cover the installed version.
 - **r2dec** — radare2; the benchmark path is the REAL r2dec plugin via the
   `decbench/r2dec` Docker image — native `pdc` is a fallback whose asm-like
-  output yields no Joern CFG, so `pdd` is required for GED.
+  output yields no usable C CFG, so `pdd` is required for GED.
 - **dewolf** — fkie-cad/dewolf, a Binary-Ninja research decompiler run OUT OF
   PROCESS in its own py3.10 venv at `/home/mahaloz/.virtualenvs/dewolf` with
   the repo at `/home/mahaloz/ctf/tools/dewolf`; see `raw/dewolf_raw.py` +
@@ -76,14 +76,12 @@ structurer was fully retired 2026-07-23; see CHANGELOG.md.)
   run into a tree's history points (stored in `function_results.json` —
   unshipped since the Historical view was removed 2026-07-22).
 
-### pyjoern / Joern (GED's engine)
+### Cindergraph (GED's C frontend)
 
-`pyjoern` bundles a ~1.9 GB Joern under site-packages and powers the GED
-metric. Gotcha: the wheel can ship a MISMATCHED joern-cli bundle (1.2.18 jars
-under a 4.x wrapper) which silently breaks `parse_source` → GED scores
-nothing. Fix: drop the matching Joern **v4.0.150** `joern-cli` into
-`site-packages/pyjoern/bin/joern-cli/` (its zip SHA-512 must equal
-`pyjoern.__init__.JOERN_ZIP_HASH`). Re-apply after any pyjoern reinstall.
+GED uses the pinned `cindergraph[graphs]` dependency to extract deterministic
+per-function C CFG topology in process. There is no JVM or external parser
+installation. Cindergraph is C-only: `.ii` C++ units receive an explicit GED
+abstention, while type-match and byte-match remain available.
 
 ## The benchmark corpus
 
@@ -195,7 +193,7 @@ and disabled by default — see `projects/cpp/disabled/README.md`); the mechanic
 Three things are worth knowing before reading a C++ number:
 
 - **No demangler is involved anywhere.** DWARF `DW_AT_name` for
-  `leveldb::DBImpl::Get` is `"Get"`, and Joern's C++ frontend keys on the short
+  `leveldb::DBImpl::Get` is `"Get"`, and historical C++ CFG data used the short
   name too, so both sides of the match already speak unqualified names. Mangled
   `_ZN...` never appears.
 - **Same-name collisions make a C++ target's absolute GED incomparable to a C
@@ -575,7 +573,7 @@ python scripts/finalize_results.py results/full_run [--audit|--render]
 # Info writers — re-run after ANY function_results rebuild (the rebuild does
 # NOT repopulate them):
 python scripts/compute_dataset_info.py results/sailr_full  # FunctionData.dataset_info (sole
-#   writer: About-page corpus LOC + Joern parse-health stats)
+#   writer: About-page corpus LOC + Cindergraph extraction-health stats)
 python scripts/compute_cost_info.py results/full_run llm_traces  # FunctionData.cost_info (sole
 #   writer: the data page's cost section FACTS — batch decompile times from decompiled/*.toml
 #   headers + LLM per-fn times/tokens via scoring/cost.py, structured fields preferred over the

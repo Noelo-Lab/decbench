@@ -15,7 +15,7 @@ kit's ``package.py`` — see :mod:`decbench.evalkit.kit_package`) into a new
   :func:`decbench.pipeline.evaluate.evaluate_decompilation` path the run
   driver uses, with source CFGs from the tree's ``.i`` files.
 
-All evaluation imports are lazy: ``evaluate=False`` never touches pyjoern.
+All evaluation imports are lazy: ``evaluate=False`` never initializes CFG extraction.
 
 Drop/count semantics: a submitted function whose address is not one of the
 frozen manifest's addresses for its (project, opt, binary) slice is dropped
@@ -543,7 +543,7 @@ def _function_owners_for_addrs(
     """The DWARF function/TU owners for target ``addrs``.
 
     Mirrors ``project_source_functions``' ``stem_out`` (scripts/run_benchmark.py)
-    so Joern parses only the translation units that hold the target functions.
+    so Cindergraph sees only the translation units that hold the target functions.
     Empty result means "unknown" — the caller falls back to every TU.
     """
     if not stems or not addrs:

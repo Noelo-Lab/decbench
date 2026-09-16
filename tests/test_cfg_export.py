@@ -15,6 +15,7 @@ from types import SimpleNamespace
 import networkx as nx
 import pytest
 
+from decbench.cfg import CfgExtraction, ExtractedCfg
 from decbench.publish import cfg_export
 from decbench.utils.cfg import (
     best_source_by_name,
@@ -24,7 +25,7 @@ from decbench.utils.cfg import (
 
 
 class Nop:
-    """Stands in for pyjoern's FUNCTION_START/FUNCTION_END filler statements."""
+    """Stands in for entry/exit filler statements in a legacy graph."""
 
 
 class Stmt:
@@ -32,7 +33,7 @@ class Stmt:
 
 
 class Block:
-    """Minimal stand-in for a pyjoern CFG block."""
+    """Minimal stand-in for a legacy CFG block."""
 
     def __init__(
         self,
@@ -61,7 +62,7 @@ def chain(n: int) -> nx.DiGraph:
 
 
 def prototype() -> nx.DiGraph:
-    """The single all-``Nop`` block Joern emits for a declaration-only view."""
+    """A single all-``Nop`` block representing a declaration-only view."""
     graph = nx.DiGraph()
     graph.add_node(Block(0, (Nop(), Nop()), entry=True, exit=True))
     return graph
@@ -148,11 +149,27 @@ def project_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             # stripping keeps only what follows a non-system line marker.
             (comp / f"{tu}.i").write_text(f'# 1 "{tu}.c"\nint tag_{tu};\n')
 
-        monkeypatch.setattr(
-            cfg_export,
-            "extract_cfgs_from_source",
-            lambda path, tus=tus: tus[path.stem],
-        )
+        def extract(path: Path, tus=tus) -> CfgExtraction:
+            functions = {}
+            for name, graph in tus[path.stem].items():
+                nodes, edges, _labels, entry, exit_, degenerate = cfg_export.relabel_cfg(graph)
+                functions[name] = ExtractedCfg(
+                    nodes=tuple(nodes),
+                    edges=tuple(tuple(edge) for edge in edges),
+                    entry=tuple(entry),
+                    exit=tuple(exit_),
+                    degenerate=degenerate,
+                )
+            return CfgExtraction(
+                functions=functions,
+                provider="cindergraph",
+                provider_version="test",
+                cfg_schema=1,
+                extraction_policy=1,
+                language="c",
+            )
+
+        monkeypatch.setattr(cfg_export, "extract_cfg_records_from_source", extract)
         return tmp_path / "root", tmp_path / "dest"
 
     return build
@@ -160,6 +177,35 @@ def project_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 def read_export(dest: Path, stem: str, opt: str = "O2", project: str = "proj") -> dict:
     return json.loads(cfg_export.cfg_json_path(dest, opt, project, stem).read_text())["functions"]
+
+
+def test_export_records_cindergraph_provenance(project_tree) -> None:
+    root, dest = project_tree({"demo": {"main": chain(1)}})
+    cfg_export.export_project_cfgs(root, dest, "proj", {"O2": ["demo"]})
+    data = json.loads(cfg_export.cfg_json_path(dest, "O2", "proj", "demo").read_text())
+    assert data["generator"]["name"] == "cindergraph"
+    assert data["generator"]["cfg_schema"] == 1
+    assert data["generator"]["extraction_policy"] == 1
+    assert data["extraction"] == {
+        "language": "c",
+        "diagnostic_count": 0,
+        "partial_recovery": False,
+    }
+
+
+def test_export_discovers_cxx_and_records_an_explicit_abstention(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    comp = tmp_path / "O2" / "proj" / "compiled"
+    comp.mkdir(parents=True)
+    (comp / "db_impl.cc.ii").write_text("int main() { return 0; }\n")
+
+    with caplog.at_level("WARNING"):
+        parsed = cfg_export._parse_tus_for_opt(tmp_path, "proj", "O2", {})
+
+    assert parsed == {"db_impl.cc": {}}
+    assert "unsupported-language" in caplog.text
+    assert "db_impl.cc.ii" in caplog.text
 
 
 def test_prototype_never_displaces_a_real_body(project_tree) -> None:

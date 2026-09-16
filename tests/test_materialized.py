@@ -6,6 +6,8 @@ import json
 import struct
 from pathlib import Path
 
+import pytest
+
 from decbench.models.project import OptimizationLevel
 from decbench.pipeline.materialized import (
     discover_decompilations,
@@ -40,7 +42,12 @@ CFG_JSON = {
     "opt": "O0",
     "project": "demo",
     "binary": "demo",
-    "generator": "test",
+    "generator": {
+        "name": "cindergraph",
+        "version": "0.1.0",
+        "cfg_schema": 1,
+        "extraction_policy": 1,
+    },
     "functions": {
         "main": {
             "nodes": [0, 1, 2, 3],
@@ -104,8 +111,22 @@ def test_load_source_cfgs_rebuilds_ged_ready_graphs(tmp_path: Path) -> None:
     exits = [n for n in cfg.nodes if n.is_exitpoint]
     assert [n.id for n in entries] == [0]
     assert [n.id for n in exits] == [3]
+    assert cfg.graph["generator"]["name"] == "cindergraph"
+    assert cfg.graph["cfg_extractor"] == "cindergraph"
+    assert cfg.graph["cfg_language"] is None  # legacy JSON remains readable
 
     assert load_source_cfgs(tmp_path, "O2", "demo") is None
+
+
+def test_load_source_cfgs_rejects_mixed_generators(tmp_path: Path) -> None:
+    proj = _write_tree(tmp_path)
+    second = dict(CFG_JSON)
+    second["binary"] = "other"
+    second["generator"] = {"name": "cindergraph", "version": "0.2.0"}
+    (proj / "source_cfgs" / "other.json").write_text(json.dumps(second))
+
+    with pytest.raises(ValueError, match="mixed source-CFG generators"):
+        load_source_cfgs(tmp_path, "O0", "demo")
 
 
 def test_discover_tree_projects(tmp_path: Path) -> None:

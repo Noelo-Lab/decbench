@@ -1,11 +1,9 @@
 """Source-language vocabulary shared by the compiler, CFG, and source-extract paths.
 
-gcc names its ``-save-temps`` output after the LANGUAGE, not the flag: a C
-translation unit yields ``<name>.i`` and a C++ one ``<name>.ii``. Joern picks
-its frontend the same way — from the extension — and its C frontend returns
-zero functions for C++ input. So the ``.i``/``.ii`` distinction has to be
-carried end-to-end, and every site that used to hard-code ``.i`` speaks these
-tuples instead.
+gcc names its ``-save-temps`` output after the language, not the flag: a C
+translation unit yields ``<name>.i`` and a C++ one ``<name>.ii``. Cindergraph
+supports C and rejects C++ explicitly, so the distinction must be carried
+end-to-end rather than silently treating C++ as empty C.
 """
 
 from __future__ import annotations

@@ -4,13 +4,21 @@ from __future__ import annotations
 
 import logging
 import re
-import shutil
-import subprocess
-import tempfile
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from decbench.cfg import (
+    CfgDiagnostic,
+    CfgExtraction,
+    CfgLanguage,
+    CindergraphCfgExtractor,
+    PreprocessingEvidence,
+    extractor_info,
+    graphs_from_extraction,
+)
+from decbench.cfg.cindergraph import CFG_SCHEMA_VERSION, EXTRACTION_POLICY_VERSION
 from decbench.utils.langs import CXX_PREPROC_EXTS, PREPROC_EXTS
 
 logger = logging.getLogger(__name__)
@@ -23,18 +31,17 @@ if TYPE_CHECKING:
 
 _LINE_MARKER = re.compile(r'^#\s+\d+\s+"([^"]*)"')
 
-# ``T [N] name(...)`` is not valid C, so Joern parses nothing for such a function
-# and it silently drops out of GED's denominator. Anchored at line start so it
+# ``T [N] name(...)`` is not valid C and can drop a function from GED's denominator.
+# Anchored at line start so it
 # only rewrites a signature, never an in-body ``char buf[16];``.
 _AGG_RETURN = re.compile(r"^([A-Za-z_][\w ]*?)\s*\[\d+\]\s+([A-Za-z_]\w*\s*\()", re.M)
 
-# ``@`` is not legal C and breaks Joern's parse for the whole function.
+# ``@`` register annotations are not legal C.
 _REG_ANNOTATION = re.compile(r"\s*@\s*[a-z]\w+\b")
 _PREPROCESSOR_CONTROL = re.compile(
     r"^\s*#\s*(?:define|undef|if|ifdef|ifndef|elif|else|endif)\b",
     re.M,
 )
-_INCLUDE_DIRECTIVE = re.compile(r"^\s*#\s*include\b[^\n]*(?:\n|$)", re.M)
 _FUNCTION_MARKER = re.compile(
     r"^// Function: ([A-Za-z_]\w*)(?: @ 0x[0-9a-fA-F]+)?\s*$",
     re.M,
@@ -49,13 +56,21 @@ _COMPUTED_GOTO = re.compile(r"\bgoto\s*\*")
 _KEEP_RAW_BYTES = frozenset({0x09, 0x0A})
 
 
+class UnsupportedCfgLanguage(ValueError):
+    """The configured CFG extractor does not support this source language."""
+
+
+def cfg_extractor_info() -> dict[str, object]:
+    """Versioned identity persisted with CFGs and included in score provenance."""
+    return extractor_info()
+
+
 def escape_literal_control_bytes(text: str) -> str:
     """Escape raw control bytes appearing inside string/char literals.
 
     A decompiler that inlines ``.rodata`` verbatim emits e.g. an ANSI colour
-    sequence as a raw ``0x1B``. That is valid C, but it makes pyjoern's fast
-    parser emit non-JSON, which fails the whole invocation rather than the one
-    function. Only literal interiors are rewritten, and ``\\x1b`` is the same
+    sequence as a raw ``0x1B``. Only literal interiors are rewritten, and
+    ``\\x1b`` is the same
     bytes to the compiler, so control flow is untouched.
     """
     out: list[str] = []
@@ -84,9 +99,8 @@ def escape_literal_control_bytes(text: str) -> str:
 def rewrite_computed_gotos(text: str) -> str:
     """Replace GNU computed gotos with an empty compound statement.
 
-    ``goto *EXPR;`` is valid GNU C, but Joern parses it into ``UnsupportedStmt``
-    nodes whose block loses its entry-point role — so a correct single-block
-    function scores GED 2 instead of 0. The target of a computed goto is not
+    ``goto *EXPR;`` is valid GNU C, but a topology-only graph cannot derive its
+    dynamic target. The target of a computed goto is not
     statically derivable, so the statement contributes no CFG edge either way;
     replacing it with ``{}`` (rather than deleting it, which would break a
     braceless ``if (c) goto *p; else ...``) leaves exactly the control flow the
@@ -112,7 +126,7 @@ def rewrite_computed_gotos(text: str) -> str:
 
 
 def sanitize_decompiled_c(text: str) -> str:
-    """Clean decompiler-specific C quirks that break Joern's parser.
+    """Clean decompiler-specific C quirks before CFG extraction.
 
     GED only cares about CFG *structure*, so these edits are purely to make the
     body parseable — they never touch control flow. Five quirks:
@@ -127,7 +141,7 @@ def sanitize_decompiled_c(text: str) -> str:
     * **Computed gotos** (any decompiler emitting GNU C): ``goto *EXPR;`` becomes
       an empty compound statement — see :func:`rewrite_computed_gotos`.
     * **Raw control bytes in literals**: escaped, so a verbatim ``.rodata`` string
-      cannot make pyjoern's fast parser emit non-JSON and void the invocation.
+      cannot confuse the C frontend's lexical boundaries.
     """
     text = _AGG_RETURN.sub(r"\1 \2", text)
     text = _REG_ANNOTATION.sub("", text)
@@ -232,40 +246,34 @@ def _protect_macro_colliding_definitions(text: str) -> tuple[str, dict[str, str]
     return text, restore
 
 
-def preprocess_decompiled_c(text: str) -> str:
-    """Expand locally defined macros before Joern parses decompiled C."""
+def prepare_decompiled_c(
+    text: str,
+    *,
+    timeout: float = 30.0,
+) -> tuple[str, PreprocessingEvidence]:
+    """Protect DecBench function markers, then use provider preprocessing."""
     if not needs_decompiled_preprocessing(text):
-        return text
+        return text, PreprocessingEvidence(status="not-needed")
 
-    compiler = shutil.which("gcc") or shutil.which("cc")
-    if compiler is None:
-        logger.warning("Cannot preprocess decompiled C: no host C preprocessor found")
-        return text
+    from cindergraph import source_cfg
 
-    safe_text = _INCLUDE_DIRECTIVE.sub("\n", text)
-    safe_text, restore = _protect_macro_colliding_definitions(safe_text)
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".c") as source:
-            source.write(safe_text)
-            source.flush()
-            result = subprocess.run(
-                [compiler, "-E", "-x", "c", source.name],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-    except (OSError, subprocess.TimeoutExpired) as e:
-        logger.warning("Cannot preprocess decompiled C: %s", e)
-        return text
-
-    if result.returncode != 0:
-        logger.warning("Cannot preprocess decompiled C: %s", result.stderr.strip())
-        return text
-    preprocessed = strip_system_headers(result.stdout)
+    protected, restore = _protect_macro_colliding_definitions(text)
+    report = source_cfg.preprocess_decompiled(protected, timeout=timeout)
+    prepared = report.text
     for sentinel, name in restore.items():
-        preprocessed = preprocessed.replace(sentinel, name)
-    return preprocessed if preprocessed.strip() else text
+        prepared = prepared.replace(sentinel, name)
+    return prepared, PreprocessingEvidence(
+        status=report.status,
+        compiler=report.compiler,
+        command=tuple(report.command),
+        stderr=report.stderr,
+        includes_removed=report.includes_removed,
+    )
+
+
+def preprocess_decompiled_c(text: str) -> str:
+    """Expand locally defined macros before extracting decompiled-C CFGs."""
+    return prepare_decompiled_c(text)[0]
 
 
 def _is_system_header(path: str) -> bool:
@@ -287,11 +295,9 @@ def _is_system_header(path: str) -> bool:
 def strip_system_headers(preprocessed: str) -> str:
     """Drop inlined system-header code from a preprocessed (``.i``/``.ii``) unit.
 
-    A preprocessed file is the project source with EVERY ``#include`` expanded inline,
-    so it is dominated (80-98%) by glibc/toolchain headers. Joern then either
-    times out parsing megabytes of headers or drowns the project's own functions
-    in thousands of header inlines — which is why GED "source-parse failures"
-    were really header-bloat timeouts, not real failures.
+    A preprocessed file is the project source with every ``#include`` expanded inline,
+    so it is dominated by glibc/toolchain headers. Keeping only project text avoids
+    extracting thousands of irrelevant inline functions.
 
     Using the ``# <line> "<file>"`` markers gcc emits, we keep only lines that
     came from the project's own files. ``#ifdef`` selection and macro expansion
@@ -315,11 +321,14 @@ def is_degenerate_source_cfg(cfg: DiGraph) -> bool:  # type: ignore
 
     Two cases, both meaning "there is nothing to score": zero nodes, or a single
     block whose statements are ALL ``Nop`` (``FUNCTION_START``/``FUNCTION_END``) —
-    an *empty prototype* Joern emitted from a declaration-only view of a function
+    an empty declaration-only view of a function
     whose defining translation unit wasn't captured. A genuine single-block
     function (a straight-line ``return foo(...);``) has real statements and is NOT
     degenerate, so it stays scorable (a correct 1-block decompilation → GED 0).
     """
+    explicit = cfg.graph.get("degenerate")
+    if explicit is not None:
+        return bool(explicit)
     n = cfg.number_of_nodes()
     if n == 0:
         return True
@@ -404,15 +413,61 @@ def resolved_source_for_binary(
     return resolved
 
 
-def temp_parse_suffix(source_path: Path) -> str:
-    """The temp-file suffix Joern must see for ``source_path``'s language.
+def extract_cfg_records_from_decompilation(
+    decompilation: DecompilationResult,
+) -> CfgExtraction:
+    """Return typed CFG records and recovery evidence for generated C."""
+    marked_sources = [
+        f"// Function: {func.name}\n{func.decompiled_code}"
+        for func in decompilation.functions.values()
+    ]
+    text = sanitize_decompiled_c("\n\n".join(marked_sources))
+    prepared, preprocessing = prepare_decompiled_c(text)
+    extractor = CindergraphCfgExtractor()
+    try:
+        extraction = extractor.extract_decompiled(prepared)
+    except Exception as error:  # noqa: BLE001 - provider failures are typed evidence
+        return CfgExtraction(
+            functions={},
+            provider=extractor.name,
+            provider_version=extractor.version,
+            cfg_schema=CFG_SCHEMA_VERSION,
+            extraction_policy=EXTRACTION_POLICY_VERSION,
+            language="c",
+            status="failed",
+            diagnostics=(CfgDiagnostic(code="provider-failure", message=str(error)),),
+            preprocessing=preprocessing,
+        )
+    return replace(
+        extraction,
+        preprocessing=preprocessing,
+    )
 
-    Joern picks its frontend from the file extension, and its C frontend returns
-    ZERO functions for C++ input — so a ``.ii`` (preprocessed C++) translation
-    unit handed over as ``.c`` silently scores nothing. Preprocessed C++ becomes
-    ``.cpp``; everything else stays ``.c``.
+
+def extract_cfg_records_from_source(source_path: Path) -> CfgExtraction:
+    """Return the typed provider result for one source translation unit.
+
+    This is the non-lossy pipeline boundary. The older graph-returning wrapper
+    below remains for callers that predate typed extraction outcomes.
     """
-    return ".cpp" if source_path.suffix in CXX_PREPROC_EXTS else ".c"
+    language: CfgLanguage = "c++" if source_path.suffix in CXX_PREPROC_EXTS else "c"
+    text = source_path.read_text(errors="replace")
+    if source_path.suffix in PREPROC_EXTS:
+        text = strip_system_headers(text)
+    extractor = CindergraphCfgExtractor()
+    try:
+        return extractor.extract_source(source_path, text, language)
+    except Exception as error:  # noqa: BLE001 - provider failures are typed evidence
+        return CfgExtraction(
+            functions={},
+            provider=extractor.name,
+            provider_version=extractor.version,
+            cfg_schema=CFG_SCHEMA_VERSION,
+            extraction_policy=EXTRACTION_POLICY_VERSION,
+            language=language,
+            status="failed",
+            diagnostics=(CfgDiagnostic(code="provider-failure", message=str(error)),),
+        )
 
 
 def extract_cfgs_from_source(
@@ -421,13 +476,13 @@ def extract_cfgs_from_source(
     preprocess_decompiled: bool = True,
     raise_on_error: bool = False,
 ) -> dict[str, DiGraph]:
-    """Extract CFGs from a C or C++ source file using pyjoern.
+    """Extract CFGs from a C source file using Cindergraph.
 
     Args:
-        source_path: Path to a source file (``.c``, or preprocessed ``.i``/``.ii``).
+        source_path: Path to a source file (``.c`` or preprocessed ``.i``).
             For preprocessed files the inlined system headers are stripped first
-            (see :func:`strip_system_headers`) so Joern parses only the project's
-            own (already-preprocessed, correctly-ifdef'd) code — fast and complete.
+            (see :func:`strip_system_headers`) so extraction sees only the project's
+            own (already-preprocessed, correctly-ifdef'd) code.
         sanitize_decompiled: When True and ``source_path`` is a *decompiled* ``.c``
             (i.e. NOT a preprocessed ground-truth source), run its text through
             :func:`sanitize_decompiled_c` before parsing so decompiler-specific
@@ -437,61 +492,51 @@ def extract_cfgs_from_source(
             sanitization. Disable only to reproduce historical decompiled-side
             CFG inputs for an audit.
         raise_on_error: Propagate parser failures instead of treating them as an
-            empty parse. Batch reevaluation uses this to keep failed work pending.
+            empty parse. Unsupported C++ always raises rather than silently
+            appearing to be an empty C translation unit.
 
     Returns:
         Dictionary mapping function names to CFG DiGraphs
     """
-    try:
-        from pyjoern import parse_source
-    except ImportError as e:
-        raise ImportError(
-            "pyjoern is required for CFG extraction. " "Install with: pip install pyjoern"
-        ) from e
-
-    cfgs: dict[str, DiGraph] = {}
-    text = source_path.read_text(errors="replace")
-    if source_path.suffix in PREPROC_EXTS:
-        text = strip_system_headers(text)
-    elif sanitize_decompiled:
-        text = sanitize_decompiled_c(text)
-        if preprocess_decompiled:
-            text = preprocess_decompiled_c(text)
-
-    # Joern names its workspace after the input basename, so a unique temp name is
-    # what keeps concurrent parses of the same filename from colliding. The suffix
-    # is what selects Joern's frontend (see :func:`temp_parse_suffix`).
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=temp_parse_suffix(source_path), delete=False
-    ) as f:
-        f.write(text)
-        temp_c_path = Path(f.name)
-    parse_path = temp_c_path
-
-    try:
-        parsed = parse_source(parse_path)
-
-        if parsed is None:
+    if not sanitize_decompiled:
+        extraction = extract_cfg_records_from_source(source_path)
+        if not extraction.supported:
+            raise UnsupportedCfgLanguage(
+                f"Cindergraph CFG extraction supports C, not C++: {source_path}"
+            )
+        if extraction.status == "failed":
+            message = "; ".join(diagnostic.message for diagnostic in extraction.diagnostics)
+            logger.warning(
+                "Cindergraph CFG extraction from source %s failed: %s", source_path, message
+            )
             if raise_on_error:
-                raise RuntimeError(f"Joern returned no parse result for {source_path}")
-            return cfgs
+                raise RuntimeError(message)
+            return {}
+        return graphs_from_extraction(extraction)
 
-        for key, func in parsed.items():
-            func_name = func.name if hasattr(func, "name") else str(key)
-            cfg = func.cfg if hasattr(func, "cfg") else None
+    if source_path.suffix in CXX_PREPROC_EXTS:
+        raise UnsupportedCfgLanguage(
+            f"Cindergraph CFG extraction supports C, not C++: {source_path}"
+        )
+    text = source_path.read_text(errors="replace")
+    text = sanitize_decompiled_c(text)
+    extractor = CindergraphCfgExtractor()
 
-            if cfg is not None:
-                cfgs[func_name] = cfg
-
-    except Exception as e:
-        logger.warning("CFG extraction from source %s failed: %s", source_path, e)
+    try:
+        if preprocess_decompiled:
+            prepared, preprocessing = prepare_decompiled_c(text)
+            extraction = replace(
+                extractor.extract_decompiled(prepared),
+                preprocessing=preprocessing,
+            )
+        else:
+            extraction = extractor.extract_source(source_path, text, "c")
+        return graphs_from_extraction(extraction)
+    except Exception as error:
+        logger.warning("Cindergraph CFG extraction from source %s failed: %s", source_path, error)
         if raise_on_error:
             raise
-    finally:
-        if temp_c_path is not None:
-            temp_c_path.unlink(missing_ok=True)
-
-    return cfgs
+        return {}
 
 
 def extract_cfgs_from_decompilation(
@@ -505,38 +550,9 @@ def extract_cfgs_from_decompilation(
     Returns:
         Dictionary mapping function names to CFG DiGraphs
     """
-    try:
-        from pyjoern import parse_source
-    except ImportError as e:
-        raise ImportError(
-            "pyjoern is required for CFG extraction. " "Install with: pip install pyjoern"
-        ) from e
-
-    cfgs: dict[str, DiGraph] = {}
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".c", delete=False) as f:
-        marked_sources = [
-            (f"// Function: {func.name}\n" f"{sanitize_decompiled_c(func.decompiled_code)}")
-            for func in decompilation.functions.values()
-        ]
-        f.write(preprocess_decompiled_c("\n\n".join(marked_sources)))
-
-        temp_path = Path(f.name)
-
-    try:
-        parsed = parse_source(temp_path)
-
-        if parsed is not None:
-            for key, func in parsed.items():
-                func_name = func.name if hasattr(func, "name") else str(key)
-                cfg = func.cfg if hasattr(func, "cfg") else None
-
-                if cfg is not None:
-                    cfgs[func_name] = cfg
-
-    except Exception as e:
-        logger.warning("CFG extraction from decompilation failed: %s", e)
-    finally:
-        temp_path.unlink(missing_ok=True)
-
-    return cfgs
+    extraction = extract_cfg_records_from_decompilation(decompilation)
+    if extraction.status == "failed":
+        details = "; ".join(item.message for item in extraction.diagnostics)
+        logger.warning("Cindergraph CFG extraction from decompilation failed: %s", details)
+        return {}
+    return graphs_from_extraction(extraction)

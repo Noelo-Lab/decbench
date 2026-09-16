@@ -178,11 +178,11 @@ def extract_source_cfgs(
 ) -> dict[str, dict]:
     """Extract source CFGs for the project's preprocessed sources, keyed by .i stem.
 
-    The CFGs feed the GED metric. ``only_stems`` restricts Joern to just those
+    The CFGs feed the GED metric. ``only_stems`` restricts extraction to those
     ``.i`` files — the ones that actually contain the functions being evaluated.
     This is the big win for gated (e.g. sample-set) runs: a firmware project with
     ~1000 source files is parsed for the ~4 files holding the sampled functions
-    instead of all of them (Joern over the full tree was the whole cost — minutes
+    instead of all of them (processing the full tree is unnecessary work
     to an hour per opt to score a handful of functions). ``None`` parses all.
     """
     sources = project.preprocessed_sources.get(opt, {})
@@ -246,7 +246,7 @@ def _relabel_to_dwarf(
 
     The decompiler analysed the stripped binary, so it named functions by address
     (``FUN_00102530`` / ``sub_...``). Map each back to the DWARF name at its
-    address — renaming in BOTH the code (so GED's Joern parse keys by the right
+    address — renaming in both the code (so GED extraction keys by the right
     name) and the function key — and point eval at the UNSTRIPPED (DWARF) binary.
     This is pure bookkeeping so name-based eval/GED line up; the decompiler got no
     help (its analysis ran on the stripped binary).

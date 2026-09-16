@@ -1,4 +1,4 @@
-"""Tests for decompiled-C sanitization ahead of Joern parsing."""
+"""Tests for compatibility sanitization of decompiler-shaped C."""
 
 from __future__ import annotations
 

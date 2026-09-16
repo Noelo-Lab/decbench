@@ -31,12 +31,12 @@ than favouring one:
   keeps the longest body per name, so a small method can be scored against an
   unrelated large one. **A C++ project's absolute GED is therefore not
   comparable to a C project's.** Fixing it properly needs qualified names on
-  both the Joern side (`fullName`) and the DWARF side (parent-DIE walking).
+  both the CFG side (qualified names) and the DWARF side (parent-DIE walking).
 - **Publish/dataset paths are still `.i`-only.** Several publish and dataset
   export sites glob `*.i` and will silently skip `.ii`, so C++ results are not
   ready to ship to the site or the HuggingFace dataset.
-- Joern's C++ frontend is exercised far less here than its C frontend; a
-  parse that returns nothing degrades to a warning rather than an error.
+- Cindergraph currently rejects C++ input, so GED abstains without affecting
+  type-match or byte-match.
 
 ## Enabling one
 

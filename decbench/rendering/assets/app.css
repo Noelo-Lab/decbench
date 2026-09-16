@@ -680,7 +680,7 @@ pre.viz-code code {
 
 
   /* ---- Plain tables -> horizontal scroll, no page overflow ----------------- */
-  #dataset-projects, #joern-output-table, #snapshots-table {
+  #dataset-projects, #cfg-frontend-output-table, #snapshots-table {
     display: block; width: 100%; overflow-x: auto; white-space: nowrap;
     -webkit-overflow-scrolling: touch;
   }
@@ -708,7 +708,7 @@ pre.viz-code code {
    ========================================================================== */
 @media (min-width: 701px) and (max-width: 1499px) {
   #leaderboard-table, #distance-table, #compile-table,
-  #metrics-perfect-table, #joern-output-table, #dataset-projects, #snapshots-table {
+  #metrics-perfect-table, #cfg-frontend-output-table, #dataset-projects, #snapshots-table {
     display: block; width: 100%; overflow-x: auto;
   }
 }

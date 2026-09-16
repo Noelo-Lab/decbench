@@ -17,8 +17,8 @@ paths read graph topology plus each node's `is_entrypoint`/`is_exitpoint` roles
 and never read labels (which makes the published source-CFG serialization
 lossless — see [dataset-publishing.md](dataset-publishing.md)).
 
-- Decompiled-side CFGs are parsed from the decompiled C via pyjoern after
-  syntax sanitization and expansion of macros defined in that output. This
+- Decompiled-side CFGs are extracted from decompiled C by Cindergraph after
+  expansion of macros defined in that output. This
   mirrors the source side's macro-expanded input; includes are removed before
   the host preprocessor runs, and preprocessing failure falls back to the
   sanitized text.
@@ -41,22 +41,17 @@ lossless — see [dataset-publishing.md](dataset-publishing.md)).
 `scripts/run_benchmark.py`, and `pipeline/executor.py` (which globs
 `compiled_dir/*.i` and `*.ii`) all build the source-side CFGs by feeding the
 preprocessed units to `utils/cfg.py extract_cfgs_from_source` (system headers
-stripped, then pyjoern `parse_source`). Preprocessed over raw source is
-deliberate: Joern needs macro-expanded, ifdef-resolved code to parse
-completely — raw `.c` with unexpanded includes parses incompletely. Without
+stripped, then Cindergraph parity-CFG extraction). Preprocessed over raw source
+is deliberate: it preserves the compiler's macro-expanded, ifdef-resolved C. Without
 them the pipeline takes the "No preprocessed sources" branch and **GED is
 silently None for every function of the run — no error**.
 
-The extractor writes stripped `.i` text to a temporary `.c` file and stripped
-`.ii` text to a temporary `.cpp` file because Joern chooses its frontend from
-that suffix. It does not read or fall back to the project's original source.
-
-gcc names the preprocessed output after the LANGUAGE, not the flag: a C unit
-yields `.i` and a C++ unit `.ii`. Joern picks its frontend the same way, and
-its **C frontend returns ZERO functions for C++ input** — so `utils/cfg.py`
-chooses the temp-file suffix from the input (`.ii` -> `.cpp`, `.i` -> `.c`)
-via `temp_parse_suffix`. Handing a `.ii` to Joern as `.c` scores nothing at
-all (measured on a leveldb TU: 0 functions as `.c`, 393 as `.cpp`).
+The extractor analyzes stripped `.i` text in process. It does not read or fall
+back to the project's original source. gcc names preprocessed output after the
+language: C yields `.i` and C++ yields `.ii`. Cindergraph currently supports C
+only, so `.ii` extraction raises an explicit unsupported-language error and GED
+abstains. It is never treated as an empty C translation unit. Type-match and
+byte-match remain available because they do not use source CFGs.
 
 Every collection site therefore globs BOTH extensions through
 `utils/langs.py preprocessed_by_stem` — `pipeline/executor.py`,
@@ -89,22 +84,15 @@ cross-TU best-by-name is only the final fallback. This matters when a build
 names an output differently from the source that defines its `main`; using the
 largest same-named graph from another TU is not valid ground truth. Matching is
 also per optimization level: an O0 source CFG is not valid ground truth for O2
-merely because both inputs came from the same project. The old
-JOERN_FAILURES.md failure analysis lives in git history; Joern parse-health
-stats render on the site's data page.
+merely because both inputs came from the same project. Cindergraph extraction
+health renders on the site's data page.
 
 The live evaluator, external eval-kit ingestion, dataset CFG export, and
 canonical `reeval_ged.py` overlay all use this ownership rule.
 
-**C++ name collisions.** Matching is by UNQUALIFIED name on both sides (DWARF
-`DW_AT_name` is `Get`, not `leveldb::DBImpl::Get`, and Joern's C++ frontend
-keys on the short name too — so no demangler is involved anywhere). A C++
-binary therefore collapses every same-named method onto one entry: leveldb has
-7-8 `Next`/`Seek`/`SeekToFirst`/`Name` methods, one per iterator class, and
-they are all scored against whichever body won `best_source_by_name`. A C++
-target's absolute GED is consequently **not comparable to a C project's** —
-compare C++ targets to each other. Qualified-name keying (Joern `fullName` +
-DWARF parent-DIE walking) is the fix and is not implemented.
+**C++ boundary.** C++ `.ii` inputs are unsupported by the CFG extractor and do
+not receive GED. The pipeline reports that abstention explicitly. C++ DWARF
+type handling and recompilation paths are independent and remain available.
 
 ## Type Correctness — `metrics/type_match.py`
 

@@ -10,14 +10,14 @@ These were disabled when decbench had no **C++** support. That reason is now
 out of date: C++ works end-to-end (see `projects/cpp/disabled/leveldb.toml`,
 itself disabled because C++ support is still experimental, and
 [docs/benchmarking.md](../../../docs/benchmarking.md#c-targets)). The original
-rationale — "pyjoern is C-oriented, so C++ projects produce no `.i` and cannot
-be scored" — was wrong on both halves: a C++ translation unit does get
-preprocessed, just to `.ii` rather than `.i`, and Joern parses it fine once the
-file is handed to its C++ frontend by extension.
+rationale that C++ projects produce no preprocessed input was wrong: a C++
+translation unit produces `.ii` rather than `.i`. The current Cindergraph CFG
+frontend rejects `.ii` explicitly, so GED abstains while other metrics remain
+available.
 
 What still holds is that neither autopilot has ever been *run* through that
 path. They are large cross-compiled Cortex-M/-A firmware, so re-enabling one is
-a measurement exercise (build time, Joern parse health on hundreds of C++ TUs,
+a measurement exercise (build time, CFG extraction on hundreds of C++ TUs,
 and the same-name collision caveat that applies to every C++ target), not a
 flip of a switch. They stay here until someone does that work.
 
