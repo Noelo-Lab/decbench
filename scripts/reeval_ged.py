@@ -2,10 +2,10 @@
 header-stripped source CFGs (decbench.utils.cfg.strip_system_headers).
 
 Why: GED's source CFGs were extracted from full preprocessed .i files, which are
-80-98% inlined system headers — Joern timed out on the big ones, so a huge share
+80-98% inlined system headers, so parsing the full units wastes most of the work
 of functions had NO source CFG and silently dropped out of GED (looked like the
 decompilers' fault). Stripping the headers (keeping the compiler's own ifdef/macro
-resolution) makes Joern fast and complete, so GED can be measured on far more
+resolution) keeps extraction focused, so GED can be measured on far more
 functions. This re-scores GED to reflect that.
 
 Two stages, both parallel via the 'spawn' context (fork deadlocks once angr's
@@ -899,7 +899,7 @@ def eval_one(
             )
             or {}
         )
-    # Joern keys CFGs by the parsed BODY name, which can differ from the marker name
+    # CFGs are keyed by parsed body name, which can differ from the marker name
     # (ida's `_rl_set_screen_size` over a `rl_set_screen_size` body). Emitting only
     # marker-declared functions avoids attributing a row the decompiler never owned.
     markers = set(

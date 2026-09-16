@@ -4,7 +4,7 @@ Produces:
 - total_loc + per-project LOC: line counts of the projects' own source (.c files
   the compile stage kept under compiled/; counted once per project from O0 so opt
   levels aren't triple-counted).
-- joern: source-parse failure rate — how often Joern (the GED front-end) fails to
+- cfg_frontend: source-parse failure rate — how often Cindergraph fails to
   parse a source file, i.e. how much of the GED pipeline is lost to our own
   tooling rather than the decompilers. Measured on a stratified SAMPLE of real
   source .i files (preprocessed units; conftest/autoconf noise excluded).
@@ -12,7 +12,7 @@ Produces:
 Software-type categories (parser/webserver/cryptography/malware/firmware) are
 derived client-side from per-binary labels, so they aren't stored here.
 
-Usage:  python scripts/compute_dataset_info.py results/full_run [joern_sample_per_project]
+Usage:  python scripts/compute_dataset_info.py results/full_run [sample_per_project]
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def sample_i_files(root: Path, per_project: int) -> list[Path]:
 
 
 def _parse_one(ip: Path) -> tuple[bool, int]:
-    """Return (failed, n_functions) for one source file (Joern parse)."""
+    """Return ``(failed, function count)`` for one Cindergraph extraction."""
     from decbench.utils.cfg import extract_cfgs_from_source
 
     try:
@@ -79,15 +79,8 @@ def _parse_one(ip: Path) -> tuple[bool, int]:
     return (not cfgs), len(cfgs)
 
 
-def joern_failures(samples: list[Path], workers: int = 8, deadline_s: int = 420) -> dict:
-    """Parse each sampled .i with Joern (parallel); count files yielding no CFGs.
-
-    Each Joern run is a subprocess (GIL-free). Bounded by an overall deadline:
-    files that don't finish in time (some preprocessed units are huge and very
-    slow, distinct from a parse *failure* which errors out fast) are reported as
-    "timed_out" and excluded from the failure rate, so a few slow/hung JVMs can't
-    stall the whole measurement.
-    """
+def cfg_frontend_failures(samples: list[Path], workers: int = 8, deadline_s: int = 420) -> dict:
+    """Extract sampled C units concurrently and report failures and deadline misses."""
     import concurrent.futures as cf
 
     completed = failed = funcs = 0
@@ -125,19 +118,20 @@ def main() -> None:
     print(f"[dataset] total LOC: {total_loc:,} across {len(loc_by_project)} projects", flush=True)
 
     samples = sample_i_files(root, per_project)
-    print(f"[dataset] Joern parse sample: {len(samples)} source files...", flush=True)
-    joern = joern_failures(samples)
+    print(f"[dataset] Cindergraph sample: {len(samples)} source files...", flush=True)
+    frontend = cfg_frontend_failures(samples)
     print(
-        f"[dataset] Joern: {joern['files_failed']}/{joern['files_sampled']} files "
-        f"failed to parse ({joern['file_fail_pct']:.1f}%), "
-        f"{joern['functions_extracted']} functions extracted",
+        f"[dataset] Cindergraph: {frontend['files_failed']}/"
+        f"{frontend['files_sampled']} files failed to parse "
+        f"({frontend['file_fail_pct']:.1f}%), "
+        f"{frontend['functions_extracted']} functions extracted",
         flush=True,
     )
 
     fd.dataset_info = {
         "total_loc": total_loc,
         "loc_by_project": loc_by_project,
-        "joern": joern,
+        "cfg_frontend": frontend,
     }
     # This script only ADDS dataset_info, so any coverage regression the guard
     # reports means the file changed under us.
@@ -145,7 +139,7 @@ def main() -> None:
 
     write_function_data_guarded(fd, root)
     print("[dataset] wrote dataset_info into function_results.json", flush=True)
-    # Hard-exit so a hung Joern worker thread cannot block interpreter shutdown.
+    # Hard-exit so a wedged worker cannot block interpreter shutdown.
     os._exit(0)
 
 

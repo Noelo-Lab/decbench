@@ -1,7 +1,7 @@
 # ============================================================================
 # DISABLED — this target is C++ (ArduPilot is ~61% C++) and decbench does not
-# support C++ yet (GED's source-CFG extractor / pyjoern is C-oriented, so it
-# produces no .i and cannot be scored). Parked in projects/cps/disabled/ so it
+# support C++ GED because Cindergraph currently accepts C only. Parked in
+# projects/cps/disabled/ so it
 # is excluded from every `projects/cps/*.toml` evaluation glob. Move it back up
 # to projects/cps/ to re-enable once C++ support lands. The recipe below is
 # verified-working (builds a real ARM Cortex-M4F ELF + DWARF).

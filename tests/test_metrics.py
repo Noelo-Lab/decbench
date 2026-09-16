@@ -85,6 +85,30 @@ class TestGEDMetric:
         result = metric.compute_for_function(func, source_cfg=None, decompiled_cfg=None)
         assert result.value == float("inf")
 
+    def test_ged_rejects_mixed_cfg_extractors(self) -> None:
+        import networkx as nx
+
+        from decbench.metrics.ged import GEDMetric
+
+        source = nx.DiGraph()
+        source.add_node(0)
+        source.graph.update(degenerate=False, cfg_extractor="historical")
+        decompiled = nx.DiGraph()
+        decompiled.add_node(0)
+        decompiled.graph["cfg_extractor"] = "cindergraph"
+        func = FunctionDecompilation(name="test", address=0x1000, decompiled_code="")
+
+        result = GEDMetric().compute_for_function(
+            func, source_cfg=source, decompiled_cfg=decompiled
+        )
+
+        assert result.value == float("inf")
+        assert result.metadata == {
+            "error": "incompatible CFG extractors",
+            "source_extractor": "historical",
+            "decompiled_extractor": "cindergraph",
+        }
+
     def test_ged_degenerate_source_cfg(self) -> None:
         """A <=1-node source CFG (prototype-only / wrong TU) is not scorable.
 

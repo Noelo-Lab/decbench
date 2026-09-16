@@ -6,7 +6,7 @@
 #
 # CAVEAT — leveldb's absolute GED is NOT comparable to a C project's. DecBench
 # matches source functions to decompiled ones by UNQUALIFIED name (both DWARF
-# DW_AT_name and Joern's C++ frontend key on the short name), so the 7-8
+# DW_AT_name keys on the short name, so the 7-8
 # same-named methods a C++ binary carries per name (`Next`, `Seek`, `Name`,
 # `SeekToFirst`, ... one per iterator class) all collapse onto whichever body
 # won the per-name reduction — usually the largest. Rank C++ targets against

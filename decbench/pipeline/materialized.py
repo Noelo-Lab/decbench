@@ -24,6 +24,7 @@ while type_match (which needs recovered variables) reports errors per function.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -182,22 +183,37 @@ def load_source_cfgs(
     ``decbench-data materialize``). Returns ``None`` when the directory does not
     exist so callers can fall back to ``.i`` extraction.
     """
-    import json
-
     from decbench.publish.cfg_export import rebuild_cfg
 
     cfg_dir = tree_root / opt / project / "source_cfgs"
     if not cfg_dir.is_dir():
         return None
     by_binary: dict[str, dict[str, DiGraph]] = {}
+    generator_identity: str | None = None
     for json_path in sorted(cfg_dir.glob("*.json")):
         try:
             data = json.loads(json_path.read_text())
         except Exception as exc:  # noqa: BLE001
             logger.warning("Unparseable source-CFG JSON %s: %s", json_path, exc)
             continue
+        generator = data.get("generator", "legacy-unknown")
+        identity = json.dumps(generator, sort_keys=True)
+        if generator_identity is None:
+            generator_identity = identity
+        elif identity != generator_identity:
+            raise ValueError(
+                f"mixed source-CFG generators in {cfg_dir}: "
+                f"{generator_identity} != {identity} ({json_path.name})"
+            )
         funcs = data.get("functions", {}) or {}
-        by_binary[json_path.stem] = {name: rebuild_cfg(fc) for name, fc in funcs.items()}
+        extraction = data.get("extraction", {}) or {}
+        graphs = {
+            name: rebuild_cfg(fc, generator=generator, extraction=extraction)
+            for name, fc in funcs.items()
+        }
+        for graph in graphs.values():
+            graph.graph["generator"] = generator
+        by_binary[json_path.stem] = graphs
     return by_binary or None
 
 

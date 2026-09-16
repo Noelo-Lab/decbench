@@ -162,7 +162,7 @@ non-finite fails the build loudly instead of shipping a payload `JSON.parse`
 rejects).
 
 **`.github/workflows/pages.yml` is deploy-ONLY** — CI CANNOT generate the
-site (needs the decompilers + ~1.9 GB Joern + ~15 GB of binaries); the
+site (needs the decompilers, Cindergraph, and ~15 GB of binaries); the
 maintainer builds locally and commits `site/` (no longer gitignored), and the
 workflow only uploads it, failing if `site/index.html` or
 `site/data/aggregates.json` is missing. The workflow triggers on pushes to
@@ -698,7 +698,7 @@ benchmark's fairness contract:
     {"name": "bash", "cats": ["parser"], "loc": 12345, "binaries": 3,
      "functions": 456, "presets": ["unoptimized", "optimized", "inlined", "sample-set"]}
   ],
-  "joern": {
+  "cfg_frontend": {
     "source": {"lost": 100, "total": 91483},   // GED unmeasurable: our source front-end
     "output": {"angr": [12, 3456]},            // dec -> [failed, scope]
     "spot_check": {"files_sampled": 0, "files_failed": 0, "files_timed_out": 0}

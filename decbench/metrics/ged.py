@@ -124,10 +124,19 @@ def _is_isomorphic(source_cfg: DiGraph, decompiled_cfg: DiGraph) -> bool:
     )
 
 
-def _graph_cache_input(cfg: DiGraph) -> dict[str, list[Any]]:
+def _graph_cache_input(cfg: DiGraph) -> dict[str, Any]:
     nodes = list(cfg.nodes())
     node_ids = {node: index for index, node in enumerate(nodes)}
     return {
+        "extractor": cfg.graph.get("cfg_extractor") or cfg.graph.get("generator"),
+        "extractor_version": cfg.graph.get("cfg_extractor_version"),
+        "cfg_schema": cfg.graph.get("cfg_schema"),
+        "extraction_policy": cfg.graph.get("extraction_policy"),
+        "language": cfg.graph.get("cfg_language"),
+        "extraction_status": cfg.graph.get("extraction_status"),
+        "diagnostic_count": cfg.graph.get("diagnostic_count"),
+        "partial_recovery": cfg.graph.get("partial_recovery"),
+        "preprocessing_status": cfg.graph.get("preprocessing_status"),
         "roles": [_node_role(node) for node in nodes],
         "edges": sorted((node_ids[src], node_ids[dst]) for src, dst in cfg.edges()),
     }
@@ -153,7 +162,7 @@ class GEDMetric(Metric):
     requires_source_cfg = True
     requires_decompiled_cfg = True
 
-    cache_version = "4"
+    cache_version = "5-cindergraph"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
@@ -183,6 +192,22 @@ class GEDMetric(Metric):
             return MetricValue(
                 value=float("inf"),
                 metadata={"error": "Missing CFG"},
+            )
+
+        source_extractor = source_cfg.graph.get("cfg_extractor")
+        decompiled_extractor = decompiled_cfg.graph.get("cfg_extractor")
+        if (
+            source_extractor is not None
+            and decompiled_extractor is not None
+            and source_extractor != decompiled_extractor
+        ):
+            return MetricValue(
+                value=float("inf"),
+                metadata={
+                    "error": "incompatible CFG extractors",
+                    "source_extractor": source_extractor,
+                    "decompiled_extractor": decompiled_extractor,
+                },
             )
 
         # A degenerate source CFG has no structure to compare against, so return

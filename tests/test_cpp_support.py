@@ -1,4 +1,4 @@
-"""C++ project support: preprocessed-unit naming, Joern frontend selection, DWARF chases.
+"""C++ project support outside the Cindergraph-backed GED path.
 
 The DWARF tests compile a tiny C and C++ pair so the C-vs-C++ asymmetry in
 ``binfmt.die_attr`` (``DW_AT_specification`` always followed,
@@ -16,7 +16,7 @@ import pytest
 
 from decbench.compilers.gcc import find_preprocessed
 from decbench.utils import binfmt
-from decbench.utils.cfg import temp_parse_suffix
+from decbench.utils.cfg import UnsupportedCfgLanguage, extract_cfgs_from_source
 from decbench.utils.langs import preprocessed_ext, strip_source_ext
 from decbench.utils.source_extract import _dwarf_decl
 
@@ -48,12 +48,11 @@ def test_preprocessed_ext_follows_the_language() -> None:
     assert preprocessed_ext(Path("grep.c")) == ".i"
 
 
-def test_temp_parse_suffix_picks_joerns_frontend() -> None:
-    # Joern's C frontend returns zero functions for C++, so a .ii must be
-    # handed over as .cpp.
-    assert temp_parse_suffix(Path("db_impl.cc.ii")) == ".cpp"
-    assert temp_parse_suffix(Path("grep.i")) == ".c"
-    assert temp_parse_suffix(Path("decompiled.c")) == ".c"
+def test_cindergraph_cfg_extraction_rejects_cxx_explicitly(tmp_path: Path) -> None:
+    source = tmp_path / "db_impl.cc.ii"
+    source.write_text("int main() { return 0; }")
+    with pytest.raises(UnsupportedCfgLanguage, match="supports C, not C\\+\\+"):
+        extract_cfgs_from_source(source)
 
 
 def test_strip_source_ext_only_strips_source_extensions() -> None:

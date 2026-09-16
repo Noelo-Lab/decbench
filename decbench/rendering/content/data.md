@@ -6,8 +6,8 @@ anchor survives markdown rendering (a markdown `###` renders without an id):
 
   #distance         the per-metric edit-distance table (#distance-table)
   #compiles         the recompilation-rate table (#compile-table)
-  #pipeline-health  Joern parse-health scaffolds (#joern-source /
-                    #joern-output-table), moved here from about.md; filled by
+  #pipeline-health  CFG extraction health (#cfg-frontend-source /
+                    #cfg-frontend-output-table), filled by
                     app.js's buildPipelineHealth from data/dataset.json
   #cost             decompile time + estimated LLM API cost (#cost-table),
                     filled by app.js's buildCost from aggregates.json's `cost`
@@ -65,14 +65,14 @@ overlap with the sample-set slice.</p>
 
 <h3 class="sub" id="pipeline-health">pipeline health (our own tooling)</h3>
 
-GED depends on Joern parsing both the source and the decompiler output.
-When Joern fails on the **source**, that's our tooling — those
+GED depends on Cindergraph extracting CFGs from both the source and the decompiler output.
+When Cindergraph fails on the **source**, that's our tooling — those
 functions are excluded from GED for every decompiler (never counted against
-them). When Joern fails on a single decompiler's **output**,
+them). When Cindergraph fails on a single decompiler's **output**,
 that's reported here (per decompiler), not folded into the headline score.
 
-<div id="joern-source" class="goal"></div>
-<table id="joern-output-table"><thead><tr></tr></thead><tbody></tbody></table>
+<div id="cfg-frontend-source" class="goal"></div>
+<table id="cfg-frontend-output-table"><thead><tr></tr></thead><tbody></tbody></table>
 
 <h3 class="sub" id="cost">cost</h3>
 

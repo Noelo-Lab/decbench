@@ -168,12 +168,12 @@ def test_data_view_has_four_section_anchors(content: Content) -> None:
     body = content.view("data").body_html
     for anchor in ("distance", "compiles", "pipeline-health", "cost"):
         assert f'<h3 class="sub" id="{anchor}">' in body, anchor
-    for scaffold in ("cost-table", "joern-source", "joern-output-table"):
+    for scaffold in ("cost-table", "cfg-frontend-source", "cfg-frontend-output-table"):
         assert f'id="{scaffold}"' in body, scaffold
     for kept in ("distance-table", "distance-subset-note", "compile-table", "compile-subset-note"):
         assert f'id="{kept}"' in body, kept
     about = content.view("about")
-    assert "joern-" not in about.body_html + about.outro_html + about.empty_html
+    assert "cfg-frontend-" not in about.body_html + about.outro_html + about.empty_html
 
 
 def test_pricing_registry_loads(content: Content) -> None:

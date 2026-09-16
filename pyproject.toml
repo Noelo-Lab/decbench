@@ -8,7 +8,7 @@ version = "1.1"
 description = "Benchmarking suite for evaluating decompiler performance"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
     {name = "DecBench Team"}
 ]
@@ -18,9 +18,9 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Security",
     "Topic :: Software Development :: Disassemblers",
 ]
@@ -31,7 +31,7 @@ dependencies = [
     "networkx>=3.0",
     "pyelftools>=0.29",
     "cfgutils>=1.10.2",
-    "pyjoern>=1.2.18",
+    "cindergraph[graphs] @ git+https://github.com/mjbommar/cindergraph.git@cfdeaccce9f11e2e23fbbda506b1b59d5086ef73",
     "click>=8.0",
     "rich>=13.0",
     # Renders the site's maintainer-editable prose (decbench/rendering/content/*.md).
@@ -58,8 +58,8 @@ dev = [
 decbench = "decbench.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/Noelo-Lab/decbench"
-Repository = "https://github.com/Noelo-Lab/decbench"
+Homepage = "https://github.com/mjbommar/decbench"
+Repository = "https://github.com/mjbommar/decbench"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -72,17 +72,17 @@ where = ["."]
 
 [tool.black]
 line-length = 100
-target-version = ["py310"]
+target-version = ["py312"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true

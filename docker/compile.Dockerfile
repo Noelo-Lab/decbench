@@ -2,7 +2,7 @@
 #
 # Decompilation runs on the host; this image only needs the cross/mingw
 # toolchains + build deps + decbench's light compile-path deps (NOT angr/ghidra/
-# pyjoern/radare2). The repo is MOUNTED at runtime (-v $PWD:/workspace) and
+# analysis front ends/radare2). The repo is mounted at runtime (-v $PWD:/workspace) and
 # decbench is imported via PYTHONPATH, so no `pip install -e .` (which would drag
 # in the heavy decompiler stack).
 #

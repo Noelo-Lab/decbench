@@ -7,9 +7,7 @@ Tests the full pipeline with the three metrics:
 3. Recompilation Bytematch (byte_match)
 """
 
-import os
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -18,7 +16,7 @@ import pytest
 MISSING_DEPS = []
 
 try:
-    import angr
+    import angr  # noqa: F401
 
     HAVE_ANGR = True
 except ImportError:
@@ -26,15 +24,15 @@ except ImportError:
     MISSING_DEPS.append("angr")
 
 try:
-    from pyjoern import parse_source
+    from cindergraph import source_cfg  # noqa: F401
 
-    HAVE_PYJOERN = True
+    HAVE_CINDERGRAPH = True
 except ImportError:
-    HAVE_PYJOERN = False
-    MISSING_DEPS.append("pyjoern")
+    HAVE_CINDERGRAPH = False
+    MISSING_DEPS.append("cindergraph")
 
 try:
-    from cfgutils.similarity import vj_ged
+    from cfgutils.similarity import vj_ged  # noqa: F401
 
     HAVE_CFGUTILS = True
 except ImportError:
@@ -180,7 +178,7 @@ class TestScoringPipeline:
         assert "angr" in text
 
     def test_html_report_generation(self) -> None:
-        from decbench.models.scoreboard import Scoreboard, DecompilerScore, MetricScore
+        from decbench.models.scoreboard import DecompilerScore, MetricScore, Scoreboard
         from decbench.rendering.html import render_html_report
 
         scoreboard = Scoreboard(
@@ -490,7 +488,7 @@ class TestFunctionData:
 
 
 @pytest.mark.skipif(
-    not (HAVE_ANGR and HAVE_PYJOERN and HAVE_CFGUTILS),
+    not (HAVE_ANGR and HAVE_CINDERGRAPH and HAVE_CFGUTILS),
     reason=f"Missing dependencies: {MISSING_DEPS}",
 )
 class TestFullPipelineIntegration:
@@ -502,17 +500,13 @@ class TestFullPipelineIntegration:
 
     def test_ged_pipeline(self) -> None:
         import angr
-        from pyjoern import parse_source
         from cfgutils.similarity import vj_ged
+        from cindergraph import source_cfg
 
         binary_file = EXAMPLE_PROJECT_DIR / "example"
         source_file = EXAMPLE_PROJECT_DIR / "example.c"
 
-        source_parsed = parse_source(str(source_file))
-        source_cfgs = {}
-        for func_name, func in source_parsed.items():
-            if func.cfg is not None and func.cfg.number_of_nodes() > 0:
-                source_cfgs[func_name] = func.cfg
+        source_cfgs = source_cfg.cfgs_from_decompiled(source_file.read_text())
 
         assert len(source_cfgs) > 0
 
@@ -520,7 +514,7 @@ class TestFullPipelineIntegration:
         cfg = project.analyses.CFGFast(normalize=True)
 
         decompiled_code = {}
-        for addr, func in cfg.kb.functions.items():
+        for _addr, func in cfg.kb.functions.items():
             if func.is_simprocedure or func.is_plt:
                 continue
             try:
@@ -534,17 +528,15 @@ class TestFullPipelineIntegration:
 
         decompiled_cfgs = {}
         with tempfile.NamedTemporaryFile(mode="w", suffix=".c", delete=False) as f:
-            for name, code in decompiled_code.items():
+            for _name, code in decompiled_code.items():
                 f.write(code)
                 f.write("\n\n")
             temp_path = f.name
 
         try:
-            dec_parsed = parse_source(temp_path)
-            if dec_parsed:
-                for func_name, func in dec_parsed.items():
-                    if func.cfg is not None and func.cfg.number_of_nodes() > 0:
-                        decompiled_cfgs[func_name] = func.cfg
+            decompiled_cfgs = source_cfg.cfgs_from_decompiled(
+                Path(temp_path).read_text(errors="replace")
+            )
         finally:
             Path(temp_path).unlink(missing_ok=True)
 

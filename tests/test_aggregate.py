@@ -109,7 +109,7 @@ def test_metric_unmeasurable_for_everyone_leaves_every_denominator() -> None:
 
 
 def test_source_parse_failure_drops_ged_for_everyone() -> None:
-    """No source CFG => GED unmeasurable. Joern failing on the SOURCE is our fault.
+    """No source CFG means GED is unmeasurable and is our tooling's fault.
 
     A function's source parsed iff SOME decompiler got a finite GED for it, so a
     function nobody has a GED for leaves GED's denominator entirely.
@@ -127,7 +127,7 @@ def test_source_parse_failure_drops_ged_for_everyone() -> None:
         assert combo["overall"][dec] == [1, 1]
 
 
-def test_joern_failing_on_one_decompilers_output_is_that_decompilers_miss() -> None:
+def test_cfg_extraction_failure_on_one_output_is_that_decompilers_miss() -> None:
     """Source parsed but one decompiler has no GED: a miss for it, measurable for all.
 
     The mirror image of the rule above — the difference between "our tooling failed"
@@ -154,8 +154,8 @@ def test_joern_failing_on_one_decompilers_output_is_that_decompilers_miss() -> N
     assert combo["overall"]["beta"] == [1, 1]
 
     dataset = build_dataset_page(_data([func]))
-    assert dataset["joern"]["source"] == {"lost": 0, "total": 1}
-    assert dataset["joern"]["output"] == {"alpha": [0, 1], "beta": [1, 1]}
+    assert dataset["cfg_frontend"]["source"] == {"lost": 0, "total": 1}
+    assert dataset["cfg_frontend"]["output"] == {"alpha": [0, 1], "beta": [1, 1]}
 
 
 def test_measurable_metric_a_decompiler_failed_is_a_miss_not_an_exclusion() -> None:
@@ -582,7 +582,7 @@ def test_decompiled_by_falls_back_to_perfects_presence() -> None:
     aggregates = _build(_data([func]))
 
     assert aggregates["combos"][combo_key("full", True)]["functions"] == 1
-    assert build_dataset_page(_data([func]))["joern"]["output"]["beta"] == [0, 1]
+    assert build_dataset_page(_data([func]))["cfg_frontend"]["output"]["beta"] == [0, 1]
 
 
 def test_decompiled_by_fallback_excludes_a_decompiler_with_no_perfects_entry() -> None:
@@ -718,7 +718,7 @@ def test_dataset_projects_are_sorted_by_loc_descending_and_stably() -> None:
     assert [p["name"] for p in dataset["projects"]] == ["charlie", "alfa", "bravo"]
 
 
-def test_dataset_joern_source_loss_is_scoped_to_decompiled_functions() -> None:
+def test_dataset_source_cfg_loss_is_scoped_to_decompiled_functions() -> None:
     """Source-CFG loss is measured over functions at least one decompiler produced."""
     lost = _func(
         "lost",
@@ -729,7 +729,7 @@ def test_dataset_joern_source_loss_is_scoped_to_decompiled_functions() -> None:
         "skipped", values={}, perfects={}, decompiled=dict.fromkeys(DECS, False)
     )
     dataset = build_dataset_page(_data([lost, never_decompiled]))
-    assert dataset["joern"]["source"] == {"lost": 1, "total": 1}
+    assert dataset["cfg_frontend"]["source"] == {"lost": 1, "total": 1}
 
 
 def _priced_content(models: dict[str, dict]):

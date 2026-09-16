@@ -16,6 +16,15 @@ Community feedback is welcome!
 
 See the live page for the latest results, insights, and purpose statement: [https://decbench.com](https://decbench.com)
 
+This fork uses [Cindergraph](https://github.com/mjbommar/cindergraph) as its
+in-process C CFG frontend. It does not install or invoke a JVM-based CFG
+extractor. C++ CFG extraction is currently unsupported and GED abstains for
+`.ii` inputs; type and recompilation metrics remain available.
+
+See [CFG provider validation](docs/cfg-provider-validation.md) for the fixed
+comparison populations, provenance, remaining language boundary, and the
+claims this migration does and does not support.
+
 **Questions? Join our Discord**:
 
 [![Discord](https://img.shields.io/discord/1542982153912975470?label=Discord&logo=discord&logoColor=white&color=5865F2&style=flat)](https://discord.gg/vAQ8BKUPXv)
@@ -26,7 +35,7 @@ DecBench evaluates decompilers using three core metrics:
 
 | Metric | What it measures | How it works |
 |--------|-----------------|--------------|
-| **Structural Correctness (GED)** | Control flow recovery | Graph Edit Distance between source and decompiled CFGs using [cfgutils](https://github.com/angr/cfgutils) |
+| **Structural Correctness (GED)** | Control flow recovery | Cindergraph CFG extraction followed by DecBench's NetworkX/SciPy VJ-GED implementation |
 | **Type Correctness** | Variable type recovery | Compares decompiled variable types against DWARF debug info |
 | **Recompilation Bytematch** | Recompilable, semantically-equivalent code | Recompiles each decompiled function with the **original toolchain** (matching its format/arch/opt flags) after a compilability **fixup** pass, then diffs the assembly via Jaccard similarity with linker-dependent operands normalized away |
 
@@ -48,24 +57,26 @@ Source Code (TOML config)
 You can access/reproduce all of them using our command-line utility and [public dataset](https://huggingface.co/datasets/noelo-lab/decbench-dataset).
 
 ```bash
-# Install
-pip install -e ".[dev]"
+# Clone this fork and install the locked environment (Python 3.12+)
+git clone https://github.com/mjbommar/decbench.git
+cd decbench
+uv sync --locked --extra dev
 
 # Run full pipeline on a project
-decbench run projects/sailr/coreutils.toml
+uv run decbench run projects/sailr/coreutils.toml
 
 # Run with specific decompilers and metrics
-decbench run project.toml -d angr -d ghidra -m ged -m type_match -m byte_match
+uv run decbench run project.toml -d angr -d ghidra -m ged -m type_match -m byte_match
 
 # Evaluate a single binary
-decbench evaluate binary.elf -s source.c
+uv run decbench evaluate binary.elf -s source.c
 
 # Generate HTML report from results
-decbench report results/scoreboard.toml -o report.html
+uv run decbench report results/scoreboard.toml -o report.html
 
 # List available decompilers and metrics
-decbench list-decompilers
-decbench list-metrics
+uv run decbench list-decompilers
+uv run decbench list-metrics
 ```
 
 ### Compete externally
@@ -98,12 +109,12 @@ run survives crashes. Driver internals and every env knob:
 ```bash
 # 1. Compile every project at every opt level into a results tree.
 GHIDRA_INSTALL_DIR=/path/to/ghidra \
-  python scripts/compile_all.py results/sailr_full 16        # 16 workers
+  uv run python scripts/compile_all.py results/sailr_full 16        # 16 workers
 
 # 2. Decompile + evaluate + write the scoreboard, function data, and report.
 DECBENCH_WORKERS=40 DECBENCH_DECOMPILERS=angr,ghidra \
   GHIDRA_INSTALL_DIR=/path/to/ghidra \
-  python scripts/run_benchmark.py results/sailr_full
+  uv run python scripts/run_benchmark.py results/sailr_full
 #   Restart resumes from per-project checkpoints.
 #   `... results/sailr_full -- grep` limits to named projects.
 ```
@@ -137,8 +148,8 @@ Use the `improvements` command, which can help you find good starting cases.
 The example below uses **GED** (structural correctness — CFG graph edit distance, where **lower is better** and `0` is a perfect structural match):
 ```bash
 # Where does angr (base) structurally beat ghidra (target)? -m ged is the default.
-decbench improvements results/sailr_full -b angr -t ghidra -m ged
-decbench improvements results/sailr_full -b angr -t ghidra -m ged --perfect-only
+uv run decbench improvements results/sailr_full -b angr -t ghidra -m ged
+uv run decbench improvements results/sailr_full -b angr -t ghidra -m ged --perfect-only
 ```
 
 Each row locates the function on disk — binary, path to the compiled binary, and the function symbol + address — so you can jump straight to it:

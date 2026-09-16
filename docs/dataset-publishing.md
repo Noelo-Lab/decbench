@@ -241,7 +241,8 @@ nothing else. Store, per binary, the `function → CFG` map the pipeline used:
 ```jsonc
 {
   "opt": "O0", "project": "zlib", "binary": "example",
-  "generator": "pyjoern",                 // provenance
+  "generator": {"name": "cindergraph", "version": "0.1.0",
+                "cfg_schema": 1, "extraction_policy": 1},
   "functions": {
     "test_compress": {
       "nodes": [0, 1, 2],                  // ints 0..n-1
@@ -266,10 +267,9 @@ A known owner with no real source CFG abstains instead of borrowing a same-named
 function from another TU. Delegating to that pair is what keeps the export from
 drifting from the scoring path (`tests/test_cfg_export.py` asserts the two
 agree). Each
-DiGraph's nodes are relabeled to `0..n-1` (stable order); Joern parses are
-**deduplicated by stripped-content hash** so each unique translation unit is
-parsed once (Joern spawns a JVM per parse — the dominant cost; see the module
-docstring), and an existing `<stem>.json` is skipped unless `--overwrite`.
+DiGraph's nodes are relabeled to `0..n-1` (stable order). Extractions are
+deduplicated by stripped-content hash so each unique translation unit is
+processed once, and an existing `<stem>.json` is skipped unless `--overwrite`.
 
 Each JSON holds only the functions **that binary** is scored on
 (`publish_dataset.py::_cfg_functions` passes `group.all_functions` as the
@@ -281,15 +281,13 @@ can never be scored on. Calling `export_all_cfgs` without `functions` keeps the
 full map.
 
 `degenerate` records `is_degenerate_source_cfg` at export time. It has to be
-stored because the predicate distinguishes a real one-block body from an empty
-prototype by looking for a non-`Nop` statement, and statements are exactly what
-this serialization drops — without the flag every rebuilt one-block function
-would read as an unscorable prototype. `rebuild_cfg` restores it. JSONs written
+stored because the extractor distinguishes a real one-block body from an empty
+declaration-only graph before serialization. `rebuild_cfg` restores it. JSONs written
 before the field existed simply keep the old (assume-degenerate) reading.
 
 > **Do not export a project-wide, name-keyed union.** That was the pre-fix
 > behaviour and it silently broke offline scoring (decbench#50): a
-> declaration-only view of a function — Joern emits a single `Nop` block for it —
+> declaration-only view of a function — represented by a degenerate one-block graph —
 > overwrote the defining TU's real body whenever it sorted later, and every
 > binary of a project ended up with a byte-identical map, so per-program
 > functions (`main`, `usage`, static helpers) were scored against some other

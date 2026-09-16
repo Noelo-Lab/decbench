@@ -8,10 +8,14 @@ from multiprocessing import cpu_count
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from decbench.cfg import CfgExtraction, graphs_from_extraction
 from decbench.metrics.registry import MetricRegistry
 from decbench.models.metrics import MetricResult
 from decbench.models.project import OptimizationLevel, Project
-from decbench.utils.cfg import extract_cfgs_from_decompilation, extract_cfgs_from_source
+from decbench.utils.cfg import (
+    extract_cfg_records_from_decompilation,
+    extract_cfg_records_from_source,
+)
 from decbench.utils.dwarf_policy import dwarf_follow_abstract_origin
 
 logger = logging.getLogger(__name__)
@@ -20,6 +24,22 @@ if TYPE_CHECKING:
     from networkx import DiGraph
 
     from decbench.models.decompilation import DecompilationResult
+
+
+def _source_graphs(extraction: CfgExtraction, source_name: str) -> dict[str, DiGraph]:
+    """Convert one typed provider result or report its abstention/failure."""
+    if extraction.status == "unsupported-language":
+        logger.warning(
+            "Source CFG extraction abstained for %s: unsupported language %s",
+            source_name,
+            extraction.language,
+        )
+        return {}
+    if extraction.status == "failed":
+        details = "; ".join(item.message for item in extraction.diagnostics)
+        logger.warning("Source CFG extraction failed for %s: %s", source_name, details)
+        return {}
+    return graphs_from_extraction(extraction)
 
 
 def evaluate_decompilation(
@@ -37,7 +57,17 @@ def evaluate_decompilation(
     decompiled_cfgs = None
     needs_decomp_cfg = any(MetricRegistry.get(m).requires_decompiled_cfg for m in metrics)
     if needs_decomp_cfg:
-        decompiled_cfgs = extract_cfgs_from_decompilation(decompilation)
+        decompiled_extraction = extract_cfg_records_from_decompilation(decompilation)
+        if decompiled_extraction.status == "failed":
+            details = "; ".join(item.message for item in decompiled_extraction.diagnostics)
+            logger.warning(
+                "Decompiled CFG extraction failed for %s: %s",
+                decompilation.binary_name,
+                details,
+            )
+            decompiled_cfgs = {}
+        else:
+            decompiled_cfgs = graphs_from_extraction(decompiled_extraction)
 
     for metric_name in metrics:
         try:
@@ -110,15 +140,15 @@ def evaluate_project(
         logger.debug("Found %d preprocessed sources for %s", len(sources), optimization)
         if parallel and len(sources) > 1:
             ex_workers = workers or cpu_count()
-            with ProcessPoolExecutor(max_workers=ex_workers) as executor:
-                futures = {
-                    executor.submit(extract_cfgs_from_source, i_path): name
+            with ProcessPoolExecutor(max_workers=ex_workers) as source_executor:
+                source_futures = {
+                    source_executor.submit(extract_cfg_records_from_source, i_path): name
                     for name, i_path in sources.items()
                 }
-                for future in as_completed(futures):
-                    name = futures[future]
+                for source_future in as_completed(source_futures):
+                    name = source_futures[source_future]
                     try:
-                        cfgs = future.result()
+                        cfgs = _source_graphs(source_future.result(), name)
                         source_cfgs_by_binary[name] = cfgs or {}
                         if not cfgs:
                             logger.warning("Source CFG extraction returned empty for %s", name)
@@ -128,7 +158,7 @@ def evaluate_project(
         else:
             for name, i_path in sources.items():
                 try:
-                    cfgs = extract_cfgs_from_source(i_path)
+                    cfgs = _source_graphs(extract_cfg_records_from_source(i_path), name)
                     source_cfgs_by_binary[name] = cfgs
                     if not cfgs:
                         logger.warning(
@@ -169,7 +199,7 @@ def evaluate_project(
                 addr: owner for addr, owner in owners.items() if addr in target_addrs
             }
 
-    def _source_for(binary_name: str) -> dict:
+    def _source_for(binary_name: str) -> dict[str, DiGraph]:
         return resolved_source_for_binary(
             binary_name,
             source_cfgs_by_binary,
@@ -180,26 +210,26 @@ def evaluate_project(
     if parallel:
         workers = workers or cpu_count()
 
-        with ProcessPoolExecutor(max_workers=workers) as executor:
-            futures = {}
+        with ProcessPoolExecutor(max_workers=workers) as evaluation_executor:
+            evaluation_futures = {}
 
             for binary_name, dec_results in decompilations.items():
                 source_cfgs = _source_for(binary_name)
 
                 for dec_name, decompilation in dec_results.items():
-                    future = executor.submit(
+                    evaluation_future = evaluation_executor.submit(
                         evaluate_decompilation,
                         decompilation,
                         source_cfgs,
                         metrics,
                         False,
                     )
-                    futures[future] = (binary_name, dec_name)
+                    evaluation_futures[evaluation_future] = (binary_name, dec_name)
 
-            for future in as_completed(futures):
-                binary_name, dec_name = futures[future]
+            for evaluation_future in as_completed(evaluation_futures):
+                binary_name, dec_name = evaluation_futures[evaluation_future]
                 try:
-                    metric_results = future.result()
+                    metric_results = evaluation_future.result()
                     if binary_name not in results:
                         results[binary_name] = {}
                     results[binary_name][dec_name] = metric_results
@@ -278,7 +308,10 @@ def evaluate_projects(
     if optimization_levels is None:
         optimization_levels = [OptimizationLevel.O2]
 
-    results = {}
+    results: dict[
+        str,
+        dict[OptimizationLevel, dict[str, dict[str, dict[str, MetricResult]]]],
+    ] = {}
 
     for project in projects:
         results[project.name] = {}

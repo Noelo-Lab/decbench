@@ -51,18 +51,18 @@ benchmark can be found at https://huggingface.co/datasets/noelo-lab/decbench-dat
 ## Common Commands
 
 ```bash
-pip install -e ".[dev]"             # install for development
-pytest                              # all tests, with coverage (real-decompiler tests auto-skip)
-ruff check .                        # lint
-black .                             # format
-mypy decbench                       # type check
+uv sync --locked --extra dev        # install for development
+uv run pytest                       # all tests, with coverage (real-decompiler tests auto-skip)
+uv run ruff check .                 # lint
+uv run black .                      # format
+uv run mypy decbench                # type check
 
-decbench run project.toml -O O0 -O O2 -d angr -d ghidra   # full pipeline, one project
-decbench list-decompilers           # show available decompilers
-decbench list-metrics               # show available metrics
-decbench report scoreboard.toml     # render the HTML report
-decbench site build results/full_run -o site/   # build the deployable Pages tree
-decbench site snapshot              # freeze the built site under today's date (only on request)
+uv run decbench run project.toml -O O0 -O O2 -d angr -d ghidra   # full pipeline, one project
+uv run decbench list-decompilers           # show available decompilers
+uv run decbench list-metrics               # show available metrics
+uv run decbench report scoreboard.toml     # render the HTML report
+uv run decbench site build results/full_run -o site/   # build the deployable Pages tree
+uv run decbench site snapshot              # freeze the built site under today's date (only on request)
 ```
 
 Real benchmark runs use `scripts/compile_all.py` + `scripts/run_benchmark.py`

@@ -10,7 +10,7 @@ importing a native Python module.
 It drives Glaurung's ``decompile`` command in its parseable-C mode
 (``--style decbench``), which emits a valid C translation-unit fragment per
 function — a real ``long name(long arg0, …)`` signature with declared locals —
-so DecBench's Joern-based GED and the C-signature type_match parser can consume
+so DecBench's Cindergraph-backed GED and C-signature type parser can consume
 it. Two invocation shapes, both load-once/decompile-many in a single process:
 
 * target-scoped (the benchmark case) — decompile exactly the DWARF target VAs::

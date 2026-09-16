@@ -5,7 +5,7 @@ Covers the three legs against a synthetic gcc -g -O0 mini-tree:
   anon-name determinism, strict vs allow_unresolved behavior, zip layout;
 - package.py: run as a REAL subprocess inside a kit — happy path plus every
   validation-error class;
-- ingest (evaluate=False everywhere — pyjoern is never touched): checkpoint +
+- ingest (evaluate=False everywhere, so CFG extraction is never initialized): checkpoint +
   artifact contents, DWARF relabeling, slice_scoped extras, failed_functions,
   extra-address drops, force semantics, raw-json rejection;
 - AddrLookup tolerance rules and CliRunner smoke tests for export + ingest.

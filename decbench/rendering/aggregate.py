@@ -160,12 +160,12 @@ def _has_ged(func: FunctionRecord, dec: str) -> bool:
 
 
 def _source_parsed(func: FunctionRecord, decompilers: list[str], ged_present: bool) -> bool:
-    """Did our source front-end (Joern) produce a CFG for this function's source?
+    """Did our source front end produce a CFG for this function's source?
 
     Source CFGs are decompiler-independent, so a function's source parsed iff *some*
-    decompiler obtained a GED for it. When Joern fails on the SOURCE that is our
+    decompiler obtained a GED for it. When extraction fails on the source that is our
     tooling's fault, so the function is excluded from GED for everyone rather than
-    counted against anyone. When Joern fails on a single decompiler's OUTPUT (source
+    counted against anyone. When extraction fails on one decompiler's output (source
     parsed, that decompiler has no GED) it still counts as that decompiler's miss.
     """
     if not ged_present:
@@ -843,9 +843,9 @@ def build_dataset_page(function_data: FunctionData) -> dict[str, Any]:
     Corpus-wide and selector-independent: this page describes what was benchmarked,
     not how anyone scored, so neither the preset nor the normalize toggle applies.
 
-    Note the Joern block is a *tooling health* report, not a score. ``source.lost`` is
+    The CFG-front-end block is a *tooling health* report, not a score. ``source.lost`` is
     the share of functions GED cannot score because our own source front-end failed —
-    charged to us, not to any decompiler — and ``output[dec]`` is how often Joern
+    charged to us, not to any decompiler — and ``output[dec]`` is how often extraction
     failed on that decompiler's output, which does count as its GED miss but is
     surfaced here so a reader can tell tooling loss from decompiler loss.
     """
@@ -902,12 +902,12 @@ def build_dataset_page(function_data: FunctionData) -> dict[str, Any]:
                 if not _has_ged(func, dec):
                     output_failed[di] += 1
 
-    spot_check = info.get("joern") or {}
+    spot_check = info.get("cfg_frontend") or {}
     return {
         "summary": summary,
         "categories": categories,
         "projects": [p.as_dict() for p in sorted(projects, key=lambda p: -p.loc)],
-        "joern": {
+        "cfg_frontend": {
             "source": {"lost": source_lost, "total": source_total},
             "output": {
                 dec: [output_failed[di], output_scope[di]] for di, dec in enumerate(decompilers)
