@@ -25,7 +25,6 @@ while type_match (which needs recovered variables) reports errors per function.
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -34,16 +33,18 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
 )
-from decbench.utils.results_tree import OPT_LEVELS, compiled_dir, resolve_binary
+from decbench.utils.function_identity import parse_function_storage_key
+from decbench.utils.results_tree import (
+    OPT_LEVELS,
+    compiled_dir,
+    resolve_binary,
+    split_functions,
+)
 
 if TYPE_CHECKING:
     from networkx import DiGraph
 
 logger = logging.getLogger(__name__)
-
-# Same marker the decompile stage writes and rebuild_function_data.py parses.
-MARKER = re.compile(r"^// Function: (\S+) @ (0x[0-9a-fA-F]+)\s*$", re.M)
-
 
 def load_decompilation(
     c_path: Path,
@@ -54,18 +55,21 @@ def load_decompilation(
 
     Function bodies come from the marker-delimited ``.c``; version/timing/failed
     functions come from the sibling ``.toml`` when present (leniently parsed).
+
+    Markers are read through :func:`~decbench.utils.results_tree.split_functions`
+    rather than a second local regex, so this path sees exactly what the writer
+    produced: collision-qualified keys such as ``same@0x1000``, and DWARF names
+    containing spaces such as ``operator new``. The storage key becomes the
+    dictionary key while ``FunctionDecompilation.name`` keeps the *semantic*
+    name -- ByteMatch feeds that field to ``function_bytes`` and to the compile
+    fixup as a real C identifier, so an address-qualified key must not reach it.
     """
-    text = c_path.read_text(errors="replace")
     functions: dict[str, FunctionDecompilation] = {}
-    marks = list(MARKER.finditer(text))
-    for i, m in enumerate(marks):
-        start = m.end()
-        end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
-        code = text[start:end].strip()
-        name = m.group(1)
-        functions[name] = FunctionDecompilation(
-            name=name,
-            address=int(m.group(2), 16),
+    for storage_key, (address, code) in split_functions(c_path).items():
+        semantic_name, _keyed_address = parse_function_storage_key(storage_key)
+        functions[storage_key] = FunctionDecompilation(
+            name=semantic_name,
+            address=address,
             decompiled_code=code,
             line_count=len(code.splitlines()),
         )

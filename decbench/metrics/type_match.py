@@ -322,8 +322,13 @@ def extract_ground_truth_types_by_address(
             return result
 
         for CU in dwarfinfo.iter_CUs():
-            top_DIE = CU.get_top_DIE()
-            for DIE in top_DIE.iter_children():
+            # Walk the whole DIE tree, not just the CU's direct children: a C++
+            # DW_TAG_subprogram can sit inside a namespace or class scope, and
+            # those are exactly the functions this address map exists to keep
+            # apart. dwarf_function_identities() already walks the full tree, so
+            # a shallower walk here would name an overload at foo@0x... and then
+            # silently have no ground truth for that address.
+            for DIE in CU.iter_DIEs():
                 if DIE.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in DIE.attributes:
                     continue
 
