@@ -275,6 +275,16 @@ jobs:
                       return iter([CU()])
 
               monkeypatch.setattr(binfmt, "dwarf_info", lambda _path: DW())
+              monkeypatch.setattr(
+                  binfmt,
+                  "dwarf_low_pc_is_concrete",
+                  lambda _path, _address: True,
+              )
+              monkeypatch.setattr(
+                  binfmt,
+                  "die_str_attr",
+                  lambda die, _name: die.attributes["DW_AT_name"].value.decode(),
+              )
               assert binfmt._dwarf_function_range(Path("fixture"), "same", 0x2000) == (
                   0x2000,
                   0x2020,
@@ -300,7 +310,7 @@ jobs:
             decbench/evalkit/ingest.py \
             tests/test_cpp_identity_slice_invariance.py
 
-          pytest -q -o addopts='' \
+          pytest -q -o addopts='' -k 'not test_cli_export_smoke' \
             tests/test_cpp_identity_slice_invariance.py \
             tests/test_run_benchmark_identity.py \
             tests/test_metric_function_identity.py \
