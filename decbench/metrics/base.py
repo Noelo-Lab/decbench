@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import Counter
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -95,6 +96,28 @@ class Metric(ABC):
         **kwargs: Any,
     ) -> MetricValue: ...
 
+    @staticmethod
+    def _cfg_for_function(
+        cfgs: dict[str, DiGraph],
+        storage_key: str,
+        function_name: str,
+        name_count: int,
+    ) -> DiGraph | None:
+        """Resolve a CFG without conflating same-name C++ functions.
+
+        Collision-safe CFG producers can key graphs by the decompilation result's
+        storage key (for example ``foo@0x401000``), which always wins.  The
+        historical plain-name fallback remains valid only when the function name
+        is unique within this binary.  For an overloaded/same-name group, a lone
+        ``cfgs['foo']`` is ambiguous and must not be applied to every function.
+        """
+        exact = cfgs.get(storage_key)
+        if exact is not None:
+            return exact
+        if name_count == 1:
+            return cfgs.get(function_name)
+        return None
+
     def compute_for_binary(
         self,
         decompilation: DecompilationResult,
@@ -112,11 +135,23 @@ class Metric(ABC):
 
         source_cfgs = source_cfgs or {}
         decompiled_cfgs = decompiled_cfgs or {}
+        name_counts = Counter(function.name for function in decompilation.functions.values())
 
-        for func_name, func_decomp in decompilation.functions.items():
+        for storage_key, func_decomp in decompilation.functions.items():
             try:
-                source_cfg = source_cfgs.get(func_name)
-                decompiled_cfg = decompiled_cfgs.get(func_name)
+                count = name_counts[func_decomp.name]
+                source_cfg = self._cfg_for_function(
+                    source_cfgs,
+                    storage_key,
+                    func_decomp.name,
+                    count,
+                )
+                decompiled_cfg = self._cfg_for_function(
+                    decompiled_cfgs,
+                    storage_key,
+                    func_decomp.name,
+                    count,
+                )
 
                 if self.requires_source_cfg and source_cfg is None:
                     continue
@@ -133,10 +168,10 @@ class Metric(ABC):
                 # this metric's denominator uniformly instead of counting as a failure.
                 if not math.isfinite(value.value):
                     continue
-                function_results[func_name] = value
+                function_results[storage_key] = value
 
             except Exception as e:
-                errors.append(f"{func_name}: {str(e)}")
+                errors.append(f"{storage_key}: {str(e)}")
 
         result = MetricResult(
             metric_name=self.name,

@@ -132,6 +132,51 @@ def tool_available(name: str) -> bool:
     return shutil.which(name) is not None
 
 
+def executable_address_status(path: Path, address: int) -> bool | None:
+    """Whether ``address`` belongs to a concrete executable ELF section.
+
+    ``False`` is returned only when executable sections are available and none
+    contains the address. ``None`` means the format/section table could not
+    provide a reliable answer.
+    """
+    info = detect(path)
+    if info is None or info.fmt != "elf":
+        return None
+    try:
+        from elftools.elf.elffile import ELFFile
+
+        with path.open("rb") as stream:
+            elf = ELFFile(stream)
+            saw_executable = False
+            for section in elf.iter_sections():
+                if section.header["sh_type"] == "SHT_NOBITS":
+                    continue
+                if not int(section.header["sh_flags"]) & 0x4:  # SHF_EXECINSTR
+                    continue
+                size = int(section.header["sh_size"])
+                if size <= 0:
+                    continue
+                saw_executable = True
+                start = int(section.header["sh_addr"])
+                if start <= address < start + size:
+                    return True
+            return False if saw_executable else None
+    except Exception:
+        return None
+
+
+def dwarf_low_pc_is_concrete(path: Path, address: int) -> bool:
+    """Whether a DWARF ``low_pc`` should be treated as a concrete code address.
+
+    Linker ICF can leave a superseded subprogram DIE with ``low_pc == 0`` even
+    though normal linked ELF code starts elsewhere. Reject zero only when the
+    ELF section table proves that address zero is not executable. If the image
+    genuinely has executable code at zero (embedded/bare-metal) or the format
+    cannot answer reliably, preserve the historical behavior.
+    """
+    return address != 0 or executable_address_status(path, 0) is not False
+
+
 # Codegen-relevant flags carried over from the original build (never -g). Only
 # codegen-only, header-independent flags: dropping them made byte_match
 # unwinnable for whole projects (e.g. -fzero-call-used-regs, -fomit-frame-pointer).
@@ -472,6 +517,9 @@ def source_function_owners(
             for die in cu.iter_DIEs():
                 if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
                     continue
+                address = int(die.attributes["DW_AT_low_pc"].value)
+                if not dwarf_low_pc_is_concrete(path, address):
+                    continue
                 name = die_str_attr(
                     die, "DW_AT_name", follow_abstract_origin=follow_abstract_origin
                 )
@@ -496,7 +544,7 @@ def source_function_owners(
                     ]
                     matched = suffix_matches[0] if len(suffix_matches) == 1 else None
                 if matched is not None:
-                    owners[int(die.attributes["DW_AT_low_pc"].value)] = (name, matched)
+                    owners[address] = (name, matched)
     except Exception:  # noqa: BLE001
         return {}
     return owners

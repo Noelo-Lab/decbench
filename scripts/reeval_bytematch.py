@@ -19,8 +19,10 @@ import json
 import multiprocessing as mp
 import os
 import sys
+from collections import Counter
 from pathlib import Path
 
+from decbench.utils.function_identity import parse_function_storage_key
 from decbench.utils.results_tree import OPT_LEVELS, resolve_binary, split_functions
 
 DECOMPILERS = ("angr", "ghidra", "ida", "binja", "kuna", "r2dec", "dewolf")
@@ -45,10 +47,20 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
     binary = Path(binary_path)
     out: dict[str, dict] = {}
     funcs = split_functions(Path(c_path))
-    context = derive_context_decls({n: c for n, (_a, c) in funcs.items()})
-    for name, (addr, code) in funcs.items():
+    semantic_names = {
+        storage_key: parse_function_storage_key(storage_key)[0] for storage_key in funcs
+    }
+    name_counts = Counter(semantic_names.values())
+    context = derive_context_decls(
+        {
+            semantic_names[storage_key]: code
+            for storage_key, (_addr, code) in funcs.items()
+            if name_counts[semantic_names[storage_key]] == 1
+        }
+    )
+    for storage_key, (addr, code) in funcs.items():
         fd = FunctionDecompilation(
-            name=name,
+            name=semantic_names[storage_key],
             address=addr,
             decompiled_code=code,
             line_count=code.count("\n") + 1,
@@ -56,7 +68,7 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
         try:
             mv = metric.compute_for_function(fd, original_binary_path=binary, context_decls=context)
         except Exception as e:  # noqa: BLE001
-            out[name] = {"value": 0.0, "compilable": False, "error": str(e)[:120]}
+            out[storage_key] = {"value": 0.0, "compilable": False, "error": str(e)[:120]}
             continue
         md = mv.metadata or {}
         # Abstain rather than score 0: the per-function call still returns 0 when no
@@ -64,7 +76,7 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
         # Omitting it makes rebuild_function_data drop byte_match for the function.
         if md.get("skipped"):
             continue
-        out[name] = {
+        out[storage_key] = {
             "value": float(mv.value),
             "compilable": bool(md.get("compilable", False)),
             "dist": md.get("changed_lines"),

@@ -55,6 +55,7 @@ from decbench.models.decompilation import (
     FunctionDecompilation,
     VariableInfo,
 )
+from decbench.utils.function_identity import insert_function
 
 _l = logging.getLogger(__name__)
 
@@ -155,20 +156,24 @@ class RawKunaDecompiler(Decompiler):
             _l.error("kuna-raw failed on %s: %s", binary_path, e)
             return self._error_result(binary_path, start, str(e))
 
-        records = {str(r.get("name") or ""): r for r in self._records(payload)}
+        records_by_address = self._records_by_address(payload)
         enumerated = sorted(
             (
-                (n, int(r.get("address") or 0))
-                for n, r in records.items()
+                (str(record.get("name") or ""), address)
+                for address, record in records_by_address.items()
                 if not common.should_skip_function(
-                    n, int(r.get("address") or 0), text_range, addr_targets
+                    str(record.get("name") or ""), address, text_range, addr_targets
                 )
             ),
             key=lambda x: x[1],
         )
         if functions is not None:
-            requested = {n for (n, _a) in functions}
-            enumerated = [(n, a) for (n, a) in enumerated if n in requested]
+            requested_addrs = {address for (_name, address) in functions}
+            enumerated = [
+                (name, address)
+                for name, address in enumerated
+                if address in requested_addrs
+            ]
         enumerated = common.narrow_to_source(
             enumerated, function_names, backend="kuna", binary_name=binary_path.name
         )
@@ -176,11 +181,11 @@ class RawKunaDecompiler(Decompiler):
         for func_name, file_addr in enumerated:
             fd = None
             try:
-                fd = self._build_function(records[func_name], func_name, file_addr)
+                fd = self._build_function(records_by_address[file_addr], func_name, file_addr)
             except Exception as e:  # noqa: BLE001
                 _l.debug("kuna-raw: assembling %s failed: %s", func_name, e)
             if fd is not None:
-                decompiled[func_name] = fd
+                insert_function(decompiled, fd)
             else:
                 failed.append(func_name)
             _dump()
@@ -281,6 +286,21 @@ class RawKunaDecompiler(Decompiler):
         if isinstance(payload, dict):
             return list(payload.get("functions") or [])
         return payload if isinstance(payload, list) else []
+
+    @classmethod
+    def _records_by_address(cls, payload: Any) -> dict[int, dict[str, Any]]:
+        """Index kuna records by binary-local address without collapsing names."""
+        out: dict[int, dict[str, Any]] = {}
+        for record in cls._records(payload):
+            value = record.get("address")
+            if value is None:
+                continue
+            try:
+                address = int(value)
+            except (TypeError, ValueError):
+                continue
+            out[address] = record
+        return out
 
     def _build_function(
         self, rec: dict[str, Any], name: str, file_addr: int

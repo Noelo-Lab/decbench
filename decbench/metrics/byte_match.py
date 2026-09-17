@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -449,8 +450,17 @@ class ByteMatchMetric(Metric):
 
         from decbench.metrics.fixup import derive_context_decls
 
+        # Storage keys may be address-qualified (``foo@0x...``), while
+        # prototype recovery needs the semantic C identifier. A same-name
+        # collision is intentionally omitted: choosing either overload's
+        # signature for calls to the other would conflate distinct functions.
+        name_counts = Counter(fd.name for fd in decompilation.functions.values())
         context_decls = derive_context_decls(
-            {name: fd.decompiled_code or "" for name, fd in decompilation.functions.items()}
+            {
+                fd.name: fd.decompiled_code or ""
+                for fd in decompilation.functions.values()
+                if name_counts[fd.name] == 1
+            }
         )
 
         for func_name, func_decomp in decompilation.functions.items():
