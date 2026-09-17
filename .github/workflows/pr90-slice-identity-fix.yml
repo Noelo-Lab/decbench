@@ -46,6 +46,229 @@ jobs:
 
           python /tmp/pr90_patch.py
 
+          cat > tests/test_cpp_identity_slice_invariance.py <<'PYTEST'
+          """Slice/eval-kit regressions for canonical C++ function identity."""
+
+          from __future__ import annotations
+
+          import importlib.util
+          from pathlib import Path
+
+          import networkx as nx
+
+          from decbench.evalkit import resolve
+          from decbench.metrics.base import Metric
+          from decbench.metrics.byte_match import ByteMatchMetric
+          from decbench.metrics.type_match import TypeMatchMetric
+          from decbench.models.decompilation import (
+              DecompilationResult,
+              DecompilerMetadata,
+              FunctionDecompilation,
+              VariableInfo,
+          )
+          from decbench.models.metrics import MetricValue
+          from decbench.utils import binfmt
+
+
+          def _load_driver():
+              path = Path(__file__).resolve().parents[1] / "scripts" / "run_benchmark.py"
+              spec = importlib.util.spec_from_file_location("decbench_run_benchmark_slice_test", path)
+              assert spec is not None and spec.loader is not None
+              module = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(module)
+              return module
+
+
+          def _fd(name: str, address: int) -> FunctionDecompilation:
+              return FunctionDecompilation(
+                  name=name,
+                  address=address,
+                  decompiled_code=f"int {name}(void) {{ return 1; }}",
+              )
+
+
+          def test_sampleset_exact_key_selects_one_overload_but_keeps_binary_wide_identity(
+              monkeypatch,
+          ):
+              driver = _load_driver()
+              from decbench.decompilers.raw import common
+
+              full = {0x1000: "same", 0x2000: "same", 0x3000: "unique"}
+              selected = driver._select_manifest_targets(full, {"same@0x2000"})
+              assert selected == {0x2000: "same"}
+              assert driver._select_manifest_targets(full, {"same"}) == {
+                  0x1000: "same",
+                  0x2000: "same",
+              }
+
+              result = DecompilationResult(
+                  binary_path=Path("stripped.bin"),
+                  binary_name="fixture",
+                  decompiler=DecompilerMetadata(decompiler_name="fixture"),
+                  functions={"raw": _fd("sub_2000", 0x2000)},
+              )
+              monkeypatch.setattr(common, "elf_min_vaddr", lambda _path: 0)
+              driver._relabel_to_dwarf(
+                  result,
+                  selected,
+                  Path("unstripped.bin"),
+                  identity_addr2name=full,
+              )
+
+              assert set(result.functions) == {"same@0x2000"}
+              assert result.decompiler.failed_functions == []
+
+
+          class _CfgMetric(Metric):
+              name = "slice_cfg_identity"
+              requires_source_cfg = True
+              requires_decompiled_cfg = True
+
+              def compute_for_function(
+                  self, decompiled, source_cfg=None, decompiled_cfg=None, **kwargs
+              ):
+                  assert source_cfg is not None and decompiled_cfg is not None
+                  return MetricValue(value=1.0)
+
+
+          def _graph() -> nx.DiGraph:
+              graph = nx.DiGraph()
+              graph.add_node(0)
+              return graph
+
+
+          def test_qualified_singleton_does_not_fall_back_to_plain_cfg(tmp_path: Path):
+              result = DecompilationResult(
+                  binary_path=tmp_path / "fixture",
+                  binary_name="fixture",
+                  decompiler=DecompilerMetadata(decompiler_name="fixture"),
+                  functions={"same@0x1000": _fd("same", 0x1000)},
+              )
+              scored = _CfgMetric().compute_for_binary(
+                  result,
+                  source_cfgs={"same": _graph()},
+                  decompiled_cfgs={"same": _graph()},
+              )
+              assert scored.function_results == {}
+
+
+          def test_qualified_singleton_does_not_borrow_name_keyed_type_ground_truth(
+              tmp_path: Path,
+          ):
+              fd = FunctionDecompilation(
+                  name="same",
+                  address=0x1000,
+                  decompiled_code="int same(int x) { return x; }",
+                  variables=[VariableInfo(name="x", type="int", kind="arg", arg_index=0)],
+              )
+              result = DecompilationResult(
+                  binary_path=tmp_path / "fixture",
+                  binary_name="fixture",
+                  decompiler=DecompilerMetadata(decompiler_name="fixture"),
+                  functions={"same@0x1000": fd},
+              )
+              gt = [
+                  {
+                      "name": "x",
+                      "type": ["int"],
+                      "rbp_offset": [],
+                      "size": 4,
+                      "is_arg": True,
+                      "arg_index": 0,
+                  }
+              ]
+              metric = TypeMatchMetric()
+              key = str(result.binary_path)
+              metric._ground_truth_cache[key] = {"same": gt}
+              metric._ground_truth_address_cache[key] = {0x2000: gt}
+
+              scored = metric.compute_for_binary(result)
+              assert scored.function_results == {}
+
+              metric._ground_truth_address_cache[key] = {0x1000: []}
+              scored = metric.compute_for_binary(result)
+              assert scored.function_results == {}
+
+
+          def test_qualified_singleton_is_not_used_as_bytematch_context(
+              tmp_path: Path, monkeypatch
+          ):
+              qualified = _fd("same", 0x1000)
+              unique = _fd("unique", 0x3000)
+              result = DecompilationResult(
+                  binary_path=tmp_path / "missing-binary",
+                  binary_name="fixture",
+                  decompiler=DecompilerMetadata(decompiler_name="fixture"),
+                  functions={"same@0x1000": qualified, "unique": unique},
+              )
+              captured: dict[str, str] = {}
+
+              def fake_derive(function_codes: dict[str, str]) -> dict[str, str]:
+                  captured.update(function_codes)
+                  return {}
+
+              metric = ByteMatchMetric()
+              monkeypatch.setattr("decbench.metrics.fixup.derive_context_decls", fake_derive)
+              monkeypatch.setattr(
+                  metric,
+                  "compute_for_function",
+                  lambda *_args, **_kwargs: MetricValue(value=1.0),
+              )
+              metric.compute_for_binary(result)
+              assert set(captured) == {"unique"}
+
+
+          def test_evalkit_resolves_canonical_manifest_key_exactly(monkeypatch):
+              mapping = {0x1000: "same", 0x2000: "same", 0x3000: "unique"}
+              monkeypatch.setattr(resolve, "_dwarf_addr_to_name", lambda _binary, _stems: mapping)
+
+              binary = Path("fixture")
+              assert resolve.name_to_addr(binary, {"same@0x2000"}) == {
+                  "same@0x2000": 0x2000
+              }
+              assert resolve.name_to_addr(binary, {"same"}) == {"same": 0x1000}
+              assert resolve.name_to_addr(binary, {"same@0x9999"}) == {}
+
+              lookup = resolve.AddrLookup({0x401000: "same"}, min_vaddr=0x400000)
+              assert lookup.resolve(0x1000) == (0x401000, "same")
+              assert lookup.name_for(0x1000) == "same"
+
+
+          def test_dwarf_function_range_prefers_exact_address(monkeypatch):
+              class Attr:
+                  def __init__(self, value, form="DW_FORM_data4"):
+                      self.value = value
+                      self.form = form
+
+              class Die:
+                  tag = "DW_TAG_subprogram"
+
+                  def __init__(self, address: int, size: int):
+                      self.attributes = {
+                          "DW_AT_name": Attr(b"same"),
+                          "DW_AT_low_pc": Attr(address, "DW_FORM_addr"),
+                          "DW_AT_high_pc": Attr(size, "DW_FORM_data4"),
+                      }
+
+              class CU:
+                  def iter_DIEs(self):
+                      return iter([Die(0x1000, 0x10), Die(0x2000, 0x20)])
+
+              class DW:
+                  def iter_CUs(self):
+                      return iter([CU()])
+
+              monkeypatch.setattr(binfmt, "dwarf_info", lambda _path: DW())
+              assert binfmt._dwarf_function_range(Path("fixture"), "same", 0x2000) == (
+                  0x2000,
+                  0x2020,
+              )
+              assert binfmt._dwarf_function_range(Path("fixture"), "same") == (
+                  0x1000,
+                  0x1010,
+              )
+          PYTEST
+
           python -m pip install --upgrade pip
           python -m pip install -e '.[dev]'
 
