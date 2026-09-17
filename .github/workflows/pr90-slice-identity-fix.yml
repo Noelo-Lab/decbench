@@ -46,6 +46,22 @@ jobs:
 
           python /tmp/pr90_patch.py
 
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("decbench/metrics/type_match.py")
+          text = path.read_text()
+          old = "                    gt_vars = [] if keyed_address is not None else gt_types.get(func_decomp.name, [])"
+          new = """                    gt_vars = (
+                        []
+                        if keyed_address is not None
+                        else gt_types.get(func_decomp.name, [])
+                    )"""
+          if old not in text:
+              raise SystemExit("expected TypeMatch formatting target was not found")
+          path.write_text(text.replace(old, new))
+          PY
+
           cat > tests/test_cpp_identity_slice_invariance.py <<'PYTEST'
           """Slice/eval-kit regressions for canonical C++ function identity."""
 
