@@ -56,6 +56,7 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
             semantic_names[storage_key]: code
             for storage_key, (_addr, code) in funcs.items()
             if name_counts[semantic_names[storage_key]] == 1
+            and parse_function_storage_key(storage_key)[1] is None
         }
     )
     for storage_key, (addr, code) in funcs.items():

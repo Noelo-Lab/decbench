@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from decbench.metrics.base import Metric, MetricConfig
 from decbench.metrics.registry import register_metric
 from decbench.models.metrics import AggregationType, MetricResult, MetricValue
+from decbench.utils.function_identity import parse_function_storage_key
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -326,9 +327,14 @@ def extract_ground_truth_types_by_address(
                 if DIE.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in DIE.attributes:
                     continue
 
+                address = int(DIE.attributes["DW_AT_low_pc"].value)
+                if not binfmt.dwarf_low_pc_is_concrete(binary_path, address):
+                    continue
                 _func_name, variables = _parse_function_die(DIE, dwarfinfo)
-                if variables:
-                    result[int(DIE.attributes["DW_AT_low_pc"].value)] = variables
+                # Keep the address even when the function has no variables. Its
+                # empty list is still authoritative and must not fall back to a
+                # different same-name overload's ground truth.
+                result[address] = variables
 
     except Exception as e:
         logger.warning(
@@ -883,7 +889,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "7"
+    cache_version = "8"
 
     weight = 1.0
     lower_is_better = False
@@ -1257,9 +1263,15 @@ class TypeMatchMetric(Metric):
 
         for storage_key, func_decomp in decompilation.functions.items():
             try:
-                gt_vars = gt_types_by_address.get(func_decomp.address, [])
-                if not gt_vars:
-                    gt_vars = gt_types.get(func_decomp.name, [])
+                if func_decomp.address in gt_types_by_address:
+                    gt_vars = gt_types_by_address[func_decomp.address]
+                else:
+                    _semantic_name, keyed_address = parse_function_storage_key(storage_key)
+                    gt_vars = (
+              []
+              if keyed_address is not None
+              else gt_types.get(func_decomp.name, [])
+          )
                 if not gt_vars:
                     continue
 
@@ -1320,10 +1332,12 @@ class TypeMatchMetric(Metric):
         """
         pairs: list[tuple[list[int], list[int]]] = []
 
-        for _storage_key, func_decomp in decompilation.functions.items():
-            gt_vars = gt_types_by_address.get(func_decomp.address, [])
-            if not gt_vars:
-                gt_vars = gt_types.get(func_decomp.name, [])
+        for storage_key, func_decomp in decompilation.functions.items():
+            if func_decomp.address in gt_types_by_address:
+                gt_vars = gt_types_by_address[func_decomp.address]
+            else:
+                _semantic_name, keyed_address = parse_function_storage_key(storage_key)
+                gt_vars = [] if keyed_address is not None else gt_types.get(func_decomp.name, [])
             if not gt_vars:
                 continue
             func_gt = [o for gv in gt_vars for o in gv.get("rbp_offset", [])]

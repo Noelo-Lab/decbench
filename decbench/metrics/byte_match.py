@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from decbench.metrics.base import Metric, MetricConfig
 from decbench.metrics.registry import register_metric
 from decbench.models.metrics import AggregationType, MetricResult, MetricValue
+from decbench.utils.function_identity import parse_function_storage_key
 
 if TYPE_CHECKING:
     from networkx import DiGraph
@@ -231,7 +232,7 @@ class ByteMatchMetric(Metric):
     requires_source_cfg = False
     requires_decompiled_cfg = False
 
-    cache_version = "7"
+    cache_version = "8"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
@@ -458,8 +459,9 @@ class ByteMatchMetric(Metric):
         context_decls = derive_context_decls(
             {
                 fd.name: fd.decompiled_code or ""
-                for fd in decompilation.functions.values()
+                for storage_key, fd in decompilation.functions.items()
                 if name_counts[fd.name] == 1
+                and parse_function_storage_key(storage_key)[1] is None
             }
         )
 

@@ -15,6 +15,7 @@ from decbench.models.metrics import (
     MetricResult,
     MetricValue,
 )
+from decbench.utils.function_identity import parse_function_storage_key
 
 if TYPE_CHECKING:
     from networkx import DiGraph
@@ -114,6 +115,9 @@ class Metric(ABC):
         exact = cfgs.get(storage_key)
         if exact is not None:
             return exact
+        _semantic_name, keyed_address = parse_function_storage_key(storage_key)
+        if keyed_address is not None:
+            return None
         if name_count == 1:
             return cfgs.get(function_name)
         return None

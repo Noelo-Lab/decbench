@@ -550,26 +550,37 @@ def source_function_owners(
     return owners
 
 
-def _dwarf_function_range(path: Path, func_name: str) -> tuple[int, int] | None:
-    """(low_pc, high_pc) absolute VA for a function, from DWARF."""
+def _dwarf_function_range(
+    path: Path, func_name: str, address: int | None = None
+) -> tuple[int, int] | None:
+    """``(low_pc, high_pc)`` for one function, preferring exact address identity.
+
+    The name-only path is retained as a compatibility fallback. C++ callers pass
+    the canonical DWARF ``low_pc`` so overloads/same-named methods cannot select
+    the first unrelated DIE with the same short name.
+    """
     di = dwarf_info(path)
     if di is None:
         return None
+    name_fallback: tuple[int, int] | None = None
     for cu in di.iter_CUs():
         for die in cu.iter_DIEs():
             if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
                 continue
-            nm = die.attributes.get("DW_AT_name")
-            name = nm.value.decode() if nm and isinstance(nm.value, bytes) else None
-            if name != func_name:
+            lo = int(die.attributes["DW_AT_low_pc"].value)
+            if not dwarf_low_pc_is_concrete(path, lo):
                 continue
-            lo = die.attributes["DW_AT_low_pc"].value
             hi_at = die.attributes.get("DW_AT_high_pc")
             if hi_at is None:
-                return None
-            hi = lo + hi_at.value if hi_at.form != "DW_FORM_addr" else hi_at.value
-            return (lo, hi)
-    return None
+                continue
+            hi = lo + int(hi_at.value) if hi_at.form != "DW_FORM_addr" else int(hi_at.value)
+            rng = (lo, hi)
+            name = die_str_attr(die, "DW_AT_name")
+            if address is not None and lo == address:
+                return rng
+            if name_fallback is None and name == func_name:
+                name_fallback = rng
+    return name_fallback
 
 
 def function_bytes(path: Path, func_name: str, address: int) -> bytes | None:
@@ -581,7 +592,7 @@ def function_bytes(path: Path, func_name: str, address: int) -> bytes | None:
         b = _elf_function_bytes(path, func_name, address)
         if b is not None:
             return b
-    rng = _dwarf_function_range(path, func_name)
+    rng = _dwarf_function_range(path, func_name, address)
     if rng is None:
         return None
     lo, hi = rng
