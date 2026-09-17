@@ -1,0 +1,63 @@
+name: Tests
+
+# The suite carries pre-existing failures, so a plain "run pytest" gate would be
+# red from the first run and quickly learn to be ignored. Compare the pull
+# request against main instead and fail only on failures the branch introduces.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLAKY_CGROUP_TEST: tests/test_decompiler_limits.py::test_cgroup_limit_kills_the_whole_descendant_tree
+
+jobs:
+  differential:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --disable-pip-version-check -U pip
+          python -m pip install -e '.[dev]'
+      - name: Capture main baseline
+        run: |
+          git worktree add --detach /tmp/decbench-main origin/${{ github.base_ref }}
+          python -m pip install --no-deps -e /tmp/decbench-main
+          set +e
+          (cd /tmp/decbench-main && COLUMNS=200 pytest -q --tb=short --deselect="$FLAKY_CGROUP_TEST") | tee /tmp/main.log
+          set -e
+          grep '^FAILED ' /tmp/main.log | awk '{print $2}' | sort -u > /tmp/main.failures || true
+          echo "baseline failures:"; cat /tmp/main.failures || true
+      - name: Pull request introduces no new failures
+        run: |
+          python -m pip install --no-deps -e .
+          set +e
+          COLUMNS=200 pytest -q --tb=short --deselect="$FLAKY_CGROUP_TEST" | tee /tmp/pr.log
+          set -e
+          grep '^FAILED ' /tmp/pr.log | awk '{print $2}' | sort -u > /tmp/pr.failures || true
+          if [ ! -s /tmp/pr.log ]; then
+            echo "pytest produced no output; treating as a broken run rather than a pass"
+            exit 1
+          fi
+          comm -13 /tmp/main.failures /tmp/pr.failures > /tmp/new.failures
+          echo "pull request failures:"; cat /tmp/pr.failures || true
+          if [ -s /tmp/new.failures ]; then
+            echo "New failures relative to ${{ github.base_ref }}:"
+            cat /tmp/new.failures
+            exit 1
+          fi
+          echo "No new failures relative to ${{ github.base_ref }}."
