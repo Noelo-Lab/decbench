@@ -54,6 +54,7 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
 )
+from decbench.utils.function_identity import insert_function
 
 _l = logging.getLogger(__name__)
 
@@ -239,7 +240,7 @@ class RawDewolfDecompiler(Decompiler):
                             metadata=common.extract_metrics(code),
                         )
                         with lock:
-                            decompiled_functions[name] = fd
+                            insert_function(decompiled_functions, fd)
                             _dump()
                     elif kind == "fail":
                         with lock:

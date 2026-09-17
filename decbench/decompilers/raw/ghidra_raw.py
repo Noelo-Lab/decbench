@@ -44,6 +44,7 @@ from decbench.models.decompilation import (
     LineMapping,
     VariableInfo,
 )
+from decbench.utils.function_identity import insert_function
 
 _l = logging.getLogger(__name__)
 
@@ -264,11 +265,11 @@ class RawGhidraDecompiler(Decompiler):
                 program = flat.getCurrentProgram()
                 image_base = int(program.getImageBase().getOffset())
 
-                requested = {n for (n, _a) in functions} if functions is not None else None
+                requested_addrs = {a for (_n, a) in functions} if functions is not None else None
 
                 enumerated = self._enumerate(program, elf_base, text_range, addr_targets)
-                if requested is not None:
-                    enumerated = [(n, a) for (n, a) in enumerated if n in requested]
+                if requested_addrs is not None:
+                    enumerated = [(n, a) for (n, a) in enumerated if a in requested_addrs]
 
                 enumerated = common.narrow_to_source(
                     enumerated,
@@ -281,11 +282,11 @@ class RawGhidraDecompiler(Decompiler):
                 ifc.openProgram(program)
                 monitor = ConsoleTaskMonitor()
                 timeout_s = int(self.config.function_timeout_seconds)
-                by_name = self._functions_by_name(program)
+                by_address = self._functions_by_address(program, elf_base)
 
                 for func_name, file_addr in enumerated:
                     func_result = None
-                    g_func = by_name.get(func_name)
+                    g_func = by_address.get(file_addr)
                     if g_func is not None:
                         try:
                             func_result = self._decompile_one(
@@ -305,7 +306,7 @@ class RawGhidraDecompiler(Decompiler):
                                 e,
                             )
                     if func_result is not None:
-                        decompiled_functions[func_name] = func_result
+                        insert_function(decompiled_functions, func_result)
                     else:
                         failed_functions.append(func_name)
                     _dump()
@@ -370,12 +371,15 @@ class RawGhidraDecompiler(Decompiler):
         return sorted(out, key=lambda x: x[1])
 
     @staticmethod
-    def _functions_by_name(program: Any) -> dict[str, Any]:
-        """Map (last-seen) function name -> Ghidra Function object."""
-        out: dict[str, Any] = {}
+    def _functions_by_address(program: Any, elf_base: int) -> dict[int, Any]:
+        """Map binary-local function address -> Ghidra Function object."""
+        image_base = int(program.getImageBase().getOffset())
+        out: dict[int, Any] = {}
         fm = program.getFunctionManager()
         for g_func in fm.getFunctions(True):
-            out[g_func.getName()] = g_func
+            offset = int(g_func.getEntryPoint().getOffset())
+            file_addr = (offset - image_base) + elf_base
+            out[file_addr] = g_func
         return out
 
     def _decompile_one(

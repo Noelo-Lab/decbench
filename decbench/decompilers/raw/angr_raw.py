@@ -31,6 +31,7 @@ from decbench.models.decompilation import (
     LineMapping,
     VariableInfo,
 )
+from decbench.utils.function_identity import insert_function
 
 _l = logging.getLogger(__name__)
 
@@ -140,7 +141,7 @@ class RawAngrDecompiler(Decompiler):
                     _l.debug("angr-raw: failed to decompile %s: %s", func_name, e)
 
                 if func_result is not None:
-                    decompiled_functions[func_name] = func_result
+                    insert_function(decompiled_functions, func_result)
                 else:
                     failed_functions.append(func_name)
                 _dump()
