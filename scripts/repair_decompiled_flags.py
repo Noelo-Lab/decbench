@@ -30,14 +30,13 @@ Usage:  python scripts/repair_decompiled_flags.py results/full_run [--apply]
 from __future__ import annotations
 
 import json
-import re
 import sys
 from collections import Counter
 from pathlib import Path
 
 from decbench.models.function_data import FunctionData
+from decbench.utils.results_tree import split_functions
 
-MARKER = re.compile(r"^// Function: (\S+) @ (0x[0-9a-fA-F]+)\s*$", re.M)
 LLM_DECOMPILERS = ("codex", "claude-code")
 PER_DEC_FIELDS = ("values", "perfects", "distances", "decompiled", "compiles")
 
@@ -45,15 +44,20 @@ PER_DEC_FIELDS = ("values", "perfects", "distances", "decompiled", "compiles")
 def marker_names(
     root: Path, opt: str, proj: str, stem: str, dec: str, cache: dict[tuple, set[str] | None]
 ) -> set[str] | None:
-    """Function names present in one decompiled artifact (None = no artifact)."""
+    """Storage keys present in one decompiled artifact (None = no artifact).
+
+    These are compared against ``FunctionData`` per-function keys, which are
+    storage keys, so the collision-qualified form is what belongs here. Reading
+    through ``split_functions`` also keeps a marker whose name contains a space
+    (``operator new``) visible, which a local ``(\\S+)`` pattern dropped.
+    """
     key = (opt, proj, stem, dec)
     if key not in cache:
         cf = root / opt / proj / "decompiled" / f"{dec}_{stem}.c"
         if not cf.is_file():
             cache[key] = None
         else:
-            text = cf.read_text(errors="replace")
-            cache[key] = {m.group(1) for m in MARKER.finditer(text)}
+            cache[key] = set(split_functions(cf))
     return cache[key]
 
 

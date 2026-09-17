@@ -34,6 +34,7 @@ from decbench.models.decompilation import (
     LineMapping,
     VariableInfo,
 )
+from decbench.utils.function_identity import insert_function
 
 _l = logging.getLogger(__name__)
 
@@ -141,8 +142,8 @@ class RawBinjaDecompiler(Decompiler):
             bv = self._load(binary_path)
             enumerated = self._enumerate(bv, elf_base, text_range, addr_targets)
             if functions is not None:
-                requested = {n for (n, _a) in functions}
-                enumerated = [(n, a) for (n, a) in enumerated if n in requested]
+                requested_addrs = {a for (_n, a) in functions}
+                enumerated = [(n, a) for (n, a) in enumerated if a in requested_addrs]
             enumerated = common.narrow_to_source(
                 enumerated,
                 function_names,
@@ -162,7 +163,7 @@ class RawBinjaDecompiler(Decompiler):
                     except Exception as e:  # noqa: BLE001
                         _l.debug("binja-raw: failed to decompile %s: %s", func_name, e)
                 if func_result is not None:
-                    decompiled_functions[func_name] = func_result
+                    insert_function(decompiled_functions, func_result)
                 else:
                     failed_functions.append(func_name)
                 _dump()

@@ -42,7 +42,9 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from decbench.utils.function_identity import parse_function_storage_key  # noqa: E402
 from decbench.utils.langs import preprocessed_by_stem  # noqa: E402
+from decbench.utils.results_tree import FUNCTION_MARKER  # noqa: E402
 
 PREVIOUS_GED_MAX_NODES = 60
 CHECKPOINT_SCHEMA_VERSION = 7
@@ -793,8 +795,6 @@ def eval_one(
     and DROPS non-finite (empty-prototype/degenerate source) results so they are
     excluded from GED's denominator instead of counting as failures.
     """
-    import re
-
     (
         opt,
         project,
@@ -902,13 +902,13 @@ def eval_one(
     # Joern keys CFGs by the parsed BODY name, which can differ from the marker name
     # (ida's `_rl_set_screen_size` over a `rl_set_screen_size` body). Emitting only
     # marker-declared functions avoids attributing a row the decompiler never owned.
-    markers = set(
-        re.findall(
-            r"^// Function: (\S+) @ 0x[0-9a-fA-F]+\s*$",
-            decompiled_text,
-            re.M,
-        )
-    )
+    # Historical score keys and Joern CFG keys are both source-level names, so
+    # take the semantic half of each storage key rather than the key itself.
+    # Sharing the marker pattern also keeps a name containing a space visible.
+    markers = {
+        parse_function_storage_key(match.group(1))[0]
+        for match in FUNCTION_MARKER.finditer(decompiled_text)
+    }
     if old_values:
         selected_source_functions = (
             set(historical_src_cfgs) if historical_overlay_covered else set(src_cfgs)
