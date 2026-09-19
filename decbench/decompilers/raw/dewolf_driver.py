@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import sys
 import time
 from collections import defaultdict
@@ -47,6 +48,29 @@ def _emit(obj: dict[str, Any]) -> None:
 
 SSAKey = tuple[int, int]
 SSADisplayKey = tuple[str, int]
+
+
+def _matches_target_address(
+    address: int, target_addresses: set[int] | None, architecture: str
+) -> bool:
+    """Match Thumb address aliases only on 32-bit ARM architectures."""
+    if target_addresses is None or address in target_addresses:
+        return True
+    arch = architecture.lower()
+    if arch == "arm" or arch.startswith(("armv", "thumb")):
+        return (address & ~1) in target_addresses or (address | 1) in target_addresses
+    return False
+
+
+def _configure_worker_threads(binaryninja: Any) -> int:
+    """Apply the per-driver Binary Ninja worker cap and return it."""
+    raw_count = os.environ.get("DECBENCH_DEWOLF_THREADS", "2")
+    try:
+        count = max(1, int(raw_count))
+    except ValueError:
+        count = 2
+    binaryninja.set_worker_thread_count(count)
+    return count
 
 
 def _ssa_key(variable: Any) -> SSAKey | None:
@@ -351,18 +375,14 @@ def main() -> int:
     from decompile import Decompiler
     from decompiler.util.options import Options
 
+    worker_threads = _configure_worker_threads(bn)
     bv = bn.load(binary)
     bv.update_analysis_and_wait()
     load_base = int(bv.start)
+    architecture = str(getattr(getattr(bv, "arch", None), "name", ""))
 
     def elf_addr(start: int) -> int:
         return (int(start) - load_base) + elf_base
-
-    # ARM Thumb functions can carry the low bit set; compare with it cleared.
-    def matches(addr: int) -> bool:
-        if target_addrs is None:
-            return True
-        return addr in target_addrs or (addr & ~1) in target_addrs or (addr | 1) in target_addrs
 
     selected = []
     for func in bv.functions:
@@ -370,12 +390,19 @@ def main() -> int:
             if getattr(func, "is_thunk", False):
                 continue
             addr = elf_addr(func.start)
-            if matches(addr):
+            if _matches_target_address(addr, target_addrs, architecture):
                 selected.append((func, addr))
         except Exception:  # noqa: BLE001
             continue
 
-    _emit({"type": "meta", "load_base": load_base, "count": len(selected)})
+    _emit(
+        {
+            "type": "meta",
+            "load_base": load_base,
+            "count": len(selected),
+            "worker_threads": worker_threads,
+        }
+    )
 
     options: Options = Decompiler.create_options()
     # Bound dewolf's dominant slow path (sympy/z3 on complex conditions) so one

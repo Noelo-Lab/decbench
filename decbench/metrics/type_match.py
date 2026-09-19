@@ -296,6 +296,11 @@ def uses_legacy_correspondence(decompiler_name: str | None) -> bool:
     return str(decompiler_name).split("@", 1)[0] not in ADDRESS_CORRESPONDENCE_BACKENDS
 
 
+def has_line_address_evidence(decompiled: FunctionDecompilation) -> bool:
+    """Whether a text-only producer supplied executable addresses for C lines."""
+    return any(mapping.addresses for mapping in decompiled.line_mappings)
+
+
 def extract_ground_truth_type_index(binary_path: Path) -> GroundTruthTypeIndex:
     """Extract DWARF variable types keyed by function address and name.
 
@@ -366,9 +371,10 @@ def _ground_truth_for_function(
     index: GroundTruthTypeIndex,
     function_name: str,
     function_address: int,
+    architecture: str,
 ) -> list[dict[str, Any]]:
     at_address: dict[str, list[dict[str, Any]]] = {}
-    for candidate in entry_address_candidates(int(function_address)):
+    for candidate in entry_address_candidates(int(function_address), architecture):
         at_address = index.get(candidate, {})
         if at_address:
             break
@@ -756,18 +762,37 @@ def _parse_param(param: str) -> tuple[str, str] | None:
     return name, type_
 
 
-def parse_c_variables(code: str, func_name: str) -> list[Any]:
+def parse_c_variables(
+    code: str, func_name: str, *, include_occurrence_lines: bool = False
+) -> list[Any]:
     """Best-effort structured ``VariableInfo`` list from decompiled C text.
 
     Recovers function arguments (with ABI ``arg_index``, name-independent) from
     ``func_name``'s signature plus local declarations from the body. A decompiler
     that emits only C text therefore gets the same argument-position anchors as one
     exposing structured variables. This declaration parser never supplies occurrence
-    addresses.
+    addresses. For text-only producers with a reported line map, identifier
+    occurrences can retain C line numbers to use that map.
     """
     from decbench.models.decompilation import VariableInfo
 
     out: list[Any] = []
+    lines: list[str] = []
+    if include_occurrence_lines:
+        masked = re.sub(
+            r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|/\*.*?\*/|//[^\n]*',
+            lambda match: re.sub(r"[^\n]", " ", match.group()),
+            code,
+            flags=re.DOTALL,
+        )
+        lines = masked.splitlines()
+
+    def occurrence_lines(name: str) -> list[int]:
+        if not name:
+            return []
+        pattern = re.compile(r"\b" + re.escape(name) + r"\b")
+        return [number for number, line in enumerate(lines, 1) if pattern.search(line)]
+
     params = _find_definition_params(code, func_name)
     argnames: set[str] = set()
     if params is not None:
@@ -780,11 +805,21 @@ def parse_c_variables(code: str, func_name: str) -> list[Any]:
                 continue
             name, type_ = parsed
             argnames.add(name)
-            out.append(VariableInfo(name=name, type=type_, arg_index=i, kind="arg"))
+            out.append(
+                VariableInfo(
+                    name=name,
+                    type=type_,
+                    arg_index=i,
+                    kind="arg",
+                    line_numbers=occurrence_lines(name),
+                )
+            )
     for name, type_ in _extract_local_decls(code):
         if name in argnames:
             continue
-        out.append(VariableInfo(name=name, type=type_, kind="stack"))
+        out.append(
+            VariableInfo(name=name, type=type_, kind="stack", line_numbers=occurrence_lines(name))
+        )
     return out
 
 
@@ -928,10 +963,10 @@ class TypeMatchMetric(Metric):
     """Type correctness metric.
 
     Establishes type-blind source/decompiler variable correspondence from ABI
-    argument position, calibrated stack offsets, and native instruction-address
-    evidence, then compares recovered types with DWARF ground truth. Producers
-    outside the supported address-evidence allowlist use the caveated legacy
-    name-based fallback. For each function, accuracy is TP / (TP + FP + FN).
+    argument position, calibrated stack offsets, and instruction-address
+    evidence, then compares recovered types with DWARF ground truth. Text-only
+    producers may supply line addresses; functions without address evidence use
+    the caveated legacy name-based fallback. Accuracy is TP / (TP + FP + FN).
 
     Perfect score is 1.0 (all types match).
     """
@@ -940,7 +975,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "15"
+    cache_version = "17"
 
     weight = 1.0
     lower_is_better = False
@@ -990,13 +1025,21 @@ class TypeMatchMetric(Metric):
             )
 
         if address_provenance is None:
-            address_provenance = not uses_legacy_correspondence(backend)
+            address_provenance = not uses_legacy_correspondence(
+                backend
+            ) or has_line_address_evidence(decompiled)
         if not address_provenance:
             return self._legacy_value(decompiled, ground_truth_vars, calibration_shift)
 
         raw_variables = list(getattr(decompiled, "variables", []) or [])
         if not raw_variables and decompiled.decompiled_code:
-            raw_variables = parse_c_variables(decompiled.decompiled_code, decompiled.name)
+            raw_variables = parse_c_variables(
+                decompiled.decompiled_code,
+                decompiled.name,
+                include_occurrence_lines=(
+                    uses_legacy_correspondence(backend) and has_line_address_evidence(decompiled)
+                ),
+            )
         working = decompiled.model_copy(update={"variables": raw_variables})
 
         source_result = build_source_evidence(
@@ -1080,6 +1123,7 @@ class TypeMatchMetric(Metric):
             {
                 "linemap_present": linemap_present,
                 "source_file": source_file,
+                "line_mapping_source": (decompiled.metadata or {}).get("line_mapping_source"),
             },
         ]
         return self._cached_value(
@@ -1094,6 +1138,7 @@ class TypeMatchMetric(Metric):
                 source_result,
                 evidence_error,
                 linemap_present,
+                (decompiled.metadata or {}).get("line_mapping_source"),
             ),
         )
 
@@ -1108,6 +1153,7 @@ class TypeMatchMetric(Metric):
         source_result: SourceEvidenceResult,
         evidence_error: str | None,
         linemap_present: bool,
+        line_mapping_source: str | None,
     ) -> MetricValue:
         gt_stack_vars = sum(1 for gv in ground_truth_vars if gv.get("rbp_offset"))
         decomp_stack_vars = sum(bool(variable.stack_offsets) for variable in decompiled_evidence)
@@ -1154,7 +1200,9 @@ class TypeMatchMetric(Metric):
             decomp_stack_vars,
             extra_metadata={
                 "correspondence": "address",
-                "variable_match_evidence": "native",
+                "variable_match_evidence": (
+                    "agent_reported" if line_mapping_source == "agent_reported" else "native"
+                ),
                 "match_stage_counts": dict(sorted(stage_counts.items())),
                 "matched_count": len(result.matches),
                 "unmatched_source_count": len(result.unmatched_source),
@@ -1506,6 +1554,10 @@ class TypeMatchMetric(Metric):
         errors: list[str] = []
 
         binary_path = decompilation.binary_path
+        from decbench.utils import binfmt
+
+        binary_info = binfmt.detect(binary_path)
+        architecture = binary_info.arch if binary_info is not None else ""
         preprocessed_sources = tuple(
             sorted({Path(path).resolve() for path in (kwargs.get("preprocessed_sources") or [])})
         )
@@ -1541,8 +1593,8 @@ class TypeMatchMetric(Metric):
                 binary_path,
             )
 
-        binary_shift = self._calibrate_binary_shift(decompilation, gt_types)
-        address_provenance = not uses_legacy_correspondence(
+        binary_shift = self._calibrate_binary_shift(decompilation, gt_types, architecture)
+        native_address_provenance = not uses_legacy_correspondence(
             decompilation.decompiler.decompiler_name
         )
 
@@ -1552,6 +1604,7 @@ class TypeMatchMetric(Metric):
                     gt_types,
                     func_decomp.name,
                     int(func_decomp.address),
+                    architecture,
                 )
                 if not gt_vars:
                     continue
@@ -1563,7 +1616,9 @@ class TypeMatchMetric(Metric):
                     binary_path=binary_path,
                     source_context=source_context,
                     backend=decompilation.decompiler.decompiler_name,
-                    address_provenance=address_provenance,
+                    address_provenance=(
+                        native_address_provenance or has_line_address_evidence(func_decomp)
+                    ),
                 )
                 function_results[func_name] = value
 
@@ -1615,6 +1670,7 @@ class TypeMatchMetric(Metric):
     def _calibrate_binary_shift(
         decompilation: DecompilationResult,
         gt_types: GroundTruthTypeIndex,
+        architecture: str,
     ) -> int | None:
         """Calibrate the offset shift across all functions of a binary.
 
@@ -1629,6 +1685,7 @@ class TypeMatchMetric(Metric):
                 gt_types,
                 func_decomp.name,
                 int(func_decomp.address),
+                architecture,
             )
             if not gt_vars:
                 continue

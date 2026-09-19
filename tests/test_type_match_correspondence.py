@@ -11,6 +11,7 @@ from decbench.metrics.base import MetricConfig
 from decbench.metrics.type_match import (
     ADDRESS_CORRESPONDENCE_BACKENDS,
     TypeMatchMetric,
+    parse_c_variables,
     uses_legacy_correspondence,
 )
 from decbench.metrics.variable_match import VariableEvidence
@@ -18,8 +19,34 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    LineMapping,
     VariableInfo,
 )
+
+
+def test_agent_reported_lines_use_address_correspondence() -> None:
+    code = 'int target(int arg) {\n int local = arg;\n puts("local"); // arg\n return local;\n}\n'
+    assert all(not var.line_numbers for var in parse_c_variables(code, "target"))
+    variables = parse_c_variables(code, "target", include_occurrence_lines=True)
+    assert [(var.name, var.line_numbers) for var in variables] == [
+        ("arg", [1, 2]),
+        ("local", [2, 4]),
+    ]
+    function = FunctionDecompilation(
+        name="target",
+        address=0x1000,
+        decompiled_code=code,
+        line_mappings=[LineMapping(line_number=2, addresses=[0x1004])],
+        metadata={"line_mapping_source": "agent_reported"},
+    )
+    value = _metric().compute_for_function(
+        function,
+        ground_truth_vars=[{"name": "arg", "type": "int", "is_arg": True}],
+        backend="codex",
+    )
+    assert value.metadata["correspondence"] == "address"
+    assert value.metadata["variable_match_evidence"] == "agent_reported"
+    assert value.metadata["decompiler_address_variables"] == 2
 
 
 @pytest.fixture(autouse=True)
@@ -267,4 +294,4 @@ def test_direct_call_defaults_to_generic_fallback_but_can_request_address_mode()
 
 
 def test_address_matcher_uses_new_cache_generation() -> None:
-    assert TypeMatchMetric.cache_version == "15"
+    assert TypeMatchMetric.cache_version == "17"

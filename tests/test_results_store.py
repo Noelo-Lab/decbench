@@ -17,9 +17,10 @@ from decbench.models.decompilation import (
 )
 from decbench.models.function_data import BinaryGroup, FunctionData, FunctionRecord
 from decbench.models.metrics import MetricResult, MetricValue
-from decbench.models.project import OptimizationLevel
+from decbench.models.project import OptimizationLevel, Project, ProjectConfig
 from decbench.results_store import (
     CoverageRegressionError,
+    apply_overlays,
     audit_tree,
     coverage_counts,
     coverage_regressions,
@@ -31,6 +32,80 @@ from decbench.results_store import (
     update_type_match,
     write_function_data_guarded,
 )
+from scripts.reeval_bytematch import preserve_unselected_scores
+
+
+def test_recovered_function_overrides_legacy_all_failed_marker() -> None:
+    recovered = DecompilationResult(
+        binary_path=Path("/nonexistent/binA"),
+        binary_name="binA",
+        decompiler=DecompilerMetadata(
+            decompiler_name="retdec",
+            failed_functions=["all"],
+        ),
+        functions={
+            "f1": FunctionDecompilation(
+                name="f1",
+                address=0x1000,
+                decompiled_code="int f1(void) { return 1; }",
+                line_count=1,
+            )
+        },
+    )
+    from decbench.scoring.function_data_builder import build_function_data
+
+    fd = build_function_data(
+        {"projA": {OptimizationLevel.O0: {"binA": {}}}},
+        [Project(config=ProjectConfig(name="projA"))],
+        {"projA": {OptimizationLevel.O0: {"binA": {"retdec": recovered}}}},
+    )
+    assert fd.groups[0].functions[0].decompiled["retdec"] is True
+
+
+def test_byte_match_subset_refresh_preserves_unselected_columns() -> None:
+    old = {
+        "O0::p::b::r2dec::f": {"value": 0.5},
+        "O0::p::b::codex::f": {"value": 0.1},
+    }
+    fresh = {
+        "O0::p::b::r2dec::f": {"value": 0.1},
+        "O0::p::b::codex::f": {"value": 0.8},
+    }
+    assert preserve_unselected_scores(fresh, old, {"codex"}) == {
+        "O0::p::b::r2dec::f": {"value": 0.5},
+        "O0::p::b::codex::f": {"value": 0.8},
+    }
+
+
+def test_apply_overlays_registers_metrics_without_inline_evaluation(tmp_path: Path) -> None:
+    function = FunctionRecord(function="f1", decompiled={"kuna": True})
+    fd = FunctionData(
+        decompilers=["kuna"],
+        groups=[
+            BinaryGroup(
+                project="projA",
+                opt_level="O0",
+                binary="binA",
+                functions=[function],
+            )
+        ],
+    )
+    (tmp_path / "ged_new.json").write_text(
+        json.dumps({"O0::projA::binA::kuna::f1": {"value": 0.0}})
+    )
+    (tmp_path / "type_match_new.json").write_text(
+        json.dumps({"kuna": {"projA::O0::binA::f1": {"value": 1.0}}})
+    )
+    (tmp_path / "byte_match_new.json").write_text(
+        json.dumps({"O0::projA::binA::kuna::f1": {"value": 1.0, "compilable": True}})
+    )
+
+    counts, _ = apply_overlays(fd, tmp_path, log=lambda _msg: None)
+
+    assert counts == {"ged": 1, "type_match": 1, "byte_match": 1}
+    assert fd.metrics == ["byte_match", "ged", "type_match"]
+    assert fd.perfect_values == {"ged": 0.0, "type_match": 1.0, "byte_match": 1.0}
+    assert function.values["kuna"] == {"ged": 0.0, "type_match": 1.0, "byte_match": 1.0}
 
 
 def _record(name: str, decs: dict[str, dict[str, float]]) -> FunctionRecord:
@@ -112,6 +187,41 @@ def test_update_byte_match_slice_scoped() -> None:
     fd2.groups[0].functions[0].values["kuna"]["byte_match"] = 0.4
     update_byte_match(fd2, {"O0::projA::binA::kuna::zzz": {"value": 1.0}}, add_only=True)
     assert fd2.groups[0].functions[0].values["kuna"]["byte_match"] == 0.4
+
+
+def test_update_byte_match_adds_overlay_to_decompiled_row_without_values() -> None:
+    function = FunctionRecord(
+        function="f1",
+        decompiled={"kuna": True, "angr": False, "ghidra": True},
+    )
+    fd = FunctionData(
+        decompilers=["angr", "ghidra", "kuna"],
+        groups=[
+            BinaryGroup(
+                project="projA",
+                opt_level="O0",
+                binary="binA",
+                functions=[function],
+            )
+        ],
+    )
+    overlay = {
+        "O0::projA::binA::kuna::f1": {"value": 0.75, "compilable": True, "dist": 2},
+        "O0::projA::binA::angr::f1": {"value": 1.0, "compilable": True, "dist": 0},
+        "O0::projA::binA::ghidra::other": {"value": 1.0, "compilable": True, "dist": 0},
+    }
+
+    tally = update_byte_match(fd, overlay)
+
+    assert function.values == {"kuna": {"byte_match": 0.75}}
+    assert function.perfects == {"kuna": {"byte_match": False}}
+    assert function.distances == {"kuna": {"byte_match": 2.0}}
+    assert function.compiles == {"kuna": True}
+    assert tally == {
+        "angr": {"comp": 0, "tot": 0},
+        "ghidra": {"comp": 0, "tot": 0},
+        "kuna": {"comp": 1, "tot": 1},
+    }
 
 
 def test_read_ged_overlay_covers_evaluated_empty_slices(tmp_path: Path) -> None:
@@ -256,6 +366,24 @@ def _mini_tree(tmp_path: Path, projects: tuple[str, ...] = ("alpha", "beta")) ->
     for p in projects:
         (root / "checkpoints" / f"{p}.pkl").write_bytes(pickle.dumps(_mini_checkpoint(p)))
     return root
+
+
+def test_finalize_tree_scores_overlay_without_inline_evaluation(tmp_path: Path) -> None:
+    root = tmp_path / "tree"
+    (root / "checkpoints").mkdir(parents=True)
+    checkpoint = _mini_checkpoint("alpha")
+    checkpoint["evaluate"] = {}
+    (root / "checkpoints" / "alpha.pkl").write_bytes(pickle.dumps(checkpoint))
+    (root / "ged_new.json").write_text(
+        json.dumps({"O0::alpha::alphabin::angr::main": {"value": 0.0}})
+    )
+
+    fd, scoreboard = finalize_tree(root, log=lambda _msg: None)
+
+    assert fd.metrics == ["ged"]
+    assert fd.perfect_values == {"ged": 0.0}
+    assert scoreboard.decompiler_scores["angr"].overall_perfect_count == 1
+    assert scoreboard.decompiler_scores["angr"].overall_total_count == 1
 
 
 def test_finalize_tree_reads_all_checkpoints(tmp_path: Path) -> None:

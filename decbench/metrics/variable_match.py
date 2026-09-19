@@ -565,7 +565,9 @@ def extract_source_evidence(
         elf = binary_context.elf
         dwarfinfo = binary_context.dwarfinfo
         entry_addresses = (
-            entry_address_candidates(function_address) if function_address is not None else ()
+            entry_address_candidates(function_address, binary_context.binary_info.arch)
+            if function_address is not None
+            else ()
         )
         found = None
         if binary_context is not None and function_address is not None:

@@ -5,15 +5,61 @@ from __future__ import annotations
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from decbench.decompilers.provenance import sanitize_native_provenance
 from decbench.decompilers.registry import DecompilerRegistry
+from decbench.models.decompilation import DecompilationResult, DecompilerMetadata
 from decbench.models.project import OptimizationLevel, Project
 
 if TYPE_CHECKING:
-    from decbench.decompilers.base import DecompilerConfig
-    from decbench.models.decompilation import DecompilationResult
+    from decbench.decompilers.base import Decompiler, DecompilerConfig
+
+_NATIVE_PROVENANCE_PRODUCERS = frozenset(
+    {"angr", "binja", "dewolf", "ghidra", "ida", "kuna", "r2dec"}
+)
+
+
+def _seed_progress(
+    decompiler: Decompiler,
+    binary_path: Path,
+    output_dir: Path | None,
+    progress_path: Path | None,
+) -> None:
+    """Persist producer identity before decompilation can be interrupted."""
+    if progress_path is None or decompiler.name not in _NATIVE_PROVENANCE_PRODUCERS:
+        return
+
+    via = "raw"
+    extra: dict[str, object] = {
+        "backend": decompiler.name,
+        "via": via,
+        "partial": True,
+    }
+    if decompiler.name == "r2dec":
+        r2dec = cast(Any, decompiler)
+        via = str(r2dec._select_path())
+        if via not in {"docker", "native"}:
+            return
+        extra["via"] = via
+        if via == "docker":
+            extra["image"] = str(r2dec.image)
+
+    from decbench.decompilers.raw.common import dump_progress
+
+    dump_progress(
+        progress_path,
+        DecompilationResult(
+            binary_path=binary_path,
+            binary_name=binary_path.stem,
+            decompiler=DecompilerMetadata(
+                decompiler_name=decompiler.id,
+                decompiler_version=decompiler.get_version(),
+                extra=extra,
+            ),
+            output_dir=output_dir,
+        ),
+    )
 
 
 def decompile_binary(
@@ -50,6 +96,7 @@ def decompile_binary(
     if not decompiler.is_available():
         raise RuntimeError(f"Decompiler '{decompiler_name}' is not available")
 
+    _seed_progress(decompiler, binary_path, output_dir, progress_path)
     result = decompiler.decompile_binary(
         binary_path,
         functions=functions,
@@ -92,9 +139,7 @@ def decompile_project(
         optimization = OptimizationLevel(optimization)
 
     if optimization not in project.compiled_binaries:
-        raise ValueError(
-            f"Project '{project.name}' not compiled at {optimization.value}"
-        )
+        raise ValueError(f"Project '{project.name}' not compiled at {optimization.value}")
 
     binaries = project.compiled_binaries[optimization]
 
@@ -115,9 +160,7 @@ def decompile_project(
         # Fresh process per task: isolates JVM (Ghidra) and idalib (IDA)
         # state between decompiler backends. Requires Python 3.11+.
         try:
-            executor_ctx = ProcessPoolExecutor(
-                max_workers=workers, max_tasks_per_child=1
-            )
+            executor_ctx = ProcessPoolExecutor(max_workers=workers, max_tasks_per_child=1)
         except TypeError:
             executor_ctx = ProcessPoolExecutor(max_workers=workers)
 
@@ -143,7 +186,7 @@ def decompile_project(
                     if binary_name not in results:
                         results[binary_name] = {}
                     results[binary_name][dec_name] = result
-                except Exception as e:
+                except Exception:
                     from decbench.models.decompilation import (
                         DecompilationResult,
                         DecompilerMetadata,
@@ -172,7 +215,7 @@ def decompile_project(
                         dec_output_dir,
                         config=config,
                     )
-                except Exception as e:
+                except Exception:
                     from decbench.models.decompilation import (
                         DecompilationResult,
                         DecompilerMetadata,

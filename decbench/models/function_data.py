@@ -12,7 +12,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-VARIABLE_MATCH_EVIDENCE = frozenset({"native", "fallback_only"})
+VARIABLE_MATCH_EVIDENCE = frozenset({"native", "agent_reported", "fallback_only"})
 
 
 class FunctionRecord(BaseModel):

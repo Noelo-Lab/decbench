@@ -70,7 +70,7 @@ def die_ranges(
     return tuple(ranges) or fallback
 
 
-def entry_address_candidates(address: int) -> tuple[int, ...]:
+def entry_address_candidates(address: int, architecture: str) -> tuple[int, ...]:
     """Return the addresses a function entry may legitimately be recorded under.
 
     ARM tools report a Thumb entry point with bit 0 set, while DWARF records the
@@ -78,6 +78,8 @@ def entry_address_candidates(address: int) -> tuple[int, ...]:
     every Thumb function, so both forms are tried before the join is called a miss.
     """
 
+    if architecture != "arm":
+        return (address,)
     masked = address & ~1
     return (address,) if masked == address else (address, masked)
 

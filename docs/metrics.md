@@ -114,8 +114,8 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="15"`, bumped for the address-correspondence algorithm
-and its producer/fallback policy. The per-function key covers source and
+Current `cache_version="17"`, bumped for agent-reported line-address support.
+The per-function key covers source and
 decompiler address evidence, argument/stack anchors, recovered types, source
 selection diagnostics, and the matching thresholds.
 It still does NOT contain the implementation of `normalize_type`, so a
@@ -146,24 +146,25 @@ and `r2dec` use one type-blind, three-stage correspondence against
    minimum-overlap threshold and the ambiguity margin.
 
 Names, types, and sizes are not correspondence evidence on this path; types are
-examined only after a source/decompiler pair is fixed. Inferred variables parsed
-from plain C cannot invent native occurrences and can participate only through
-an ABI argument or stack anchor.
+examined only after a source/decompiler pair is fixed. For a text-only producer
+with a reported line map, inferred variables parsed from plain C retain
+identifier occurrence lines, but cannot invent instruction addresses. Without
+that map they participate only through an ABI argument or stack anchor.
 
-Any producer outside that positive seven-backend allowlist remains evaluable
-through the older, explicitly caveated fallback: ABI argument position,
-calibrated stack offset, then exact variable name (with regex parsing when no
-structured variables were stored). Its Type result records
-`variable_match_evidence = "fallback_only"`; supported address rows record
-`"native"`, including a conservative zero-match result. The site marks fallback
-rows with an asterisk. Capability is chosen from the producer identity once per
-result, not inferred from whether one particular function happened to carry an
-address.
+For a producer outside that positive seven-backend allowlist, the address path
+is used per function when a C-line-to-instruction map is reported. The metric
+records `variable_match_evidence = "agent_reported"` for that path. Otherwise
+the function remains evaluable through the older, explicitly caveated fallback:
+ABI argument position, calibrated stack offset, then exact variable name (with
+regex parsing when no structured variables were stored), recorded as
+`"fallback_only"`. Native backend rows record `"native"`, including a
+conservative zero-match result. The site marks agent-reported and fallback
+rows with an asterisk.
 
 At `-O2`, register locals that decompilers fold into expressions count as misses
 for everyone uniformly.
 
-Every native address is passed through
+Every producer-supplied instruction address is passed through
 `decompilers/provenance.py` before evaluation. The sanitizer resolves the
 function from DWARF and accepts only exact decoded instruction starts inside
 that function (normalizing the Thumb bit where appropriate); invalid rows and

@@ -127,7 +127,8 @@ class GCCCompiler(Compiler):
             self.gcc_path,
             *flags,
             "-c",
-            "-o", str(object_path),
+            "-o",
+            str(object_path),
             str(source_path),
         ]
 
@@ -156,9 +157,7 @@ class GCCCompiler(Compiler):
                 source_path=source_path,
                 object_path=object_path if object_path.exists() else None,
                 preprocessed_path=(
-                    preprocessed_path
-                    if preprocessed_path and preprocessed_path.exists()
-                    else None
+                    preprocessed_path if preprocessed_path and preprocessed_path.exists() else None
                 ),
                 success=object_path.exists(),
             )
@@ -191,8 +190,14 @@ class GCCCompiler(Compiler):
             return False
 
     _ELF_MACHINES = {
-        0x28: "arm", 0xB7: "aarch64", 0x3E: "x86-64", 0x03: "x86",
-        0xF3: "riscv", 0x08: "mips", 0x14: "ppc", 0x15: "ppc64",
+        0x28: "arm",
+        0xB7: "aarch64",
+        0x3E: "x86-64",
+        0x03: "x86",
+        0xF3: "riscv",
+        0x08: "mips",
+        0x14: "ppc",
+        0x15: "ppc64",
     }
 
     @classmethod
@@ -274,10 +279,7 @@ class GCCCompiler(Compiler):
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        if project_root is None:
-            project_root = project_dir
-        else:
-            project_root = Path(project_root)
+        project_root = project_dir if project_root is None else Path(project_root)
 
         results = []
 
@@ -343,12 +345,14 @@ class GCCCompiler(Compiler):
                             dest_i = output_dir / alt_i.name
                             shutil.copy2(alt_i, dest_i)
 
-                    results.append(CompileResult(
-                        source_path=c_file if c_file.exists() else entry,
-                        object_path=dest_bin,
-                        preprocessed_path=dest_i,
-                        success=True,
-                    ))
+                    results.append(
+                        CompileResult(
+                            source_path=c_file if c_file.exists() else entry,
+                            object_path=dest_bin,
+                            preprocessed_path=dest_i,
+                            success=True,
+                        )
+                    )
 
                 for obj_file in project_dir.rglob("*.o"):
                     i_file = find_preprocessed(obj_file)
@@ -358,11 +362,13 @@ class GCCCompiler(Compiler):
                             shutil.copy2(i_file, dest_i)
 
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-                results.append(CompileResult(
-                    source_path=project_dir,
-                    success=False,
-                    error_message=f"Make failed: {e}",
-                ))
+                results.append(
+                    CompileResult(
+                        source_path=project_dir,
+                        success=False,
+                        error_message=f"Make failed: {e}",
+                    )
+                )
 
         else:
             source_files = list(project_dir.glob(source_pattern))

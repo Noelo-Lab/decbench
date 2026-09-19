@@ -52,7 +52,10 @@ def main() -> int:
         progress_path=Path(pkl_out),
         defer_provenance_validation=True,
     )
-    Path(pkl_out).write_bytes(pickle.dumps(result))
+    result_path = Path(pkl_out)
+    temp_path = result_path.with_suffix(result_path.suffix + ".tmp")
+    temp_path.write_bytes(pickle.dumps(result))
+    temp_path.replace(result_path)
     return 0
 
 

@@ -396,15 +396,16 @@ stack offsets; variable names are never evidence there. The heuristic deliberate
 ambiguous candidates unmatched, so a backend that cannot expose sound provenance may
 conservatively undercount recovery.
 
-A backend outside the seven supported full-dataset producers cannot be measured that
-way, so we score it by the older name-based correspondence instead of not scoring its
-variables at all:
+A text-only backend can optionally report pseudocode-line-to-instruction addresses.
+Those addresses are checked against instruction starts in the target function and
+used for variable correspondence, but the backend's claimed line association
+cannot be independently verified. Functions without addresses use the older
+name-based correspondence:
 argument position, calibrated stack offset, then exact variable name. Name matching is
-weaker evidence and rewards a decompiler that happened to import debug names, so those
-scores are measured differently from the rest of the board. The leaderboard marks those
-fallback Type percentages, plus historical measurements whose evidence category was not
-recorded, with an asterisk without changing their scores or denominators. A native row
-where the conservative matcher accepts no pair remains native and is not marked.
+weaker evidence and rewards a decompiler that happened to import debug names. The
+leaderboard marks agent-reported, fallback, and uncategorized historical Type percentages
+with an asterisk; scores and denominators are unchanged. A native row where the
+conservative matcher accepts no pair remains native and is not marked.
 
 ### Recompilation Byte Edit Distance
 The flaw here is that each function is evaluated alone.

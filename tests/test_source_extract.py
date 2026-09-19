@@ -68,6 +68,13 @@ class TestExtractFromText:
         assert out.startswith("int registerit(")
         assert "return cb ? n : 0;" in out
 
+    def test_parenthesized_function_name(self) -> None:
+        src = "void (isr_usart1)(void)\n{\n    irq_handler(1);\n}\n"
+        out = extract_from_text(src, "isr_usart1")
+        assert out is not None
+        assert out.startswith("void (isr_usart1)(void)")
+        assert "irq_handler(1);" in out
+
 
 KNR_SRC = """\
 local void send_all_trees OF((deflate_state *s, int a, int b));

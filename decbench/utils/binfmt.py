@@ -36,6 +36,7 @@ import shutil
 import struct
 import subprocess
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
 
@@ -234,6 +235,44 @@ def executable_regions(path: Path) -> tuple[tuple[int, bytes], ...]:
     return ()
 
 
+@lru_cache(maxsize=64)
+def _elf_function_thumb_index(
+    path: Path,
+    inode: int,
+    size: int,
+    mtime_ns: int,
+) -> tuple[dict[int, bool], dict[str, bool | None]]:
+    """Index ARM function-symbol Thumb states for one immutable file version."""
+    del inode, size, mtime_ns
+    exact_states: dict[int, bool] = {}
+    named_states: dict[str, bool | None] = {}
+    from elftools.elf.elffile import ELFFile
+
+    with path.open("rb") as stream:
+        elf = ELFFile(stream)
+        if elf.header["e_machine"] != "EM_ARM":
+            return {}, {}
+        symtab = elf.get_section_by_name(".symtab")
+        if symtab is None:
+            return {}, {}
+        symbol_table = cast(Any, symtab)
+        for symbol in symbol_table.iter_symbols():
+            if symbol["st_info"]["type"] != "STT_FUNC" or symbol["st_size"] <= 0:
+                continue
+            raw_address = int(symbol["st_value"])
+            state = bool(raw_address & 1)
+            expected = raw_address & ~1
+            if expected in exact_states and exact_states[expected] != state:
+                exact_states[expected] = False
+            else:
+                exact_states[expected] = state
+            if symbol.name in named_states:
+                named_states[symbol.name] = None
+            else:
+                named_states[symbol.name] = state
+    return exact_states, named_states
+
+
 def elf_function_is_thumb(path: Path, func_name: str, address: int) -> bool:
     """Return whether an ARM ELF function symbol selects Thumb encoding.
 
@@ -243,35 +282,23 @@ def elf_function_is_thumb(path: Path, func_name: str, address: int) -> bool:
     heuristic.
     """
     try:
-        from elftools.elf.elffile import ELFFile
-
-        with path.open("rb") as stream:
-            elf = ELFFile(stream)
-            if elf.header["e_machine"] != "EM_ARM":
-                return False
-            symtab = elf.get_section_by_name(".symtab")
-            if symtab is None:
-                return False
-            symbol_table = cast(Any, symtab)
-            exact_states: list[bool] = []
-            named_states: list[bool] = []
-            expected = address & ~1
-            for symbol in symbol_table.iter_symbols():
-                if symbol["st_info"]["type"] != "STT_FUNC" or symbol["st_size"] <= 0:
-                    continue
-                raw_address = int(symbol["st_value"])
-                state = bool(raw_address & 1)
-                if (raw_address & ~1) == expected:
-                    exact_states.append(state)
-                if symbol.name == func_name:
-                    named_states.append(state)
-            if exact_states:
-                return exact_states[0] if len(set(exact_states)) == 1 else False
-            if len(named_states) == 1:
-                return named_states[0]
+        resolved = path.resolve()
+        stat = resolved.stat()
+    except OSError:
+        return False
+    try:
+        exact_states, named_states = _elf_function_thumb_index(
+            resolved,
+            stat.st_ino,
+            stat.st_size,
+            stat.st_mtime_ns,
+        )
     except Exception:
-        pass
-    return False
+        return False
+    expected = address & ~1
+    if expected in exact_states:
+        return exact_states[expected]
+    return named_states.get(func_name) is True
 
 
 def elf_is_arm_mclass(path: Path) -> bool:

@@ -53,4 +53,6 @@ on the [view page](https://decbench.com/view/?dataset=sample-set&tier=sample-set
 
 <div id="leaderboard-dataset-desc"></div>
 
-<p id="type-evidence-note" class="view-desc evidence-note" hidden><span class="evidence-mark" aria-hidden="true">*</span> Some Type measurements used the older name-based variable correspondence because the producer is outside the seven address-reporting backends, or are historical rows whose evidence category was not recorded. Name matching is weaker evidence and not comparable like-for-like. A native row with no accepted variable pair does not receive this marker. Scores and denominators are calculated identically.</p>
+# [outro]
+
+<p id="type-evidence-note" class="view-desc evidence-note" hidden><span class="evidence-mark" aria-hidden="true">*</span> For higher accuracy type measuring, DecBench requests decompilers to report addresses for each line of decompilation. Decompilers marked with the astrix did not provide those or the addresses can't be verified.</p>

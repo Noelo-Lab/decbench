@@ -122,6 +122,8 @@ def test_prose_renders_markdown_constructs(content: Content) -> None:
     assert '<a href="https://mahaloz.re/dec-history-pt1">the last 30 years</a>' in lb
     assert "—" in lb
     assert "&mdash;" not in lb
+    assert "type-evidence-note" not in lb
+    assert "For higher accuracy type measuring" in content.view("leaderboard").outro_html
     di = content.view("data").body_html
     assert "<strong>GED</strong>" in di
     assert "**GED**" not in di
@@ -306,6 +308,11 @@ def test_private_artifacts_defaults_off_and_is_parsed(content: Content) -> None:
 
 def test_glaurung_is_sample_set_only(content: Content) -> None:
     assert "glaurung" in content.site.sample_set_only_decompilers
+
+
+def test_retdec_is_hidden_not_sample_set_only(content: Content) -> None:
+    assert "retdec" in content.site.hidden_decompilers
+    assert "retdec" not in content.site.sample_set_only_decompilers
 
 
 def test_decompiler_lookup_matches_base_name_for_versioned_ids(content: Content) -> None:

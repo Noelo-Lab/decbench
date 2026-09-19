@@ -29,20 +29,21 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
   natively if an executable resolves (`MANIFOLD_BIN` / config / `$PATH`),
   otherwise in the `decbench/manifold` image (`docker/manifold.Dockerfile`,
   built by `decbench decompiler-build manifold`), so a host that only has
-  Docker needs nothing else installed.
+  Docker needs nothing else installed. Upstream Manifold supports x86-64 ELF
+  and AMD64 PE, not the sample-set's ARM or 32-bit x86 targets.
 - **Native or containerized Glaurung** (`raw/glaurung_raw.py`: `glaurung`):
   invokes Glaurung's address-scoped JSON CLI natively when `GLAURUNG_BIN`, the
   decompiler config, or `$PATH` resolves it. Otherwise it runs the immutable
   revision recorded in `decbench/glaurung:latest`, built from source with
   `decbench decompiler-build glaurung`. The raw container has networking
-  disabled at runtime and does not receive LLM credentials. The *published*
-  `glaurung` column does not come from this backend: it is an external
-  sample-set submission (Part III) at `git-fb4ee6b`, flagged
-  `external_submission` in its metadata.
-- **Dockerized** (`dockerized.py`: `reko`/`retdec`/`r2dec`): run a tool in a
-  container (or natively for r2dec) and split whole-program C into
-  per-function results. Build images with `decbench decompiler-build <name>`;
-  Dockerfiles in `docker/`.
+  disabled at runtime and does not receive LLM credentials. Earlier published
+  `glaurung` results came from an external sample-set submission (Part III) at
+  `git-fb4ee6b`, flagged `external_submission` in its metadata; the new
+  sample-set pass uses this runnable backend.
+- **Dockerized** (`dockerized.py`: `reko`/`retdec`/`r2dec`): Reko and RetDec
+  split container-produced C into functions. r2dec uses `pdd` through its
+  versioned image and returns address-keyed functions. Build images with
+  `decbench decompiler-build <name>`; Dockerfiles live in `docker/`.
 - **LLM / coding-agent** (`llm_dec.py`: `codex`, `claude-code`, `kimi-code`):
   Part II below.
 - **External / not runnable here** (`external.py`: `fission`, `ventris`): ids we
@@ -350,8 +351,8 @@ view renders them today.)
 When a decompiler isn't a Python library (Reko, RetDec, …), subclass
 `decbench.decompilers.dockerized.DockerizedDecompiler`. Provide the image tag,
 a Dockerfile under `docker/`, and a method that maps the tool's whole-program C
-output back onto per-function `FunctionDecompilation`s (pull function
-names/addresses from the ELF symbol table so addresses stay ELF-space). Build
+output back onto per-function `FunctionDecompilation`s. Stripped-binary runs
+use address-named definitions; unstripped runs may use ELF symbols. Build
 the image with:
 
 ```bash
@@ -359,7 +360,15 @@ decbench decompiler-build retdec
 ```
 
 `is_available()` should return True only when Docker is present **and** the
-image exists locally (don't auto-build inside `is_available`).
+image exists locally (don't auto-build inside `is_available`). Runtime
+containers have networking disabled and mount the input binary read-only.
+RetDec and Reko can join a sample-set-gated run with
+`DECBENCH_DECOMPILERS=retdec,reko`; their address-named functions are matched
+to requested stripped-binary entry addresses, including Thumb low-bit and PE
+ImageBase normalization. Reko's named functions also join by their adjacent
+entry-address comments. Its ARM `define fn...` output is preserved as
+function-specific pseudocode; missing line maps keep type_match on the fallback
+path.
 
 Glaurung follows the same explicit-build contract while retaining its raw
 address-scoped backend:
@@ -376,6 +385,7 @@ python scripts/run_benchmark.py results/full_run
 Glaurung is sample-set-only for now, so production runs use the frozen manifest
 gate above. The backend prefers a native executable, then falls back to the image. Set
 `GLAURUNG_BIN` to an exact executable to force the native route;
+the Docker route uses the host UID/GID so it can read private stripped binaries.
 `GLAURUNG_IMAGE` retags the container; and `GLAURUNG_REPO` / `GLAURUNG_REF`
 select the source revision at build time. `decompiler-build` resolves a branch
 or tag to a commit SHA before invoking Docker, and the image records that SHA
@@ -425,7 +435,7 @@ Three backends ship today (`decbench/decompilers/llm_dec.py`):
 
 | id            | tool                        | default model        | credentials |
 |---------------|-----------------------------|----------------------|-------------|
-| `codex`       | OpenAI Codex CLI            | `gpt-5.6-sol`        | `~/.codex/auth.json` **or** `OPENAI_API_KEY` |
+| `codex`       | OpenAI Codex CLI            | `gpt-5.6-sol`        | `OPENAI_API_KEY` + isolated API-key login |
 | `claude-code` | Anthropic Claude Code CLI   | `claude-opus-4-8`    | `~/.claude/.credentials.json` **or** `ANTHROPIC_API_KEY` |
 | `kimi-code`   | Moonshot Kimi Code CLI      | `kimi-code/k3`       | `~/.kimi-code/credentials/` (OAuth) or `api_key` in `~/.kimi-code/config.toml` |
 
@@ -442,8 +452,15 @@ All three backends share one instruction, `LLM_DECOMPILE_PROMPT` in
 one function under the **hard tool policy** above, and write only that
 function's C to `decompiled.c`. Per-function specifics (binary path, entry
 address, architecture, a short disassembly hint, the output filename) are
-appended per call; edit the constant to change the policy for both backends at
-once.
+appended per call. The hint decodes M-profile ARM as Thumb even when the entry
+address is even. Agents may also write `address_lines.json` with 1-based C
+line numbers and objdump instruction addresses. The backend checks the format
+and executable-section bounds; the evaluation boundary further checks that
+each address is an instruction start in the exact target function. The raw
+mapping stays in the per-function trace for audit. The C-line association is
+still agent-reported, not native decompiler provenance.
+`type_match` uses the address path for functions with a valid map and labels
+their scores `agent_reported`; functions without one retain `fallback_only`.
 
 ## Cost control — run ONLY on the sample-set
 
@@ -465,11 +482,15 @@ two independent guards:
 
    # 2. Additively run the LLM backends, gated to that slice. Every other
    #    project/decompiler resumes from its checkpoint untouched.
-   DECBENCH_DECOMPILERS=codex,claude-code \
+   DECBENCH_DECOMPILERS=codex \
      DECBENCH_SAMPLESET_MANIFEST=results/full_run/sample_set_manifest.json \
      DECBENCH_WORKERS=24 \
      python scripts/run_benchmark.py results/full_run
    ```
+
+   Keep the prior Claude Code checkpoint unless intentionally replacing those
+   results. An unreadable or empty manifest is fatal: the gate cannot silently
+   turn off.
 
 2. **The per-binary cap (backstop).** Even un-gated, each backend refuses to
    issue more than `max_funcs` (default **8**) agent calls for one binary and
@@ -480,7 +501,7 @@ two independent guards:
 
 ```toml
 [codex.versions.default]
-model = "gpt-5.6-sol"  # the gpt-5.6 variant a ChatGPT-account login allows
+model = "gpt-5.6-sol"
 # timeout = 600        # per-function agent wall-clock budget (seconds)
 # max_funcs = 8        # per-binary hard cap (runaway guard)
 # fn_workers = 4       # decompile this many of a binary's functions concurrently
@@ -508,16 +529,20 @@ CLI's own session JSONL — every objdump/tool call, the audit record for the
 no-decompilers policy. Set `DECBENCH_LLM_TRACE_DIR` (or `trace_dir`) to collect
 all traces under one directory instead.
 
-## Host mode: isolated homes, synced credentials
+## Host mode: isolated homes
 
 By default the backends run the CLI **on the host**, but under a
 **decbench-owned isolated home** rather than your live config:
 
-- **codex** runs with `CODEX_HOME` pointed at `~/.cache/decbench/codex-home`
-  (override: `DECBENCH_CODEX_HOME` / `codex_home`), whose `skills/` dir is kept
-  **empty** so the `decompiler` skill (which drives real decompilers) cannot
-  load; `auth.json` + `config.toml` are synced from `~/.codex` only when the
-  host copy is newer, so codex's own in-place token refresh isn't clobbered.
+- **codex** requires `OPENAI_API_KEY` and uses
+  `~/.cache/decbench/codex-home-api` (override: `DECBENCH_CODEX_HOME` /
+  `codex_home`). Initialize it once by piping the key to
+  `CODEX_HOME=~/.cache/decbench/codex-home-api codex login --with-api-key`.
+  The backend requires `auth_mode=apikey` and an exact match to the current
+  `OPENAI_API_KEY` (re-login after rotating the key); it never copies a ChatGPT
+  subscription login from `~/.codex`, removes the key from the agent subprocess
+  environment after login, and refuses Codex container mode. The
+  isolated `skills/` directory is empty.
 - **claude-code** strips `CLAUDE_CODE_*`/`CLAUDECODE`/`CLAUDE_PID` from the env
   (a nested `claude` launched from inside a Claude Code session would otherwise
   reattach to the parent's daemon and hang), points `CLAUDE_CONFIG_DIR` at
@@ -546,23 +571,23 @@ pinned), build the agent image and set `docker_image`:
 docker build -f docker/llm-agents.Dockerfile -t decbench/llm-agents:latest docker/
 
 DECBENCH_LLM_DOCKER_IMAGE=decbench/llm-agents:latest \
-  DECBENCH_DECOMPILERS=codex \
+  DECBENCH_DECOMPILERS=claude-code \
   DECBENCH_SAMPLESET_MANIFEST=results/full_run/sample_set_manifest.json \
   python scripts/run_benchmark.py results/full_run
 ```
 
 The image carries the CLIs and the permitted inspection tools but **no
-credentials** — the host's token dirs are bind-mounted read-only and the key
-env vars forwarded per call, so the container "inherits the token from
+credentials** — the host's Claude/Kimi token dirs are bind-mounted read-only
+and the Anthropic key can be forwarded, so the container "inherits the token from
 outside" (the `docker/llm-agents.Dockerfile` header shows the same invocation):
 
 ```
 docker run --rm -v <workdir>:/work -w /work \
-  -v ~/.codex:/root/.codex:ro -v ~/.claude:/root/.claude:ro \
+  -v ~/.claude:/root/.claude:ro \
   -v ~/.kimi-code:/root/.kimi-code:ro \
-  -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e CODEX_HOME=/root/.codex \
+  -e ANTHROPIC_API_KEY \
   -e KIMI_CODE_HOME=/root/.kimi-code -e HOME=/root \
-  decbench/llm-agents:latest <codex exec ... | claude -p ... | kimi -p ...>
+  decbench/llm-agents:latest <claude -p ... | kimi -p ...>
 ```
 
 ## How it fits the pipeline
@@ -572,18 +597,16 @@ sees no symbols — the honest RE setting, identical to what Ghidra/IDA get); th
 backend also hands the agent an anonymized `target.bin` copy, so the filename
 (`grep`, `nuttx`, …) can't tip an LLM off to recall the source from memory. The
 backend labels each function `sub_<addr>`; `run_benchmark._relabel_to_dwarf`
-renames the placeholder to the real symbol for name-based evaluation. Missing
-line-maps and variables are fine — GED parses the C directly, and type_match
+renames the placeholder to the real symbol for name-based evaluation. The
+output parser excludes preprocessor macros when locating the function
+definition, so control-flow keywords in multiline macros are not renamed.
+Missing line-maps and variables are fine — GED parses the C directly, and type_match
 parses the C signature into ABI-positioned arguments plus locals and scores
 them through the caveated legacy stack/name fallback. It remains evaluable,
-but is not presented as native address evidence. Before publishing, refresh the
-metric overlays as with any newly added
-decompiler — but note `scripts/reeval_ged.py` and `scripts/reeval_bytematch.py`
-hard-code a `DECOMPILERS` tuple that does **not** include the LLM backends
-(`codex`/`claude-code`/`kimi-code`):
-extend those tuples (and run `scripts/reeval_typematch.py`, which covers every
-decompiler in the checkpoints) so the overlays cover the LLM columns, then
-`scripts/rebuild_function_data.py`.
+but is not presented as native address evidence. Before publishing, refresh
+the metric overlays for newly added columns using
+`DECBENCH_REEVAL_DECOMPILERS`, then run `scripts/finalize_results.py` from
+the checkout holding `results/`.
 
 ---
 

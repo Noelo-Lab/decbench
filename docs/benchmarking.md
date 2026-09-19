@@ -21,7 +21,7 @@ decompiler in [decompilers.md](decompilers.md).
 
 ### Decompiler backends available and working
 
-Verified via the native interfaces; `decbench list-decompilers`
+Verified via the backend interfaces; `decbench list-decompilers`
 shows live availability. The core benchmark set is **angr, ghidra, ida,
 binja** (+ kuna in the full run); **r2dec** and **dewolf** are the newest
 additions. (The former angr-variant backend that forced a non-default
@@ -36,25 +36,31 @@ structurer was fully retired 2026-07-23; see CHANGELOG.md.)
   `binaryninja.pth` in site-packages; needs a license at
   `~/.binaryninja/license.dat` — a Commercial/Ultimate license is required
   for headless use, and it must cover the installed version.
-- **r2dec** — radare2; the benchmark path is the REAL r2dec plugin via the
-  `decbench/r2dec` Docker image — native `pdc` is a fallback whose asm-like
-  output yields no Joern CFG, so `pdd` is required for GED.
+- **r2dec** — the real radare2 `pdd` plugin through the version-matched
+  `decbench/r2dec:6.2.0` image. The backend is unavailable until it is built.
 - **dewolf** — fkie-cad/dewolf, a Binary-Ninja research decompiler run OUT OF
   PROCESS in its own py3.10 venv at `/home/mahaloz/.virtualenvs/dewolf` with
   the repo at `/home/mahaloz/ctf/tools/dewolf`; see `raw/dewolf_raw.py` +
   `raw/dewolf_driver.py`, configured under `[dewolf.versions.default]`.
-- **RetDec / Reko** — Dockerized (`docker/`); their images are NOT currently
-  built on this machine (`list-decompilers` shows N) — build one with
-  `decbench decompiler-build <name>` first.
+- **RetDec / Reko** — Dockerized (`docker/`); their images are built on this
+  machine. The sample-set driver matches their address-named functions, plus
+  Reko's entry-address-commented names, to DWARF entry addresses; neither
+  reports line addresses. A RetDec retry for a missing target may use a fixed
+  8 KiB window starting at its requested address; verify full DWARF-range
+  coverage after the run, never supply the exact function end to RetDec. Reko
+  may also retry a missing target from a fixed 8 KiB executable-code window;
+  count only a non-empty function whose emitted assembly ends at the DWARF
+  function boundary, and keep the targeted output as a supplemental artifact.
 - **Glaurung** — native address-scoped CLI or the
   `decbench/glaurung:latest` image built by
   `decbench decompiler-build glaurung`. The image is a reproducible raw-only
   install and requires no API credentials. Its published results remain
   sample-set-only for now.
 - **codex / claude-code / kimi-code** — LLM coding-agent backends,
-  sample-set-only; see [decompilers.md](decompilers.md). codex and
-  claude-code are logged in and available; kimi-code shows N until a Kimi
-  OAuth login exists on this machine.
+  sample-set-only; see [decompilers.md](decompilers.md). Codex requires the
+  `OPENAI_API_KEY` from the launch shell and an isolated API-key login; retain
+  historical Claude Code results and add only validated missing-function
+  retries. Kimi Code still needs its own login.
 
 ### Five Ghidra versions (multi-version / historical benchmarking)
 
@@ -461,8 +467,8 @@ Other driver facts:
 
 A **full run = EVERY project AND EVERY supported decompiler**: all of
 `projects/{sailr,cps,malware}/*.toml` decompiled by all backends available on
-this machine — angr, ghidra, ida, binja, kuna, r2dec, and dewolf (+ Glaurung and
-the LLM sample-set-only backends on their slice). If a new project or decompiler is
+this machine — angr, ghidra, ida, binja, kuna, r2dec, and dewolf (plus available
+sample-set-only backends on their frozen slice). If a new project or decompiler is
 added, "full run" includes it too; scope down only for a deliberate partial
 pass. (sailr x86 + cps ARM + malware ARM/PE.)
 
@@ -503,8 +509,8 @@ Notes:
   column is Union (perfect on ≥1 measurable metric, over functions with ≥1
   measurable metric), so abstained byte_match isn't a failure and ARM/PE still
   count via GED/types.
-- Glaurung and the LLM backends run in a separate sample-set-gated invocation —
-  see [decompilers.md](decompilers.md).
+- Glaurung, RetDec, Reko, and the LLM backends run in separate
+  sample-set-gated invocations — see [decompilers.md](decompilers.md).
 
 ## Overlays, finalize, and rebuilds — where the published numbers come from
 
@@ -515,8 +521,9 @@ inline values — and `function_results.json` is only ever written through
 `results/<tree>/{ged,type_match,byte_match}_new.json` (from
 `scripts/reeval_{ged,typematch}.py` / `reeval_bytematch.py`) carry the
 corrected values (sanitized decompiled parses, DWARF-owned per-TU source
-matching, non-finite dropped, compilability fixup); the per-project checkpoints still
-hold the ORIGINAL inline values from each decompiler's first evaluation.
+matching, non-finite dropped, compilability fixup). Older checkpoints may also
+hold original inline values; decompile-only checkpoints rely entirely on these
+overlays, including for the scoreboard's metric list.
 
 The type_match refresh additionally rebinds every checkpoint's binary path to
 the selected results tree, validates decompiler occurrence addresses against
@@ -560,6 +567,9 @@ coverage (`--allow-drops` / `DECBENCH_ALLOW_DROPS=1` overrides;
 `--audit` scans checkpoints/artifacts/overlays/published for silent gaps.
 After adding a decompiler, refresh the overlays and re-finalize before
 publishing.
+A scoped `reeval_bytematch.py` pass retains unselected columns from the existing
+overlay. If a prior partial pass already removed them, set
+`DECBENCH_REEVAL_BASELINE` to a saved full `byte_match_new.json` while rerunning.
 
 **A reeval can only fix what the checkpoint recorded.** `reeval_typematch.py`
 recomputes the METRIC from `FunctionDecompilation.variables`, line mappings,
@@ -594,9 +604,9 @@ python scripts/compute_dataset_info.py results/sailr_full  # FunctionData.datase
 #   writer: About-page corpus LOC + Joern parse-health stats)
 python scripts/compute_cost_info.py results/full_run llm_traces  # FunctionData.cost_info (sole
 #   writer: the data page's cost section FACTS — batch decompile times from decompiled/*.toml
-#   headers + LLM per-fn times/tokens via scoring/cost.py, structured fields preferred over the
-#   trace scan). Prices are NOT stored: content/pricing.toml is applied at render
-#   time, so a price fix needs only a re-render.
+#   headers + LLM per-fn times/tokens via scoring/cost.py, structured fields preferred
+#   when at least as many calls are covered). Prices are NOT stored: content/pricing.toml
+#   is applied at render time, so a price fix needs only a re-render.
 
 # Re-render: decbench report results/sailr_full/scoreboard.toml
 ```

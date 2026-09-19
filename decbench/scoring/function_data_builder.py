@@ -244,7 +244,7 @@ def build_function_data(
                     if ver:
                         decompiler_versions[dec_name] = str(ver)
                     ff = list(getattr(dr.decompiler, "failed_functions", []) or [])
-                    if ff == ["all"]:
+                    if ff == ["all"] and not dr.functions:
                         allfail_decs.add(dec_name)
                     names = list(dr.functions.keys()) + [f for f in ff if f != "all"]
                     for fn in names:

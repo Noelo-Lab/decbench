@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,13 @@ class RawBinjaDecompiler(Decompiler):
         forces analysis to completion first.
         """
         import binaryninja
+
+        worker_threads = os.environ.get("DECBENCH_BINJA_WORKER_THREADS")
+        if worker_threads is not None:
+            count = int(worker_threads)
+            if count < 1:
+                raise ValueError("DECBENCH_BINJA_WORKER_THREADS must be positive")
+            binaryninja.set_worker_thread_count(count)
 
         if hasattr(binaryninja, "load"):
             bv = binaryninja.load(str(binary_path))

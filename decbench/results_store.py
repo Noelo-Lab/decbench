@@ -217,18 +217,22 @@ def update_byte_match(
     tally = {d: {"comp": 0, "tot": 0} for d in fd.decompilers}
     for g in fd.groups:
         for f in g.functions:
-            for dec, mv in list(f.values.items()):
+            for dec in set(fd.decompilers) | set(f.values):
+                mv = f.values.get(dec)
                 key = f"{g.opt_level}::{g.project}::{g.binary}::{dec}::{f.function}"
                 rec = new.get(key)
                 if rec is None:
                     in_slice = (g.opt_level, g.project, g.binary, dec) in covered
-                    if not add_only and in_slice:
+                    if not add_only and in_slice and mv is not None:
                         mv.pop("byte_match", None)
                         f.perfects.get(dec, {}).pop("byte_match", None)
                         f.distances.get(dec, {}).pop("byte_match", None)
                         f.compiles.pop(dec, None)
                     continue
+                if not f.decompiled.get(dec, False):
+                    continue
                 val = float(rec["value"])
+                mv = f.values.setdefault(dec, {})
                 mv["byte_match"] = val
                 f.perfects.setdefault(dec, {})["byte_match"] = val >= PERFECT["byte_match"]
                 compilable = bool(rec.get("compilable"))
@@ -340,6 +344,9 @@ def apply_overlays(
         counts["byte_match"] = sum(t["tot"] for t in bm_tally.values())
 
     for metric, n in counts.items():
+        if n:
+            fd.metrics = sorted(set(fd.metrics) | {metric})
+            fd.perfect_values[metric] = PERFECT[metric]
         log(f"[store] overlaid {n} {metric} entries")
     return counts, bm_tally
 
@@ -642,8 +649,8 @@ def audit_tree(root: Path, log: Log = print) -> list[CoverageGap]:
     * **SILENT-DROP** — the published dataset has NO values for a slice although the
       checkpoint, overlay or artifact has data: the regression class the guard exists
       to prevent, present in already-written data.
-    * **OVERLAY-GAP** — artifact + checkpoint data but no GED overlay entries: the
-      published GED for that slice rides on stale inline values; run the reeval.
+    * **OVERLAY-GAP** — artifact + checkpoint data but no GED overlay entries;
+      published coverage may come from other metrics.
     * **DECOMPILE-FAILURE** — empty artifact + empty checkpoint slice while the same
       (project, decompiler) succeeded at sibling opt levels (the kuna@betaflight
       case): re-decompile or accept as a recorded failure.
@@ -764,9 +771,9 @@ def audit_tree(root: Path, log: Log = print) -> list[CoverageGap]:
                 )
             elif ov == 0 and ckpt_n > 0 and art > 0:
                 note = (
-                    "GED riding on inline values"
+                    "no GED overlay; published slice has metric values"
                     if pub > 0
-                    else "no overlay coverage (unmeasurable: ARM byte_match / no source CFG)"
+                    else "no GED overlay; slice has no measurable values"
                 )
                 gaps.append(
                     CoverageGap(

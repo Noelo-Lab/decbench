@@ -565,7 +565,7 @@ def _view_section(
     function_data: FunctionData | None,
     active: bool,
 ) -> str:
-    """Render one view: title, prose, goal cards, outro, generated table.
+    """Render one view: title, prose, goal cards, generated table, outro.
 
     A view with nothing to show renders its ``# [empty]`` section instead of its
     body, so the reader gets a sentence explaining the blank rather than a blank.
@@ -575,8 +575,9 @@ def _view_section(
         title, inner = view.empty_title, view.empty_html
     else:
         title = view.title
-        inner = view.body_html + _goal_cards(view) + view.outro_html
+        inner = view.body_html + _goal_cards(view)
         inner += _generated_table(spec.id, scoreboard, function_data, content)
+        inner += view.outro_html
     cls = "view active" if active else "view"
     return f"""
     <section class="{cls}" id="view-{spec.id}" data-view="{spec.id}">

@@ -230,8 +230,9 @@ class PreprocessedSourceContext:
         function_address: int,
     ) -> Path | None:
         index = self._dwarf_source_index(binary_path)
+        architecture = self.binary_context(binary_path).binary_info.arch
         cu_paths: tuple[str, ...] = ()
-        for candidate in entry_address_candidates(function_address):
+        for candidate in entry_address_candidates(function_address, architecture):
             cu_paths = index.get((function_name, candidate), ())
             if cu_paths:
                 break

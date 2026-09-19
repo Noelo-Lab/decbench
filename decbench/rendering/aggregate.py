@@ -58,7 +58,7 @@ ALL_PRESET = "__all__"
 # Mirrors app.js's SAMPLE_SET_PRESET; the two must stay in sync.
 SAMPLE_SET_PRESET = "sample-set"
 
-_EVIDENCE_ORDER = ("native", "fallback_only")
+_EVIDENCE_ORDER = ("native", "agent_reported", "fallback_only")
 
 # Do NOT reintroduce rounding here. The client re-renders some values at fewer
 # places than they are stored, so pre-rounding manufactures half-boundaries that
@@ -82,7 +82,7 @@ def union_leaders(
     re-deriving it.
 
     ``exclude_sample_set_only`` drops the sample-set-only backends
-    (``sample_set_only`` in the payload — codex/claude-code) for the leaderboard's
+    (``sample_set_only`` in the payload) for the leaderboard's
     default-preset text, where their rows do not render; it is left off for the
     sample-set preset itself, where every decompiler is on screen. A decompiler with
     an empty Union denominator (never measurable under the preset) is skipped. Ties

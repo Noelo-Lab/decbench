@@ -5,11 +5,8 @@ Invoked by ``docker/r2dec.Dockerfile``'s ENTRYPOINT as:
 
     python3 r2dec-decompile.py /in/<binary> /work/out.json [/work/targets.json]
 
-It runs radare2 over the (possibly stripped) binary — ``aaa`` for analysis,
-``aflj`` for discovery — and decompiles each function with the r2dec ``pdd``
-command (the real decompiler), falling back to radare2's built-in ``pdc``
-pseudo-decompiler only if the r2dec plugin is missing. Discovery is from
-radare2's OWN analysis, so it works on fully stripped ELF/PE and on ARM firmware.
+It runs radare2 analysis and decompiles each discovered function with the r2dec
+``pdd`` command. The driver fails if the plugin is unavailable.
 
 ``targets.json`` (optional) is a JSON list of ELF-file-space ADDRESSES (DWARF
 low_pc) the host wants; when present, only functions whose radare2 address
@@ -37,15 +34,14 @@ _SCHEMA_VERSION = 1
 _ENTRY_NAMES = frozenset({"entry0", "entry1", "entry.init0", "entry.fini0", "entry.preinit0"})
 
 
-def _probe_cmd(r: r2pipe.open) -> str:
-    """Prefer the real r2dec ``pdd``; fall back to the built-in ``pdc``."""
+def _require_pdd(r: r2pipe.open) -> None:
     try:
-        out = r.cmd("pdd @ entry0")
+        out = r.cmd("pdd?")
     except Exception:  # noqa: BLE001
         out = ""
-    if out and "install the plugin" not in out and "Cannot find" not in out:
-        return "pdd"
-    return "pdc"
+    lowered = out.lower()
+    if "decompile" not in lowered or "install the plugin" in lowered:
+        raise RuntimeError("radare2 r2dec plugin is unavailable")
 
 
 def _is_import(name: str) -> bool:
@@ -103,33 +99,6 @@ def _json_code(payload: object) -> tuple[str, list[dict[str, object]]] | None:
         for line_number, (_text, offset) in enumerate(rendered, 1)
         if offset is not None
     ]
-
-
-def _annotated_code(payload: object) -> tuple[str, list[dict[str, object]]] | None:
-    if not isinstance(payload, dict):
-        return None
-    raw_code = str(payload.get("code") or "")
-    code = raw_code.strip()
-    annotations = payload.get("annotations")
-    if not code or not isinstance(annotations, list):
-        return None
-    code_start = raw_code.find(code)
-    mappings: list[dict[str, object]] = []
-    for annotation in annotations:
-        if not isinstance(annotation, dict):
-            continue
-        offset = _as_int(annotation.get("offset"))
-        position = _as_int(annotation.get("start"))
-        if offset is None or position is None or position < code_start:
-            continue
-        adjusted = min(position - code_start, len(code))
-        mappings.append(
-            {
-                "line_number": code.count("\n", 0, adjusted) + 1,
-                "addresses": [offset],
-            }
-        )
-    return code, mappings
 
 
 def _variables(
@@ -227,17 +196,16 @@ def _variables(
     return variables
 
 
-def _decompile(r: r2pipe.open, cmd: str, addr: int, architecture: str) -> dict[str, object] | None:
+def _decompile(r: r2pipe.open, addr: int, architecture: str) -> dict[str, object] | None:
     code = ""
     line_mappings: list[dict[str, object]] = []
-    if cmd in {"pdd", "pdc"}:
-        payload = _cmdj(r, f"{cmd}j @ {addr}", None)
-        parsed = _json_code(payload) if cmd == "pdd" else _annotated_code(payload)
-        if parsed is not None:
-            code, line_mappings = parsed
+    payload = _cmdj(r, f"pddj @ {addr}", None)
+    parsed = _json_code(payload)
+    if parsed is not None:
+        code, line_mappings = parsed
     if not code:
         try:
-            code = str(r.cmd(f"{cmd} @ {addr}") or "").strip()
+            code = str(r.cmd(f"pdd @ {addr}") or "").strip()
         except Exception:  # noqa: BLE001
             code = ""
     if not code or "install the plugin" in code:
@@ -278,7 +246,7 @@ def main() -> int:
 
     r = r2pipe.open(binary, flags=_R2_FLAGS)
     r.cmd("aaa")
-    cmd = _probe_cmd(r)
+    _require_pdd(r)
     info = r.cmdj("ij") or {}
     baddr = int((info.get("bin") or {}).get("baddr") or 0)
     architecture = str((info.get("bin") or {}).get("arch") or "").lower()
@@ -297,7 +265,7 @@ def main() -> int:
         addr = int(addr)
         if targets is not None and not _addr_matches(addr, targets):
             continue
-        record = _decompile(r, cmd, addr, architecture)
+        record = _decompile(r, addr, architecture)
         if record is None:
             continue
         out.append({"addr": addr, "baddr": baddr, "name": name, **record})
@@ -305,7 +273,7 @@ def main() -> int:
     r.quit()
 
     with open(out_path, "w") as f:
-        json.dump({"schema_version": _SCHEMA_VERSION, "command": cmd, "functions": out}, f)
+        json.dump({"schema_version": _SCHEMA_VERSION, "command": "pdd", "functions": out}, f)
     return 0
 
 

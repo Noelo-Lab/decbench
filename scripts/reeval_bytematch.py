@@ -30,6 +30,24 @@ if os.environ.get("DECBENCH_REEVAL_DECOMPILERS"):
     )
 
 
+def preserve_unselected_scores(
+    fresh: dict[str, dict], previous: dict[str, dict], selected: set[str]
+) -> dict[str, dict]:
+    retained = {
+        key: value
+        for key, value in previous.items()
+        if len(parts := key.split("::", 4)) == 5 and parts[3] not in selected
+    }
+    retained.update(
+        {
+            key: value
+            for key, value in fresh.items()
+            if len(parts := key.split("::", 4)) == 5 and parts[3] in selected
+        }
+    )
+    return retained
+
+
 def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
     """Worker: recompute byte_match for every function of one (binary, dec).
 
@@ -107,7 +125,10 @@ def main() -> None:
     pending = []
     for t in tasks:
         key = f"{t[0]}::{t[1]}::{t[2]}::{t[3]}"
-        if not (ckpt_dir / (key.replace("::", "__") + ".json")).exists():
+        checkpoint = ckpt_dir / (key.replace("::", "__") + ".json")
+        if not checkpoint.exists() or checkpoint.stat().st_mtime_ns < max(
+            Path(t[4]).stat().st_mtime_ns, Path(t[5]).stat().st_mtime_ns
+        ):
             pending.append(t)
     print(
         f"[reeval] {len(tasks)} tasks total, {len(pending)} pending, {workers} workers", flush=True
@@ -129,6 +150,11 @@ def main() -> None:
         for func, v in data.items():
             merged[f"{key}::{func}"] = v
     out_path = Path(os.environ.get("DECBENCH_REEVAL_OUT", root / "byte_match_new.json"))
+    baseline = Path(os.environ.get("DECBENCH_REEVAL_BASELINE", out_path))
+    if baseline.is_file():
+        merged = preserve_unselected_scores(
+            merged, json.loads(baseline.read_text()), set(DECOMPILERS)
+        )
     out_path.write_text(json.dumps(merged))
     comp = sum(1 for v in merged.values() if v.get("compilable"))
     print(

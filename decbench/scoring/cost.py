@@ -16,11 +16,11 @@ Two kinds of source, deliberately not comparable and labeled by ``basis``:
 * **per-function** (:func:`scan_llm_traces` and the structured fields) — the LLM
   coding agents, timed one agentic call per function *including* tool use.
 
-Structured-first: runs made after ``FunctionDecompilation`` grew ``time_seconds``
-/ ``llm_tokens`` (2026-07-23) carry per-function cost in the decompiled TOMLs
-themselves, and :func:`build_cost_info` PREFERS those
-(:func:`scan_structured_costs`) over the trace-directory scan — the scans remain
-the historical path for runs recorded before the fields existed.
+Runs made after ``FunctionDecompilation`` grew ``time_seconds`` / ``llm_tokens``
+(2026-07-23) carry per-function cost in the decompiled TOMLs themselves.
+:func:`build_cost_info` prefers structured costs when their call coverage is at
+least as complete as the trace scan; mixed historical/incremental runs retain
+the more complete trace facts.
 """
 
 from __future__ import annotations
@@ -352,15 +352,18 @@ def build_cost_info(
     the honest number for one-agent-call-per-function backends (the batch rate
     divides concurrent per-function wall times by the function count).
 
-    ``llm`` merges the historical trace scan with the structured per-function
-    fields, structured winning per backend (see the module docstring).
+    ``llm`` chooses the more complete per-backend source between historical
+    traces and structured per-function fields (see the module docstring).
 
     ``opt_levels`` defaults to the tree's opt-level directories; the driver
     script passes the exact set from ``function_results.json``.
     """
     opts = list(opt_levels) if opt_levels is not None else _discover_opt_levels(tree)
     llm = scan_llm_traces(traces_dir) if traces_dir is not None else {}
-    llm.update(scan_structured_costs(tree, opts))
+    for backend, structured in scan_structured_costs(tree, opts).items():
+        historical = llm.get(backend)
+        if historical is None or structured["functions"] >= historical["functions"]:
+            llm[backend] = structured
     return {
         "decompile_time": scan_decompile_times(tree, opts),
         "llm": llm,

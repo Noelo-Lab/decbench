@@ -175,10 +175,12 @@ class DecompilationResult(BaseModel):
                 "line_count": func.line_count,
                 **func.metadata,
             }
-            if func.time_seconds is not None:
-                entry["time_seconds"] = func.time_seconds
-            if func.llm_tokens is not None:
-                entry["llm_tokens"] = dict(func.llm_tokens)
+            time_seconds = getattr(func, "time_seconds", None)
+            llm_tokens = getattr(func, "llm_tokens", None)
+            if time_seconds is not None:
+                entry["time_seconds"] = time_seconds
+            if llm_tokens is not None:
+                entry["llm_tokens"] = dict(llm_tokens)
             data[f"functions.{name}"] = entry
 
         with open(path, "w") as f:

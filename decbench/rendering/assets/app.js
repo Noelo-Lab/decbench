@@ -472,17 +472,15 @@ function metricEvidence(result, d, m) {
 function evidenceUsesHeuristic(evidence) {
     if (!evidence) return false;
     const nativeCount = evidence.native || 0;
+    const reportedCount = evidence.agent_reported || 0;
     const fallbackCount = evidence.fallback_only || 0;
     const measured = evidence.measured || 0;
-    return fallbackCount > 0 || measured > nativeCount + fallbackCount;
+    return reportedCount > 0 || fallbackCount > 0 ||
+        measured > nativeCount + reportedCount + fallbackCount;
 }
 // Decompilers to render as rows for the CURRENT preset. AGG.sample_set_only
 // backends ran on the sample-set slice only, so they render there and, on the
 // data page, below a partial-coverage break (splitDecs) — never elsewhere.
-// AGG.sample_set_only (the LLM/coding-agent ones — codex/claude-code) ran on the
-// sample-set slice only, so their rows are shown ONLY when the sample-set preset is
-// selected; on every other view they are omitted (their data still ships, it is
-// just not rendered where the shared denominator would make them look near-empty).
 // Exception: the data page renders them everywhere via splitDecs() below —
 // separated and marked as partial-coverage instead of hidden.
 const SAMPLE_SET_PRESET = "sample-set";
@@ -564,7 +562,7 @@ function cellPctHtml(cell, evidence) {
     const marker = evidenceUsesHeuristic(evidence)
         ? '<a class="evidence-mark" href="#type-evidence-note" ' +
           'aria-label="Type-score measurement note" aria-describedby="type-evidence-note" ' +
-          'title="This Type score includes legacy or uncategorized correspondence evidence.">*</a>'
+          'title="This Type score includes agent-reported, legacy, or uncategorized correspondence evidence.">*</a>'
         : "";
     return '<span class="bar-ascii">' + asciiBar(p, 8) + '</span> ' +
         '<span class="cell-pct pct-' + pctClass(p) + '">' + p.toFixed(1) + '%' + marker +

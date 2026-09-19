@@ -123,11 +123,13 @@ def test_type_match_evidence_distinguishes_native_and_fallback_rows() -> None:
 
     assert combo["metric_evidence"]["alpha"]["type_match"] == {
         "native": 1,
+        "agent_reported": 0,
         "fallback_only": 0,
         "measured": 1,
     }
     assert combo["metric_evidence"]["beta"]["type_match"] == {
         "native": 0,
+        "agent_reported": 0,
         "fallback_only": 1,
         "measured": 1,
     }
@@ -144,9 +146,28 @@ def test_historical_type_rows_preserve_an_uncategorized_measured_count() -> None
 
     assert combo["metric_evidence"]["alpha"]["type_match"] == {
         "native": 0,
+        "agent_reported": 0,
         "fallback_only": 0,
         "measured": 1,
     }
+
+
+def test_agent_reported_type_evidence_is_counted() -> None:
+    record = _func(
+        "reported",
+        values={"alpha": {"type_match": 0.5}},
+        perfects={"alpha": {"type_match": False}},
+    )
+    record.metric_evidence = {"alpha": {"type_match": "agent_reported"}}
+    combo = _build(_data([record]))["combos"][combo_key("full", False)]
+    assert combo["metric_evidence"]["alpha"]["type_match"] == {
+        "native": 0,
+        "agent_reported": 1,
+        "fallback_only": 0,
+        "measured": 1,
+    }
+
+
 def test_source_parse_failure_drops_ged_for_everyone() -> None:
     """No source CFG => GED unmeasurable. Joern failing on the SOURCE is our fault.
 

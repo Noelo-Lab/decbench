@@ -393,3 +393,30 @@ def test_build_cost_info_merges_scans_structured_first(tmp_path: Path) -> None:
 
     info = build_cost_info(tmp_path, None, ["O0"])
     assert set(info["llm"]) == {"claude-code"}
+
+
+def test_build_cost_info_keeps_more_complete_historical_traces(tmp_path: Path) -> None:
+    from decbench.models.decompilation import (
+        DecompilationResult,
+        DecompilerMetadata,
+        FunctionDecompilation,
+    )
+
+    traces = tmp_path / "traces"
+    _trace_md(traces, "claude-code", "O0__p__b__f_0x1", status="ok", elapsed=100)
+    _trace_md(traces, "claude-code", "O0__p__b__g_0x2", status="ok", elapsed=200)
+    result = DecompilationResult(
+        binary_path=tmp_path / "b",
+        binary_name="b",
+        decompiler=DecompilerMetadata(decompiler_name="claude-code"),
+        functions={
+            "g": FunctionDecompilation(name="g", address=2, decompiled_code="x", time_seconds=50.0)
+        },
+    )
+    dest = tmp_path / "O0" / "proj" / "decompiled" / "claude-code_b.toml"
+    dest.parent.mkdir(parents=True)
+    result.to_toml(dest)
+
+    cost = build_cost_info(tmp_path, traces, ["O0"])["llm"]["claude-code"]
+    assert cost["functions"] == 2
+    assert cost["elapsed"]["mean_s"] == pytest.approx(150.0)

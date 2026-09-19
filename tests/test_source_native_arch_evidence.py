@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 
@@ -76,8 +77,49 @@ def test_instruction_addresses_decode_thumb_at_canonical_addresses() -> None:
 
 
 def test_thumb_entry_candidates_include_the_even_dwarf_key() -> None:
-    assert entry_address_candidates(0x08000001) == (0x08000001, 0x08000000)
-    assert entry_address_candidates(0x08000000) == (0x08000000,)
+    assert entry_address_candidates(0x08000001, "arm") == (0x08000001, 0x08000000)
+    assert entry_address_candidates(0x08000000, "arm") == (0x08000000,)
+
+
+def test_x86_odd_entry_candidates_are_not_thumb_masked() -> None:
+    assert entry_address_candidates(0x401001, "x86") == (0x401001,)
+
+
+def test_thumb_symbol_lookup_reuses_one_versioned_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Symbol(dict[str, Any]):
+        def __init__(self, name: str, address: int) -> None:
+            super().__init__(
+                st_info={"type": "STT_FUNC"},
+                st_size=4,
+                st_value=address,
+            )
+            self.name = name
+
+    symbols = [
+        Symbol("thumb", 0x101),
+        Symbol("duplicate", 0x301),
+        Symbol("duplicate", 0x401),
+        Symbol("conflict_thumb", 0x501),
+        Symbol("conflict_arm", 0x500),
+    ]
+    symbol_table = SimpleNamespace(iter_symbols=lambda: iter(symbols))
+    elf = SimpleNamespace(
+        header={"e_machine": "EM_ARM"},
+        get_section_by_name=lambda _name: symbol_table,
+    )
+    parser = Mock(return_value=elf)
+    monkeypatch.setattr("elftools.elf.elffile.ELFFile", parser)
+    binary = tmp_path / "firmware.elf"
+    binary.write_bytes(b"ELF")
+    binfmt._elf_function_thumb_index.cache_clear()
+
+    assert binfmt.elf_function_is_thumb(binary, "thumb", 0x100)
+    assert binfmt.elf_function_is_thumb(binary, "thumb", 0x900)
+    assert not binfmt.elf_function_is_thumb(binary, "duplicate", 0x900)
+    assert not binfmt.elf_function_is_thumb(binary, "conflict_thumb", 0x500)
+    assert parser.call_count == 1
 
 
 def test_ground_truth_resolves_a_thumb_entry_with_a_repeated_static_name() -> None:
@@ -87,7 +129,7 @@ def test_ground_truth_resolves_a_thumb_entry_with_a_repeated_static_name() -> No
         0x08001000: {"_putc": [{"name": "other", "type": "char"}]},
     }
 
-    assert _ground_truth_for_function(index, "_putc", 0x08000001) == wanted
+    assert _ground_truth_for_function(index, "_putc", 0x08000001, "arm") == wanted
 
 
 def test_address_pinned_source_resolves_a_thumb_entry(monkeypatch) -> None:
@@ -101,6 +143,11 @@ def test_address_pinned_source_resolves_a_thumb_entry(monkeypatch) -> None:
         PreprocessedSourceContext,
         "_path_for_cu",
         lambda self, cu_path, function_name: Path("build/led.i"),
+    )
+    monkeypatch.setattr(
+        PreprocessedSourceContext,
+        "binary_context",
+        lambda self, binary_path: SimpleNamespace(binary_info=binfmt.BinInfo("elf", "arm", 32)),
     )
 
     resolved = context._address_pinned_path(Path("firmware.elf"), "_putc", 0x08000001)

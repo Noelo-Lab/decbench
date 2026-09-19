@@ -12,6 +12,7 @@ function_results.json, and writes type_match_new.json when --emit is passed.
 from __future__ import annotations
 
 import json
+import os
 import pickle
 import sys
 from collections import defaultdict
@@ -27,6 +28,11 @@ from decbench.utils.results_tree import resolve_binary
 root = Path(sys.argv[1]).resolve()
 args = [a for a in sys.argv[2:] if not a.startswith("--")]
 emit = "--emit" in sys.argv
+selected_decompilers = {
+    name.strip()
+    for name in os.environ.get("DECBENCH_REEVAL_DECOMPILERS", "").split(",")
+    if name.strip()
+}
 
 with open(root / "function_results.json") as _fh:
     fd = json.load(_fh)
@@ -54,6 +60,8 @@ for proj in projects:
     for opt, bins in dec_tree.items():
         optn = getattr(opt, "value", str(opt))
         for binn, decs in bins.items():
+            if selected_decompilers and not selected_decompilers.intersection(decs):
+                continue
             compiled = root / optn / proj / "compiled"
             binary_path = resolve_binary(compiled, binn)
             if binary_path is None:
@@ -62,6 +70,8 @@ for proj in projects:
             source_paths = list(preprocessed_by_stem(compiled).values())
             provenance_context = NativeProvenanceContext(binary_path)
             for dname, dr in decs.items():
+                if selected_decompilers and dname not in selected_decompilers:
+                    continue
                 try:
                     if not isinstance(dr, DecompilationResult):
                         raise TypeError("checkpoint entry is not a DecompilationResult")
@@ -109,9 +119,8 @@ for d in sorted(agg):
 
 if emit:
     out_path = root / "type_match_new.json"
-    if args and out_path.is_file():
-        # Project-scoped runs MERGE into the existing overlay: overwriting used to
-        # silently shrink type_match_new.json to only the projects covered.
+    if (args or selected_decompilers) and out_path.is_file():
+        # Scoped runs must preserve entries outside their project/decompiler selection.
         from decbench.results_store import merge_typematch_overlay
 
         with open(out_path) as _if:

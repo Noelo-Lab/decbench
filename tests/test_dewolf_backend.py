@@ -16,6 +16,7 @@ from typing import Any
 
 import decbench.decompilers  # noqa: F401  (registers the raw backends)
 from decbench.decompilers.raw.dewolf_driver import (
+    _matches_target_address,
     _native_addresses_for_origins,
     _resolve_ssa_origins,
     _ssa_address_index,
@@ -48,6 +49,21 @@ def test_child_env_prepends_repo_and_astyle(monkeypatch, tmp_path: Path) -> None
     assert env["PYTHONPATH"].split(":")[0] == "/opt/dewolf"
     assert "/existing" in env["PYTHONPATH"]
     assert env["PATH"].split(":")[0] == "/opt/astyle/bin"
+
+
+def test_target_filter_accepts_thumb_address_aliases() -> None:
+    targets = {0x08001001}
+
+    assert _matches_target_address(0x08001000, targets, "thumb2")
+    assert _matches_target_address(0x08001000, targets, "armv7")
+
+
+def test_target_filter_keeps_non_arm_adjacent_addresses_distinct() -> None:
+    targets = {0x401000}
+
+    assert _matches_target_address(0x401000, targets, "x86_64")
+    assert not _matches_target_address(0x401001, targets, "x86_64")
+    assert not _matches_target_address(0x401001, targets, "aarch64")
 
 
 _FAKE_DRIVER = """\
