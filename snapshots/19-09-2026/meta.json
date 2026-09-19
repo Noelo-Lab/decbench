@@ -1,0 +1,82 @@
+{
+  "date": "19-09-2026",
+  "iso_date": "2026-09-19",
+  "label": "Updated type distance evaluation",
+  "note": "",
+  "scoreboard": "DecBench Scoreboard",
+  "version": "1.0",
+  "generated_at": "2026-09-19T14:17:27.103487",
+  "functions": 96092,
+  "binaries": 770,
+  "preset": "unoptimized",
+  "decompilers": [
+    "angr",
+    "binja",
+    "claude-code",
+    "codex",
+    "dewolf",
+    "fission",
+    "ghidra",
+    "glaurung",
+    "ida",
+    "kuna",
+    "manifold",
+    "r2dec",
+    "reko",
+    "ventris"
+  ],
+  "decompiler_names": {
+    "angr": "angr",
+    "binja": "Binary Ninja",
+    "claude-code": "Claude Code",
+    "codex": "Codex",
+    "dewolf": "dewolf",
+    "fission": "Fission",
+    "ghidra": "Ghidra",
+    "glaurung": "Glaurung",
+    "ida": "Hex-Rays",
+    "kuna": "Kuna",
+    "manifold": "Manifold",
+    "r2dec": "r2dec",
+    "reko": "Reko",
+    "ventris": "Ventris"
+  },
+  "decompiler_versions": {
+    "angr": "9.3.4",
+    "binja": "5.3.9757",
+    "claude-code": "claude-opus-4-8 (2.1.217)",
+    "codex": "gpt-5.6-sol (0.154.0)",
+    "dewolf": "v2026.7.11",
+    "fission": "0.2.3",
+    "ghidra": "12.1",
+    "glaurung": "git-fb4ee6ba",
+    "ida": "9.2",
+    "kuna": "1.515",
+    "manifold": "v1",
+    "r2dec": "6.2.0",
+    "reko": "latest",
+    "ventris": "decompiler_v8_postpp_brace_fix"
+  },
+  "metrics": [
+    "byte_match",
+    "ged",
+    "type_match"
+  ],
+  "leaders": [
+    {
+      "dec": "kuna",
+      "name": "Kuna",
+      "pct": 51.409807355516634
+    },
+    {
+      "dec": "ida",
+      "name": "Hex-Rays",
+      "pct": 49.05429071803853
+    },
+    {
+      "dec": "angr",
+      "name": "angr",
+      "pct": 47.52481027437245
+    }
+  ]
+}
