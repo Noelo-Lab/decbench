@@ -342,6 +342,7 @@ class RawGlaurungDecompiler(Decompiler):
                 "backend": "glaurung",
                 "via": "raw",
                 "run_via": run_via,
+                "slice_scoped": bool(function_names or functions),
             }
             if run_via == "docker":
                 extra["image"] = self._image
@@ -376,10 +377,19 @@ class RawGlaurungDecompiler(Decompiler):
         except subprocess.TimeoutExpired as e:
             timed_out = True
             _l.warning("glaurung-raw timed out on %s: %s", binary_path, e)
-            return self._error_result(binary_path, start, "timeout", run_via, timed_out=True)
+            return self._error_result(
+                binary_path,
+                start,
+                "timeout",
+                run_via,
+                timed_out=True,
+                slice_scoped=bool(function_names or functions),
+            )
         except Exception as e:  # noqa: BLE001
             _l.error("glaurung-raw failed on %s: %s", binary_path, e)
-            return self._error_result(binary_path, start, str(e), run_via)
+            return self._error_result(
+                binary_path, start, str(e), run_via, slice_scoped=bool(function_names or functions)
+            )
 
         # 2. Index by name, filter to the benchmarkable + source-narrowed set.
         by_name = {str(r.get("name") or ""): r for r in records}
@@ -441,6 +451,8 @@ class RawGlaurungDecompiler(Decompiler):
                 docker,
                 "run",
                 "--rm",
+                "--user",
+                f"{os.getuid()}:{os.getgid()}",
                 *docker_tracking_args(),
                 *docker_memory_args(),
                 "--network",
@@ -567,12 +579,14 @@ class RawGlaurungDecompiler(Decompiler):
         err: str,
         run_via: str,
         timed_out: bool = False,
+        slice_scoped: bool = False,
     ) -> DecompilationResult:
         extra: dict[str, Any] = {
             "error": err,
             "backend": "glaurung",
             "via": "raw",
             "run_via": run_via,
+            "slice_scoped": slice_scoped,
         }
         if run_via == "docker":
             extra["image"] = self._image

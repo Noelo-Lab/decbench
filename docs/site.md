@@ -15,7 +15,8 @@ NO CSS, NO JS, NO prose. Layout:
 - `content/` — **ALL maintainer-editable text.** `<view>.md` per view
   (leaderboard, **data**, **view**, changelog, **snapshots**, **about**) + `site.toml`
   (brand/footer/banners/sidebar/side_stats, and `[decompilers] hidden` = the
-  site-hidden decompilers, currently Phoenix), `views.toml` (view registry: id, nav label,
+  site-hidden decompilers, currently Phoenix and RetDec), `views.toml` (view registry:
+  id, nav label,
   `requires_function_data`, which is `default`), `metrics.toml` (display
   name/short name/order/perfect definition — the ONE source of truth),
   `datasets.toml` (the 5 presets' label+description+`default`),
@@ -533,6 +534,10 @@ button (`#theme-toggle`) flips and persists it at runtime.
       "overall": {"angr": [111, 222]},   // Union column: decompiler -> [perfect, total]
       "errors":  {"angr": [5, 1000]},    // decompiler -> [errored, scope]
       "compile": {"angr": [890, 1000]},  // Compiles rate (data page): decompiler -> [compiled, byte_match-measured]
+      "metric_evidence": {               // dec -> metric -> provenance counts
+        "angr": {"type_match": {"native": 67000, "agent_reported": 0,
+                                  "fallback_only": 0, "measured": 67000}}
+      },
       "distance": {                      // decompiler -> metric -> stats | null
         "angr": {"ged": {"mean": 3.25, "median": 2, "n": 5000, "at0": 1200}}
       }
@@ -548,6 +553,20 @@ percentage client-side keeps the JSON small and lossless.
 
 `distance[dec][metric]` is `null` when no function under the combo had a finite
 distance for that metric.
+
+`metric_evidence` is measurement provenance, not another score. For Type
+Correctness, `native` means the seven supported full-dataset backends used the
+address-based correspondence; `agent_reported` means a text-only producer
+provided a line-to-address map for the address path; `fallback_only` means a
+producer without such evidence was kept evaluable through the older name-based
+correspondence. `measured` is the
+number of finite metric rows, including historical rows that carry no provenance.
+The client adds an asterisk to a Type percentage when any contributing row used
+agent-reported or fallback evidence, or when historical measured rows lack an
+evidence category. Native
+rows remain native even when the conservative matcher accepts no pair, so those
+zero-match rows do not receive the marker. The marker does not alter the score or
+denominator.
 
 ### Decompiler registry
 

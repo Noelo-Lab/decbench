@@ -68,6 +68,8 @@ CANONICAL_DECOMPILERS = (
     "glaurung",
     "fission",
     "ventris",
+    "reko",
+    "retdec",
 )
 SELECTED_DECOMPILERS = CANONICAL_DECOMPILERS
 if os.environ.get("DECBENCH_REEVAL_DECOMPILERS"):

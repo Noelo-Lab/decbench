@@ -124,8 +124,8 @@ def test_no_hidden_is_a_noop() -> None:
     assert out_sb is sb and out_fd is fd
 
 
-def test_shipped_config_hides_phoenix() -> None:
-    assert load_content().site.hidden_decompilers == ("phoenix",)
+def test_shipped_config_hides_unpublished_decompilers() -> None:
+    assert load_content().site.hidden_decompilers == ("phoenix", "retdec")
 
 
 def test_build_site_omits_hidden_decompiler(

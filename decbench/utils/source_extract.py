@@ -170,7 +170,8 @@ def extract_from_text(text: str, func_name: str, decl_line: int = 0) -> str | No
     When ``decl_line`` (1-based) is given, prefer the candidate nearest it.
     Returns the signature + body, or ``None`` if no definition is found.
     """
-    pat = re.compile(r"(^|[^\w])" + re.escape(func_name) + r"\s*\(")
+    name = re.escape(func_name)
+    pat = re.compile(r"(?<!\w)(?:" + name + r"\s*|\(\s*" + name + r"\s*\)\s*)(\()")
     lines = text.splitlines(keepends=True)
     offsets = []
     acc = 0
@@ -180,7 +181,7 @@ def extract_from_text(text: str, func_name: str, decl_line: int = 0) -> str | No
 
     candidates: list[tuple[int, int, int]] = []
     for m in pat.finditer(text):
-        paren = text.index("(", m.start())
+        paren = m.start(1)
         close = _match_paren(text, paren)
         if close is None:
             continue

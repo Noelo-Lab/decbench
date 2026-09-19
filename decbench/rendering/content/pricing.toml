@@ -13,8 +13,8 @@
 #                          codex sessions record no cache-write bucket)
 #   output_per_mtok        output tokens (codex: includes reasoning tokens)
 #
-# Prices below are published list prices as of 2026-07-23. The $ figures on the
-# cost page are labeled "estimated" — MAINTAINER: re-verify against the current
+# Prices are published list prices (GPT-5.6 Sol checked 2026-09-18). Cost-page
+# figures are labeled "estimated" — MAINTAINER: re-verify against the current
 # published price sheets before each publish (an all-zero model is treated as
 # "unpriced": ModelPricing.is_priced == false, and renders as n/a rather than a
 # bogus $0.00, so zero out a model you can no longer price).
@@ -29,13 +29,11 @@ cached_input_per_mtok = 0.50
 cache_write_per_mtok = 10.00
 output_per_mtok = 25.00
 
-# GPT-5.6 Sol (codex default). OpenAI list price (July 2026): $5 / $30 per MTok
-# in/out; cache read retains the 90% input discount (0.1x); cache write ≈ 1.25x
-# input (codex session logs record no separate cache-write bucket, so this axis
-# is unused for codex today but set for completeness).
+# GPT-5.6 Sol (codex default). OpenAI API promotional price through at least
+# 2026-11-21; cache writes are 1.25x input (unused by current Codex logs).
 [[model]]
 name = "gpt-5.6-sol"
-input_per_mtok = 5.00
-cached_input_per_mtok = 0.50
-cache_write_per_mtok = 6.25
-output_per_mtok = 30.00
+input_per_mtok = 4.00
+cached_input_per_mtok = 0.40
+cache_write_per_mtok = 5.00
+output_per_mtok = 20.00

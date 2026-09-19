@@ -1,40 +1,14 @@
-"""LLM / coding-agent decompiler backends (Codex, Claude Code, Kimi Code).
+"""Sample-set coding-agent backends for manually reconstructing stripped functions.
 
-This family drives a **general coding agent** (OpenAI's ``codex`` CLI,
-Anthropic's ``claude`` CLI, or Moonshot's ``kimi`` CLI) as a decompiler: for
-each target function it hands
-the agent the stripped binary and asks it to *manually* reconstruct the original
-C source — the agent is explicitly **forbidden from using any decompiler** and
-may only reach for simple disassemblers (``objdump``/``readelf``/``nm``/…). The
-agent's C output is wrapped into the same :class:`DecompilationResult` contract
-every other backend produces, so GED / type_match / byte_match score it exactly
-like Ghidra or IDA.
-
-Two things make this family different from the raw/dockerized backends and drive
-the design:
-
-* **Cost.** One agentic CLI invocation per function is expensive, so these
-  backends are meant to run on the ``sample-set`` slice only. The run driver
-  gates *which* functions reach the backend (``DECBENCH_SAMPLESET_MANIFEST`` in
-  ``scripts/run_benchmark.py``), and the backend adds a belt-and-suspenders
-  per-binary hard cap (:data:`_DEFAULT_MAX_FUNCS`) so a mis-configured run can
-  never fan out across the whole corpus. See ``docs/decompilers.md``.
-* **Auth.** The CLIs authenticate with the host user's own credentials
-  (``~/.codex/auth.json`` / ``~/.claude/.credentials.json`` or
-  ``ANTHROPIC_API_KEY``/``OPENAI_API_KEY``). Run on the host, the subprocess
-  simply inherits them. Run inside the project container (config/env
-  ``docker_image``), the wrapper bind-mounts those token dirs and forwards the
-  key env vars, so the container "inherits the token from outside".
-
-The addresses the driver passes are DWARF ``low_pc`` values (ELF-file space) on a
-*stripped* binary, so the backend labels each function ``sub_<addr>`` and stores
-the DWARF address; ``run_benchmark._relabel_to_dwarf`` renames the placeholder to
-the real symbol for evaluation, exactly as it does for angr/Ghidra.
+Codex runs with an isolated API-key login; Claude Code and Kimi Code can also
+run in a credential-bearing container. Agents may report C-line instruction
+addresses, which remain distinct from native decompiler provenance.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import re
@@ -62,6 +36,7 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    LineMapping,
 )
 
 _l = logging.getLogger(__name__)
@@ -69,6 +44,7 @@ _l = logging.getLogger(__name__)
 _DEFAULT_MAX_FUNCS = 8
 
 _OUTFILE = "decompiled.c"
+_ADDRESS_FILE = "address_lines.json"
 
 
 LLM_DECOMPILE_PROMPT = """\
@@ -112,7 +88,58 @@ OUTPUT CONTRACT
 - The file must contain EXACTLY ONE top-level definition of the target function.
 - No markdown fences, no commentary, no analysis prose inside the file — just
   compilable C.
+- If you can identify which assembly instructions correspond to specific lines
+  of your C, also write `address_lines.json` as a JSON list of objects like
+  [{"line_number": 3, "addresses": ["0x401234", "0x401238"]}]. Line numbers
+  are 1-based lines of `decompiled.c`; addresses are the binary's instruction
+  virtual addresses as printed by objdump. Include only mappings you can
+  substantiate from the assembly. This file is optional: omit it if unsure.
+- Keep address annotations out of `decompiled.c` so its C remains compilable.
 """
+
+
+def _read_address_lines(
+    path: Path, code: str, binary_path: Path, line_offset: int = 0
+) -> list[LineMapping]:
+    if not path.is_file():
+        return []
+    try:
+        rows = json.loads(path.read_text())
+        if not isinstance(rows, list):
+            return []
+        ranges = common.elf_text_ranges(binary_path)
+        if not ranges:
+            from decbench.utils.binfmt import executable_regions
+
+            ranges = [(start, start + len(data)) for start, data in executable_regions(binary_path)]
+        if not ranges:
+            return []
+        valid: dict[int, set[int]] = {}
+        lines = code.splitlines()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            number = row.get("line_number")
+            addresses = row.get("addresses")
+            if type(number) is not int:
+                continue
+            number -= line_offset
+            if not 1 <= number <= len(lines):
+                continue
+            if not lines[number - 1].strip() or not isinstance(addresses, list):
+                continue
+            for address in addresses:
+                if not isinstance(address, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", address):
+                    continue
+                value = int(address, 16)
+                if any(start <= value < end for start, end in ranges):
+                    valid.setdefault(number, set()).add(value)
+        return [
+            LineMapping(line_number=number, addresses=sorted(addresses))
+            for number, addresses in sorted(valid.items())
+        ]
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return []
 
 
 def _creds_present(*candidates: Path) -> bool:
@@ -130,7 +157,13 @@ def _find_func_span(text: str) -> tuple[int, int, str] | None:
     return type on that line is included); ``end`` is just past the matching
     closing brace; ``name`` is the function identifier.
     """
-    m = _FUNC_HEADER_RE.search(text)
+    masked_lines: list[str] = []
+    directive = False
+    for line in text.splitlines(keepends=True):
+        directive = directive or line.lstrip().startswith("#")
+        masked_lines.append(re.sub(r"[^\r\n]", " ", line) if directive else line)
+        directive = directive and line.rstrip().endswith("\\")
+    m = _FUNC_HEADER_RE.search("".join(masked_lines))
     if not m:
         return None
     brace = text.index("{", m.end() - 1)
@@ -200,6 +233,14 @@ def _disasm_hint(binary_path: Path, addr: int, max_bytes: int = 640) -> str:
     try:
         from elftools.elf.elffile import ELFFile
 
+        from decbench.utils import binfmt
+
+        fmt = binfmt.detect(binary_path)
+        if fmt is None:
+            return ""
+        mclass = fmt.arch == "arm" and fmt.fmt == "elf" and binfmt.elf_is_arm_mclass(binary_path)
+        thumb = fmt.arch == "arm" and (bool(addr & 1) or mclass)
+        entry = addr & ~1 if thumb else addr
         with open(binary_path, "rb") as f:
             elf = ELFFile(f)
             text = elf.get_section_by_name(".text")
@@ -207,7 +248,7 @@ def _disasm_hint(binary_path: Path, addr: int, max_bytes: int = 640) -> str:
                 return ""
             sh_addr = text["sh_addr"]
             data = text.data()
-        off = addr - sh_addr
+        off = entry - sh_addr
         if off < 0 or off >= len(data):
             return ""
         blob = data[off : off + max_bytes]
@@ -217,19 +258,12 @@ def _disasm_hint(binary_path: Path, addr: int, max_bytes: int = 640) -> str:
     try:
         import capstone
 
-        from decbench.utils import binfmt
-
-        fmt = binfmt.detect(binary_path)
-        if fmt is None:
-            return ""
-        # An odd DWARF low_pc is a Thumb entry (T-bit set), not a byte offset.
-        thumb = fmt.arch == "arm" and bool(addr & 1)
-        am = binfmt.capstone_arch_mode(fmt, thumb=thumb)
+        am = binfmt.capstone_arch_mode(fmt, thumb=thumb, mclass=mclass)
         if am is None:
             return ""
         md = capstone.Cs(*am)
         lines: list[str] = []
-        for insn in md.disasm(blob, addr & ~1 if thumb else addr):
+        for insn in md.disasm(blob, entry):
             lines.append(f"  0x{insn.address:x}: {insn.mnemonic} {insn.op_str}".rstrip())
             if insn.mnemonic in ("ret", "retq", "bx", "pop") and len(lines) > 3:
                 break
@@ -402,6 +436,7 @@ class _AgentDecompiler(Decompiler):
             code: str | None,
             elapsed: float | None = None,
             tokens: dict[str, int] | None = None,
+            line_mappings: list[LineMapping] | None = None,
         ) -> None:
             with lock:
                 if code:
@@ -410,7 +445,11 @@ class _AgentDecompiler(Decompiler):
                         address=addr,
                         decompiled_code=code,
                         line_count=code.count("\n") + 1,
-                        metadata=common.extract_metrics(code),
+                        line_mappings=line_mappings or [],
+                        metadata={
+                            **common.extract_metrics(code),
+                            **({"line_mapping_source": "agent_reported"} if line_mappings else {}),
+                        },
                         time_seconds=elapsed,
                         llm_tokens=tokens,
                     )
@@ -423,18 +462,22 @@ class _AgentDecompiler(Decompiler):
         def _one(name: str, addr: int) -> None:
             elapsed: float | None = None
             tokens: dict[str, int] | None = None
+            line_mappings: list[LineMapping] = []
             t0 = time.time()
             try:
                 out = self._decompile_one(binary_path, name, addr, output_dir)
                 if isinstance(out, tuple):
-                    code, elapsed, tokens = out
+                    if len(out) == 4:
+                        code, elapsed, tokens, line_mappings = out
+                    else:
+                        code, elapsed, tokens = out
                 else:
                     code = out
             except Exception as e:  # noqa: BLE001
                 _l.warning("llm/%s: %s @ 0x%x failed: %s", self.name, name, addr, e)
                 code = None
                 elapsed = time.time() - t0
-            _record(name, addr, code, elapsed, tokens)
+            _record(name, addr, code, elapsed, tokens, line_mappings)
 
         workers = min(self._fn_workers(), len(targets))
         if workers <= 1:
@@ -480,8 +523,8 @@ class _AgentDecompiler(Decompiler):
 
     def _decompile_one(
         self, binary_path: Path, name: str, addr: int, output_dir: Path | None = None
-    ) -> tuple[str | None, float, dict[str, int] | None]:
-        """Run the agent once for one function: ``(code, elapsed_s, tokens)``.
+    ) -> tuple[str | None, float, dict[str, int] | None, list[LineMapping]]:
+        """Run the agent once for one function, including optional line addresses.
 
         ``code`` is the reconstructed C (or ``None``); ``elapsed_s`` the call's
         wall time including tool use; ``tokens`` the session's normalized token
@@ -535,12 +578,21 @@ class _AgentDecompiler(Decompiler):
                 _l.warning("llm/%s: agent timed out on %s @ 0x%x", self.name, name, addr)
 
             code = None
+            line_offset = 0
+            from_file = False
             if outfile.is_file():
-                text = outfile.read_text(errors="replace").strip()
-                code = text or None
+                text = outfile.read_text(errors="replace")
+                code = text.strip() or None
+                from_file = bool(code) and not text.lstrip().startswith("```")
+                line_offset = text[: len(text) - len(text.lstrip())].count("\n")
             if not code:
                 code = _extract_c(stdout)
             final = _rename_func(_sanitize(code), name) if code else None
+            line_mappings = (
+                _read_address_lines(workdir / _ADDRESS_FILE, final, binary_path, line_offset)
+                if final and from_file
+                else []
+            )
             elapsed = time.time() - t0
             session = self._save_trace(
                 output_dir,
@@ -562,7 +614,7 @@ class _AgentDecompiler(Decompiler):
                     tokens = parse_session_tokens(session)
                 except Exception as e:  # noqa: BLE001
                     _l.debug("llm/%s: token parse failed for %s: %s", self.name, name, e)
-            return final, elapsed, tokens
+            return final, elapsed, tokens, line_mappings
 
     def _traces_enabled(self) -> bool:
         return str(self._opt("save_traces", "DECBENCH_LLM_SAVE_TRACES", "1")).lower() not in (
@@ -616,6 +668,10 @@ class _AgentDecompiler(Decompiler):
                 f"## Agent transcript (stdout/stderr)\n\n```\n{transcript.strip()}\n```\n\n"
                 f"## Reconstructed C\n\n```c\n{code or '(none — failed)'}\n```\n"
             )
+            address_file = workdir / _ADDRESS_FILE
+            if address_file.is_file():
+                reported = address_file.read_text(errors="replace")[:65536]
+                body += f"\n## Agent-reported line addresses\n\n```json\n{reported}\n```\n"
             (trace_dir / f"{label}.md").write_text(body)
             session = trace_dir / f"{label}.session.jsonl"
             self._copy_session_jsonl(workdir, transcript, session)
@@ -671,7 +727,6 @@ class _AgentDecompiler(Decompiler):
             "/work",
         ]
         token_dirs = (
-            (home / ".codex", "/root/.codex"),
             (home / ".claude", "/root/.claude"),
             (
                 Path(os.environ.get("KIMI_CODE_HOME") or home / ".kimi-code"),
@@ -681,12 +736,10 @@ class _AgentDecompiler(Decompiler):
         for host_dir, cont_dir in token_dirs:
             if host_dir.is_dir():
                 docker += ["-v", f"{host_dir}:{cont_dir}:ro"]
-        for key in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        for key in ("ANTHROPIC_API_KEY",):
             if os.environ.get(key):
                 docker += ["-e", key]
         docker += [
-            "-e",
-            "CODEX_HOME=/root/.codex",
             "-e",
             "KIMI_CODE_HOME=/root/.kimi-code",
             "-e",
@@ -745,10 +798,14 @@ class CodexDecompiler(_AgentDecompiler):
     name = "codex"
     display_name = "OpenAI Codex CLI"
     cli = "codex"
-    # A ChatGPT-account login only accepts the ``-sol`` variant; bare ids 400.
     default_model = "gpt-5.6-sol"
-    cred_files = (".codex/auth.json",)
+    cred_files = ()
     cred_env = ("OPENAI_API_KEY",)
+
+    def _invocation(self, workdir: Path, prompt: str, local_binary: Path) -> tuple[list[str], dict]:
+        if self._docker_image():
+            raise RuntimeError("Codex API-key mode requires the host CLI")
+        return super()._invocation(workdir, prompt, local_binary)
 
     def _agent_argv(self, workdir: Path, prompt: str, model: str) -> list[str]:
         argv = [
@@ -765,25 +822,31 @@ class CodexDecompiler(_AgentDecompiler):
         return argv
 
     def _agent_env(self) -> dict[str, str]:
+        if not os.environ.get("OPENAI_API_KEY"):
+            raise RuntimeError("Codex requires OPENAI_API_KEY; subscription login is disabled")
         env = dict(os.environ)
-        # Isolated CODEX_HOME with an empty skills/ dir enforces the decompiler
-        # ban; auth.json + config.toml are synced in from ~/.codex.
-        env["CODEX_HOME"] = str(self._isolated_codex_home())
+        home = self._isolated_codex_home()
+        try:
+            auth = json.loads((home / "auth.json").read_text())
+        except (OSError, UnicodeError, ValueError):
+            auth = {}
+        if auth.get("auth_mode") != "apikey" or auth.get("OPENAI_API_KEY") != env["OPENAI_API_KEY"]:
+            raise RuntimeError(
+                "Codex API home is not logged in with the current API key; "
+                "run `codex login --with-api-key` with CODEX_HOME set"
+            )
+        env["CODEX_HOME"] = str(home)
+        env.pop("OPENAI_API_KEY", None)
         return env
 
     def _isolated_codex_home(self) -> Path:
         """A decbench-owned CODEX_HOME with no skills (enforces the decompiler ban)."""
         override = self._opt("codex_home", "DECBENCH_CODEX_HOME", "")
-        home = Path(override) if override else Path.home() / ".cache" / "decbench" / "codex-home"
+        home = (
+            Path(override) if override else Path.home() / ".cache" / "decbench" / "codex-home-api"
+        )
         home.mkdir(parents=True, exist_ok=True)
         (home / "skills").mkdir(exist_ok=True)
-        src = Path.home() / ".codex"
-        for fn in ("auth.json", "config.toml"):
-            s, d = src / fn, home / fn
-            # Newer-only, so codex's in-place token refresh is not clobbered.
-            if s.is_file() and (not d.exists() or s.stat().st_mtime > d.stat().st_mtime):
-                with contextlib.suppress(Exception):
-                    shutil.copy2(s, d)
         return home
 
     def _copy_session_jsonl(self, workdir: Path, transcript: str, dest: Path) -> None:
@@ -795,8 +858,6 @@ class CodexDecompiler(_AgentDecompiler):
             sid = m.group(1)
             home = self._isolated_codex_home()
             rolls = list((home / "sessions").glob(f"**/*{sid}*.jsonl"))
-            if not rolls:
-                rolls = list((Path.home() / ".codex" / "sessions").glob(f"**/*{sid}*.jsonl"))
             if rolls:
                 shutil.copy2(rolls[0], dest)
         except Exception:  # noqa: BLE001
