@@ -462,6 +462,10 @@ still agent-reported, not native decompiler provenance.
 `type_match` uses the address path for functions with a valid map and labels
 their scores `agent_reported`; functions without one retain `fallback_only`.
 
+If the output file is absent or empty, transcript recovery requires a recognized,
+brace-balanced function definition. Fenced prose containing braces, such as a
+repository path, is not treated as reconstructed C.
+
 ## Cost control — run ONLY on the sample-set
 
 One agentic CLI call per function is expensive, so these backends are meant to
@@ -521,6 +525,16 @@ sampled functions concurrently), `DECBENCH_LLM_DOCKER_IMAGE`. Per-decompiler
 wall-clock in the driver: `DECBENCH_CODEX_TIMEOUT` /
 `DECBENCH_CLAUDE_CODE_TIMEOUT` / `DECBENCH_KIMI_CODE_TIMEOUT` (shared default
 3600s per binary).
+
+Set `work_dir` (or `DECBENCH_LLM_WORK_DIR`) to choose the parent directory for
+per-function workspaces; otherwise the system temporary directory is used.
+For malware runs, this must be a neutral directory inside `results/`, because
+malware binaries must never be copied out of that tree. Copies are read-only
+and non-executable, and the shared prompt explicitly prohibits executing inputs
+or reconstructed code, including through loaders or emulators. These permissions
+do not replace the static-inspection policy. Codex disables automatic project
+`AGENTS.md` loading so a workspace inside the checkout does not expose repository
+instructions to the benchmark agent.
 
 **Traces.** Every agent call is traced by default (disable with
 `DECBENCH_LLM_SAVE_TRACES=0` / `save_traces = false`): the prompt, transcript,

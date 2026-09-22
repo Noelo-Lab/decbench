@@ -484,27 +484,32 @@ function evidenceUsesHeuristic(evidence) {
 // Exception: the data page renders them everywhere via splitDecs() below —
 // separated and marked as partial-coverage instead of hidden.
 const SAMPLE_SET_PRESET = "sample-set";
+function presetDecs(preset) {
+    const allowed = (AGG && AGG.decompiler_presets) || {};
+    return ((AGG && AGG.decompilers) || []).filter(d =>
+        !Object.prototype.hasOwnProperty.call(allowed, d) || allowed[d].includes(preset));
+}
 function visibleDecs() {
-    const all = ((AGG && AGG.decompilers) || []).slice();
+    const preset = state.dataset || defaultPresetName();
+    const all = presetDecs(preset);
     const sso = (AGG && AGG.sample_set_only) || [];
     if (!sso.length) return all;
-    const preset = state.dataset || defaultPresetName();
     if (preset === SAMPLE_SET_PRESET) return all;
     return all.filter(d => sso.indexOf(d) < 0);
 }
 function splitDecs() {
-    const all = ((AGG && AGG.decompilers) || []).slice();
-    const sso = (AGG && AGG.sample_set_only) || [];
     const preset = state.dataset || defaultPresetName();
+    const all = presetDecs(preset);
+    const sso = (AGG && AGG.sample_set_only) || [];
     if (!sso.length || preset === SAMPLE_SET_PRESET) return {main: all, subset: []};
     return {
         main: all.filter(d => sso.indexOf(d) < 0),
         subset: all.filter(d => sso.indexOf(d) >= 0),
     };
 }
-function subsetBreakRow(colspan) {
+function subsetBreakRow(colspan, label = "sample-set only") {
     return '<tr class="subset-break"><td colspan="' + colspan +
-        '">&mdash; sample-set only &mdash;</td></tr>';
+        '">&mdash; ' + escapeHtml(label) + ' &mdash;</td></tr>';
 }
 function toggleSubsetNote(id, on) {
     const el = document.getElementById(id);
@@ -733,7 +738,6 @@ function buildCost() {
     tbl.querySelector("thead tr").innerHTML =
         "<th>decompiler</th><th>median time / fn</th><th>mean time / fn</th><th>est. cost</th>";
     const all = ((AGG && AGG.decompilers) || []).filter(d => cost[d]);
-    const sso = (AGG && AGG.sample_set_only) || [];
     const median = d => {
         const t = cost[d].time || {};
         return (t.median_s == null) ? Infinity : t.median_s;
@@ -753,12 +757,13 @@ function buildCost() {
             '<td class="metric-cell" data-label="mean time / fn">' + timeCell(t.mean_s) + '</td>' +
             '<td class="metric-cell" data-label="est. cost">' + dolCell + '</td></tr>';
     };
-    const rows = mkRows(all.filter(d => sso.indexOf(d) < 0));
-    const subRows = mkRows(all.filter(d => sso.indexOf(d) >= 0));
+    const perFunction = d => (cost[d].time || {}).basis === "per-function";
+    const rows = mkRows(all.filter(d => !perFunction(d)));
+    const subRows = mkRows(all.filter(perFunction));
     let body = "";
     for (const d of rows) body += rowHtml(d, false);
     if (subRows.length) {
-        body += subsetBreakRow(4);
+        body += subsetBreakRow(4, "per-function agents");
         for (const d of subRows) body += rowHtml(d, true);
     }
     tbl.querySelector("tbody").innerHTML = body;

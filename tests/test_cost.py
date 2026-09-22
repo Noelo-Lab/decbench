@@ -230,6 +230,25 @@ def test_parse_codex_session_tokens_normalizes_cached_input(tmp_path: Path) -> N
     }
 
 
+def test_parse_codex_session_tokens_separates_cache_writes(tmp_path: Path) -> None:
+    path = tmp_path / "s.jsonl"
+    _codex_session(path)
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    records[1]["payload"]["info"]["total_token_usage"]["cache_write_input_tokens"] = 10
+    records[2]["payload"]["info"]["total_token_usage"]["cache_write_input_tokens"] = 60000
+    path.write_text("\n".join(json.dumps(record) for record in records))
+
+    tokens = parse_session_tokens(path)
+
+    assert tokens == {
+        "input": 6000,
+        "cached_input": 487000,
+        "cache_write": 60000,
+        "output": 6500,
+    }
+    assert tokens["input"] + tokens["cached_input"] + tokens["cache_write"] == 553000
+
+
 def test_parse_unknown_session_format_returns_none(tmp_path: Path) -> None:
     """A future backend's log must degrade to None, not a guess."""
     path = tmp_path / "s.jsonl"
@@ -395,7 +414,12 @@ def test_build_cost_info_merges_scans_structured_first(tmp_path: Path) -> None:
     assert set(info["llm"]) == {"claude-code"}
 
 
-def test_build_cost_info_keeps_more_complete_historical_traces(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("backend", "status"), [("claude-code", "ok"), ("codex@gpt-6-astra", "FAILED")]
+)
+def test_build_cost_info_keeps_more_complete_historical_traces(
+    tmp_path: Path, backend: str, status: str
+) -> None:
     from decbench.models.decompilation import (
         DecompilationResult,
         DecompilerMetadata,
@@ -403,20 +427,29 @@ def test_build_cost_info_keeps_more_complete_historical_traces(tmp_path: Path) -
     )
 
     traces = tmp_path / "traces"
-    _trace_md(traces, "claude-code", "O0__p__b__f_0x1", status="ok", elapsed=100)
-    _trace_md(traces, "claude-code", "O0__p__b__g_0x2", status="ok", elapsed=200)
+    _trace_md(traces, backend, "O0__p__b__f_0x1", status=status, elapsed=100)
+    _trace_md(traces, backend, "O0__p__b__g_0x2", status="ok", elapsed=200)
+    for label in ("O0__p__b__f_0x1", "O0__p__b__g_0x2"):
+        _codex_session(traces / backend / f"{label}.session.jsonl")
+    if "@" in backend:
+        (traces / backend).rename(traces / backend.replace("@", "-"))
     result = DecompilationResult(
         binary_path=tmp_path / "b",
         binary_name="b",
-        decompiler=DecompilerMetadata(decompiler_name="claude-code"),
+        decompiler=DecompilerMetadata(decompiler_name=backend),
         functions={
             "g": FunctionDecompilation(name="g", address=2, decompiled_code="x", time_seconds=50.0)
         },
     )
-    dest = tmp_path / "O0" / "proj" / "decompiled" / "claude-code_b.toml"
+    dest = tmp_path / "O0" / "proj" / "decompiled" / f"{backend}_b.toml"
     dest.parent.mkdir(parents=True)
     result.to_toml(dest)
 
-    cost = build_cost_info(tmp_path, traces, ["O0"])["llm"]["claude-code"]
+    llm = build_cost_info(tmp_path, traces, ["O0"])["llm"]
+    assert set(llm) == {backend}
+    cost = llm[backend]
     assert cost["functions"] == 2
+    assert cost["failed"] == (status == "FAILED")
+    assert cost["tokens"]["sessions"] == 2
+    assert cost["tokens"]["output"] == 13000
     assert cost["elapsed"]["mean_s"] == pytest.approx(150.0)

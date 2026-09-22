@@ -47,6 +47,10 @@ sample_set_only = [
     "reko",
 ]
 
+# Exact version overrides take precedence over sample_set_only base names.
+[decompilers.presets]
+"codex@gpt-6-astra" = ["optimized"]
+
 # GitHub Pages custom domain. `decbench site build` writes it into the tree's
 # CNAME file; the authoritative routing for workflow deploys is the repo's Pages
 # settings (Settings -> Pages -> Custom domain), which must carry the same value.

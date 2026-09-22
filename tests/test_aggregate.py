@@ -32,6 +32,7 @@ from decbench.rendering.aggregate import (
     build_dataset_page,
     build_payloads,
     combo_key,
+    union_leaders,
 )
 
 DECS = ["alpha", "beta"]
@@ -366,6 +367,34 @@ def test_sample_set_only_decompiler_still_gates_the_sample_set_preset() -> None:
     assert aggregates["combos"][combo_key("sample-set", False)]["functions"] == 2
     normalized = aggregates["combos"][combo_key("sample-set", True)]
     assert normalized["functions"] == 1, "codex's real failure gates where its row renders"
+
+
+@pytest.mark.parametrize("preset", ["unoptimized", "optimized", "inlined", "large", "sample-set"])
+@pytest.mark.parametrize("astra_ok,legacy_ok", [(False, True), (True, False)])
+def test_versioned_codex_only_gates_its_configured_preset(
+    preset: str, astra_ok: bool, legacy_ok: bool
+) -> None:
+    astra = "codex@gpt-6-astra"
+    decompiled = {"alpha": True, "beta": True, "codex": legacy_ok, astra: astra_ok}
+    func = _func(
+        "scoped",
+        values={dec: {"ged": 0.0} for dec, ok in decompiled.items() if ok},
+        perfects={dec: {"ged": True} for dec, ok in decompiled.items() if ok},
+        decompiled=decompiled,
+        datasets=[preset],
+    )
+    data = _data_with_codex([func])
+    data.decompilers.append(astra)
+    data.dataset_presets = [DatasetPreset(name=preset, label=preset, description="")]
+    aggregates = _build(data)
+
+    assert aggregates["sample_set_only"] == ["codex"]
+    assert aggregates["decompiler_presets"] == {astra: ["optimized"]}
+    expected = astra_ok if preset == "optimized" else legacy_ok if preset == "sample-set" else True
+    assert aggregates["combos"][combo_key(preset, True)]["functions"] == int(expected)
+    assert aggregates["combos"][combo_key(preset, False)]["functions"] == 1
+    leaders = union_leaders(aggregates, preset, exclude_sample_set_only=preset != "sample-set")
+    assert (astra in [dec for _, _, dec in leaders]) == (preset == "optimized")
 
 
 def test_presets_are_non_exclusive_membership_tags() -> None:

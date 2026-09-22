@@ -9,11 +9,11 @@
 # The four axes match decbench.scoring.cost's normalized token buckets:
 #   input_per_mtok         uncached input tokens
 #   cached_input_per_mtok  cache-read input tokens
-#   cache_write_per_mtok   cache-write (creation) input tokens (claude only;
-#                          codex sessions record no cache-write bucket)
+#   cache_write_per_mtok   cache-write (creation) input tokens, when recorded
 #   output_per_mtok        output tokens (codex: includes reasoning tokens)
 #
-# Prices are published list prices (GPT-5.6 Sol checked 2026-09-18). Cost-page
+# Prices are published list prices (GPT-5.6 Sol checked 2026-09-18;
+# GPT-6 Astra checked 2026-09-19). Cost-page
 # figures are labeled "estimated" — MAINTAINER: re-verify against the current
 # published price sheets before each publish (an all-zero model is treated as
 # "unpriced": ModelPricing.is_priced == false, and renders as n/a rather than a
@@ -30,10 +30,20 @@ cache_write_per_mtok = 10.00
 output_per_mtok = 25.00
 
 # GPT-5.6 Sol (codex default). OpenAI API promotional price through at least
-# 2026-11-21; cache writes are 1.25x input (unused by current Codex logs).
+# 2026-11-21; cache writes are 1.25x input.
 [[model]]
 name = "gpt-5.6-sol"
 input_per_mtok = 4.00
 cached_input_per_mtok = 0.40
 cache_write_per_mtok = 5.00
 output_per_mtok = 20.00
+
+# GPT-6 Astra standard rates for requests with at most 272K input tokens.
+# https://developers.openai.com/api/docs/models/gpt-6-astra
+# Larger requests require a separate request-level pricing audit.
+[[model]]
+name = "gpt-6-astra"
+input_per_mtok = 10.00
+cached_input_per_mtok = 1.00
+cache_write_per_mtok = 12.50
+output_per_mtok = 50.00

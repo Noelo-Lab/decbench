@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from decbench.decompilers import llm_dec
+from decbench.decompilers.base import DecompilerConfig
 from decbench.decompilers.registry import DecompilerRegistry
 from decbench.models.decompilation import DecompilationResult, LineMapping
 from decbench.utils import binfmt
@@ -130,6 +131,41 @@ def test_agent_container_does_not_receive_codex_credentials(
     assert not any(".codex" in arg or "CODEX_HOME" in arg for arg in argv)
 
 
+def test_agent_copy_stays_in_configured_work_root_and_cannot_execute(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import subprocess
+    import sys
+
+    binary = tmp_path / "original"
+    binary.write_text("#!/bin/sh\nexit 99\n")
+    binary.chmod(0o755)
+    work_root = tmp_path / "results" / "agent-work"
+    dec = llm_dec.CodexDecompiler(DecompilerConfig(extra_options={"work_dir": str(work_root)}))
+    workdirs: list[Path] = []
+
+    def fake_invocation(
+        workdir: Path, prompt: str, local_binary: Path
+    ) -> tuple[list[str], dict[str, str]]:
+        workdirs.append(workdir)
+        assert workdir.parent == work_root
+        assert local_binary.read_bytes() == binary.read_bytes()
+        assert local_binary.stat().st_mode & 0o777 == 0o400
+        with pytest.raises(PermissionError):
+            subprocess.run([str(local_binary)], check=False)
+        (workdir / "decompiled.c").write_text("int sub_1000(void) { return 1; }\n")
+        return [sys.executable, "-c", "pass"], {"cwd": str(workdir)}
+
+    monkeypatch.setattr(dec, "_invocation", fake_invocation)
+    monkeypatch.setattr(dec, "_build_prompt", lambda *_args: "prompt")
+    monkeypatch.setattr(dec, "_save_trace", lambda *_args, **_kwargs: None)
+    code, _elapsed, _tokens, _mappings = dec._decompile_one(binary, "sub_1000", 0x1000)
+
+    assert code == "int sub_1000(void) { return 1; }\n"
+    assert binary.stat().st_mode & 0o777 == 0o755
+    assert workdirs and not workdirs[0].exists()
+
+
 def test_extract_c_from_fence():
     text = "Here you go:\n```c\nint f(int a) { return a + 1; }\n```\nDone."
     code = llm_dec._extract_c(text)
@@ -142,6 +178,33 @@ def test_extract_c_from_bare_definition():
     assert code is not None
     assert code.strip().startswith("int g(void)")
     assert code.strip().endswith("}")
+
+
+def test_extract_c_rejects_fenced_repository_text() -> None:
+    text = "```\nA full run covers projects/{sailr,cps,malware}/.\n```"
+    assert llm_dec._extract_c(text) is None
+
+
+def test_extract_c_skips_nonfunction_fence() -> None:
+    text = (
+        "```\nprojects/{sailr,cps,malware}/\n```\n"
+        "```c\ntypedef unsigned int word;\n"
+        "word sub_1000(word x) { return x + 1; }\n```"
+    )
+    assert llm_dec._extract_c(text) == (
+        "typedef unsigned int word;\nword sub_1000(word x) { return x + 1; }"
+    )
+
+
+def test_extract_c_ignores_braces_in_literals_and_comments() -> None:
+    code = (
+        "const char *f(void) { /* } */\n"
+        "    char c = '{'; // }\n"
+        '    return c ? "\\"{" : "}";\n'
+        "}\n"
+    )
+    assert llm_dec._extract_c(f"```c\n{code}```") == code.strip()
+    assert llm_dec._extract_c(code + "trailing prose") == code.strip()
 
 
 def test_rename_func_matches_placeholder():

@@ -65,6 +65,8 @@ HARD TOOL POLICY (this is the whole point of the exercise — follow it exactly)
 - You MAY use only simple, non-decompiling binary inspection tools:
   `objdump`, `readelf`, `nm`, `strings`, `xxd` / `od`, `file`, `size`, `c++filt`.
   Read the raw assembly yourself and reason about it; hand-write the C.
+- NEVER execute the input binary or reconstructed code, including through a
+  loader, interpreter, or emulator. This task permits static inspection only.
 
 METHOD
 - Disassemble the target function (e.g. `objdump -d <binary>`), locate it by its
@@ -148,6 +150,10 @@ def _creds_present(*candidates: Path) -> bool:
 
 
 _FUNC_HEADER_RE = re.compile(r"\b([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{")
+_C_LITERAL_OR_COMMENT_RE = re.compile(
+    r"//[^\n]*|/\*.*?\*/|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'",
+    re.DOTALL,
+)
 
 
 def _find_func_span(text: str) -> tuple[int, int, str] | None:
@@ -157,20 +163,22 @@ def _find_func_span(text: str) -> tuple[int, int, str] | None:
     return type on that line is included); ``end`` is just past the matching
     closing brace; ``name`` is the function identifier.
     """
+    masked = _C_LITERAL_OR_COMMENT_RE.sub(lambda m: re.sub(r"[^\r\n]", " ", m[0]), text)
     masked_lines: list[str] = []
     directive = False
-    for line in text.splitlines(keepends=True):
+    for line in masked.splitlines(keepends=True):
         directive = directive or line.lstrip().startswith("#")
         masked_lines.append(re.sub(r"[^\r\n]", " ", line) if directive else line)
         directive = directive and line.rstrip().endswith("\\")
-    m = _FUNC_HEADER_RE.search("".join(masked_lines))
+    masked = "".join(masked_lines)
+    m = _FUNC_HEADER_RE.search(masked)
     if not m:
         return None
     brace = text.index("{", m.end() - 1)
     line_start = text.rfind("\n", 0, m.start()) + 1
     depth = 0
     for i in range(brace, len(text)):
-        ch = text[i]
+        ch = masked[i]
         if ch == "{":
             depth += 1
         elif ch == "}":
@@ -188,10 +196,9 @@ def _extract_c(text: str) -> str | None:
     """
     if not text:
         return None
-    fence = re.search(r"```(?:c|cpp|C)?\s*\n(.*?)```", text, re.DOTALL)
-    if fence:
+    for fence in re.finditer(r"```(?:c|cpp|C)?\s*\n(.*?)```", text, re.DOTALL):
         body = fence.group(1).strip()
-        if "{" in body:
+        if _find_func_span(body) is not None:
             return body
     span = _find_func_span(text)
     if span is None:
@@ -539,12 +546,17 @@ class _AgentDecompiler(Decompiler):
         exact function.
         """
         t0 = time.time()
-        with tempfile.TemporaryDirectory(prefix=f"llmdec_{self.name}_") as tmp:
+        configured_root = self._opt("work_dir", "DECBENCH_LLM_WORK_DIR", "")
+        work_root = Path(configured_root).expanduser().resolve() if configured_root else None
+        if work_root is not None:
+            work_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with tempfile.TemporaryDirectory(prefix=f"llmdec_{self.name}_", dir=work_root) as tmp:
             workdir = Path(tmp)
             # Neutral filename: the real name would let the agent recall the upstream
             # source from memory instead of reverse-engineering it.
             local = workdir / "target.bin"
             shutil.copy2(binary_path, local)
+            local.chmod(0o400)
             outfile = workdir / _OUTFILE
             prompt = self._build_prompt(binary_path, local.name, name, addr, outfile.name)
 
@@ -813,6 +825,8 @@ class CodexDecompiler(_AgentDecompiler):
             "exec",
             "--skip-git-repo-check",
             "--dangerously-bypass-approvals-and-sandbox",
+            "-c",
+            "project_doc_max_bytes=0",
             "-C",
             str(workdir),
         ]
