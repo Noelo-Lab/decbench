@@ -573,7 +573,8 @@ denominator.
 `[decompilers.presets]` in `content/site.toml` restricts exact decompiler ids to
 listed presets and overrides the base-name `sample_set_only` rule. For example,
 `"codex@gpt-6-astra" = ["optimized"]` shows the full O2-noinline run on that preset;
-the historical `codex` entry remains sample-set-only. These overrides ship as
+the unversioned `codex` entry carries the current sample-set run (GPT-6 Astra/max).
+The optimized entry retains its independent full-run results. These overrides ship as
 `decompiler_presets` in `aggregates.json`. They govern leaderboard/data rows,
 social-share rankings, and the decompilers required by normalization. Older
 payloads without the map retain their existing sample-set behavior. The global
@@ -715,7 +716,7 @@ benchmark's fairness contract:
   a leaderboard column); the combo key is unchanged.
 * `normalize=1` additionally restricts to functions **every** decompiler decompiled —
   where "every" means every decompiler *whose rows the preset shows*: the
-  sample-set-only backends (`sample_set_only`, e.g. historical codex/claude-code)
+  sample-set-only backends (`sample_set_only`, e.g. codex/claude-code)
   join the gate only on the sample-set preset. Exact-version `decompiler_presets`
   overrides join it only on their listed presets (`aggregate._active_combos`).
 
