@@ -248,7 +248,14 @@ def test_evaluate_project_accepts_precomputed_cfgs_with_dwarf_owners(
     }
     seen: dict[str, int] = {}
 
-    def evaluate_one(_decompilation, source_cfgs, _metrics):
+    def evaluate_one(
+        _decompilation: object,
+        source_cfgs: dict[str, nx.DiGraph],
+        _metrics: list[str],
+        *,
+        preprocessed_sources: list[Path] | None = None,
+    ) -> dict[str, object]:
+        assert preprocessed_sources is None
         seen["main_nodes"] = source_cfgs["main"].number_of_nodes()
         return {}
 

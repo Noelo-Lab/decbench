@@ -8,12 +8,19 @@ semantics are always exercised.
 
 from __future__ import annotations
 
-import shutil
+import json
+import runpy
+import subprocess
+import sys
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from decbench.decompilers.dockerized import (
+    _DOCKER_DIR,
+    _R2_DRIVER_CONTAINER_PATH,
     DockerizedDecompiler,
     R2DecDecompiler,
     RekoDecompiler,
@@ -25,6 +32,7 @@ from decbench.decompilers.dockerized import (
     split_c_functions,
 )
 from decbench.decompilers.registry import DecompilerRegistry
+from decbench.utils.binfmt import BinInfo
 
 _GZIP_CANDIDATES = [
     Path("results/sailr_full/O0/gzip/compiled/gzip"),
@@ -68,19 +76,32 @@ def test_is_available_false_when_no_docker(monkeypatch: pytest.MonkeyPatch) -> N
     assert RekoDecompiler().is_available() is False
 
 
-def test_r2dec_available_when_native_present() -> None:
-    """r2dec is available if native radare2+r2pipe exist (even w/o image)."""
+@pytest.mark.parametrize("image_present", [True, False])
+def test_r2dec_requires_pinned_image(monkeypatch: pytest.MonkeyPatch, image_present: bool) -> None:
     dec = R2DecDecompiler()
-    native = R2DecDecompiler._native_available()
-    if native:
-        assert dec.is_available() is True
-    else:
-        assert dec.is_available() == DockerizedDecompiler._image_present(dec.image)
+    monkeypatch.setattr(dec, "_image_present", lambda _image: image_present)
+    assert dec.is_available() is image_present
+
+
+def test_r2dec_decompile_fails_without_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    dec = R2DecDecompiler()
+    monkeypatch.setattr(dec, "_image_present", lambda _image: False)
+    with pytest.raises(RuntimeError, match="docker image.*missing"):
+        dec.decompile_binary(Path("/nonexistent/bin"))
+
+
+def test_r2_driver_requires_pdd(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "r2pipe", SimpleNamespace())
+    require_pdd = runpy.run_path(str(_DOCKER_DIR / "r2dec-decompile.py"))["_require_pdd"]
+    with pytest.raises(RuntimeError, match="plugin is unavailable"):
+        require_pdd(SimpleNamespace(cmd=lambda _command: "Please install the plugin"))
+    require_pdd(SimpleNamespace(cmd=lambda _command: "pdd: decompile current function"))
 
 
 def test_get_version_proxies_image_tag() -> None:
     assert RetDecDecompiler().get_version() == "latest"
     assert RekoDecompiler().get_version() == "latest"
+    assert R2DecDecompiler().get_version() == "6.2.0"
 
 
 _FAKE_C = """
@@ -119,6 +140,131 @@ def test_split_c_functions_balances_braces_with_literals() -> None:
     assert "return (uint64_t)x;" in parts["entrypoint"]
 
 
+def test_split_c_functions_accepts_reko_next_line_brace() -> None:
+    source = "word32 fn000000000000352B(word32 a)\n{\n    return a;\n}\n"
+    assert "return a;" in split_c_functions(source)["fn000000000000352B"]
+
+
+def test_split_c_functions_accepts_reko_arm_define() -> None:
+    source = "define fn080011C2\n{\n    word32 r0;\n    if (r0) { r0 = 1; }\n}\n"
+    assert "word32 r0;" in split_c_functions(source)["fn080011C2"]
+
+
+@pytest.mark.parametrize(
+    "cls,name", [(RetDecDecompiler, "function_352b"), (RekoDecompiler, "fn000000000000352B")]
+)
+def test_stripped_docker_output_matches_target_addresses(cls: type, name: str) -> None:
+    dec = cls()
+    source = f"int {name}(void)\n{{\n    return 1;\n}}\n"
+    result = dec._build_result(
+        binary_path=Path("/nonexistent/stripped"),
+        combined_c=source,
+        functions=None,
+        function_names={0x352B},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+    assert list(result.functions) == [name]
+    assert result.functions[name].address == 0x352B
+    assert result.decompiler.extra["slice_scoped"] is True
+
+
+def test_stripped_docker_output_matches_thumb_addresses(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.binfmt.detect", lambda _: BinInfo("elf", "arm", 32)
+    )
+    source = "int function_4501(void) { return 1; }\n"
+    result = RetDecDecompiler()._build_result(
+        binary_path=Path("/nonexistent/stripped"),
+        combined_c=source,
+        functions=None,
+        function_names={0x4500},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+    assert result.functions["function_4501"].address == 0x4501
+
+
+def test_reko_arm_define_matches_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.binfmt.detect", lambda _: BinInfo("elf", "arm", 32)
+    )
+    source = "define fn080011C2\n{\n    word32 r0;\n}\n"
+    result = RekoDecompiler()._build_result(
+        binary_path=Path("/nonexistent/stripped"),
+        combined_c=source,
+        functions=None,
+        function_names={0x80011C2},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+    assert result.functions["fn080011C2"].address == 0x80011C2
+
+
+def test_reko_named_function_comment_matches_target() -> None:
+    source = (
+        "// 0000000000004F6A: void acl_entries(Register (ptr64 Eq_2) rdi)\n"
+        "void acl_entries(void *rdi)\n{\n    return;\n}\n"
+    )
+    result = RekoDecompiler()._build_result(
+        binary_path=Path("/nonexistent/stripped"),
+        combined_c=source,
+        functions=None,
+        function_names={0x4F6A},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+    assert result.functions["acl_entries"].address == 0x4F6A
+
+
+def test_reko_named_comment_must_adjoin_definition() -> None:
+    source = (
+        "// 0000000000004F6A: void acl_entries(void)\n"
+        "int unrelated;\n"
+        "void acl_entries(void) { return; }\n"
+    )
+    result = RekoDecompiler()._build_result(
+        binary_path=Path("/nonexistent/stripped"),
+        combined_c=source,
+        functions=None,
+        function_names={0x4F6A},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+    assert result.functions == {}
+
+
+def test_stripped_docker_output_matches_pe_image_base(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.binfmt.detect", lambda _: BinInfo("pe", "x86-64", 64)
+    )
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.raw_common.elf_min_vaddr", lambda _: 0x400000
+    )
+    source = "int function_1234(void) { return 1; }\n"
+    result = RetDecDecompiler()._build_result(
+        binary_path=Path("/nonexistent/stripped"),
+        combined_c=source,
+        functions=None,
+        function_names={0x401234},
+        elapsed=0.1,
+        timed_out=False,
+        error=None,
+        output_dir=None,
+    )
+    assert result.functions["function_1234"].address == 0x1234
+
+
 def test_split_c_functions_empty_input() -> None:
     assert split_c_functions("") == {}
     assert split_c_functions("// just a comment\nint x;\n") == {}
@@ -129,34 +275,6 @@ def test_split_keeps_first_definition_of_duplicate_name() -> None:
     parts = split_c_functions(src)
     assert "return 1;" in parts["f"]
     assert "return 2;" not in parts["f"]
-
-
-class _FakeR2:
-    """Minimal r2pipe stand-in returning canned ``ij`` / ``aflj`` / ``pdd``."""
-
-    def __init__(self, aflj: list[dict], baddr: int = 0) -> None:
-        self._aflj = aflj
-        self._baddr = baddr
-
-    def cmdj(self, cmd: str):  # noqa: ANN201
-        if cmd == "aflj":
-            return self._aflj
-        if cmd == "ij":
-            return {"bin": {"baddr": self._baddr}}
-        return None
-
-    def cmd(self, cmd: str) -> str:
-        if cmd.startswith(("pdd", "pdc")) and "@" in cmd:
-            addr = int(cmd.rsplit("@", 1)[1].strip(), 0)
-            return (
-                "/* r2dec pseudo code output (r2 6.0.8) */\n"
-                "#include <stdint.h>\n\n"
-                f"int64_t fcn_{addr:08x}(int32_t a) {{\n    return a;\n}}\n"
-            )
-        return ""
-
-    def quit(self) -> None:  # noqa: D401
-        pass
 
 
 def test_r2_is_import_and_bare_name() -> None:
@@ -172,7 +290,7 @@ def test_r2_is_import_and_bare_name() -> None:
 
 def test_func_ident_in_code_strips_banner_and_macros() -> None:
     code = (
-        "/* r2dec pseudo code output (r2 6.0.8) */\n"
+        "/* r2dec pseudo code output (r2 6.2.0) */\n"
         "/* /in/bin @ 0x2e2b */\n"
         "#include <stdint.h>\n\n"
         "#define BIT_MASK(t,v) ((t)(-((v)!=0)))\n\n"
@@ -183,29 +301,6 @@ def test_func_ident_in_code_strips_banner_and_macros() -> None:
     assert _func_ident_in_code(code) == "acl_create_entry"
     assert _func_ident_in_code("void fcn.00003bed (int64_t a) {\n    return;\n}") == "fcn.00003bed"
     assert _func_ident_in_code("if (x) {\n    y();\n}\n") is None
-
-
-def test_r2_discover_normalizes_and_filters() -> None:
-    aflj = [
-        {"name": "sym.imp.free", "addr": 0x500},
-        {"name": "reloc.foo", "addr": 0x600},
-        {"name": "entry0", "addr": 0x1500},
-        {"name": "fcn.00002000", "addr": 0x2000},
-        {"name": "sym.main", "addr": 0x3000},
-        {"name": "sym.outside", "addr": 0x9500},
-    ]
-    r = _FakeR2(aflj, baddr=0)
-    out = R2DecDecompiler._discover(r, elf_base=0, text_range=(0x1000, 0x9000), baddr=0)
-    assert out == [("fcn.00002000", 0x2000, 0x2000), ("sym.main", 0x3000, 0x3000)]
-
-
-def test_r2_discover_rebases_when_baddr_differs() -> None:
-    aflj = [{"name": "fcn.08002000", "addr": 0x8002000}]
-    r = _FakeR2(aflj, baddr=0x8000000)
-    out = R2DecDecompiler._discover(
-        r, elf_base=0x8000000, text_range=(0x8000000, 0x8010000), baddr=0x8000000
-    )
-    assert out == [("fcn.08002000", 0x8002000, 0x8002000)]
 
 
 def test_r2_narrow_by_int_address() -> None:
@@ -239,24 +334,264 @@ def test_r2_make_function_names_from_code_and_relabels() -> None:
     assert R2DecDecompiler._make_function("fcn.x", 0x1, "   ", None) is None
 
 
-def test_r2_decompile_native_int_filter_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The int-address filter path end-to-end, with r2pipe mocked (no binary)."""
-    import r2pipe
-
-    aflj = [
-        {"name": "sym.imp.puts", "addr": 0x500},
-        {"name": "fcn.00001000", "addr": 0x1000},
-        {"name": "sym.wanted", "addr": 0x2000},
-        {"name": "fcn.00003000", "addr": 0x3000},
+def test_r2_make_function_rebases_and_filters_thumb_provenance() -> None:
+    provenance = {
+        "addr": 0x5001,
+        "size": 0x10,
+        "is_thumb": True,
+        "line_mappings": [
+            {"line_number": 1, "addresses": [0x5001, 0x5004, 0x6000]},
+            {"line_number": 99, "addresses": [0x5008]},
+        ],
+        "variables": [
+            {
+                "name": "renamed",
+                "type": "int",
+                "kind": "stack",
+                "stack_offset": -4,
+                "line_numbers": [1, 99],
+                "addresses": [0x5003, 0x5004, 0x6000],
+            }
+        ],
+    }
+    function = R2DecDecompiler._make_function(
+        "fcn.5001",
+        0x9001,
+        "int f(void) { return 0; }",
+        None,
+        provenance,
+        r2_addr=0x5001,
+        baddr=0x4000,
+        elf_base=0x8000,
+    )
+    assert function is not None
+    assert function.address == 0x9000
+    assert [mapping.model_dump() for mapping in function.line_mappings] == [
+        {"line_number": 1, "addresses": [0x9000, 0x9004]}
     ]
-    monkeypatch.setattr(r2pipe, "open", lambda *a, **k: _FakeR2(aflj, baddr=0))
+    assert function.variables[0].line_numbers == [1]
+    assert function.variables[0].addresses == [0x9002, 0x9004]
+
+
+def test_r2_make_function_rejects_malformed_variable_fields() -> None:
+    provenance = {
+        "addr": 0x1000,
+        "size": 0x10,
+        "variables": [
+            {
+                "name": "",
+                "addresses": [0x1004],
+            },
+            {
+                "name": "local",
+                "size": 0,
+                "kind": "stack",
+                "arg_index": 2,
+                "line_numbers": [-1, 0, 1, 99],
+                "addresses": [0x1004],
+            },
+            {
+                "name": "arg1",
+                "size": -4,
+                "kind": "arg",
+                "arg_index": -1,
+                "addresses": [0x1008],
+            },
+        ],
+    }
+    function = R2DecDecompiler._make_function(
+        "fcn.1000",
+        0x1000,
+        "int f(int arg1) {\n    int local = arg1;\n    return local;\n}",
+        None,
+        provenance,
+        r2_addr=0x1000,
+    )
+    assert function is not None
+    assert [variable.name for variable in function.variables] == ["local", "arg1"]
+    assert function.variables[0].size is None
+    assert function.variables[0].arg_index is None
+    assert function.variables[0].line_numbers == [1]
+    assert function.variables[1].size is None
+    assert function.variables[1].arg_index is None
+
+
+def test_r2_code_inferred_local_joins_line_addresses() -> None:
+    from decbench.metrics.base import MetricConfig
+    from decbench.metrics.type_match import TypeMatchMetric
+
+    provenance = {
+        "addr": 0x1000,
+        "size": 0x10,
+        "line_mappings": [{"line_number": 2, "addresses": [0x1004]}],
+    }
+    function = R2DecDecompiler._make_function(
+        "fcn.1000",
+        0x1000,
+        "int target(void) {\n    int renamed = 1;\n    return renamed;\n}",
+        None,
+        provenance,
+        r2_addr=0x1000,
+    )
+    assert function is not None
+    assert function.variables[0].line_numbers == [2, 3]
+    assert function.variables[0].addresses == [0x1004]
+    metric = TypeMatchMetric(MetricConfig())
+    result = metric.compute_for_function(
+        function,
+        ground_truth_vars=[
+            {
+                "identity": "source:0",
+                "name": "original",
+                "type": ["int"],
+                "rbp_offset": [],
+                "addresses": [0x1004],
+            }
+        ],
+        backend="r2dec",
+    )
+    assert result.value == 1.0
+    assert result.metadata["match_stage_counts"] == {"overlap": 1}
+    assert result.metadata["decompiler_address_variables"] == 1
+
+
+def test_r2_code_inferred_variables_abstain_on_shadowed_names() -> None:
+    provenance = {
+        "addr": 0x1000,
+        "size": 0x20,
+        "line_mappings": [
+            {"line_number": 2, "addresses": [0x1004]},
+            {"line_number": 3, "addresses": [0x1008]},
+            {"line_number": 4, "addresses": [0x100C]},
+        ],
+    }
+    function = R2DecDecompiler._make_function(
+        "fcn.1000",
+        0x1000,
+        "int target(void) {\n"
+        "    int shadow = 0;\n"
+        "    { int shadow = 1; shadow++; }\n"
+        "    return shadow;\n"
+        "}\n",
+        None,
+        provenance,
+        r2_addr=0x1000,
+    )
+
+    assert function is not None
+    assert [variable.name for variable in function.variables] == ["shadow"]
+    assert all(variable.line_numbers == [] for variable in function.variables)
+    assert all(variable.addresses == [] for variable in function.variables)
+
+
+def test_r2_docker_payload_populates_native_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     dec = R2DecDecompiler()
-    result = dec._decompile_native(Path("/nonexistent/bin"), None, None, {0x1000, 0x2000}, None)
-    got = {fd.address for fd in result.functions.values()}
-    assert got == {0x1000, 0x2000}
-    for fd in result.functions.values():
-        assert _func_ident_in_code(fd.decompiled_code) == fd.name
-    assert result.decompiler.extra.get("via") == "native"
+    monkeypatch.setattr(dec, "_image_present", lambda _image: True)
+
+    def fake_run(**kwargs: Any) -> subprocess.CompletedProcess[str]:
+        work_dir = kwargs["work_dir"]
+        assert kwargs["args"] == ["/in/bin", "/work/out.json", "/work/targets.json"]
+        assert json.loads((work_dir / "targets.json").read_text()) == [0x1000]
+        assert kwargs["readonly_mounts"] == [
+            (_DOCKER_DIR / "r2dec-decompile.py", _R2_DRIVER_CONTAINER_PATH)
+        ]
+        payload = {
+            "schema_version": 1,
+            "command": "pdd",
+            "functions": [
+                {
+                    "addr": 0x1000,
+                    "baddr": 0,
+                    "name": "fcn.00001000",
+                    "code": "int f(int arg1) {\n    return arg1;\n}",
+                    "size": 0x10,
+                    "line_mappings": [{"line_number": 2, "addresses": [0x1004]}],
+                    "variables": [
+                        {
+                            "name": "arg1",
+                            "type": "int",
+                            "kind": "arg",
+                            "arg_index": 0,
+                            "addresses": [0x1004],
+                            "line_numbers": [2],
+                        }
+                    ],
+                },
+                {
+                    "addr": 0x2000,
+                    "baddr": 0,
+                    "name": "fcn.00002000",
+                    "code": "int unrelated(void) { return 0; }",
+                    "size": 0x10,
+                    "line_mappings": [],
+                    "variables": [],
+                },
+            ],
+        }
+        (work_dir / "out.json").write_text(json.dumps(payload))
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(dec, "_run_docker", fake_run)
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.raw_common.elf_min_vaddr",
+        lambda _path: 0,
+    )
+    monkeypatch.setattr(
+        "decbench.decompilers.dockerized.raw_common.elf_text_ranges",
+        lambda _path: [(0x1000, 0x1010)],
+    )
+    result = dec._decompile_docker(Path("/nonexistent/bin"), None, None, {0x1000}, None)
+    assert {function.address for function in result.functions.values()} == {0x1000}
+    function = next(iter(result.functions.values()))
+    assert function.line_mappings[0].addresses == [0x1004]
+    assert function.variables[0].addresses == [0x1004]
+    assert function.variables[0].arg_index == 0
+    assert result.decompiler.extra["command"] == "pdd"
+
+
+def test_r2_docker_rejects_legacy_unversioned_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dec = R2DecDecompiler()
+    monkeypatch.setattr(dec, "_image_present", lambda _image: True)
+
+    def fake_run(**kwargs: Any) -> subprocess.CompletedProcess[str]:
+        legacy_payload = [
+            {
+                "addr": 0x1000,
+                "baddr": 0,
+                "name": "fcn.00001000",
+                "code": "int f(void) { return 0; }",
+            }
+        ]
+        (kwargs["work_dir"] / "out.json").write_text(json.dumps(legacy_payload))
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(dec, "_run_docker", fake_run)
+    result = dec._decompile_docker(Path("/nonexistent/bin"), None, None, {0x1000}, None)
+
+    assert result.functions == {}
+    assert result.decompiler.failed_functions == ["all"]
+    assert "legacy driver payload" in result.decompiler.extra["error"]
+
+
+def test_r2_docker_rejects_non_pdd_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    dec = R2DecDecompiler()
+    monkeypatch.setattr(dec, "_image_present", lambda _image: True)
+
+    def fake_run(**kwargs: Any) -> subprocess.CompletedProcess[str]:
+        payload = {"schema_version": 1, "command": "pdc", "functions": []}
+        (kwargs["work_dir"] / "out.json").write_text(json.dumps(payload))
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(dec, "_run_docker", fake_run)
+    result = dec._decompile_docker(Path("/nonexistent/bin"), None, None, None, None)
+
+    assert result.functions == {}
+    assert result.decompiler.failed_functions == ["all"]
+    assert "invalid command: pdc" in result.decompiler.extra["error"]
 
 
 @pytest.mark.skipif(not _GZIP.is_file(), reason="sample gzip binary not present")
@@ -293,54 +628,6 @@ def test_build_result_maps_snippets_to_elf_addresses() -> None:
     assert fn.variables == []
     assert fn.line_mappings == []
     assert result.decompiler.decompiler_name == "retdec"
-
-
-def _native_r2dec_ready() -> bool:
-    if shutil.which("r2") is None and shutil.which("radare2") is None:
-        return False
-    try:
-        import r2pipe  # noqa: F401
-    except Exception:
-        return False
-    return _GZIP.is_file()
-
-
-@pytest.mark.skipif(
-    not _native_r2dec_ready(), reason="native radare2/r2pipe or sample binary absent"
-)
-def test_r2dec_native_decompiles_one_function() -> None:
-    dec = R2DecDecompiler()
-    result = dec._decompile_native(_GZIP, None, None, {"rsync_roll"}, None)
-    assert result.decompiler.extra.get("via") == "native"
-    assert "rsync_roll" in result.functions
-    fn = result.functions["rsync_roll"]
-    want = dict(elf_function_symbols(_GZIP)).get("rsync_roll")
-    assert want is not None and fn.address == want
-    assert fn.decompiled_code.strip()
-    assert result.decompiler.decompiler_name == "r2dec"
-
-
-def test_r2dec_native_int_address_filter() -> None:
-    """The benchmark driver hands r2dec a set of int ADDRESSES; only functions at
-    those (normalized) addresses come back, keyed by their code identifier."""
-    if not _native_r2dec_ready():
-        pytest.skip("native radare2/r2pipe or sample binary absent")
-    dec = R2DecDecompiler()
-    syms = dict(elf_function_symbols(_GZIP))
-    wanted = {syms[n] for n in ("rsync_roll", "bi_reverse") if n in syms}
-    assert wanted, "expected known gzip functions"
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as td:
-        prog = Path(td) / "prog.pkl"
-        result = dec._decompile_native(_GZIP, None, Path(td), wanted, prog)
-        got = {fd.address for fd in result.functions.values()}
-        assert got, "expected at least one decompiled function"
-        assert got <= wanted
-        for fd in result.functions.values():
-            assert fd.decompiled_code.strip()
-            assert _func_ident_in_code(fd.decompiled_code) == fd.name
-        assert prog.exists()
 
 
 @pytest.mark.parametrize("cls", [RetDecDecompiler, RekoDecompiler])

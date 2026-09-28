@@ -27,6 +27,7 @@ def evaluate_decompilation(
     source_cfgs: dict[str, DiGraph] | None = None,
     metrics: list[str] | None = None,
     parallel: bool = False,
+    preprocessed_sources: list[Path] | None = None,
 ) -> dict[str, MetricResult]:
     """Evaluate a single decompilation result."""
     if metrics is None:
@@ -55,6 +56,7 @@ def evaluate_decompilation(
                 decompilation,
                 source_cfgs=source_cfgs,
                 decompiled_cfgs=decompiled_cfgs,
+                preprocessed_sources=preprocessed_sources,
             )
             results[metric_name] = result
 
@@ -147,6 +149,7 @@ def evaluate_project(
     from decbench.utils.cfg import best_source_by_name, resolved_source_for_binary
 
     best_by_name = best_source_by_name(source_cfgs_by_binary)
+    preprocessed_sources = list(project.preprocessed_sources.get(optimization, {}).values())
     function_owners = dict(source_function_owners or {})
     if source_function_owners is None and precomputed_source_cfgs is None:
         from decbench.utils import binfmt
@@ -193,6 +196,7 @@ def evaluate_project(
                         source_cfgs,
                         metrics,
                         False,
+                        preprocessed_sources or None,
                     )
                     futures[future] = (binary_name, dec_name)
 
@@ -213,11 +217,13 @@ def evaluate_project(
             results[binary_name] = {}
 
             for dec_name, decompilation in dec_results.items():
-                results[binary_name][dec_name] = evaluate_decompilation(
+                metric_results = evaluate_decompilation(
                     decompilation,
                     source_cfgs,
                     metrics,
+                    preprocessed_sources=preprocessed_sources or None,
                 )
+                results[binary_name][dec_name] = metric_results
 
     _save_evaluation_results(results, eval_output_dir)
 

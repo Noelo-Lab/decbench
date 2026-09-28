@@ -153,6 +153,7 @@ class SiteContent:
     side_stats: dict[str, str]
     hidden_decompilers: tuple[str, ...] = ()
     sample_set_only_decompilers: tuple[str, ...] = ()
+    decompiler_presets: dict[str, tuple[str, ...]] = field(default_factory=dict)
     pages_domain: str = ""
     """Custom domain the split site is served from (``[pages] domain``).
 
@@ -606,6 +607,9 @@ def _load_site() -> SiteContent:
         side_stats=dict(raw["side_stats"]),
         hidden_decompilers=hidden,
         sample_set_only_decompilers=sample_set_only,
+        decompiler_presets={
+            dec: tuple(presets) for dec, presets in (decs.get("presets") or {}).items()
+        },
         pages_domain=str((raw.get("pages") or {}).get("domain") or ""),
     )
 

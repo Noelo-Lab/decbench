@@ -7,7 +7,7 @@ This directory is decbench's single Docker home. Four images package
 |----------|----------|--------------------------|----------------------|----------------------|
 | RetDec   | `retdec` | `decbench/retdec:latest` | `retdec.Dockerfile`  | no (Docker only)     |
 | Reko     | `reko`   | `decbench/reko:latest`   | `reko.Dockerfile`    | no (Docker only)     |
-| r2dec    | `r2dec`  | `decbench/r2dec:latest`  | `r2dec.Dockerfile`   | **yes** (radare2)    |
+| r2dec    | `r2dec`  | `decbench/r2dec:6.2.0`   | `r2dec.Dockerfile`   | no (Docker only)     |
 | Glaurung | `glaurung` | `decbench/glaurung:latest` | `glaurung.Dockerfile` | **yes** |
 
 Unlike the canonical native API backends (angr/ghidra/ida/binja — in-process drivers
@@ -20,15 +20,13 @@ backends. **r2dec** is different: its container driver returns address-keyed
 per-function JSON straight from radare2's **own** analysis (`aaa` + `aflj`), so
 it needs no symbol table and works on fully stripped binaries.
 
-These tools do not expose stack variables / line mappings uniformly, so the
-`FunctionDecompilation.variables` and `.line_mappings` lists are empty. The
-metrics degrade gracefully: GED still parses the recovered C, byte_match
-recompiles it, and type_match falls back to regex/name matching.
+RetDec and Reko do not expose stack variables or line mappings. r2dec returns
+address-keyed variable and line evidence from radare2.
 
 ## Building an image
 
 Images are **never auto-built** (building is a multi-minute side effect).
-`is_available()` only checks whether the image already exists locally:
+`is_available()` only checks for the configured local image.
 
 ```python
 DockerizedDecompiler.is_available()  # docker present AND `docker image inspect <image>` ok
@@ -71,21 +69,15 @@ with the **.NET 8 SDK** (multi-stage build →
 
 ### r2dec
 
-Selection order (`R2DecDecompiler._select_path`): **native with the r2dec
-plugin** (real `pdd`, no container overhead) > **this Docker image** > native
-`pdc` (radare2's built-in pseudo-decompiler, whose asm-like output rarely
-parses for GED). On hosts whose packaged radare2 lacks the dev headers to
-build the plugin (`r2pm -ci r2dec` needs `/usr/include/libr`), the image **is**
-the benchmark path: it builds radare2 **from source** so the real r2dec plugin
-compiles. `is_available()` is true if **either** native radare2+r2pipe is
-present **or** the Docker image exists.
+The backend requires the local `decbench/r2dec:6.2.0` image. It builds the
+matching radare2 and r2dec 6.2.0 release tags and verifies `pdd` during the
+build; the runtime driver also fails if `pdd` is unavailable.
 
 The in-container driver `r2dec-decompile.py` is invoked as
 `/in/<bin> /work/out.json [/work/targets.json]`. `targets.json` (optional) is a
 JSON list of ELF-file-space addresses to restrict to (matched Thumb-bit
-tolerant); `out.json` is a JSON list of `{"addr", "baddr", "name", "code"}`
-entries — one per function, keyed by radare2's own analysis addresses, so
-nothing is split by symbol.
+tolerant); `out.json` is a versioned object whose `functions` field contains
+one address-keyed record per function.
 
 ### Glaurung
 
@@ -116,7 +108,7 @@ the runtime `docker run` invocation.
 
 ### llm-agents (`llm-agents.Dockerfile`)
 
-Container mode for the LLM coding-agent decompilers (`codex` / `claude-code`,
+Container mode for the LLM coding-agent decompilers (`claude-code` / `kimi-code`,
 `decbench/decompilers/llm_dec.py`): both agent CLIs plus only the allowed
 binary-inspection tools (objdump/readelf/nm/strings/xxd/file). The image is
 credential-free — the backend bind-mounts the host's token dirs per call. Built
@@ -128,15 +120,12 @@ manually (no `decompiler-build` hook); see `docs/decompilers.md`.
   `glaurung.Dockerfile` — the decompiler
   backend images.
 - `compile.Dockerfile` — the `decbench-compile` cross-compile image (see above).
-- `llm-agents.Dockerfile` — the codex/claude-code container mode (see above).
+- `llm-agents.Dockerfile` — the claude-code/kimi-code container mode (see above).
 - `reko-decompile.sh` — Reko in-container driver (copied to `/opt/reko/decompile.sh`).
 - `r2dec-decompile.py` — r2dec in-container driver (copied to `/opt/`).
 
 ## Notes / limitations
 
-- On the dev machine, the native r2dec plugin **cannot** build (no radare2 dev
-  headers, no sudo), so `_select_path` lands on the Docker image — there the
-  image, not native `pdc`, is the benchmark path.
 - Reko / RetDec CLI flags vary slightly across versions; the helper scripts run
   permissively and gather any `*.c` output. Bump `RETDEC_VERSION`/`REKO_REF` args
   and retag the image to change versions (the dockerized backends do not read

@@ -385,6 +385,7 @@ class PipelineExecutor:
                     dec_result,
                     source_cfgs,
                     self.config.metrics,
+                    preprocessed_sources=[source_path] if source_path else None,
                 )
                 results.evaluate_results[binary_name][dec_name] = eval_result
 

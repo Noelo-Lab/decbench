@@ -465,38 +465,51 @@ function totalFunctions() { return (AGG && AGG.totals && AGG.totals.functions) |
 
 function pairOf(map, key) { const c = map && map[key]; return c || [0, 0]; }
 function metricCell(result, d, m) { return pairOf((result.per_metric || {})[d], m); }
-
+function metricEvidence(result, d, m) {
+    const byDec = (result.metric_evidence || {})[d] || {};
+    return byDec[m] || null;
+}
+function evidenceUsesHeuristic(evidence) {
+    if (!evidence) return false;
+    const nativeCount = evidence.native || 0;
+    const reportedCount = evidence.agent_reported || 0;
+    const fallbackCount = evidence.fallback_only || 0;
+    const measured = evidence.measured || 0;
+    return reportedCount > 0 || fallbackCount > 0 ||
+        measured > nativeCount + reportedCount + fallbackCount;
+}
 // Decompilers to render as rows for the CURRENT preset. AGG.sample_set_only
 // backends ran on the sample-set slice only, so they render there and, on the
 // data page, below a partial-coverage break (splitDecs) — never elsewhere.
-// AGG.sample_set_only (the LLM/coding-agent ones — codex/claude-code) ran on the
-// sample-set slice only, so their rows are shown ONLY when the sample-set preset is
-// selected; on every other view they are omitted (their data still ships, it is
-// just not rendered where the shared denominator would make them look near-empty).
 // Exception: the data page renders them everywhere via splitDecs() below —
 // separated and marked as partial-coverage instead of hidden.
 const SAMPLE_SET_PRESET = "sample-set";
+function presetDecs(preset) {
+    const allowed = (AGG && AGG.decompiler_presets) || {};
+    return ((AGG && AGG.decompilers) || []).filter(d =>
+        !Object.prototype.hasOwnProperty.call(allowed, d) || allowed[d].includes(preset));
+}
 function visibleDecs() {
-    const all = ((AGG && AGG.decompilers) || []).slice();
+    const preset = state.dataset || defaultPresetName();
+    const all = presetDecs(preset);
     const sso = (AGG && AGG.sample_set_only) || [];
     if (!sso.length) return all;
-    const preset = state.dataset || defaultPresetName();
     if (preset === SAMPLE_SET_PRESET) return all;
     return all.filter(d => sso.indexOf(d) < 0);
 }
 function splitDecs() {
-    const all = ((AGG && AGG.decompilers) || []).slice();
-    const sso = (AGG && AGG.sample_set_only) || [];
     const preset = state.dataset || defaultPresetName();
+    const all = presetDecs(preset);
+    const sso = (AGG && AGG.sample_set_only) || [];
     if (!sso.length || preset === SAMPLE_SET_PRESET) return {main: all, subset: []};
     return {
         main: all.filter(d => sso.indexOf(d) < 0),
         subset: all.filter(d => sso.indexOf(d) >= 0),
     };
 }
-function subsetBreakRow(colspan) {
+function subsetBreakRow(colspan, label = "sample-set only") {
     return '<tr class="subset-break"><td colspan="' + colspan +
-        '">&mdash; sample-set only &mdash;</td></tr>';
+        '">&mdash; ' + escapeHtml(label) + ' &mdash;</td></tr>';
 }
 function toggleSubsetNote(id, on) {
     const el = document.getElementById(id);
@@ -549,11 +562,27 @@ function showBannerHtml(viewId, html) {
     if (b) b.innerHTML = html;
 }
 
-function cellPctHtml(cell) {
+function cellPctHtml(cell, evidence) {
     const p = pct(cell);
+    const marker = evidenceUsesHeuristic(evidence)
+        ? '<a class="evidence-mark" href="#type-evidence-note" ' +
+          'aria-label="Type-score measurement note" aria-describedby="type-evidence-note" ' +
+          'title="This Type score includes agent-reported, legacy, or uncategorized correspondence evidence.">*</a>'
+        : "";
     return '<span class="bar-ascii">' + asciiBar(p, 8) + '</span> ' +
-        '<span class="cell-pct pct-' + pctClass(p) + '">' + p.toFixed(1) + '%</span> ' +
+        '<span class="cell-pct pct-' + pctClass(p) + '">' + p.toFixed(1) + '%' + marker +
+        '</span> ' +
         '<span class="cell-count">(' + cell[0] + '/' + cell[1] + ')</span>';
+}
+function metricPctHtml(result, d, m) {
+    const evidence = m === "type_match" ? metricEvidence(result, d, m) : null;
+    return cellPctHtml(metricCell(result, d, m), evidence);
+}
+function updateTypeEvidenceNote(result) {
+    const note = document.getElementById("type-evidence-note");
+    if (!note) return;
+    note.hidden = !visibleDecs().some(d =>
+        evidenceUsesHeuristic(metricEvidence(result, d, "type_match")));
 }
 function errPctClass(p) { return p < 2 ? "high" : (p < 10 ? "mid" : "low"); }
 function errRate(cell) { return cell && cell[1] > 0 ? (cell[0] / cell[1]) * 100 : 0; }
@@ -594,7 +623,7 @@ function buildLeaderboard(result) {
             '<td class="lb-name lb-name-stacked" title="' + escapeHtml(decTip(d)) + '">' +
             decNameHtml(d, {stacked: true}) + '</td>';
         row += '<td class="metric-cell col-overall" data-label="Union">' + cellPctHtml(overallCell(result, d)) + '</td>';
-        for (const m of metrics) row += '<td class="metric-cell" data-label="' + escapeHtml(metricShort(m)) + '">' + cellPctHtml(metricCell(result, d, m)) + '</td>';
+        for (const m of metrics) row += '<td class="metric-cell" data-label="' + escapeHtml(metricShort(m)) + '">' + metricPctHtml(result, d, m) + '</td>';
         row += '<td class="metric-cell" data-label="Errors">' + errorCellHtml(errorCell(result, d)) + '</td>';
         row += '</tr>';
         body += row;
@@ -621,7 +650,7 @@ function buildMetricsTable(result) {
     let body = "";
     for (const d of decs) {
         let row = '<tr><td class="lb-name" title="' + escapeHtml(decTip(d)) + '">' + decNameHtml(d) + '</td>';
-        for (const m of metrics) row += '<td class="metric-cell" data-label="' + escapeHtml(metricShort(m)) + '">' + cellPctHtml(metricCell(result, d, m)) + '</td>';
+        for (const m of metrics) row += '<td class="metric-cell" data-label="' + escapeHtml(metricShort(m)) + '">' + metricPctHtml(result, d, m) + '</td>';
         row += '<td class="metric-cell col-overall" data-label="Union">' + cellPctHtml(overallCell(result, d)) + '</td>';
         row += '<td class="metric-cell" data-label="Errors">' + errorCellHtml(errorCell(result, d)) + '</td>';
         row += '</tr>';
@@ -709,7 +738,6 @@ function buildCost() {
     tbl.querySelector("thead tr").innerHTML =
         "<th>decompiler</th><th>median time / fn</th><th>mean time / fn</th><th>est. cost</th>";
     const all = ((AGG && AGG.decompilers) || []).filter(d => cost[d]);
-    const sso = (AGG && AGG.sample_set_only) || [];
     const median = d => {
         const t = cost[d].time || {};
         return (t.median_s == null) ? Infinity : t.median_s;
@@ -729,12 +757,13 @@ function buildCost() {
             '<td class="metric-cell" data-label="mean time / fn">' + timeCell(t.mean_s) + '</td>' +
             '<td class="metric-cell" data-label="est. cost">' + dolCell + '</td></tr>';
     };
-    const rows = mkRows(all.filter(d => sso.indexOf(d) < 0));
-    const subRows = mkRows(all.filter(d => sso.indexOf(d) >= 0));
+    const perFunction = d => (cost[d].time || {}).basis === "per-function";
+    const rows = mkRows(all.filter(d => !perFunction(d)));
+    const subRows = mkRows(all.filter(perFunction));
     let body = "";
     for (const d of rows) body += rowHtml(d, false);
     if (subRows.length) {
-        body += subsetBreakRow(4);
+        body += subsetBreakRow(4, "per-function agents");
         for (const d of subRows) body += rowHtml(d, true);
     }
     tbl.querySelector("tbody").innerHTML = body;
@@ -771,6 +800,7 @@ function refresh() {
     buildMetricsTable(lastResult);
     buildDistance(lastResult);
     buildCompile(lastResult);
+    updateTypeEvidenceNote(lastResult);
     updateStats(lastResult);
     renderDatasetProjects();
 }

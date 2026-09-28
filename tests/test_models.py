@@ -1,26 +1,24 @@
 """Tests for data models."""
 
-import pytest
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
-from decbench.models.project import (
-    Project,
-    ProjectConfig,
-    CompilationConfig,
-    OptimizationLevel,
-    RemoteType,
-)
+import pytest
+
 from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
 )
-from decbench.models.metrics import (
-    MetricValue,
-    MetricResult,
+from decbench.models.metrics import MetricResult, MetricValue
+from decbench.models.project import (
+    CompilationConfig,
+    OptimizationLevel,
+    Project,
+    ProjectConfig,
+    RemoteType,
 )
-from decbench.models.scoreboard import Scoreboard, DecompilerScore, MetricScore
+from decbench.models.scoreboard import DecompilerScore, MetricScore, Scoreboard
 
 
 class TestProjectModels:
@@ -139,6 +137,22 @@ class TestDecompilationModels:
         )
         assert result.function_count == 1
         assert result.successful_count == 1
+
+    def test_legacy_function_toml_without_cost_fields(self, tmp_path: Path) -> None:
+        function = FunctionDecompilation(
+            name="main", address=0x1000, decompiled_code="int main() {}"
+        )
+        function.__dict__.pop("time_seconds")
+        function.__dict__.pop("llm_tokens")
+        result = DecompilationResult(
+            binary_path=Path("/test/binary.o"),
+            binary_name="binary",
+            decompiler=DecompilerMetadata(decompiler_name="test_dec"),
+            functions={"main": function},
+        )
+        path = tmp_path / "result.toml"
+        result.to_toml(path)
+        assert "functions.main" in path.read_text()
 
 
 class TestMetricModels:

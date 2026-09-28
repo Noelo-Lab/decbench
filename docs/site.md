@@ -15,15 +15,16 @@ NO CSS, NO JS, NO prose. Layout:
 - `content/` — **ALL maintainer-editable text.** `<view>.md` per view
   (leaderboard, **data**, **view**, changelog, **snapshots**, **about**) + `site.toml`
   (brand/footer/banners/sidebar/side_stats, and `[decompilers] hidden` = the
-  site-hidden decompilers, currently Phoenix), `views.toml` (view registry: id, nav label,
+  site-hidden decompilers, currently Phoenix and RetDec), `views.toml` (view registry:
+  id, nav label,
   `requires_function_data`, which is `default`), `metrics.toml` (display
   name/short name/order/perfect definition — the ONE source of truth),
   `datasets.toml` (the 5 presets' label+description+`default`),
   `categories.toml` (software-type taxonomy), `pricing.toml` (per-model
   USD/MTok list prices for the cost table — applied at RENDER time against
   `FunctionData.cost_info`'s token facts, so a price fix is a re-render;
-  ships all-zero PLACEHOLDER cards that render n/a until the maintainer fills
-  them in), PLUS `decompilers.toml` — the decompiler registry (id → official
+  unknown or all-zero price cards render n/a), PLUS `decompilers.toml` — the
+  decompiler registry (id → official
   display_name/url/license/logo/`private_artifacts`/version_overrides, e.g.
   ida→"Hex-Rays" + "920"→"9.2");
   shipped into `aggregates.json` as `decompiler_registry` (hidden decompilers
@@ -533,6 +534,10 @@ button (`#theme-toggle`) flips and persists it at runtime.
       "overall": {"angr": [111, 222]},   // Union column: decompiler -> [perfect, total]
       "errors":  {"angr": [5, 1000]},    // decompiler -> [errored, scope]
       "compile": {"angr": [890, 1000]},  // Compiles rate (data page): decompiler -> [compiled, byte_match-measured]
+      "metric_evidence": {               // dec -> metric -> provenance counts
+        "angr": {"type_match": {"native": 67000, "agent_reported": 0,
+                                  "fallback_only": 0, "measured": 67000}}
+      },
       "distance": {                      // decompiler -> metric -> stats | null
         "angr": {"ged": {"mean": 3.25, "median": 2, "n": 5000, "at0": 1200}}
       }
@@ -549,7 +554,31 @@ percentage client-side keeps the JSON small and lossless.
 `distance[dec][metric]` is `null` when no function under the combo had a finite
 distance for that metric.
 
+`metric_evidence` is measurement provenance, not another score. For Type
+Correctness, `native` means the seven supported full-dataset backends used the
+address-based correspondence; `agent_reported` means a text-only producer
+provided a line-to-address map for the address path; `fallback_only` means a
+producer without such evidence was kept evaluable through the older name-based
+correspondence. `measured` is the
+number of finite metric rows, including historical rows that carry no provenance.
+The client adds an asterisk to a Type percentage when any contributing row used
+agent-reported or fallback evidence, or when historical measured rows lack an
+evidence category. Native
+rows remain native even when the conservative matcher accepts no pair, so those
+zero-match rows do not receive the marker. The marker does not alter the score or
+denominator.
+
 ### Decompiler registry
+
+`[decompilers.presets]` in `content/site.toml` restricts exact decompiler ids to
+listed presets and overrides the base-name `sample_set_only` rule. For example,
+`"codex@gpt-6-astra" = ["optimized"]` shows the full O2-noinline run on that preset;
+the unversioned `codex` entry carries the current sample-set run (GPT-6 Astra/max).
+The optimized entry retains its independent full-run results. These overrides ship as
+`decompiler_presets` in `aggregates.json`. They govern leaderboard/data rows,
+social-share rankings, and the decompilers required by normalization. Older
+payloads without the map retain their existing sample-set behavior. The global
+cost table still includes every visible backend, grouped by timing basis.
 
 `decompiler_registry` maps each decompiler id to how it is shown — `display_name`,
 an optional `url` (a project homepage; the client renders a link when present,
@@ -612,9 +641,20 @@ Provenance is a two-layer split so a price fix never needs a re-scan:
   per-function time = binary wall time / function count), and per-function LLM
   times + token sums from the structured `FunctionDecompilation.time_seconds` /
   `llm_tokens` fields (new runs) or the `$DECBENCH_LLM_TRACE_DIR` trace scan
-  (historical runs). Facts only — no dollar amounts are stored.
+  (historical runs). When traces cover more calls than the structured records,
+  their totals take precedence, including failed calls and same-name functions
+  combined during relabeling. Trace headers provide the canonical decompiler ID
+  (such as `codex@gpt-6-astra`), since folder names replace `@` with `-`.
+  Codex input totals include cached reads and cache writes;
+  the parser separates them from ordinary input so each token is counted in
+  one pricing category. Older sessions without cache-write usage retain zero
+  cache-write tokens. Facts only — no dollar amounts are stored.
 * **Prices** live in `decbench/rendering/content/pricing.toml` (USD per MTok per
-  model) and are applied at RENDER time (`aggregate._cost_block`).
+  model) and are applied at RENDER time (`aggregate._cost_block`). GPT-6 Astra's
+  card records standard rates for requests with at most 272K input tokens.
+  Aggregated token facts do not capture request sizes; audit the raw session
+  usage before publication to identify any larger requests requiring the
+  higher input/cache and output rates.
 
 Entry semantics:
 
@@ -625,8 +665,7 @@ Entry semantics:
 * `dollars` is always `null` for batch entries (no per-token cost). For LLM entries
   it is `{"total", "per_function", "model", "estimated": true}` — an **estimate**
   from recorded token usage at list prices — or `null` when the model is unknown,
-  unpriced (pricing.toml ships all-zero **placeholder** cards until the maintainer
-  verifies list prices; an unpriced model must render as n/a, never $0.00), or no
+  unpriced (a missing or all-zero price card must render as n/a, never $0.00), or no
   token data was captured.
 * Keyed off the visible `decompilers` list, so a site-hidden backend's cost never
   ships; a decompiler with no cost facts is simply absent.
@@ -677,9 +716,9 @@ benchmark's fairness contract:
   a leaderboard column); the combo key is unchanged.
 * `normalize=1` additionally restricts to functions **every** decompiler decompiled —
   where "every" means every decompiler *whose rows the preset shows*: the
-  sample-set-only backends (`sample_set_only`, e.g. codex/claude-code) attempt nothing
-  outside the sample-set slice, so they join the gate only on the sample-set preset and
-  are ignored elsewhere (`aggregate._active_combos`).
+  sample-set-only backends (`sample_set_only`, e.g. codex/claude-code)
+  join the gate only on the sample-set preset. Exact-version `decompiler_presets`
+  overrides join it only on their listed presets (`aggregate._active_combos`).
 
 ## `data/dataset.json`
 

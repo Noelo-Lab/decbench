@@ -7,13 +7,11 @@ the consumer CLI (`decbench_data`, §7), and the `decbench download` alias (§8)
 implement against; paths, schemas, and key conventions here are normative — do
 not diverge from them.
 
-- **Source data**: a completed results tree at `results/full_run` (the richest:
-  9 decompilers — `angr`, `ghidra`, `ida`, `binja`, `kuna`,
-  `r2dec`, `dewolf`, plus the sample-set-only LLM agents `codex` and
-  `claude-code`; 40 projects; O0 / O2 / O2-noinline; ~806 evaluated binaries;
-  ~95k function records — all counts flow from the tree at publish time, not
-  from this doc). Its `function_results.json` (schema v2) is the authoritative
-  index of what was evaluated and is the anchor the publisher iterates over.
+- **Source data**: a completed results tree (normally `results/full_run`). Its
+  `function_results.json` (schema v2) is the authoritative index of projects,
+  binaries, functions, and decompiler columns. The seven full-corpus backends
+  and whichever sample-set-only columns are present are read from that file;
+  counts flow from the tree at publish time, not from this doc.
 - **Dataset repo**: `~/github/decbench-dataset`, a HuggingFace *dataset* git repo
   with `repo_id = "noelo-lab/decbench-dataset"` (remote
   `git@hf.co:datasets/noelo-lab/decbench-dataset`). Large files go through Git
@@ -34,11 +32,10 @@ matching `decbench.scoring.aggregator` (`project::opt::binary::function`) and
   (e.g. `example`, `update-passwd`, `libz.so.1.2`) — NOT necessarily the
   on-disk filename, which may carry a suffix (`libz.so.1.2.13`, `mydoom.exe`).
   Resolve the real file with `decbench.utils.results_tree.resolve_binary`.
-- Decompiler ids in `full_run` are single-version, so their unversioned `name`
-  is used everywhere. The set is read from `function_results.json`, never
-  hardcoded (currently the 9 above; `codex`/`claude-code` cover only the
-  sample-set slice). The
-  on-disk decompiled artifact is `decompiled/<name>_<stem>.c` (+ `.toml`).
+- Decompiler ids are `name` or `name@version`, as recorded in
+  `function_results.json`; the publisher never hardcodes the set. Sample-only
+  backends cover the frozen sample-set slice. The on-disk decompiled artifact
+  is `decompiled/<id>_<stem>.c` (+ `.toml`).
 
 ## 1. Published repo layout
 
@@ -157,7 +154,7 @@ consumer can download exactly a config from this file alone.
   "description": "~250 functions evenly sampled across unoptimized/optimized/inlined/large/ARM and projects",
   "dataset_repo": "noelo-lab/decbench-dataset",
   "created": "2026-07-04T00:00:00",            // ISO; stamped by publisher (not inside a workflow)
-  "decompilers": ["angr","ghidra","ida","binja","kuna","r2dec","dewolf","codex","claude-code"],
+  "decompilers": ["angr","ghidra","codex","reko","retdec"], // illustrative
   "metrics": ["byte_match","ged","type_match"],
   "function_count": 250,
   "binary_count": 250,
@@ -198,7 +195,7 @@ file — the publisher must reconcile the manifest with what is actually on disk
 name = "decbench-dataset"
 repo_id = "noelo-lab/decbench-dataset"
 opt_levels = ["O0", "O2", "O2-noinline"]
-decompilers = ["angr","ghidra","ida","binja","kuna","r2dec","dewolf","codex","claude-code"]
+decompilers = ["angr","ghidra","codex","reko","retdec"] # illustrative
 metrics = ["byte_match","ged","type_match"]
 projects = 40
 binaries = 806

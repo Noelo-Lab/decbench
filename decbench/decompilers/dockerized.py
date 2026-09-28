@@ -1,47 +1,14 @@
-"""Container-backed and external-tool decompiler plugins.
+"""Container-backed decompiler plugins.
 
-This module hosts decompilers that ship as standalone CLIs rather than Python
-libraries:
-
-- **Reko** (``reko``) — .NET decompiler, run inside a Docker image.
-- **RetDec** (``retdec``) — LLVM-based decompiler, run inside a Docker image.
-- **r2dec** (``r2dec``) — radare2's r2dec decompiler. Discovers functions from
-  radare2's OWN analysis (``aaa`` + ``aflj``, so it works on fully STRIPPED
-  ELF/PE and ARM firmware), normalizes addresses to ELF-file space, and
-  decompiles each function with the r2dec ``pdd`` command — falling back to the
-  built-in ``pdc`` pseudo-decompiler when the r2dec plugin is absent. It picks,
-  in order, native-with-plugin > the ``decbench/r2dec`` Docker image (real
-  r2dec built from source; the host's packaged r2 usually lacks the dev headers
-  to build the plugin natively) > native ``pdc``. Unlike the whole-program
-  RetDec/Reko path, r2dec does NOT go through the ELF symbol table or
-  ``split_c_functions`` — its discovery and per-function decompile are
-  symbol-free and address-keyed, matching how the benchmark driver hands it a
-  stripped binary + a set of DWARF ``low_pc`` addresses.
-
-Common design (:class:`DockerizedDecompiler`):
-    The container is run with the target binary bind-mounted **read-only**; the
-    decompiler emits whole-program C, which we then split into per-function
-    snippets. Function *names and addresses* come from the binary's ELF symbol
-    table (via pyelftools), so addresses live in **ELF file space** and line up
-    with DWARF and the rest of decbench.
-
-    These tools do not expose stack variables / line mappings uniformly, so
-    ``FunctionDecompilation.variables`` and ``.line_mappings`` are left empty.
-    The metrics degrade gracefully: GED still parses the recovered C, byte_match
-    recompiles it, and type_match falls back to regex/name parsing.
-
-Images are **not** auto-built. ``is_available()`` only reports whether the image
-already exists locally; build it explicitly with ``decbench decompiler-build
-<name>`` (which calls :meth:`DockerizedDecompiler.build_image`).
+Images are never built implicitly. Reko and RetDec split whole-program C;
+r2dec consumes address-keyed records from its pinned image.
 """
 
 from __future__ import annotations
 
 import contextlib
-import glob
 import json
 import logging
-import os
 import re
 import shutil
 import subprocess
@@ -63,7 +30,9 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    VariableInfo,
 )
+from decbench.utils import binfmt
 
 _l = logging.getLogger(__name__)
 
@@ -122,6 +91,7 @@ _FUNC_DEF_RE = re.compile(
     r"^[A-Za-z_][\w\s\*\(\),:<>\[\]&]*?\b([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{",
     re.MULTILINE,
 )
+_REKO_DEFINE_RE = re.compile(r"^define\s+(fn[0-9a-fA-F]+)\s*\{", re.MULTILINE)
 
 
 def split_c_functions(combined_c: str) -> dict[str, str]:
@@ -140,7 +110,10 @@ def split_c_functions(combined_c: str) -> dict[str, str]:
     n = len(lines)
     while i < n:
         line = lines[i]
-        m = _FUNC_DEF_RE.match(line)
+        m = _FUNC_DEF_RE.match(line) or _REKO_DEFINE_RE.match(line)
+        if m is None and i + 1 < n:
+            pair = line + lines[i + 1]
+            m = _FUNC_DEF_RE.match(pair) or _REKO_DEFINE_RE.match(pair)
         if m is None:
             i += 1
             continue
@@ -164,6 +137,20 @@ def split_c_functions(combined_c: str) -> dict[str, str]:
         results.setdefault(name, snippet)
         i = j + 1
     return results
+
+
+def _reko_named_addresses(combined_c: str, snippets: dict[str, str]) -> dict[str, int]:
+    addresses: dict[str, int] = {}
+    for name, code in snippets.items():
+        position = combined_c.find(code)
+        if position < 0:
+            continue
+        prefix = combined_c[max(0, position - 512) : position]
+        pattern = rf"(?m)^//\s*([0-9a-fA-F]{{8,16}}):[^\n]*\b{re.escape(name)}\s*\([^\n]*"
+        matches = list(re.finditer(pattern, prefix))
+        if matches and not prefix[matches[-1].end() :].strip():
+            addresses[name] = int(matches[-1].group(1), 16)
+    return addresses
 
 
 def _strip_c_literals(line: str) -> str:
@@ -278,6 +265,7 @@ class DockerizedDecompiler(Decompiler):
         binary_path: Path,
         work_dir: Path,
         timeout: float | None = None,
+        readonly_mounts: list[tuple[Path, str]] | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run ``docker run`` with the binary mounted read-only at ``/in/<name>``
         and ``work_dir`` mounted read-write at ``/work``.
@@ -292,15 +280,21 @@ class DockerizedDecompiler(Decompiler):
             docker,
             "run",
             "--rm",
+            "--network",
+            "none",
             *docker_tracking_args(),
             *docker_memory_args(),
             "-v",
             f"{binary_path.resolve()}:/in/{binary_path.name}:ro",
             "-v",
             f"{work_dir.resolve()}:/work",
-            self.image,
-            *args,
         ]
+        for host_path, container_path in readonly_mounts or []:
+            resolved = host_path.resolve()
+            if not resolved.is_file():
+                raise FileNotFoundError(f"Docker bind source not found: {resolved}")
+            cmd.extend(["-v", f"{resolved}:{container_path}:ro"])
+        cmd.extend([self.image, *args])
         _l.debug("docker run: %s", " ".join(cmd))
         try:
             return subprocess.run(
@@ -318,7 +312,7 @@ class DockerizedDecompiler(Decompiler):
         binary_path: Path,
         functions: list[tuple[str, int]] | None = None,
         output_dir: Path | None = None,
-        function_names: set[str] | None = None,
+        function_names: set[str] | set[int] | None = None,
         progress_path: Path | None = None,
     ) -> DecompilationResult:
         """Decompile a binary inside the container and split into functions.
@@ -381,24 +375,42 @@ class DockerizedDecompiler(Decompiler):
         binary_path: Path,
         combined_c: str,
         functions: list[tuple[str, int]] | None,
-        function_names: set[str] | None,
+        function_names: set[str] | set[int] | None,
         elapsed: float,
         timed_out: bool,
         error: str | None,
         output_dir: Path | None,
     ) -> DecompilationResult:
         """Assemble a :class:`DecompilationResult` from whole-program C."""
+        snippets = split_c_functions(combined_c) if combined_c else {}
         if functions is not None:
             name_to_addr = {n: a for n, a in functions}
+        elif function_names and all(isinstance(a, int) for a in function_names):
+            targets = {int(a) for a in function_names}
+            info = binfmt.detect(binary_path)
+            base = raw_common.elf_min_vaddr(binary_path) if info and info.fmt == "pe" else 0
+            thumb_targets = (
+                {target & ~1 for target in targets} if info and info.arch == "arm" else set()
+            )
+            reko_addresses = (
+                _reko_named_addresses(combined_c, snippets) if self.name == "reko" else {}
+            )
+            name_to_addr = {}
+            for name in snippets:
+                match = re.fullmatch(r"(?:function_|fn)([0-9a-fA-F]+)", name)
+                if match is None and name not in reko_addresses:
+                    continue
+                address = int(match.group(1), 16) if match else reko_addresses[name]
+                candidates = (address, address + base) if base else (address,)
+                if any(
+                    candidate in targets or candidate & ~1 in thumb_targets
+                    for candidate in candidates
+                ):
+                    name_to_addr[name] = address
         else:
             name_to_addr = dict(elf_function_symbols(binary_path))
-
-        if function_names:
-            filtered = {n: a for n, a in name_to_addr.items() if n in function_names}
-            if filtered:
-                name_to_addr = filtered
-
-        snippets = split_c_functions(combined_c) if combined_c else {}
+            if function_names:
+                name_to_addr = {n: a for n, a in name_to_addr.items() if n in function_names}
 
         decompiled: dict[str, FunctionDecompilation] = {}
         failed: list[str] = []
@@ -421,7 +433,11 @@ class DockerizedDecompiler(Decompiler):
                 },
             )
 
-        extra: dict[str, object] = {"via": "docker", "image": self.image}
+        extra: dict[str, object] = {
+            "via": "docker",
+            "image": self.image,
+            "slice_scoped": bool(function_names or functions),
+        }
         if error:
             extra["error"] = error
         if not combined_c:
@@ -508,10 +524,61 @@ _R2_ENTRY_NAMES = frozenset({"entry0", "entry1", "entry.init0", "entry.fini0", "
 
 _C_KEYWORDS = frozenset({"if", "while", "for", "switch", "return", "do", "else", "sizeof", "case"})
 
-# Tolerates both r2 pseudo-name spellings (``fcn.00003bed`` from ``pdc`` and
-# ``fcn_00003bed`` from ``pdd``). The parameter list is matched non-greedily so
-# an ``ident (...)`` inside a comment cannot swallow text up to the real ``) {``.
+# Tolerates both common r2 pseudo-name spellings.
 _R2_DEF_RE = re.compile(r"\b([A-Za-z_][\w.]*)\s*\([^;{}]*?\)\s*\{")
+_R2_DRIVER_SCHEMA_VERSION = 1
+_R2_DRIVER_CONTAINER_PATH = "/opt/r2dec-decompile.py"
+
+
+def _r2_int(value: Any, default: int | None = None) -> int | None:
+    """Best-effort integer conversion for radare2's mixed JSON scalars."""
+    try:
+        return int(value, 0) if isinstance(value, str) else int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _r2_inferred_variables(
+    code: str,
+    function_name: str,
+    line_mappings: list[Any],
+) -> list[VariableInfo]:
+    """Join uniquely bound C variables to native r2 render-line addresses."""
+    try:
+        from decbench.metrics.type_match import parse_c_variables
+        from decbench.metrics.variable_features import variable_occurrence_lines
+
+        variables = parse_c_variables(code, function_name)
+        occurrence_lines = variable_occurrence_lines(
+            code,
+            function_name,
+            (variable.name for variable in variables),
+            require_exact_function_name=True,
+        )
+    except Exception:  # noqa: BLE001
+        return []
+    line_addresses = {
+        int(mapping.line_number): {int(address) for address in mapping.addresses}
+        for mapping in line_mappings
+    }
+    out: list[VariableInfo] = []
+    for variable in variables:
+        lines = list(occurrence_lines.get(variable.name, ())) if variable.name else []
+        out.append(
+            variable.model_copy(
+                update={
+                    "line_numbers": lines,
+                    "addresses": sorted(
+                        {
+                            address
+                            for line_number in lines
+                            for address in line_addresses.get(line_number, set())
+                        }
+                    ),
+                }
+            )
+        )
+    return out
 
 
 def _r2_is_import(name: str) -> bool:
@@ -569,15 +636,6 @@ class R2DecDecompiler(DockerizedDecompiler):
     at its own ``baddr`` (the ELF min PT_LOAD vaddr / PE ImageBase), which equals
     ``elf_min_vaddr``, so an r2 function address is already ELF-file space.
 
-    Three execution paths, tried in this order:
-
-    1. **native pdd** — radare2 + the r2dec plugin installed on the host;
-    2. **docker pdd** — the ``decbench/r2dec`` image (real r2dec built from
-       source; the host's packaged r2 usually lacks the dev headers to build the
-       plugin natively);
-    3. **native pdc** — radare2's built-in pseudo-decompiler (always available
-       when r2 is installed, but its asm-like output rarely parses for GED).
-
     The ``function_names`` filter accepts a set of **ints** (ELF-file-space
     addresses — the benchmark driver's DWARF ``low_pc`` set, matched Thumb-bit
     tolerant) or a set of **strs** (legacy name matching).
@@ -585,90 +643,8 @@ class R2DecDecompiler(DockerizedDecompiler):
 
     name = "r2dec"
     display_name = "r2dec"
-    image = "decbench/r2dec:latest"
+    image = "decbench/r2dec:6.2.0"
     dockerfile = "r2dec.Dockerfile"
-
-    _R2_FLAGS = ["-2", "-e", "bin.relocs.apply=true", "-e", "scr.color=0"]
-
-    @staticmethod
-    def _native_available() -> bool:
-        if shutil.which("r2") is None and shutil.which("radare2") is None:
-            return False
-        try:
-            import r2pipe  # noqa: F401
-        except Exception:  # noqa: BLE001
-            return False
-        return True
-
-    @staticmethod
-    def _native_plugin_available() -> bool:
-        """True iff radare2's r2dec plugin (``pdd``) is installed natively.
-
-        Scans the user + system radare2 plugin dirs for the r2dec core plugin
-        (``*pdd*`` / ``*r2dec*``) so the real decompiler can be preferred over the
-        built-in ``pdc`` without opening r2. A false negative is harmless: the
-        native path's command probe still upgrades to ``pdd`` if it is present.
-        """
-        dirs = [os.path.expanduser("~/.local/share/radare2/plugins")]
-        try:
-            proc = subprocess.run(
-                [shutil.which("r2") or "radare2", "-H", "R2_LIBR_PLUGINS"],
-                capture_output=True,
-                text=True,
-                timeout=20,
-            )
-            sysdir = (proc.stdout or "").strip()
-            if sysdir:
-                dirs.append(sysdir)
-        except Exception:  # noqa: BLE001
-            dirs.extend(["/usr/lib/radare2", "/usr/local/lib/radare2"])
-        for d in dirs:
-            if not d or not os.path.isdir(d):
-                continue
-            for pat in ("*pdd*", "*r2dec*"):
-                if glob.glob(os.path.join(d, "**", pat), recursive=True):
-                    return True
-        return False
-
-    def is_available(self) -> bool:
-        """Available if native radare2+r2pipe OR the Docker image is present."""
-        return self._native_available() or self._image_present(self.image)
-
-    def _select_path(self) -> str:
-        """Choose the execution path: ``"native"`` or ``"docker"``.
-
-        Preference: native-with-plugin (real r2dec, no container overhead) >
-        docker (real r2dec in a container) > native-without-plugin (``pdc``). The
-        native path probes ``pdd``/``pdc`` itself, so this only decides host vs
-        container.
-        """
-        native = self._native_available()
-        if native and self._native_plugin_available():
-            return "native"
-        if self._image_present(self.image):
-            return "docker"
-        if native:
-            return "native"
-        return "docker"
-
-    def get_version(self) -> str | None:
-        if self._native_available():
-            try:
-                proc = subprocess.run(
-                    [shutil.which("r2") or "radare2", "-v"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    text=True,
-                    timeout=20,
-                )
-                first = proc.stdout.splitlines()[0] if proc.stdout else ""
-                m = re.search(r"radare2\s+(\S+)", first)
-                if m:
-                    return f"r2-{m.group(1)}"
-            except Exception:  # noqa: BLE001
-                pass
-            return "native"
-        return super().get_version()
 
     def decompile_binary(
         self,
@@ -678,51 +654,10 @@ class R2DecDecompiler(DockerizedDecompiler):
         function_names: set[int] | set[str] | None = None,
         progress_path: Path | None = None,
     ) -> DecompilationResult:
-        """Decompile a binary via the real r2dec (native or docker) or ``pdc``."""
-        if self._select_path() == "docker":
-            return self._decompile_docker(
-                binary_path, functions, output_dir, function_names, progress_path
-            )
-        return self._decompile_native(
+        """Decompile a binary through the real r2dec ``pdd`` command."""
+        return self._decompile_docker(
             binary_path, functions, output_dir, function_names, progress_path
         )
-
-    @staticmethod
-    def _discover(
-        r: Any,
-        elf_base: int,
-        text_range: raw_common.TextRanges,
-        baddr: int,
-        addr_targets: set[int] | None = None,
-    ) -> list[tuple[str, int, int]]:
-        """``(r2_flag_name, file_addr, r2_addr)`` for benchmarkable functions.
-
-        Uses radare2's ``aflj`` (function list). ``file_addr`` is ELF-file space
-        (``r2_addr - baddr + elf_base``). Imports/PLT/reloc stubs, the entrypoint
-        alias, CRT helpers, and anything outside the ``.text`` family are dropped
-        — EXCEPT a function whose address is one of ``addr_targets`` (the
-        driver's DWARF ``low_pc`` source set), which is a verified real function
-        and is kept regardless of the section heuristic (see
-        :func:`raw_common.should_skip_function`).
-        """
-        funcs = r.cmdj("aflj") or []
-        out: list[tuple[str, int, int]] = []
-        for fn in funcs:
-            name = fn.get("name") or ""
-            raw = fn.get("addr")
-            if raw is None:
-                raw = fn.get("offset")
-            if not name or raw is None:
-                continue
-            if _r2_is_import(name) or name in _R2_ENTRY_NAMES:
-                continue
-            raw = int(raw)
-            file_addr = raw - baddr + elf_base
-            if _skip_r2_function(_r2_bare_name(name), file_addr, text_range, addr_targets):
-                continue
-            out.append((name, file_addr, raw))
-        out.sort(key=lambda t: t[1])
-        return out
 
     @staticmethod
     def _narrow(
@@ -780,6 +715,11 @@ class R2DecDecompiler(DockerizedDecompiler):
         file_addr: int,
         code: str,
         label: str | None,
+        provenance: dict[str, Any] | None = None,
+        *,
+        r2_addr: int | None = None,
+        baddr: int = 0,
+        elf_base: int = 0,
     ) -> FunctionDecompilation | None:
         """Build a :class:`FunctionDecompilation`, keeping ``.name`` equal to the
         identifier that appears in ``decompiled_code``.
@@ -793,54 +733,96 @@ class R2DecDecompiler(DockerizedDecompiler):
         code = (code or "").strip()
         if not code:
             return None
+        provenance = provenance or {}
+        function_raw = _r2_int(r2_addr, _r2_int(provenance.get("addr"), file_addr))
+        function_size = _r2_int(provenance.get("size"), 0) or 0
+        is_thumb = bool(provenance.get("is_thumb"))
+        normalized_start = (
+            (function_raw & ~1) if is_thumb and function_raw is not None else function_raw
+        )
+
+        def evidence_address(value: Any) -> int | None:
+            raw_address = _r2_int(value)
+            if raw_address is None:
+                return None
+            normalized = raw_address & ~1 if is_thumb else raw_address
+            if normalized_start is not None and normalized < normalized_start:
+                return None
+            if (
+                function_size > 0
+                and normalized_start is not None
+                and normalized >= normalized_start + function_size
+            ):
+                return None
+            return normalized - baddr + elf_base
+
         code_ident = _func_ident_in_code(code)
         final = label or code_ident or r2_flag
         if code_ident and code_ident != final:
             code = re.sub(r"\b" + re.escape(code_ident) + r"\b", final, code)
+        line_count = code.count("\n") + 1
+        line_to_addresses: dict[int, set[int]] = {}
+        for mapping in provenance.get("line_mappings") or []:
+            if not isinstance(mapping, dict):
+                continue
+            line_number = _r2_int(mapping.get("line_number"), 0) or 0
+            if not 1 <= line_number <= line_count:
+                continue
+            for value in mapping.get("addresses") or []:
+                address = evidence_address(value)
+                if address is not None:
+                    line_to_addresses.setdefault(line_number, set()).add(address)
+        line_mappings = raw_common.merge_line_addresses(line_to_addresses)
+
+        variables: list[VariableInfo] = []
+        for record in provenance.get("variables") or []:
+            if not isinstance(record, dict):
+                continue
+            name = str(record.get("name") or "")
+            if not name:
+                continue
+            line_numbers = sorted(
+                {
+                    line_number
+                    for value in record.get("line_numbers") or []
+                    if 1 <= (line_number := (_r2_int(value, 0) or 0)) <= line_count
+                }
+            )
+            addresses = sorted(
+                {
+                    address
+                    for value in record.get("addresses") or []
+                    if (address := evidence_address(value)) is not None
+                }
+            )
+            raw_size = _r2_int(record.get("size"))
+            size = raw_size if raw_size is not None and raw_size > 0 else None
+            raw_arg_index = _r2_int(record.get("arg_index"))
+            arg_index = raw_arg_index if raw_arg_index is not None and raw_arg_index >= 0 else None
+            kind = "arg" if record.get("kind") == "arg" else "stack"
+            variables.append(
+                VariableInfo(
+                    name=name,
+                    type=str(record.get("type") or ""),
+                    stack_offset=_r2_int(record.get("stack_offset")),
+                    size=size,
+                    kind=kind,
+                    arg_index=arg_index if kind == "arg" else None,
+                    line_numbers=line_numbers,
+                    addresses=addresses,
+                )
+            )
+        if not variables and line_mappings:
+            variables = _r2_inferred_variables(code, final, line_mappings)
+        output_address = file_addr & ~1 if is_thumb else file_addr
         return FunctionDecompilation(
             name=final,
-            address=file_addr,
+            address=output_address,
             decompiled_code=code,
-            line_count=code.count("\n") + 1,
-            line_mappings=[],
-            variables=[],
+            line_count=line_count,
+            line_mappings=line_mappings,
+            variables=variables,
             metadata=raw_common.extract_metrics(code),
-        )
-
-    def _make_result(
-        self,
-        binary_path: Path,
-        decompiled: dict[str, FunctionDecompilation],
-        failed: list[str],
-        elapsed: float,
-        via: str,
-        cmd: str,
-        output_dir: Path | None,
-        *,
-        partial: bool = False,
-        timed_out: bool = False,
-        error: str | None = None,
-    ) -> DecompilationResult:
-        extra: dict[str, Any] = {"via": via, "command": cmd}
-        if via == "docker":
-            extra["image"] = self.image
-        if partial:
-            extra["partial"] = True
-        if error:
-            extra["error"] = error
-        return DecompilationResult(
-            binary_path=binary_path,
-            binary_name=binary_path.stem,
-            decompiler=DecompilerMetadata(
-                decompiler_name=self.id,
-                decompiler_version=self.get_version(),
-                total_time_seconds=elapsed,
-                timeout_occurred=timed_out,
-                failed_functions=list(failed),
-                extra=extra,
-            ),
-            functions=dict(decompiled),
-            output_dir=output_dir,
         )
 
     def _write_artifacts(
@@ -856,84 +838,6 @@ class R2DecDecompiler(DockerizedDecompiler):
             result.to_c_file(output_dir / f"{self.name}_{binary_path.stem}.c")
         with contextlib.suppress(Exception):
             result.to_toml(output_dir / f"{self.name}_{binary_path.stem}.toml")
-
-    def _decompile_native(
-        self,
-        binary_path: Path,
-        functions: list[tuple[str, int]] | None,
-        output_dir: Path | None,
-        function_names: set[int] | set[str] | None,
-        progress_path: Path | None,
-    ) -> DecompilationResult:
-        import r2pipe
-
-        start = time.time()
-        elf_base = raw_common.elf_min_vaddr(binary_path)
-        text_range = raw_common.elf_text_ranges(binary_path)
-        decompiled: dict[str, FunctionDecompilation] = {}
-        failed: list[str] = []
-        used_cmd = "pdc"
-        targets: list[tuple[str | None, int, int, str]] = []
-
-        def _dump() -> None:
-            common_res = self._make_result(
-                binary_path,
-                decompiled,
-                failed,
-                time.time() - start,
-                "native",
-                used_cmd,
-                output_dir,
-                partial=True,
-            )
-            raw_common.dump_progress(progress_path, common_res)
-
-        r = None
-        try:
-            r = r2pipe.open(str(binary_path), flags=self._R2_FLAGS)
-            r.cmd("aaa")
-            baddr = self._r2_baddr(r)
-            used_cmd = self._probe_decompile_cmd(r)
-            if functions is not None:
-                for name, fa in functions:
-                    raw = int(fa) - elf_base + baddr
-                    with contextlib.suppress(Exception):
-                        r.cmd(f"af @ {raw}")
-                    targets.append((name, int(fa), raw, name))
-            else:
-                targets = self._narrow(
-                    self._discover(
-                        r, elf_base, text_range, baddr, _addr_targets_of(function_names)
-                    ),
-                    function_names,
-                    binary_path.name,
-                )
-            for label, file_addr, raw, r2_flag in targets:
-                try:
-                    code = self._decompile_one_native(r, used_cmd, raw)
-                except Exception as e:  # noqa: BLE001
-                    _l.debug("r2dec failed on %s@%#x: %s", r2_flag, raw, e)
-                    code = None
-                fd = self._make_function(r2_flag, file_addr, code or "", label)
-                if fd is None:
-                    failed.append(label or _r2_bare_name(r2_flag))
-                else:
-                    decompiled[fd.name] = fd
-                _dump()
-        except Exception as e:  # noqa: BLE001
-            _l.error("r2dec native run failed on %s: %s", binary_path, e)
-            if not decompiled:
-                failed = [t[0] or _r2_bare_name(t[3]) for t in targets] or ["all"]
-        finally:
-            if r is not None:
-                with contextlib.suppress(Exception):
-                    r.quit()
-
-        result = self._make_result(
-            binary_path, decompiled, failed, time.time() - start, "native", used_cmd, output_dir
-        )
-        self._write_artifacts(result, output_dir, binary_path)
-        return result
 
     def _decompile_docker(
         self,
@@ -977,10 +881,35 @@ class R2DecDecompiler(DockerizedDecompiler):
                     args=[f"/in/{binary_path.name}", "/work/out.json", targets_arg],
                     binary_path=binary_path,
                     work_dir=work_dir,
+                    readonly_mounts=[
+                        (_DOCKER_DIR / "r2dec-decompile.py", _R2_DRIVER_CONTAINER_PATH)
+                    ],
                 )
                 out_json = work_dir / "out.json"
                 if out_json.is_file():
-                    entries = json.loads(out_json.read_text() or "[]")
+                    payload = json.loads(out_json.read_text() or "{}")
+                    if not isinstance(payload, dict):
+                        raise RuntimeError("r2dec container returned a legacy driver payload")
+                    schema_version = payload.get("schema_version")
+                    if (
+                        type(schema_version) is not int
+                        or schema_version != _R2_DRIVER_SCHEMA_VERSION
+                    ):
+                        raise RuntimeError(
+                            "r2dec container driver schema mismatch: "
+                            f"expected {_R2_DRIVER_SCHEMA_VERSION}, got {schema_version}"
+                        )
+                    raw_entries = payload.get("functions")
+                    if not isinstance(raw_entries, list) or not all(
+                        isinstance(entry, dict) for entry in raw_entries
+                    ):
+                        raise RuntimeError("r2dec container returned malformed function records")
+                    driver_command = payload.get("command")
+                    if driver_command != "pdd":
+                        raise RuntimeError(
+                            f"r2dec container returned invalid command: {driver_command}"
+                        )
+                    entries = raw_entries
                 else:
                     error = (
                         f"container produced no out.json (rc={proc.returncode}): "
@@ -994,9 +923,9 @@ class R2DecDecompiler(DockerizedDecompiler):
                 error = str(e)
                 _l.error("%s docker failed on %s: %s", self.name, binary_path, e)
 
-        by_addr: dict[int, tuple[str, str]] = {}
+        by_addr: dict[int, tuple[str, dict[str, Any]]] = {}
         discovered: list[tuple[str, int, int]] = []
-        addr_targets = _addr_targets_of(function_names)
+        filter_addrs = _addr_targets_of(function_names)
         for entry in entries:
             raw = entry.get("addr")
             if raw is None:
@@ -1006,18 +935,28 @@ class R2DecDecompiler(DockerizedDecompiler):
             nm = entry.get("name") or ""
             if _r2_is_import(nm) or nm in _R2_ENTRY_NAMES:
                 continue
-            if _skip_r2_function(_r2_bare_name(nm), file_addr, text_range, addr_targets):
+            if _skip_r2_function(_r2_bare_name(nm), file_addr, text_range, filter_addrs):
                 continue
-            by_addr[file_addr] = (nm, entry.get("code") or "")
+            by_addr[file_addr] = (nm, entry)
             discovered.append((nm, file_addr, int(raw)))
         discovered.sort(key=lambda t: t[1])
         targets = self._narrow(discovered, function_names, binary_path.name)
 
         decompiled: dict[str, FunctionDecompilation] = {}
         failed: list[str] = []
-        for label, file_addr, _raw, r2_flag in targets:
-            _nm, code = by_addr.get(file_addr, (r2_flag, ""))
-            fd = self._make_function(r2_flag, file_addr, code, label)
+        for label, file_addr, raw, r2_flag in targets:
+            _nm, entry = by_addr.get(file_addr, (r2_flag, {}))
+            entry_baddr = _r2_int(entry.get("baddr"), 0) or 0
+            fd = self._make_function(
+                r2_flag,
+                file_addr,
+                str(entry.get("code") or ""),
+                label,
+                entry,
+                r2_addr=_r2_int(entry.get("addr"), raw),
+                baddr=entry_baddr,
+                elf_base=elf_base,
+            )
             if fd is None:
                 failed.append(label or _r2_bare_name(r2_flag))
             else:
@@ -1025,51 +964,30 @@ class R2DecDecompiler(DockerizedDecompiler):
         if not entries and not decompiled:
             failed = failed or ["all"]
 
-        result = self._make_result(
-            binary_path,
-            decompiled,
-            failed,
-            time.time() - start,
-            "docker",
-            "pdd",
-            output_dir,
-            timed_out=timed_out,
-            error=error,
+        extra: dict[str, Any] = {
+            "via": "docker",
+            "command": "pdd",
+            "image": self.image,
+        }
+        if error:
+            extra["error"] = error
+        result = DecompilationResult(
+            binary_path=binary_path,
+            binary_name=binary_path.stem,
+            decompiler=DecompilerMetadata(
+                decompiler_name=self.id,
+                decompiler_version=self.get_version(),
+                total_time_seconds=time.time() - start,
+                timeout_occurred=timed_out,
+                failed_functions=failed,
+                extra=extra,
+            ),
+            functions=decompiled,
+            output_dir=output_dir,
         )
         raw_common.dump_progress(progress_path, result)
         self._write_artifacts(result, output_dir, binary_path)
         return result
-
-    @staticmethod
-    def _r2_baddr(r: Any) -> int:
-        """radare2's load base address (``baddr``) for the open binary."""
-        try:
-            info = r.cmdj("ij") or {}
-            return int((info.get("bin") or {}).get("baddr") or 0)
-        except Exception:  # noqa: BLE001
-            return 0
-
-    @staticmethod
-    def _probe_decompile_cmd(r: Any) -> str:
-        """Pick the decompile command: the real r2dec ``pdd`` or built-in ``pdc``."""
-        try:
-            out = r.cmd("pdd @ entry0")
-        except Exception:  # noqa: BLE001
-            out = ""
-        if out and "install the plugin" not in out and "Cannot find" not in out:
-            return "pdd"
-        return "pdc"
-
-    @staticmethod
-    def _decompile_one_native(r: Any, cmd: str, addr: int) -> str | None:
-        """Decompile one function at ``addr`` (r2 load space) and return its C."""
-        raw = r.cmd(f"{cmd} @ {addr}")
-        if not raw:
-            return None
-        out = str(raw).strip()
-        if not out or "install the plugin" in out:
-            return None
-        return out
 
 
 __all__ = [

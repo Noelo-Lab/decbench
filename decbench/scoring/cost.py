@@ -16,11 +16,11 @@ Two kinds of source, deliberately not comparable and labeled by ``basis``:
 * **per-function** (:func:`scan_llm_traces` and the structured fields) — the LLM
   coding agents, timed one agentic call per function *including* tool use.
 
-Structured-first: runs made after ``FunctionDecompilation`` grew ``time_seconds``
-/ ``llm_tokens`` (2026-07-23) carry per-function cost in the decompiled TOMLs
-themselves, and :func:`build_cost_info` PREFERS those
-(:func:`scan_structured_costs`) over the trace-directory scan — the scans remain
-the historical path for runs recorded before the fields existed.
+Runs made after ``FunctionDecompilation`` grew ``time_seconds`` / ``llm_tokens``
+(2026-07-23) carry per-function cost in the decompiled TOMLs themselves.
+:func:`build_cost_info` prefers structured costs when their call coverage is at
+least as complete as the trace scan; mixed historical/incremental runs retain
+the more complete trace facts.
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ __all__ = [
     "scan_structured_costs",
 ]
 
+_TRACE_BACKEND_RE = re.compile(r"\A# (?P<backend>\S+) trace — ")
 _TRACE_MODEL_RE = re.compile(r"^- model:\s*(?P<model>.+?)\s*$", re.MULTILINE)
 _TRACE_STATUS_RE = re.compile(r"^- status:\s*(?P<status>ok|FAILED|TIMEOUT)\s*$", re.MULTILINE)
 _TRACE_ELAPSED_RE = re.compile(r"^- elapsed:\s*(?P<secs>\d+(?:\.\d+)?)s\s*$", re.MULTILINE)
@@ -162,9 +163,9 @@ def _codex_session_tokens(records: list[dict[str, Any]]) -> dict[str, int] | Non
     """A Codex session's usage: the LAST ``payload.type == "token_count"`` record.
 
     Codex logs a running total, so only the final record counts. Its
-    ``input_tokens`` INCLUDES ``cached_input_tokens`` — normalized here to
-    uncached input so the pricing formula never double-charges the cached part —
-    and ``output_tokens`` already includes reasoning tokens.
+    ``input_tokens`` includes cached reads and cache writes. Subtract both so
+    each input token is priced in exactly one category. ``output_tokens``
+    already includes reasoning tokens.
     """
     usage: dict[str, Any] | None = None
     for rec in records:
@@ -178,10 +179,11 @@ def _codex_session_tokens(records: list[dict[str, Any]]) -> dict[str, int] | Non
         return None
     input_tokens = int(usage.get("input_tokens") or 0)
     cached = int(usage.get("cached_input_tokens") or 0)
+    cache_write = int(usage.get("cache_write_input_tokens") or 0)
     return {
-        "input": max(input_tokens - cached, 0),
+        "input": max(input_tokens - cached - cache_write, 0),
         "cached_input": cached,
-        "cache_write": 0,
+        "cache_write": cache_write,
         "output": int(usage.get("output_tokens") or 0),
     }
 
@@ -234,8 +236,10 @@ def _sum_tokens(per_call: list[dict[str, int]]) -> dict[str, int] | None:
 def scan_llm_traces(traces_dir: Path) -> dict[str, dict[str, Any]]:
     """Per-backend LLM cost facts from a ``$DECBENCH_LLM_TRACE_DIR`` tree.
 
-    One entry per ``<traces_dir>/<backend>/`` directory holding ``*.md`` traces
-    (written by ``llm_dec._save_trace``). FAILED/TIMEOUT calls are *included* in
+    One entry per backend holding ``*.md`` traces (written by
+    ``llm_dec._save_trace``). The trace header preserves the canonical identity;
+    directory names replace ``@`` with ``-``. Older traces without that header
+    fall back to the directory name. FAILED/TIMEOUT calls are *included* in
     the elapsed and token sums — that wall time and those tokens were genuinely
     spent — and counted in ``failed``. Token sums come from the sibling
     ``*.session.jsonl`` files via :func:`parse_session_tokens`; ``tokens`` is
@@ -248,6 +252,7 @@ def scan_llm_traces(traces_dir: Path) -> dict[str, dict[str, Any]]:
         mds = sorted(backend_dir.glob("*.md"))
         if not mds:
             continue
+        backend: str | None = None
         model: str | None = None
         elapsed: list[float] = []
         failed = 0
@@ -256,6 +261,8 @@ def scan_llm_traces(traces_dir: Path) -> dict[str, dict[str, Any]]:
                 text = md.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
+            if backend is None and (m := _TRACE_BACKEND_RE.match(text)):
+                backend = m.group("backend")
             if model is None and (m := _TRACE_MODEL_RE.search(text)):
                 model = m.group("model")
             if (m := _TRACE_STATUS_RE.search(text)) and m.group("status") != "ok":
@@ -267,7 +274,7 @@ def scan_llm_traces(traces_dir: Path) -> dict[str, dict[str, Any]]:
             for session in sorted(backend_dir.glob("*.session.jsonl"))
             if (tokens := parse_session_tokens(session)) is not None
         ]
-        out[backend_dir.name] = {
+        out[backend or backend_dir.name] = {
             "model": model,
             "functions": len(mds),
             "failed": failed,
@@ -352,15 +359,18 @@ def build_cost_info(
     the honest number for one-agent-call-per-function backends (the batch rate
     divides concurrent per-function wall times by the function count).
 
-    ``llm`` merges the historical trace scan with the structured per-function
-    fields, structured winning per backend (see the module docstring).
+    ``llm`` chooses the more complete per-backend source between historical
+    traces and structured per-function fields (see the module docstring).
 
     ``opt_levels`` defaults to the tree's opt-level directories; the driver
     script passes the exact set from ``function_results.json``.
     """
     opts = list(opt_levels) if opt_levels is not None else _discover_opt_levels(tree)
     llm = scan_llm_traces(traces_dir) if traces_dir is not None else {}
-    llm.update(scan_structured_costs(tree, opts))
+    for backend, structured in scan_structured_costs(tree, opts).items():
+        historical = llm.get(backend)
+        if historical is None or structured["functions"] >= historical["functions"]:
+            llm[backend] = structured
     return {
         "decompile_time": scan_decompile_times(tree, opts),
         "llm": llm,

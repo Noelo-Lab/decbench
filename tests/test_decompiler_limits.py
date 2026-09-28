@@ -5,8 +5,11 @@ from __future__ import annotations
 import pickle
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -185,17 +188,65 @@ def test_dockerized_run_uses_memory_limit(monkeypatch: pytest.MonkeyPatch, tmp_p
     limit = str(16 * 1024**3)
     assert seen[seen.index("--memory") + 1] == limit
     assert seen[seen.index("--memory-swap") + 1] == limit
+    assert seen[seen.index("--network") + 1] == "none"
 
 
 def test_llm_docker_memory_is_split_across_function_workers(tmp_path: Path) -> None:
     config = DecompilerConfig(
         extra_options={"docker_image": "agents", "fn_workers": 4, "max_funcs": 8}
     )
-    decompiler = DecompilerRegistry.get("codex", config)
+    decompiler = DecompilerRegistry.get("claude-code", config)
     command, _kwargs = decompiler._invocation(tmp_path, "prompt", tmp_path / "target.bin")
     limit = str(4 * 1024**3)
     assert command[command.index("--memory") + 1] == limit
     assert command[command.index("--memory-swap") + 1] == limit
+
+
+def test_decompile_result_pickle_uses_unique_system_temp_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from scripts import run_benchmark
+
+    system_temp = tmp_path / "system-temp"
+    system_temp.mkdir()
+    out_dir = tmp_path / "durable"
+    out_dir.mkdir()
+    stale_path = out_dir / "angr_target.result.pkl"
+    stale_path.write_bytes(b"stale")
+    result_paths: list[Path] = []
+    result = DecompilationResult(
+        binary_path=tmp_path / "target",
+        binary_name="target",
+        decompiler=DecompilerMetadata(decompiler_name="angr"),
+    )
+
+    def decompile(
+        _binary: Path, _name: str, output: Path, _names: str, result_path: Path
+    ) -> DecompilationResult:
+        assert output == out_dir
+        result_paths.append(result_path)
+        result_path.write_bytes(b"result")
+        result_path.with_suffix(".pkl.tmp").write_bytes(b"partial")
+        return result
+
+    monkeypatch.setattr(
+        run_benchmark,
+        "_timed_decompile_with_result_path",
+        decompile,
+    )
+    monkeypatch.setenv("TMPDIR", str(system_temp))
+    monkeypatch.setattr(tempfile, "tempdir", None)
+
+    results = [
+        run_benchmark._timed_decompile(tmp_path / parent / "target", "angr", out_dir, "NONE")
+        for parent in ("first", "second")
+    ]
+
+    assert results == [result, result]
+    assert len(set(result_paths)) == 2
+    assert all(path.is_relative_to(system_temp) for path in result_paths)
+    assert all(not path.parent.exists() for path in result_paths)
+    assert stale_path.read_bytes() == b"stale"
 
 
 def test_oom_result_recovers_partial_checkpoint(
@@ -204,7 +255,6 @@ def test_oom_result_recovers_partial_checkpoint(
     from scripts import run_benchmark
 
     binary = tmp_path / "target"
-    result_path = tmp_path / "angr_target.result.pkl"
     partial = DecompilationResult(
         binary_path=binary,
         binary_name=binary.stem,
@@ -215,7 +265,6 @@ def test_oom_result_recovers_partial_checkpoint(
             )
         },
     )
-    result_path.write_bytes(pickle.dumps(partial))
 
     class FakeProcess:
         pid = 1234
@@ -230,10 +279,19 @@ def test_oom_result_recovers_partial_checkpoint(
         process.returncode = 128 + 9
 
     seen_command: list[str] = []
+    result_paths: list[Path] = []
 
-    def scope_command(command: list[str], _timeout: int) -> tuple[list[str], str]:
+    def scope_command(
+        command: list[str], _timeout: int, **_kwargs: object
+    ) -> tuple[list[str], str]:
         seen_command.extend(command)
         return command, "decbench-test.scope"
+
+    def popen(command: list[str], **_kwargs: object) -> FakeProcess:
+        result_path = Path(command[-3])
+        result_paths.append(result_path)
+        result_path.write_bytes(pickle.dumps(partial))
+        return process
 
     monkeypatch.setenv("DECBENCH_ANGR_TIMEOUT", "7200")
     monkeypatch.setattr(
@@ -241,7 +299,7 @@ def test_oom_result_recovers_partial_checkpoint(
         "resource_scope_command",
         scope_command,
     )
-    monkeypatch.setattr(run_benchmark.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(run_benchmark.subprocess, "Popen", popen)
     monkeypatch.setattr(run_benchmark, "resource_scope_memory_events", lambda *_args: None)
     monkeypatch.setattr(run_benchmark, "resource_scope_oom_killed", lambda _events: True)
     monkeypatch.setattr(run_benchmark, "_kill_process_group", kill)
@@ -255,6 +313,75 @@ def test_oom_result_recovers_partial_checkpoint(
     assert recovered.decompiler.extra["memory_limit_exceeded"] is True
     assert recovered.decompiler.extra["recovered_partial"] is True
     assert seen_command[-1] == "7200"
+    assert not result_paths[0].parent.exists()
+
+
+def test_timeout_result_preserves_empty_progress_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from scripts import run_benchmark
+
+    binary = tmp_path / "target"
+    binary.touch()
+
+    class FakeProcess:
+        pid = 1234
+        returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    process = FakeProcess()
+
+    def popen(command: list[str], **_kwargs: object) -> FakeProcess:
+        progress_path = Path(command[-3])
+        progress_path.write_bytes(
+            pickle.dumps(
+                DecompilationResult(
+                    binary_path=binary,
+                    binary_name=binary.stem,
+                    decompiler=DecompilerMetadata(
+                        decompiler_name="dewolf@2026.7.11",
+                        decompiler_version="v2026.7.11",
+                        extra={"backend": "dewolf", "via": "raw", "partial": True},
+                    ),
+                )
+            )
+        )
+        return process
+
+    def kill(_process: FakeProcess, _unit: str | None = None) -> None:
+        process.returncode = 128 + 9
+
+    times = iter((0.0, 3601.0))
+    monkeypatch.delenv("DECBENCH_DEWOLF_TIMEOUT", raising=False)
+    monkeypatch.delenv("DECBENCH_DECOMPILE_TIMEOUT", raising=False)
+    monkeypatch.setattr(run_benchmark.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(
+        run_benchmark,
+        "resource_scope_command",
+        lambda command, _timeout, **_kwargs: (command, "decbench-test.scope"),
+    )
+    monkeypatch.setattr(run_benchmark.subprocess, "Popen", popen)
+    monkeypatch.setattr(run_benchmark, "resource_scope_memory_events", lambda *_args: None)
+    monkeypatch.setattr(run_benchmark, "resource_scope_oom_killed", lambda _events: False)
+    monkeypatch.setattr(run_benchmark, "_kill_process_group", kill)
+
+    result = run_benchmark._timed_decompile(binary, "dewolf@2026.7.11", tmp_path, "NONE")
+
+    assert result.functions == {}
+    assert result.decompiler.decompiler_name == "dewolf@2026.7.11"
+    assert result.decompiler.decompiler_version == "v2026.7.11"
+    assert result.decompiler.failed_functions == ["all"]
+    assert result.decompiler.timeout_occurred is True
+    assert result.decompiler.extra == {
+        "backend": "dewolf",
+        "via": "raw",
+        "partial": True,
+        "failure": "timeout>3600s",
+        "memory_limit_exceeded": False,
+        "timed_out": True,
+    }
 
 
 def test_decompile_worker_receives_resolved_binary_timeout(
@@ -290,6 +417,67 @@ def test_decompile_worker_receives_resolved_binary_timeout(
 
     assert decompile_one.main() == 0
     assert seen[0].binary_timeout_seconds == 7200
+    assert pickle.loads(output.read_bytes()).decompiler.decompiler_name == "angr"
+    assert not output.with_suffix(".pkl.tmp").exists()
+
+
+@pytest.mark.parametrize(
+    ("name", "selected_via", "expected_via"),
+    [
+        ("angr", "raw", "raw"),
+        ("binja", "raw", "raw"),
+        ("dewolf", "raw", "raw"),
+        ("ghidra", "raw", "raw"),
+        ("ida", "raw", "raw"),
+        ("kuna", "raw", "raw"),
+        ("r2dec", "docker", "docker"),
+        ("r2dec", "native", "native"),
+        ("glaurung", "raw", None),
+    ],
+)
+def test_native_producers_seed_progress_metadata_before_decompilation(
+    tmp_path: Path,
+    name: str,
+    selected_via: str,
+    expected_via: str | None,
+) -> None:
+    from decbench.pipeline import decompile as pipeline_decompile
+
+    binary = tmp_path / "target"
+    binary.touch()
+    progress_path = tmp_path / "result.pkl"
+    decompiler = SimpleNamespace(
+        name=name,
+        id=f"{name}@requested",
+        image="decbench/r2dec:test",
+        get_version=lambda: "realized-version",
+        _select_path=lambda: selected_via,
+    )
+
+    pipeline_decompile._seed_progress(
+        cast(Any, decompiler),
+        binary,
+        tmp_path,
+        progress_path,
+    )
+
+    if expected_via is None:
+        assert not progress_path.exists()
+        return
+
+    seed = pickle.loads(progress_path.read_bytes())
+    assert seed.functions == {}
+    assert seed.binary_path == binary
+    assert seed.output_dir == tmp_path
+    assert seed.decompiler.decompiler_name == f"{name}@requested"
+    assert seed.decompiler.decompiler_version == "realized-version"
+    assert seed.decompiler.failed_functions == []
+    assert seed.decompiler.extra == {
+        "backend": name,
+        "via": expected_via,
+        "partial": True,
+        **({"image": "decbench/r2dec:test"} if expected_via == "docker" else {}),
+    }
 
 
 @pytest.mark.parametrize(
@@ -313,17 +501,24 @@ def test_sigkill_is_only_a_timeout_at_the_scope_deadline(
             return 137
 
     times = iter((0.0, elapsed))
+    result_paths: list[Path] = []
+
+    def popen(command: list[str], **_kwargs: object) -> KilledProcess:
+        result_path = Path(command[-3])
+        result_paths.append(result_path)
+        result_path.write_bytes(b"incomplete")
+        result_path.with_suffix(".pkl.tmp").write_bytes(b"incomplete")
+        return KilledProcess()
+
     monkeypatch.delenv("DECBENCH_ANGR_TIMEOUT", raising=False)
     monkeypatch.delenv("DECBENCH_DECOMPILE_TIMEOUT", raising=False)
     monkeypatch.setattr(run_benchmark.time, "monotonic", lambda: next(times))
     monkeypatch.setattr(
         run_benchmark,
         "resource_scope_command",
-        lambda command, _timeout: (command, "decbench-test.scope"),
+        lambda command, _timeout, **_kwargs: (command, "decbench-test.scope"),
     )
-    monkeypatch.setattr(
-        run_benchmark.subprocess, "Popen", lambda *_args, **_kwargs: KilledProcess()
-    )
+    monkeypatch.setattr(run_benchmark.subprocess, "Popen", popen)
     monkeypatch.setattr(run_benchmark, "resource_scope_memory_events", lambda *_args: None)
     monkeypatch.setattr(run_benchmark, "resource_scope_oom_killed", lambda _events: False)
     monkeypatch.setattr(run_benchmark, "_cleanup_scope_containers", lambda _unit: None)
@@ -333,6 +528,7 @@ def test_sigkill_is_only_a_timeout_at_the_scope_deadline(
     assert result.decompiler.timeout_occurred is expected_timeout
     assert result.decompiler.extra["memory_limit_exceeded"] is False
     assert result.decompiler.extra["failure"] == expected_failure
+    assert not result_paths[0].parent.exists()
 
 
 def test_llm_function_timeout_kills_descendants(tmp_path: Path) -> None:
@@ -349,7 +545,7 @@ def test_llm_function_timeout_kills_descendants(tmp_path: Path) -> None:
     binary = tmp_path / "binary"
     binary.touch()
 
-    code, _elapsed, _tokens = decompiler._decompile_one(binary, "target", 0x1000)
+    code, _elapsed, _tokens, _mappings = decompiler._decompile_one(binary, "target", 0x1000)
 
     assert code is None
     assert child_pid.is_file()

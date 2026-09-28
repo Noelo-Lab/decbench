@@ -30,11 +30,14 @@ functions where every metric was measurable). It is still emitted under the
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from decbench.models.function_data import FunctionData, FunctionRecord
+from decbench.models.function_data import (
+    VARIABLE_MATCH_EVIDENCE,
+    FunctionData,
+    FunctionRecord,
+)
 from decbench.models.scoreboard import Scoreboard
 from decbench.rendering.content import Category, Content, load_content
 
@@ -53,6 +56,8 @@ ALL_PRESET = "__all__"
 
 # Mirrors app.js's SAMPLE_SET_PRESET; the two must stay in sync.
 SAMPLE_SET_PRESET = "sample-set"
+
+_EVIDENCE_ORDER = ("native", "agent_reported", "fallback_only")
 
 # Do NOT reintroduce rounding here. The client re-renders some values at fewer
 # places than they are stored, so pre-rounding manufactures half-boundaries that
@@ -76,18 +81,22 @@ def union_leaders(
     re-deriving it.
 
     ``exclude_sample_set_only`` drops the sample-set-only backends
-    (``sample_set_only`` in the payload — codex/claude-code) for the leaderboard's
+    (``sample_set_only`` in the payload) for the leaderboard's
     default-preset text, where their rows do not render; it is left off for the
-    sample-set preset itself, where every decompiler is on screen. A decompiler with
-    an empty Union denominator (never measurable under the preset) is skipped. Ties
+    sample-set preset itself. Exact-version preset restrictions apply in both cases.
+    A decompiler with an empty Union denominator (never measurable under the preset)
+    is skipped. Ties
     break by id, so the ranking is deterministic across rebuilds.
     """
     combo = aggregates.get("combos", {}).get(combo_key(preset, False)) or {}
     overall = combo.get("overall", {})
     registry = aggregates.get("decompiler_registry", {})
     sample_only = set(aggregates.get("sample_set_only", ()))
+    allowed_presets = aggregates.get("decompiler_presets", {})
     ranked: list[tuple[float, str, str]] = []
     for dec in aggregates.get("decompilers", []):
+        if dec in allowed_presets and preset not in allowed_presets[dec]:
+            continue
         if exclude_sample_set_only and dec in sample_only:
             continue
         pair = overall.get(dec)
@@ -209,10 +218,7 @@ class _FunctionFacts:
     """
 
     datasets: frozenset[str]
-    all_decompiled: bool
-    # all_decompiled minus the sample-set-only decompilers: requiring them everywhere
-    # collapses every normalize=1 combo to the sample-set intersection.
-    all_full_coverage_decompiled: bool
+    failed_decompilers: frozenset[str]
     err_scope: tuple[bool, ...]
     err_errored: tuple[bool, ...]
     measurable: tuple[bool, ...]
@@ -221,6 +227,8 @@ class _FunctionFacts:
     union_perfect: tuple[bool, ...]
     distances: tuple[tuple[float | None, ...], ...]
     compiles: tuple[bool | None, ...]
+    metric_evidence: tuple[tuple[str | None, ...], ...]
+    metric_measured: tuple[tuple[bool, ...], ...]
 
 
 def _function_facts(
@@ -229,7 +237,6 @@ def _function_facts(
     metrics: list[str],
     distance_metrics: list[str],
     ged_present: bool,
-    sample_set_only: frozenset[str] = frozenset(),
 ) -> _FunctionFacts:
     """Reduce one function to its combo-independent contribution."""
     measurable = tuple(_metric_measurable(func, m, decompilers, ged_present) for m in metrics)
@@ -240,8 +247,9 @@ def _function_facts(
     union_perfect: list[bool] = []
     distances: list[tuple[float | None, ...]] = []
     compiles: list[bool | None] = []
-    all_decompiled = True
-    all_full_coverage_decompiled = True
+    metric_evidence: list[tuple[str | None, ...]] = []
+    metric_measured: list[tuple[bool, ...]] = []
+    failed_decompilers: set[str] = set()
 
     for dec in decompilers:
         attempted = dec in func.decompiled
@@ -249,9 +257,7 @@ def _function_facts(
         err_errored.append(attempted and not func.decompiled[dec])
 
         if not _decompiled_by(func, dec):
-            all_decompiled = False
-            if dec not in sample_set_only:
-                all_full_coverage_decompiled = False
+            failed_decompilers.add(dec)
 
         fperf = func.perfects.get(dec) or {}
         flags = tuple(bool(fperf.get(m)) for m in metrics)
@@ -272,10 +278,31 @@ def _function_facts(
         bm = (func.values.get(dec) or {}).get("byte_match")
         compiles.append(bool(func.compiles.get(dec)) if bm is not None else None)
 
+        values = func.values.get(dec) or {}
+        metric_measured.append(
+            tuple(
+                (
+                    isinstance(value, (int, float)) and math.isfinite(value)
+                    if (value := values.get(metric)) is not None
+                    else False
+                )
+                for metric in metrics
+            )
+        )
+        evidence_by_metric = func.metric_evidence.get(dec) or {}
+        metric_evidence.append(
+            tuple(
+                (
+                    evidence
+                    if (evidence := evidence_by_metric.get(metric)) in VARIABLE_MATCH_EVIDENCE
+                    else None
+                )
+                for metric in metrics
+            )
+        )
     return _FunctionFacts(
         datasets=frozenset(func.datasets),
-        all_decompiled=all_decompiled,
-        all_full_coverage_decompiled=all_full_coverage_decompiled,
+        failed_decompilers=frozenset(failed_decompilers),
         err_scope=tuple(err_scope),
         err_errored=tuple(err_errored),
         measurable=measurable,
@@ -284,6 +311,8 @@ def _function_facts(
         union_perfect=tuple(union_perfect),
         distances=tuple(distances),
         compiles=tuple(compiles),
+        metric_evidence=tuple(metric_evidence),
+        metric_measured=tuple(metric_measured),
     )
 
 
@@ -342,6 +371,10 @@ class _ComboAccumulator:
         self._distances: list[list[list[float]]] = [
             [[] for _ in range(n_dist)] for _ in range(n_dec)
         ]
+        self._metric_evidence = [
+            [[0] * len(_EVIDENCE_ORDER) for _ in range(n_met)] for _ in range(n_dec)
+        ]
+        self._metric_measured = [[0] * n_met for _ in range(n_dec)]
 
     def add(self, facts: _FunctionFacts) -> None:
         """Fold one active function into this combo."""
@@ -356,6 +389,11 @@ class _ComboAccumulator:
             dec_total = self._total[di]
             dec_perfect_counts = self._perfect[di]
             for mi in range(len(self._metrics)):
+                if facts.metric_measured[di][mi]:
+                    self._metric_measured[di][mi] += 1
+                    evidence = facts.metric_evidence[di][mi]
+                    if evidence is not None:
+                        self._metric_evidence[di][mi][_EVIDENCE_ORDER.index(evidence)] += 1
                 if not facts.measurable[mi]:
                     continue
                 dec_total[mi] += 1
@@ -383,6 +421,20 @@ class _ComboAccumulator:
 
     def result(self) -> dict[str, Any]:
         """Emit this combo per the schema (counts as ``[numerator, denominator]``)."""
+        metric_evidence: dict[str, dict[str, dict[str, int]]] = {}
+        for di, dec in enumerate(self._decompilers):
+            per_metric: dict[str, dict[str, int]] = {}
+            for mi, metric in enumerate(self._metrics):
+                counts = self._metric_evidence[di][mi]
+                measured = self._metric_measured[di][mi]
+                if not any(counts) and (metric != "type_match" or not measured):
+                    continue
+                per_metric[metric] = {
+                    **dict(zip(_EVIDENCE_ORDER, counts, strict=True)),
+                    "measured": measured,
+                }
+            if per_metric:
+                metric_evidence[dec] = per_metric
         return {
             "functions": self.functions,
             "binaries": self.binaries,
@@ -405,6 +457,7 @@ class _ComboAccumulator:
                 dec: [self._compiled[di], self._compile_total[di]]
                 for di, dec in enumerate(self._decompilers)
             },
+            "metric_evidence": metric_evidence,
             "distance": {
                 dec: {
                     metric: _distance_stats(self._distances[di][mi])
@@ -416,7 +469,9 @@ class _ComboAccumulator:
 
 
 def _active_combos(
-    facts: _FunctionFacts, preset_names: Iterable[str], match_all: bool = False
+    facts: _FunctionFacts,
+    visible_decompilers: dict[str, frozenset[str]],
+    match_all: bool = False,
 ) -> list[tuple[str, bool]]:
     """The combos one function is active under.
 
@@ -425,12 +480,8 @@ def _active_combos(
     decompiled — so scores compare like with like instead of rewarding a decompiler
     for skipping what it found hard.
 
-    "Every decompiler" means every decompiler *whose row the preset shows*: the
-    sample-set-only backends (codex/claude-code) attempt nothing outside the
-    sample-set slice, so they join the gate only on :data:`SAMPLE_SET_PRESET` —
-    where their rows render — and are ignored elsewhere. Requiring them everywhere
-    collapsed every ``|1`` combo to the sample-set intersection (optimized|1
-    7,850 -> 50) when codex landed on 2026-07-22.
+    "Every decompiler" means every decompiler whose row the preset shows,
+    respecting both sample-set restrictions and exact-version preset overrides.
 
     ``match_all`` is the preset-less fallback: every function joins the synthetic
     :data:`ALL_PRESET` combo whatever its (absent) tags say. It restores the old
@@ -439,15 +490,10 @@ def _active_combos(
     JS parity: ``isActive(group, func)`` takes a ``group`` and ignores it entirely.
     """
     combos: list[tuple[str, bool]] = []
-    for name in preset_names:
+    for name, decompilers in visible_decompilers.items():
         if match_all or name in facts.datasets:
             combos.append((name, False))
-            gated = (
-                facts.all_decompiled
-                if name == SAMPLE_SET_PRESET
-                else facts.all_full_coverage_decompiled
-            )
-            if gated:
+            if facts.failed_decompilers.isdisjoint(decompilers):
                 combos.append((name, True))
     return combos
 
@@ -458,9 +504,8 @@ def _llm_dollars(content: Content, entry: dict[str, Any]) -> dict[str, Any] | No
     ``entry`` is a ``cost_info["llm"]`` fact blob (:mod:`decbench.scoring.cost`):
     normalized token buckets x the model's per-MTok list prices from
     ``content/pricing.toml``. One formula serves both CLIs because the scan
-    already normalized them — claude records all four buckets; codex has no
-    cache-write bucket (0) and its ``input`` was already reduced by
-    ``cached_input``. ``None`` — rendered as n/a, never $0.00 — when the model is
+    already normalized them into disjoint input, cache-read, cache-write, and
+    output buckets. ``None`` — rendered as n/a, never $0.00 — when the model is
     unknown, unpriced (an all-zero placeholder card), or there is no token data.
     """
     tokens = entry.get("tokens")
@@ -557,12 +602,18 @@ def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dic
 
     content = load_content()
     decompilers = function_data.decompilers
+    decompiler_presets = {
+        dec: list(presets)
+        for dec, presets in content.site.decompiler_presets.items()
+        if dec in decompilers
+    }
     # Shown only on the sample-set preset: elsewhere these backends would be
     # near-empty under the shared denominator. Their data still ships.
     sample_set_only = [
-        d for d in decompilers if is_hidden(d, content.site.sample_set_only_decompilers)
+        d
+        for d in decompilers
+        if d not in decompiler_presets and is_hidden(d, content.site.sample_set_only_decompilers)
     ]
-    sample_set_only_set = frozenset(sample_set_only)
     metrics = function_data.metrics
     distance_metrics = content.ordered_metrics(metrics)
     presets = function_data.dataset_presets
@@ -571,6 +622,15 @@ def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dic
 
     match_all = not preset_names
     combo_names = [ALL_PRESET] if match_all else preset_names
+    visible_decompilers = {
+        name: frozenset(
+            dec
+            for dec in decompilers
+            if (dec not in decompiler_presets or name in decompiler_presets[dec])
+            and (dec not in sample_set_only or name == SAMPLE_SET_PRESET)
+        )
+        for name in combo_names
+    }
 
     accumulators: dict[tuple[str, bool], _ComboAccumulator] = {
         (name, normalize): _ComboAccumulator(decompilers, metrics, distance_metrics)
@@ -582,10 +642,8 @@ def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dic
     for group in function_data.groups:
         for func in group.functions:
             total_functions += 1
-            facts = _function_facts(
-                func, decompilers, metrics, distance_metrics, ged_present, sample_set_only_set
-            )
-            for combo in _active_combos(facts, combo_names, match_all):
+            facts = _function_facts(func, decompilers, metrics, distance_metrics, ged_present)
+            for combo in _active_combos(facts, visible_decompilers, match_all):
                 accumulators[combo].add(facts)
         for accumulator in accumulators.values():
             accumulator.end_group()
@@ -598,6 +656,7 @@ def build_aggregates(function_data: FunctionData, scoreboard: Scoreboard) -> dic
         or sorted({group.project for group in function_data.groups}),
         "decompilers": decompilers,
         "sample_set_only": sample_set_only,
+        "decompiler_presets": decompiler_presets,
         "decompiler_versions": function_data.decompiler_versions,
         "decompiler_registry": _decompiler_registry(
             content, decompilers, function_data.decompiler_versions

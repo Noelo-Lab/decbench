@@ -266,12 +266,14 @@ class TestDockerInstall:
 
         assert result.functions["add_nums"].address == target
         assert result.decompiler.extra["run_via"] == "docker"
+        assert result.decompiler.extra["slice_scoped"] is True
         run = next(
             call
             for call in _docker_calls(fake_docker)
             if call[0] == "run" and "--entrypoint" not in call
         )
         assert "--network" in run and "none" in run
+        assert run[run.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
         limit = str(16 * 1024**3)
         assert run[run.index("--memory") + 1] == limit
         assert run[run.index("--memory-swap") + 1] == limit

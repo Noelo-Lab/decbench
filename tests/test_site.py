@@ -516,6 +516,9 @@ def test_both_modes_render_the_same_skeleton(
         assert marker in index, marker
         assert marker in single, marker
 
+    for page in (index, single):
+        assert page.index('<table id="leaderboard-table">') < page.index('id="type-evidence-note"')
+
 
 def test_theme_bootstrap_and_toggle_ship_in_both_data_modes(
     tmp_path: Path, scoreboard: Scoreboard, function_data: FunctionData

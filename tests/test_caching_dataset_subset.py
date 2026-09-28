@@ -172,8 +172,8 @@ def test_type_match_caches(cache_dir):
 
     metric = TypeMatchMetric()
     calls = {"n": 0}
-    orig = metric._compute_uncached
-    metric._compute_uncached = lambda *a, **k: (
+    orig = metric._compute_legacy_uncached
+    metric._compute_legacy_uncached = lambda *a, **k: (
         calls.__setitem__("n", calls["n"] + 1) or orig(*a, **k)
     )
 

@@ -1,6 +1,8 @@
-"""Re-evaluate type_match from run checkpoints (no re-decompile) and compare to
-the old stored scores. Checkpoints carry FunctionDecompilation.variables +
-binary_path, so type_match (which only needs those + DWARF) can be recomputed.
+"""Re-evaluate type_match from run checkpoints without running decompilers.
+
+Checkpoint paths can point at another checkout, so each result is rebound to the
+selected results tree before native provenance is validated. Preprocessed sources
+from the compiled directory provide the source-side address evidence.
 
 Usage: python reeval_typematch.py <results_dir> [proj1 proj2 ...]
 Prints per-decompiler OLD vs NEW aggregate over functions present in
@@ -10,17 +12,27 @@ function_results.json, and writes type_match_new.json when --emit is passed.
 from __future__ import annotations
 
 import json
+import os
 import pickle
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 import decbench.decompilers  # noqa: F401 (register backends so pickles load)
+from decbench.decompilers.provenance import NativeProvenanceContext, sanitize_native_provenance
 from decbench.metrics.type_match import TypeMatchMetric
+from decbench.models.decompilation import DecompilationResult
+from decbench.utils.langs import preprocessed_by_stem
+from decbench.utils.results_tree import resolve_binary
 
-root = Path(sys.argv[1])
+root = Path(sys.argv[1]).resolve()
 args = [a for a in sys.argv[2:] if not a.startswith("--")]
 emit = "--emit" in sys.argv
+selected_decompilers = {
+    name.strip()
+    for name in os.environ.get("DECBENCH_REEVAL_DECOMPILERS", "").split(",")
+    if name.strip()
+}
 
 with open(root / "function_results.json") as _fh:
     fd = json.load(_fh)
@@ -48,9 +60,31 @@ for proj in projects:
     for opt, bins in dec_tree.items():
         optn = getattr(opt, "value", str(opt))
         for binn, decs in bins.items():
+            if selected_decompilers and not selected_decompilers.intersection(decs):
+                continue
+            compiled = root / optn / proj / "compiled"
+            binary_path = resolve_binary(compiled, binn)
+            if binary_path is None:
+                print(f"  ! {proj}/{optn}/{binn}: compiled binary not found")
+                continue
+            source_paths = list(preprocessed_by_stem(compiled).values())
+            provenance_context = NativeProvenanceContext(binary_path)
             for dname, dr in decs.items():
+                if selected_decompilers and dname not in selected_decompilers:
+                    continue
                 try:
-                    mr = metric.compute_for_binary(dr)
+                    if not isinstance(dr, DecompilationResult):
+                        raise TypeError("checkpoint entry is not a DecompilationResult")
+                    rebound = dr.model_copy(deep=True, update={"binary_path": binary_path})
+                    sanitize_native_provenance(
+                        rebound,
+                        binary_path,
+                        context=provenance_context,
+                    )
+                    mr = metric.compute_for_binary(
+                        rebound,
+                        preprocessed_sources=source_paths,
+                    )
                 except Exception as e:  # noqa: BLE001
                     print(f"  ! {proj}/{optn}/{binn}/{dname}: {e}")
                     continue
@@ -63,6 +97,7 @@ for proj in projects:
                         new_scores.setdefault(dname, {})[f"{proj}::{optn}::{binn}::{fn}"] = {
                             "value": n,
                             "dist": dist,
+                            "variable_match_evidence": md.get("variable_match_evidence"),
                         }
                     if key not in old:
                         continue
@@ -84,9 +119,8 @@ for d in sorted(agg):
 
 if emit:
     out_path = root / "type_match_new.json"
-    if args and out_path.is_file():
-        # Project-scoped runs MERGE into the existing overlay: overwriting used to
-        # silently shrink type_match_new.json to only the projects covered.
+    if (args or selected_decompilers) and out_path.is_file():
+        # Scoped runs must preserve entries outside their project/decompiler selection.
         from decbench.results_store import merge_typematch_overlay
 
         with open(out_path) as _if:
