@@ -32,9 +32,14 @@ with the shared ``common`` helpers, exactly like the other raw backends.
 Architecture support: x86-64, AArch64, and **ARM32/Thumb-2** (the DecBench CPS
 firmware is Cortex-M Thumb, so this covers the ARM slice). ARM32 mode selection
 uses ELF mapping symbols, function-symbol Thumb bits, and bounded decode probes;
-both Thumb-2 and A32 have dedicated round-trip lanes. Structured
-``VariableInfo`` is not emitted yet; type_match uses its C-signature text-parsing
-path over the emitted ``long name(long arg0, …)`` prototype.
+both Thumb-2 and A32 have dedicated round-trip lanes.
+
+The CLI reports a structured ``variables`` inventory and per-line
+``line_mappings`` in the same JSON payload, and both are forwarded here: the
+inventory carries frame offsets and the machine addresses that touch each slot,
+which a parse of the emitted C cannot recover, and the line map is what lets a
+producer outside ``ADDRESS_CORRESPONDENCE_BACKENDS`` reach the
+address-correspondence path in type_match at all.
 
 Locate the CLI via ``$GLAURUNG_BIN`` (an explicit path), the DecBench
 decompiler configuration, or ``glaurung`` on ``$PATH``. When no native CLI
@@ -69,6 +74,7 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    VariableInfo,
 )
 
 _l = logging.getLogger(__name__)
@@ -562,15 +568,95 @@ class RawGlaurungDecompiler(Decompiler):
         if not code or not str(code).strip():
             return None
         code = str(code)
+        line_count = code.count("\n") + 1
+        record_addr = self._as_int(rec.get("entry_va"), file_addr)
+        size = self._as_int(rec.get("size"), 0)
+        address_delta = file_addr - record_addr
+
+        def _evidence_address(value: Any) -> int | None:
+            address = self._as_int(value, -1)
+            if address < record_addr:
+                return None
+            if size > 0 and address >= record_addr + size:
+                return None
+            return address + address_delta
+
+        line_to_addresses: dict[int, set[int]] = {}
+        for mapping in rec.get("line_mappings") or []:
+            line_number = self._as_int(mapping.get("line_number"), 0)
+            if not 1 <= line_number <= line_count:
+                continue
+            addresses = {
+                rebased
+                for value in mapping.get("addresses") or []
+                if (rebased := _evidence_address(value)) is not None
+            }
+            if addresses:
+                line_to_addresses.setdefault(line_number, set()).update(addresses)
         return FunctionDecompilation(
             name=name,
             address=file_addr,
             decompiled_code=code,
-            line_count=code.count("\n") + 1,
-            line_mappings=[],  # not emitted; GED parses the C directly
-            variables=[],  # v1: type_match uses the C-signature text path
+            line_count=line_count,
+            line_mappings=common.merge_line_addresses(line_to_addresses),
+            variables=self._variables(rec, line_count, _evidence_address),
             metadata=common.extract_metrics(code),
         )
+
+    @staticmethod
+    def _as_int(value: Any, default: int) -> int:
+        try:
+            return int(value, 0) if isinstance(value, str) else int(value)
+        except (TypeError, ValueError, OverflowError):
+            return default
+
+    @staticmethod
+    def _variables(
+        rec: dict[str, Any],
+        line_count: int,
+        address_converter: Any,
+    ) -> list[VariableInfo]:
+        """Glaurung's structured inventory, filtered to this function's span.
+
+        Glaurung reports `size: null` for many functions; the converter then
+        skips the upper bound rather than rejecting every address, because a
+        zero-length span would silently discard the whole payload.
+        """
+        out: list[VariableInfo] = []
+        for v in rec.get("variables") or []:
+            name = str(v.get("name") or "")
+            if not name:
+                continue
+            kind = str(v.get("kind") or "stack")
+            line_numbers = sorted(
+                {
+                    line_number
+                    for value in v.get("line_numbers") or []
+                    if 0 < (line_number := RawGlaurungDecompiler._as_int(value, 0)) <= line_count
+                }
+            )
+            addresses = sorted(
+                {
+                    converted
+                    for value in v.get("addresses") or []
+                    if (converted := address_converter(value)) is not None and converted >= 0
+                }
+            )
+            out.append(
+                VariableInfo(
+                    name=name,
+                    type=str(v.get("type") or ""),
+                    stack_offset=(
+                        int(v["stack_offset"]) if v.get("stack_offset") is not None else None
+                    ),
+                    size=(int(v["size"]) if v.get("size") is not None else None),
+                    kind="arg" if kind == "arg" else "stack",
+                    arg_index=(int(v["arg_index"]) if v.get("arg_index") is not None else None),
+                    line_numbers=line_numbers,
+                    addresses=addresses,
+                )
+            )
+        return out
 
     def _error_result(
         self,
