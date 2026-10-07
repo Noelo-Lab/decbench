@@ -153,19 +153,19 @@ showing 1 of 356, largest margin first
 
 ## AI Policy
 [DecBench](https://github.com/Noelo-Lab/decbench), unlike [Kuna](https://github.com/Noelo-Lab/kuna), **DOES NOT** allow fully autonomous contributions.
-This is relevant for Issues, Commit Comments, and PRs that are automatically created and submitted by an AI system (Codex, Claude, Kimi, ...).
-We do allow AI generated code, and, in fact, much of this repo contains code created by a coding agent.
-However, nearly ever line added has been added and is _owned_ by the user that authorized it, with the core ideas being their own.
+This applies to Issues, Commit Comments, and PRs automatically created and submitted by an AI system (Codex, Claude, Kimi, ...).
+We do allow AI-generated code, and, in fact, much of this repo contains code created by a coding agent.
+However, nearly every line added has been added and is _owned_ by the user who authorized it, with the core ideas being their own.
 Autonomous research is valuable, but not desired on this project.
 
-Autonmous contributions may be closed without reason. 
+Autonomous contributions may be closed without reason. 
 Again, this is not a ban on AI, but a ban on end-to-end automation (open issue, PR, comments).
 Please be responsible and own the content you write for DecBench.
 
 ## Citation
 
 If you use DecBench for research or to improve your tools, consider citing or mentioning it
-in your project. Public acknowledgement helps gain support to keep DecBench it running:
+in your project. Public acknowledgment helps gain support to keep DecBench running:
 
 ```bibtex
 @misc{decbench2026,
