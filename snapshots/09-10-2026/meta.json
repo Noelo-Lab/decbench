@@ -1,0 +1,85 @@
+{
+  "date": "09-10-2026",
+  "iso_date": "2026-10-09",
+  "label": "Codex Astra 6 joins full set (optimized only)",
+  "note": "",
+  "scoreboard": "DecBench Scoreboard",
+  "version": "1.0",
+  "generated_at": "2026-09-23T18:46:57.175986",
+  "functions": 96103,
+  "binaries": 770,
+  "preset": "unoptimized",
+  "decompilers": [
+    "angr",
+    "binja",
+    "claude-code",
+    "codex",
+    "codex@gpt-6-astra",
+    "dewolf",
+    "fission",
+    "ghidra",
+    "glaurung",
+    "ida",
+    "kuna",
+    "manifold",
+    "r2dec",
+    "reko",
+    "ventris"
+  ],
+  "decompiler_names": {
+    "angr": "angr",
+    "binja": "Binary Ninja",
+    "claude-code": "Claude Code",
+    "codex": "Codex",
+    "codex@gpt-6-astra": "Codex",
+    "dewolf": "dewolf",
+    "fission": "Fission",
+    "ghidra": "Ghidra",
+    "glaurung": "Glaurung",
+    "ida": "Hex-Rays",
+    "kuna": "Kuna",
+    "manifold": "Manifold",
+    "r2dec": "r2dec",
+    "reko": "Reko",
+    "ventris": "Ventris"
+  },
+  "decompiler_versions": {
+    "angr": "9.3.4",
+    "binja": "5.3.9757",
+    "claude-code": "claude-opus-4-8 (2.1.217)",
+    "codex": "gpt-6-astra (0.155.1)",
+    "codex@gpt-6-astra": "gpt-6-astra (0.155.1)",
+    "dewolf": "v2026.7.11",
+    "fission": "0.2.3",
+    "ghidra": "12.1",
+    "glaurung": "git-fb4ee6ba",
+    "ida": "9.2",
+    "kuna": "1.515",
+    "manifold": "v1",
+    "r2dec": "6.2.0",
+    "reko": "latest",
+    "ventris": "decompiler_v8_postpp_brace_fix"
+  },
+  "metrics": [
+    "byte_match",
+    "ged",
+    "type_match"
+  ],
+  "leaders": [
+    {
+      "dec": "kuna",
+      "name": "Kuna",
+      "pct": 51.409807355516634
+    },
+    {
+      "dec": "ida",
+      "name": "Hex-Rays",
+      "pct": 49.05429071803853
+    },
+    {
+      "dec": "angr",
+      "name": "angr",
+      "pct": 47.52481027437245
+    }
+  ]
+}
