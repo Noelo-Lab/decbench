@@ -26,12 +26,12 @@ except ImportError:
     MISSING_DEPS.append("angr")
 
 try:
-    from pyjoern import parse_source
+    from rust_joern import parse_source
 
-    HAVE_PYJOERN = True
+    HAVE_RUST_JOERN = True
 except ImportError:
-    HAVE_PYJOERN = False
-    MISSING_DEPS.append("pyjoern")
+    HAVE_RUST_JOERN = False
+    MISSING_DEPS.append("rust_joern")
 
 try:
     from cfgutils.similarity import vj_ged
@@ -490,7 +490,7 @@ class TestFunctionData:
 
 
 @pytest.mark.skipif(
-    not (HAVE_ANGR and HAVE_PYJOERN and HAVE_CFGUTILS),
+    not (HAVE_ANGR and HAVE_RUST_JOERN and HAVE_CFGUTILS),
     reason=f"Missing dependencies: {MISSING_DEPS}",
 )
 class TestFullPipelineIntegration:
@@ -502,13 +502,13 @@ class TestFullPipelineIntegration:
 
     def test_ged_pipeline(self) -> None:
         import angr
-        from pyjoern import parse_source
+        from rust_joern import parse_source
         from cfgutils.similarity import vj_ged
 
         binary_file = EXAMPLE_PROJECT_DIR / "example"
         source_file = EXAMPLE_PROJECT_DIR / "example.c"
 
-        source_parsed = parse_source(str(source_file))
+        source_parsed = parse_source(str(source_file), no_ddg=True)
         source_cfgs = {}
         for func_name, func in source_parsed.items():
             if func.cfg is not None and func.cfg.number_of_nodes() > 0:
@@ -540,7 +540,7 @@ class TestFullPipelineIntegration:
             temp_path = f.name
 
         try:
-            dec_parsed = parse_source(temp_path)
+            dec_parsed = parse_source(temp_path, no_ddg=True)
             if dec_parsed:
                 for func_name, func in dec_parsed.items():
                     if func.cfg is not None and func.cfg.number_of_nodes() > 0:

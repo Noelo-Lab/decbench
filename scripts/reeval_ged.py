@@ -45,8 +45,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from decbench.utils.langs import preprocessed_by_stem  # noqa: E402
 
 PREVIOUS_GED_MAX_NODES = 60
-CHECKPOINT_SCHEMA_VERSION = 7
-SOURCE_CACHE_SCHEMA_VERSION = 1
+CHECKPOINT_SCHEMA_VERSION = 8
+SOURCE_CACHE_SCHEMA_VERSION = 2
 HISTORICAL_CANDIDATE_PARSE = "legacy-overlay-evidence-reconciled-v3"
 
 LEGACY_RAW = "legacy_raw"
@@ -77,7 +77,6 @@ if os.environ.get("DECBENCH_REEVAL_DECOMPILERS"):
         d.strip() for d in os.environ["DECBENCH_REEVAL_DECOMPILERS"].split(",") if d.strip()
     )
 OPT_LEVELS = ("O0", "O2", "O2-noinline")
-SRC_OPT = "O0"
 
 
 def promoted_decompilers(
@@ -642,51 +641,6 @@ def _project_cache_is_current(path: Path, inputs: dict[str, str]) -> bool:
     )
 
 
-def _seed_content_cache_from_legacy(
-    root: Path,
-    src_dir: Path,
-    inputs: dict[tuple[str, str], dict[str, tuple[Path, str]]],
-) -> int:
-    """Reuse current legacy O0 project caches without carrying their cross-opt bug."""
-    seeded = 0
-    projects = sorted({project for _opt, project in inputs})
-    content_dir = src_dir / "by_content"
-    content_dir.mkdir(parents=True, exist_ok=True)
-    for project in projects:
-        legacy_path = root / "ged_src" / f"{project}.pkl"
-        if not legacy_path.exists():
-            continue
-        legacy_opt = next(
-            (
-                opt
-                for opt in (
-                    SRC_OPT,
-                    *(level for level in OPT_LEVELS if level != SRC_OPT),
-                )
-                if _source_inputs(root, opt, project)
-            ),
-            None,
-        )
-        if legacy_opt is None or (legacy_opt, project) not in inputs:
-            continue
-        try:
-            payload = pickle.loads(legacy_path.read_bytes())
-        except Exception:  # noqa: BLE001
-            continue
-        per_stem = payload.get("per_stem", payload) if isinstance(payload, dict) else {}
-        for stem, (source_path, digest) in inputs[(legacy_opt, project)].items():
-            content_path = content_dir / f"{digest}.pkl"
-            if (
-                content_path.exists()
-                or stem not in per_stem
-                or legacy_path.stat().st_mtime < source_path.stat().st_mtime
-            ):
-                continue
-            _write_pickle_atomic(content_path, per_stem[stem])
-            seeded += 1
-    return seeded
-
-
 def build_source_cfgs(
     root: Path,
     required: set[tuple[str, str]],
@@ -712,7 +666,6 @@ def build_source_cfgs(
         print("[ged/src] all optimization-specific source-CFG caches present", flush=True)
         return src_dir
 
-    seeded = _seed_content_cache_from_legacy(root, src_dir, inputs)
     content_dir = src_dir / "by_content"
     representatives: dict[str, Path] = {}
     for pair in rebuild:
@@ -721,7 +674,6 @@ def build_source_cfgs(
                 representatives.setdefault(digest, path)
     print(
         f"[ged/src] {len(rebuild)} opt/project caches need assembly; "
-        f"seeded {seeded} TUs from valid legacy caches; "
         f"parsing {len(representatives)} unique source files with {workers} workers",
         flush=True,
     )
@@ -892,12 +844,13 @@ def eval_one(
             sanitizer_changed=sanitizer_changed,
         )
     elif has_preprocessor_control:
+        # Audit-only census input: unexpanded directives may not parse, and scores
+        # never read it.
         sanitized_dec_cfgs = (
             extract_cfgs_from_source(
                 Path(c_path),
                 sanitize_decompiled=True,
                 preprocess_decompiled=False,
-                raise_on_error=True,
             )
             or {}
         )

@@ -48,8 +48,10 @@ Source Code (TOML config)
 You can access/reproduce all of them using our command-line utility and [public dataset](https://huggingface.co/datasets/noelo-lab/decbench-dataset).
 
 ```bash
-# Install
+# Install (GED also needs Rust Joern, built from source)
 pip install -e ".[dev]"
+git clone https://github.com/Noelo-Lab/rust-joern && (cd rust-joern && cargo build --release)
+pip install -e ./rust-joern
 
 # Run full pipeline on a project
 decbench run projects/sailr/coreutils.toml

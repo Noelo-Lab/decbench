@@ -666,7 +666,9 @@ def test_standalone_pass_enriches_only_audit(tmp_path: Path) -> None:
     artifact = root / "O0/proj/decompiled/angr_bin.c"
     artifact.parent.mkdir(parents=True)
     artifact.write_text("// Function: f @ 0x1000\nint f(void) { return 0; }\n")
-    source_cache = root / "ged_src/v1/projects/O0/proj.pkl"
+    source_cache = historical_iso.source_cache_path(
+        root / "ged_src" / f"v{historical_iso.SOURCE_CACHE_SCHEMA_VERSION}", "O0", "proj"
+    )
     _write_source_cache(source_cache, _path_graph(61))
     legacy_source_cache = root / "ged_src/proj.pkl"
     _write_source_cache(legacy_source_cache, _path_graph(61))
