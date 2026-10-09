@@ -23,10 +23,10 @@ of a project ends up with an identical map, so per-program functions (``main``,
 ``usage``, static helpers) are scored against another binary's body. That was
 the bug behind decbench#50 — it silently capped offline GED coverage at ~39%.
 
-Cost model: Joern spawns a JVM per parse, so parsing dominates. We therefore
-**deduplicate parses by stripped-content hash** — each unique translation unit
-(shared across opt levels and binaries) is parsed once and cached. Output is
-resumable: an existing ``<stem>.json`` is left untouched unless ``overwrite``.
+Cost model: parsing dominates, so we **deduplicate parses by stripped-content
+hash** — each unique translation unit (shared across opt levels and binaries) is
+parsed once and cached. Output is resumable: an existing ``<stem>.json`` is left
+untouched unless ``overwrite``.
 """
 
 from __future__ import annotations
@@ -271,7 +271,7 @@ def export_project_cfgs(
     *,
     functions: FunctionFilter | None = None,
     overwrite: bool = False,
-    generator: str = "pyjoern",
+    generator: str = "rust-joern",
 ) -> dict[tuple[str, str], str]:
     """Write source-CFG JSONs for one project's binaries; return ``{(opt, stem): rel}``.
 
@@ -314,7 +314,7 @@ def export_all_cfgs(
     workers: int = 1,
     functions: dict[tuple[str, str, str], Collection[str]] | None = None,
     overwrite: bool = False,
-    generator: str = "pyjoern",
+    generator: str = "rust-joern",
     log: Logger = print,
 ) -> dict[tuple[str, str, str], str]:
     """Export source CFGs for many projects; return ``{(opt, project, stem): rel}``.

@@ -238,7 +238,7 @@ nothing else. Store, per binary, the `function → CFG` map the pipeline used:
 ```jsonc
 {
   "opt": "O0", "project": "zlib", "binary": "example",
-  "generator": "pyjoern",                 // provenance
+  "generator": "rust-joern",              // provenance (older exports: "pyjoern")
   "functions": {
     "test_compress": {
       "nodes": [0, 1, 2],                  // ints 0..n-1
@@ -265,8 +265,8 @@ drifting from the scoring path (`tests/test_cfg_export.py` asserts the two
 agree). Each
 DiGraph's nodes are relabeled to `0..n-1` (stable order); Joern parses are
 **deduplicated by stripped-content hash** so each unique translation unit is
-parsed once (Joern spawns a JVM per parse — the dominant cost; see the module
-docstring), and an existing `<stem>.json` is skipped unless `--overwrite`.
+parsed once (parsing is the dominant cost; see the module docstring), and an
+existing `<stem>.json` is skipped unless `--overwrite`.
 
 Each JSON holds only the functions **that binary** is scored on
 (`publish_dataset.py::_cfg_functions` passes `group.all_functions` as the

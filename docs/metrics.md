@@ -17,7 +17,7 @@ paths read graph topology plus each node's `is_entrypoint`/`is_exitpoint` roles
 and never read labels (which makes the published source-CFG serialization
 lossless — see [dataset-publishing.md](dataset-publishing.md)).
 
-- Decompiled-side CFGs are parsed from the decompiled C via pyjoern after
+- Decompiled-side CFGs are parsed from the decompiled C via Rust Joern after
   syntax sanitization and expansion of macros defined in that output. This
   mirrors the source side's macro-expanded input; includes are removed before
   the host preprocessor runs, and preprocessing failure falls back to the
@@ -41,7 +41,7 @@ lossless — see [dataset-publishing.md](dataset-publishing.md)).
 `scripts/run_benchmark.py`, and `pipeline/executor.py` (which globs
 `compiled_dir/*.i` and `*.ii`) all build the source-side CFGs by feeding the
 preprocessed units to `utils/cfg.py extract_cfgs_from_source` (system headers
-stripped, then pyjoern `parse_source`). Preprocessed over raw source is
+stripped, then Rust Joern `parse_source`). Preprocessed over raw source is
 deliberate: Joern needs macro-expanded, ifdef-resolved code to parse
 completely — raw `.c` with unexpanded includes parses incompletely. Without
 them the pipeline takes the "No preprocessed sources" branch and **GED is
