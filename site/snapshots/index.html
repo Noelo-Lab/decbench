@@ -45,7 +45,7 @@
             </div>
         </div>
             <div class="side-stats"><div class="side-stat"><span class="side-num" data-stat="functions">96,103</span> functions</div><div class="side-stat"><span class="side-num" data-stat="binaries">770</span> binaries</div><div class="side-stat"><span class="side-num" data-stat="decompilers">15</span> decompilers</div><div class="side-stat"><span class="side-num" data-stat="metrics">3</span> metrics</div></div>
-            <div class="side-foot"><button class="ds-btn theme-toggle" id="theme-toggle" type="button" aria-label="toggle light or dark theme"><span class="th-to-light">[ light mode ]</span><span class="th-to-dark">[ dark mode ]</span></button><div class="side-foot-stamp">[ 2026-09-23 18:46 ]</div></div>
+            <div class="side-foot"><button class="ds-btn theme-toggle" id="theme-toggle" type="button" aria-label="toggle light or dark theme"><span class="th-to-light">[ light mode ]</span><span class="th-to-dark">[ dark mode ]</span></button><div class="side-foot-stamp">[ 2026-10-09 21:48 ]</div></div>
         </aside>
 
         <main class="main">
@@ -522,7 +522,7 @@ Non-isomorphic graphs up to 200 nodes use the <a href="https://github.com/mahalo
 Like most GED algorithms, VJ-GED is an approximation and can report more distance than actually exists.
 Larger non-isomorphic graphs use a nonzero lower bound from their node and edge count differences.</p>
 <p class="view-desc">There are other ways to inject error here.
-We largely use <a href="https://joern.io/">Joern</a> to parse the decompilation of each project.
+We use <a href="https://github.com/Noelo-Lab/rust-joern">Rust Joern</a>, a Rust port of <a href="https://joern.io/">Joern</a>'s C/C++ front end, to parse the source and the decompilation of each project.
 If Joern fails, we fail.
 There is also ways the <code>.i</code> files, which we parse, can have false information left behind by the compiler.
 When we sampled this process, we found it was small.</p>
@@ -559,6 +559,11 @@ This is more common on the optimization dataset, and is a known limitation.</p>
     <section class="view" id="view-changelog" data-view="changelog">
         <h2 class="view-title">Changelog</h2>
         <p class="view-desc">Significant changes to DecBench that introduce or update results, which can be viewable on the website.</p>
+<h3 class="sub">2026-10-09</h3>
+<ul>
+<li>Added Codex Astra 6 to optimized leaderboard</li>
+<li>Reworked CFG evaluation using <a href="https://github.com/Noelo-Lab/rust-joern">rust-joern</a>.</li>
+</ul>
 <h3 class="sub">2026-08-28</h3>
 <ul>
 <li>Added the Ventris decompiler.</li>
