@@ -2,6 +2,10 @@
 
 Significant changes to DecBench that introduce or update results, which can be viewable on the website.
 
+### 2026-10-09
+- Added Codex Astra 6 to optimized leaderboard
+- Reworked CFG evaluation using [rust-joern](https://github.com/Noelo-Lab/rust-joern).
+
 ### 2026-08-28
 - Added the Ventris decompiler.
 
