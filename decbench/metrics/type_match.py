@@ -28,6 +28,7 @@ from decbench.metrics.variable_match import (
     match_variables,
 )
 from decbench.models.metrics import AggregationType, MetricResult, MetricValue
+from decbench.utils.function_identity import parse_function_storage_key
 from decbench.utils.native_code import die_ranges, entry_address_candidates
 
 if TYPE_CHECKING:
@@ -329,8 +330,7 @@ def extract_ground_truth_type_index(binary_path: Path) -> GroundTruthTypeIndex:
             return result
 
         for CU in dwarfinfo.iter_CUs():
-            top_DIE = CU.get_top_DIE()
-            for DIE in top_DIE.iter_children():
+            for DIE in CU.iter_DIEs():
                 if DIE.tag != "DW_TAG_subprogram":
                     continue
 
@@ -344,6 +344,54 @@ def extract_ground_truth_type_index(binary_path: Path) -> GroundTruthTypeIndex:
 
     except Exception as e:
         logger.warning("Failed to extract DWARF types from %s: %s", binary_path, e)
+
+    return result
+
+
+def extract_ground_truth_types_by_address(
+    binary_path: Path,
+) -> dict[int, list[dict[str, Any]]]:
+    """Extract DWARF variable ground truth keyed by concrete function address.
+
+    This is the collision-safe companion to :func:`extract_ground_truth_types`.
+    It intentionally keeps the legacy name-keyed extractor for compatibility,
+    while allowing C++ overloads and same-named methods to remain distinct.
+    """
+    from decbench.utils import binfmt
+
+    result: dict[int, list[dict[str, Any]]] = {}
+
+    try:
+        dwarfinfo = binfmt.dwarf_info(binary_path)
+        if dwarfinfo is None:
+            return result
+
+        for CU in dwarfinfo.iter_CUs():
+            # Walk the whole DIE tree, not just the CU's direct children: a C++
+            # DW_TAG_subprogram can sit inside a namespace or class scope, and
+            # those are exactly the functions this address map exists to keep
+            # apart. dwarf_function_identities() already walks the full tree, so
+            # a shallower walk here would name an overload at foo@0x... and then
+            # silently have no ground truth for that address.
+            for DIE in CU.iter_DIEs():
+                if DIE.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in DIE.attributes:
+                    continue
+
+                address = int(DIE.attributes["DW_AT_low_pc"].value)
+                if not binfmt.dwarf_low_pc_is_concrete(binary_path, address):
+                    continue
+                _func_name, variables = _parse_function_die(DIE, dwarfinfo)
+                # Keep the address even when the function has no variables. Its
+                # empty list is still authoritative and must not fall back to a
+                # different same-name overload's ground truth.
+                result[address] = variables
+
+    except Exception as e:
+        logger.warning(
+            "Failed to extract address-keyed DWARF types from %s: %s",
+            binary_path,
+            e,
+        )
 
     return result
 
@@ -387,6 +435,24 @@ def _ground_truth_for_function(
         functions[function_name] for functions in index.values() if function_name in functions
     ]
     return by_name[0] if len(by_name) == 1 else []
+
+
+def _ground_truth_for_storage_key(
+    index: GroundTruthTypeIndex,
+    by_address: dict[int, list[dict[str, Any]]],
+    storage_key: str,
+    decompiled: FunctionDecompilation,
+    architecture: str,
+) -> list[dict[str, Any]]:
+    """Resolve a storage key without letting an overload borrow another's types."""
+    semantic_name, keyed_address = parse_function_storage_key(storage_key)
+    if keyed_address is not None:
+        return by_address.get(keyed_address, [])
+
+    function_address = int(decompiled.address)
+    if function_address in by_address:
+        return by_address[function_address]
+    return _ground_truth_for_function(index, semantic_name, function_address, architecture)
 
 
 def _parse_function_die(die: Any, dwarfinfo: Any) -> tuple[str | None, list[dict[str, Any]]]:
@@ -975,7 +1041,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "17"
+    cache_version = "18"
 
     weight = 1.0
     lower_is_better = False
@@ -988,6 +1054,9 @@ class TypeMatchMetric(Metric):
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
         self._ground_truth_cache: dict[str, GroundTruthTypeIndex] = {}
+        self._ground_truth_address_cache: dict[
+            str, dict[int, list[dict[str, Any]]]
+        ] = {}
         self._source_context_key: tuple[Path, str, tuple[Path, ...]] | None = None
         self._source_context: PreprocessedSourceContext | None = None
         options = self.config.extra_options
@@ -1587,23 +1656,32 @@ class TypeMatchMetric(Metric):
             gt_types = extract_ground_truth_type_index(binary_path)
             self._ground_truth_cache[cache_key] = gt_types
 
-        if not gt_types:
+        if cache_key in self._ground_truth_address_cache:
+            gt_types_by_address = self._ground_truth_address_cache[cache_key]
+        else:
+            gt_types_by_address = extract_ground_truth_types_by_address(binary_path)
+            self._ground_truth_address_cache[cache_key] = gt_types_by_address
+
+        if not gt_types and not gt_types_by_address:
             logger.warning(
                 "No DWARF ground truth types for %s. " "Binary may not have been compiled with -g.",
                 binary_path,
             )
 
-        binary_shift = self._calibrate_binary_shift(decompilation, gt_types, architecture)
+        binary_shift = self._calibrate_binary_shift(
+            decompilation, gt_types, gt_types_by_address, architecture
+        )
         native_address_provenance = not uses_legacy_correspondence(
             decompilation.decompiler.decompiler_name
         )
 
-        for func_name, func_decomp in decompilation.functions.items():
+        for storage_key, func_decomp in decompilation.functions.items():
             try:
-                gt_vars = _ground_truth_for_function(
+                gt_vars = _ground_truth_for_storage_key(
                     gt_types,
-                    func_decomp.name,
-                    int(func_decomp.address),
+                    gt_types_by_address,
+                    storage_key,
+                    func_decomp,
                     architecture,
                 )
                 if not gt_vars:
@@ -1620,10 +1698,10 @@ class TypeMatchMetric(Metric):
                         native_address_provenance or has_line_address_evidence(func_decomp)
                     ),
                 )
-                function_results[func_name] = value
+                function_results[storage_key] = value
 
             except Exception as e:
-                errors.append(f"{func_name}: {str(e)}")
+                errors.append(f"{storage_key}: {str(e)}")
 
         if gt_types and (
             not function_results or all(v.value == 0.0 for v in function_results.values())
@@ -1670,21 +1748,23 @@ class TypeMatchMetric(Metric):
     def _calibrate_binary_shift(
         decompilation: DecompilationResult,
         gt_types: GroundTruthTypeIndex,
+        gt_types_by_address: dict[int, list[dict[str, Any]]],
         architecture: str,
     ) -> int | None:
         """Calibrate the offset shift across all functions of a binary.
 
-        Gathers per-function (ground-truth, decompiled) stack offset sets and
-        finds the single additive shift that aligns them best across the
-        binary. Returns ``None`` when there is nothing to calibrate against.
+        Address-keyed ground truth is preferred so C++ overloads do not share a
+        calibration payload. Only unqualified keys may use the unique-name
+        fallback for old or unusual artifacts where an address cannot be resolved.
         """
         pairs: list[tuple[list[int], list[int]]] = []
 
-        for func_decomp in decompilation.functions.values():
-            gt_vars = _ground_truth_for_function(
+        for storage_key, func_decomp in decompilation.functions.items():
+            gt_vars = _ground_truth_for_storage_key(
                 gt_types,
-                func_decomp.name,
-                int(func_decomp.address),
+                gt_types_by_address,
+                storage_key,
+                func_decomp,
                 architecture,
             )
             if not gt_vars:

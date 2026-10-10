@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from decbench.metrics.base import Metric, MetricConfig
 from decbench.metrics.registry import register_metric
 from decbench.models.metrics import AggregationType, MetricResult, MetricValue
+from decbench.utils.function_identity import parse_function_storage_key
 
 if TYPE_CHECKING:
     from networkx import DiGraph
@@ -230,7 +232,7 @@ class ByteMatchMetric(Metric):
     requires_source_cfg = False
     requires_decompiled_cfg = False
 
-    cache_version = "7"
+    cache_version = "8"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
@@ -449,8 +451,18 @@ class ByteMatchMetric(Metric):
 
         from decbench.metrics.fixup import derive_context_decls
 
+        # Storage keys may be address-qualified (``foo@0x...``), while
+        # prototype recovery needs the semantic C identifier. A same-name
+        # collision is intentionally omitted: choosing either overload's
+        # signature for calls to the other would conflate distinct functions.
+        name_counts = Counter(fd.name for fd in decompilation.functions.values())
         context_decls = derive_context_decls(
-            {name: fd.decompiled_code or "" for name, fd in decompilation.functions.items()}
+            {
+                fd.name: fd.decompiled_code or ""
+                for storage_key, fd in decompilation.functions.items()
+                if name_counts[fd.name] == 1
+                and parse_function_storage_key(storage_key)[1] is None
+            }
         )
 
         for func_name, func_decomp in decompilation.functions.items():

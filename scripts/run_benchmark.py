@@ -243,22 +243,40 @@ def _stripped_copy(binary: Path, strip_dir: Path) -> Path:
 
 
 def _relabel_to_dwarf(
-    result: DecompilationResult, addr2name: dict[int, str], unstripped: Path
+    result: DecompilationResult,
+    addr2name: dict[int, str],
+    unstripped: Path,
+    identity_addr2name: dict[int, str] | None = None,
 ) -> None:
-    """Re-symbolize a stripped-binary decompilation for evaluation.
+    """Canonicalize stripped-binary results against the full DWARF target set.
 
-    The decompiler analysed the stripped binary, so it named functions by address
-    (``FUN_00102530`` / ``sub_...``). Map each back to the DWARF name at its
-    address — renaming in BOTH the code (so GED's Joern parse keys by the right
-    name) and the function key — and point eval at the UNSTRIPPED (DWARF) binary.
-    This is pure bookkeeping so name-based eval/GED line up; the decompiler got no
-    help (its analysis ran on the stripped binary).
+    ``addr2name`` is the selected benchmark target set for this run.
+    ``identity_addr2name`` is the complete binary-wide source-function universe
+    used only to decide whether a short name is ambiguous. Keeping those maps
+    separate makes storage identity invariant under sample-set slicing: selecting
+    one member of an overload group does not turn ``foo@0x...`` back into ``foo``.
+
+    Backend addresses are normalized back to the canonical DWARF ``low_pc``
+    (including historical PE-RVA and Thumb-bit variants), so address-keyed
+    metrics and source recovery consume the same identity primitive. Output
+    that cannot be mapped to a requested target is outside the gated benchmark
+    universe and is dropped.
     """
     from decbench.decompilers.raw import common
 
-    # Pre-fix PE decompiles stored bare RVAs; adding the ImageBase recovers the
-    # DWARF key. Harmless for ELF, where the base is already folded into fd.address.
     base = common.elf_min_vaddr(unstripped)
+
+    identity_universe = identity_addr2name or addr2name
+    name_counts: dict[str, int] = {}
+    for target_name in identity_universe.values():
+        name_counts[target_name] = name_counts.get(target_name, 0) + 1
+    ambiguous_names = {name for name, count in name_counts.items() if count > 1}
+
+    def storage_key(name: str, address: int) -> str:
+        if name in ambiguous_names:
+            return f"{name}@0x{address:x}"
+        return name
+
     thumb_names: dict[int, tuple[int, str]] = {}
     blocked_thumb_addresses: set[int] = set()
     info = binfmt.detect(unstripped)
@@ -285,49 +303,69 @@ def _relabel_to_dwarf(
     for address in blocked_thumb_addresses:
         thumb_names.pop(address, None)
 
+    def dwarf_target(raw_address: int) -> tuple[int, str] | None:
+        candidates = (raw_address,) if not base else (raw_address, raw_address + base)
+        for candidate in candidates:
+            target_name = addr2name.get(candidate)
+            if target_name is not None:
+                return candidate, target_name
+        for candidate in candidates:
+            thumb_binding = thumb_names.get(candidate & ~1)
+            if thumb_binding is not None:
+                return thumb_binding
+        return None
+
     new_funcs: dict[str, object] = {}
-    dropped = 0
+    recovered_targets: set[int] = set()
+    dropped_unmapped = 0
+
     for fd in list(result.functions.values()):
-        addr = int(fd.address)
-        candidates = (addr,) if not base else (addr, addr + base)
-        binding = next(
-            (
-                (candidate, addr2name[candidate])
-                for candidate in candidates
-                if candidate in addr2name
-            ),
-            None,
-        )
-        if binding is None:
-            binding = next(
-                (
-                    thumb_names[canonical]
-                    for candidate in candidates
-                    if (canonical := candidate & ~1) in thumb_names
-                ),
-                None,
-            )
-        if binding is None:
-            dropped += 1
+        target = dwarf_target(int(fd.address))
+        if target is None:
+            dropped_unmapped += 1
             continue
-        matched_address, dwarf_name = binding
-        fd.address = matched_address
-        if dwarf_name != fd.name:
+
+        target_address, target_name = target
+        recovered_targets.add(target_address)
+        old_name = fd.name
+        if target_name != old_name:
             fd.decompiled_code = re.sub(
-                r"\b" + re.escape(fd.name) + r"\b", dwarf_name, fd.decompiled_code
+                r"\b" + re.escape(old_name) + r"\b",
+                target_name,
+                fd.decompiled_code,
             )
-            fd.name = dwarf_name
-        prev = new_funcs.get(fd.name)
-        if prev is None or len(fd.decompiled_code or "") >= len(
-            getattr(prev, "decompiled_code", "") or ""
+        fd.name = target_name
+        fd.address = target_address
+
+        key = storage_key(target_name, target_address)
+        previous = new_funcs.get(key)
+        if previous is None or len(fd.decompiled_code or "") >= len(
+            getattr(previous, "decompiled_code", "") or ""
         ):
-            new_funcs[fd.name] = fd
+            new_funcs[key] = fd
+
     result.functions = new_funcs  # type: ignore[assignment]
+
+    was_all_failure = result.decompiler.failed_functions == ["all"]
+    missing = [
+        storage_key(addr2name[address], address)
+        for address in sorted(addr2name)
+        if address not in recovered_targets
+    ]
+    if not (was_all_failure and not recovered_targets):
+        result.decompiler.failed_functions = missing
+
+    result.decompiler.extra = {
+        **(result.decompiler.extra or {}),
+        "function_identity": "dwarf-low-pc",
+        "ambiguous_source_names": len(ambiguous_names),
+        "dropped_unmapped_functions": dropped_unmapped,
+    }
     result.binary_path = unstripped
-    if dropped:
+    if dropped_unmapped:
         result.decompiler.extra = {
             **(result.decompiler.extra or {}),
-            "source_filter_unmatched_dropped": dropped,
+            "source_filter_unmatched_dropped": dropped_unmapped,
         }
 
 
@@ -476,15 +514,17 @@ def decompile_project_timed(
     opt: OptimizationLevel,
     source_fn_map: dict[str, dict[int, str]],
     decompilers: list[str] | None = None,
+    identity_fn_map: dict[str, dict[int, str]] | None = None,
 ) -> tuple[dict, dict[str, int]]:
     """Decompile all of a project's binaries at one opt level, with timeouts.
 
     Concurrency is managed by a thread pool whose threads each block on a
     decompile subprocess (the work happens in the child, so the GIL is free).
-    ``source_fn_map`` maps binary stem -> {low_pc: name} for the project's own
-    source functions. The decompiler is run on a STRIPPED copy (no debug info /
-    symbols) and restricted to those ADDRESSES; results are then re-labeled with
-    the DWARF names and pointed back at the unstripped binary for evaluation.
+    ``source_fn_map`` maps binary stem -> {low_pc: name} for the selected
+    targets. ``identity_fn_map`` optionally carries the complete pre-slice source
+    universe used to keep collision-qualified storage keys stable. The decompiler
+    is run on a STRIPPED copy (no debug info / symbols) and restricted to the
+    selected ADDRESSES; results are then re-labeled with DWARF names.
     ``decompilers`` (default: the global set) lets callers run a SUBSET — used
     for incremental runs that add/redo only one or two decompilers.
     Returns (results_dict binary->dec->DecompilationResult, stats).
@@ -539,7 +579,8 @@ def decompile_project_timed(
                 amap = source_fn_map.get(stem) or {}
                 if orig is not None:
                     if amap:
-                        _relabel_to_dwarf(res, amap, orig)
+                        identity_map = (identity_fn_map or {}).get(stem) or amap
+                        _relabel_to_dwarf(res, amap, orig, identity_map)
                     else:
                         res.binary_path = orig
                     sanitize_native_provenance(res, orig)
@@ -573,6 +614,37 @@ def discover(project: Project, out_dir: Path) -> int:
     ex = PipelineExecutor(cfg)
     ex._discover_existing_binaries([project], out_dir)
     return sum(len(v) for v in project.compiled_binaries.values())
+
+
+def _canonical_target_keys(addr2name: dict[int, str]) -> dict[int, str]:
+    """Binary-wide canonical storage key for every DWARF target address."""
+    counts: dict[str, int] = {}
+    for name in addr2name.values():
+        counts[name] = counts.get(name, 0) + 1
+    return {
+        address: (f"{name}@0x{address:x}" if counts[name] > 1 else name)
+        for address, name in addr2name.items()
+    }
+
+
+def _select_manifest_targets(
+    addr2name: dict[int, str], allowed: set[str] | None
+) -> dict[int, str]:
+    """Select a manifest slice without losing binary-wide function identity.
+
+    New manifests may contain canonical ``name@0xADDR`` keys and therefore
+    select one exact overload. Historical plain-name manifests remain accepted;
+    when such a name is ambiguous they retain the legacy behavior of selecting
+    every matching address rather than silently picking one.
+    """
+    if not allowed:
+        return {}
+    canonical = _canonical_target_keys(addr2name)
+    return {
+        address: name
+        for address, name in addr2name.items()
+        if canonical[address] in allowed or name in allowed
+    }
 
 
 def _present_decompilers(
@@ -682,17 +754,20 @@ def main() -> int:
             ts = time.time()
             source_stems = set(project.preprocessed_sources.get(opt, {}).keys())
             src_fn_names: dict[str, dict[int, str]] = {}
+            src_fn_identity: dict[str, dict[int, str]] = {}
             src_fn_owners: dict[str, dict[int, tuple[str, str]]] = {}
             kept_binaries = []
             needed_stems: set[str] = set()
             for b in project.compiled_binaries[opt]:
                 addr_stem: dict[int, str] = {}
                 fns = project_source_functions(b, source_stems, stem_out=addr_stem)
+                identity_fns = dict(fns)
                 if SAMPLESET_GATE is not None:
                     allowed = SAMPLESET_GATE.get((name, opt.value, b.stem))
-                    fns = {a: nm for a, nm in fns.items() if allowed and nm in allowed}
+                    fns = _select_manifest_targets(fns, allowed)
                 if fns:
                     src_fn_names[b.stem] = fns
+                    src_fn_identity[b.stem] = identity_fns
                     src_fn_owners[b.stem] = {
                         addr: (func_name, addr_stem[addr])
                         for addr, func_name in fns.items()
@@ -736,7 +811,12 @@ def main() -> int:
             )
             try:
                 dec, dstats = decompile_project_timed(
-                    project, out_dir, opt, src_fn_names, decompilers=to_run
+                    project,
+                    out_dir,
+                    opt,
+                    src_fn_names,
+                    decompilers=to_run,
+                    identity_fn_map=src_fn_identity,
                 )
             except Exception as e:  # noqa: BLE001
                 print(f"[{name}/{opt.value}] decompile ERROR: {e}", flush=True)

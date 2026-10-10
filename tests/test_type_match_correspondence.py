@@ -294,4 +294,4 @@ def test_direct_call_defaults_to_generic_fallback_but_can_request_address_mode()
 
 
 def test_address_matcher_uses_new_cache_generation() -> None:
-    assert TypeMatchMetric.cache_version == "17"
+    assert TypeMatchMetric.cache_version == "18"

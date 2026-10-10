@@ -25,8 +25,9 @@ import re
 from pathlib import Path
 
 from decbench.utils import binfmt
+from decbench.utils.function_identity import parse_function_storage_key
 
-FUNCTION_MARKER = re.compile(r"^// Function: (\S+) @ (0x[0-9a-fA-F]+)\s*$", re.M)
+FUNCTION_MARKER = re.compile(r"^// Function: (.+?) @ (0x[0-9a-fA-F]+)\s*$", re.M)
 
 OPT_LEVELS = ("O0", "O2", "O2-noinline")
 
@@ -51,19 +52,56 @@ def decompiled_c_path(root: Path, opt: str, project: str, decompiler: str, stem:
 
 
 def split_functions(c_path: Path) -> dict[str, tuple[int, str]]:
-    """``name -> (address, decompiled block)`` for one decompiled ``.c`` file."""
+    """``storage key -> (address, decompiled block)`` for one ``.c`` artifact.
+
+    New artifacts write collision-qualified storage keys directly. Historical
+    artifacts wrote only semantic names, so if two markers share a name at
+    different addresses, upgrade both to ``<name>@0x<address>`` while reading.
+    """
     text = c_path.read_text(errors="replace")
     out: dict[str, tuple[int, str]] = {}
     matches = list(FUNCTION_MARKER.finditer(text))
     for i, m in enumerate(matches):
         start = m.end()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        out[m.group(1)] = (int(m.group(2), 16), text[start:end].strip())
+        marker_key = m.group(1)
+        address = int(m.group(2), 16)
+        code = text[start:end].strip()
+        semantic_name, encoded_address = parse_function_storage_key(marker_key)
+
+        if encoded_address is not None:
+            out[marker_key] = (address, code)
+            continue
+
+        same_name = [
+            (key, value)
+            for key, value in out.items()
+            if parse_function_storage_key(key)[0] == semantic_name
+        ]
+        duplicate = next(
+            (key for key, (existing_address, _code) in same_name if existing_address == address),
+            None,
+        )
+        if duplicate is not None:
+            out[duplicate] = (address, code)
+            continue
+        if not same_name:
+            out[semantic_name] = (address, code)
+            continue
+
+        for key, (existing_address, existing_code) in same_name:
+            if key == semantic_name:
+                del out[key]
+                out[f"{semantic_name}@0x{existing_address:x}"] = (
+                    existing_address,
+                    existing_code,
+                )
+        out[f"{semantic_name}@0x{address:x}"] = (address, code)
     return out
 
 
 def function_addresses(c_path: Path) -> dict[str, int]:
-    """``name -> address`` parsed from a decompiled ``.c`` header (``{}`` if absent)."""
+    """``storage key -> address`` parsed from a decompiled artifact."""
     if not c_path.is_file():
         return {}
     return {name: addr for name, (addr, _code) in split_functions(c_path).items()}
