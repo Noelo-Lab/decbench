@@ -6,11 +6,12 @@ ships as a standalone Rust CLI (a line-faithful port of Ghidra's decompiler).
 So this backend *shells out* to it and parses JSON, the way the dockerized
 backends shell out to a container.
 
-It drives kuna's **whole-binary** entrypoint, which loads + analyzes the binary
-once and decompiles every function from that single load (the load-once contract
-decbench's ghidra/angr backends satisfy by reusing one program/JVM/process):
+It drives kuna's **whole-binary** JSON entrypoint for code and metric evidence,
+and its native project export for declarations. Each command loads once; a
+project header is used only when its native name, address and body match JSON:
 
     kuna decompile-all <binary> --json
+    kuna decompile-project <binary> -o <temporary-directory>
 
 emitting ::
 
@@ -45,6 +46,7 @@ import re
 import shutil
 import signal
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -60,6 +62,7 @@ from decbench.models.decompilation import (
 )
 
 _l = logging.getLogger(__name__)
+_PROJECT_FUNCTION_RE = re.compile(r"^// Function: (.+) @ 0x([0-9a-fA-F]+)[^\n]*\n", re.MULTILINE)
 
 
 @register_decompiler("kuna")
@@ -72,6 +75,7 @@ class RawKunaDecompiler(Decompiler):
     def __init__(self, config: DecompilerConfig | None = None):
         super().__init__(config)
         self._payload_cache: dict[str, Any] = {}
+        self._project_cache: dict[str, tuple[str, str]] = {}
 
     @staticmethod
     def _kuna_bin() -> str | None:
@@ -107,7 +111,7 @@ class RawKunaDecompiler(Decompiler):
         function_names: set[str] | None = None,
         progress_path: Path | None = None,
     ) -> DecompilationResult:
-        """Decompile a whole binary with kuna (one CLI invocation per binary)."""
+        """Decompile with native JSON evidence and matching project declarations."""
         if not self.is_available():
             raise RuntimeError(
                 f"Decompiler '{self.name}' is not available "
@@ -158,6 +162,12 @@ class RawKunaDecompiler(Decompiler):
             _l.error("kuna-raw failed on %s: %s", binary_path, e)
             return self._error_result(binary_path, start, str(e))
 
+        project_c, preamble = "", ""
+        try:
+            project_c, preamble = self._run_project_export(binary_path)
+        except Exception as e:  # noqa: BLE001
+            _l.warning("kuna-raw: project declarations unavailable for %s: %s", binary_path, e)
+
         records = {str(r.get("name") or ""): r for r in self._records(payload)}
         enumerated = sorted(
             (
@@ -179,7 +189,15 @@ class RawKunaDecompiler(Decompiler):
         for func_name, file_addr in enumerated:
             fd = None
             try:
-                fd = self._build_function(records[func_name], func_name, file_addr)
+                rec = records[func_name]
+                matched = self._project_body_matches(project_c, rec)
+                fd = self._build_function(rec, func_name, file_addr, preamble if matched else "")
+                if fd is not None and project_c and not matched:
+                    _l.warning(
+                        "kuna-raw: %s: native project name/address/body differs from JSON; "
+                        "header not used",
+                        func_name,
+                    )
             except Exception as e:  # noqa: BLE001
                 _l.debug("kuna-raw: assembling %s failed: %s", func_name, e)
             if fd is not None:
@@ -279,6 +297,60 @@ class RawKunaDecompiler(Decompiler):
         self._payload_cache[key] = payload
         return payload
 
+    def _run_project_export(self, binary_path: Path) -> tuple[str, str]:
+        """Read native project C and declarations; keep no files after this call."""
+        key = str(binary_path)
+        if key in self._project_cache:
+            return self._project_cache[key]
+        cmd = self._build_command(binary_path)
+        cmd[1] = "decompile-project"
+        cmd.remove("--json")
+        with tempfile.TemporaryDirectory(prefix="kuna-project-") as tmp:
+            cmd += ["-o", tmp]
+            p = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
+            try:
+                stdout, stderr = p.communicate(timeout=self._timeout_seconds())
+            finally:
+                if p.poll() is None:
+                    self._kill_group(p)
+            if p.returncode != 0:
+                raise RuntimeError(
+                    f"kuna project exited {p.returncode}: {(stderr or stdout or '')[-500:]}"
+                )
+            name = binary_path.resolve().name
+            root = Path(tmp).resolve()
+            c_path, h_path = root / f"{name}.c", root / f"{name}.h"
+            if any(not path.resolve().is_relative_to(root) for path in (c_path, h_path)):
+                raise RuntimeError("kuna project C/header is outside the export tree")
+            source = c_path.read_bytes().decode("utf-8")
+            header = h_path.read_bytes().decode("utf-8")
+            first_function = _PROJECT_FUNCTION_RE.search(source)
+            include = f'#include "{name}.h"'
+            if first_function is None or not source.startswith(include + "\n"):
+                raise RuntimeError("kuna project missing native header include/function markers")
+            preamble = source[: first_function.start()].replace(include, header, 1)
+            self._project_cache[key] = source, preamble
+        return self._project_cache[key]
+
+    @staticmethod
+    def _project_body_matches(source: str, rec: dict[str, Any]) -> bool:
+        """Bind a project header to the exact JSON body using native export markers."""
+        markers = list(_PROJECT_FUNCTION_RE.finditer(source))
+        for index, marker in enumerate(markers):
+            if marker.group(1) != rec.get("name") or int(marker.group(2), 16) != (
+                RawKunaDecompiler._as_int(rec.get("address"), -1)
+            ):
+                continue
+            end = markers[index + 1].start() if index + 1 < len(markers) else len(source)
+            return source[marker.end() : end] == str(rec.get("code") or "") + "\n\n"
+        return False
+
     @staticmethod
     def _records(payload: Any) -> list[dict[str, Any]]:
         if isinstance(payload, dict):
@@ -286,13 +358,15 @@ class RawKunaDecompiler(Decompiler):
         return payload if isinstance(payload, list) else []
 
     def _build_function(
-        self, rec: dict[str, Any], name: str, file_addr: int
+        self, rec: dict[str, Any], name: str, file_addr: int, preamble: str = ""
     ) -> FunctionDecompilation | None:
         code = rec.get("code")
         if not code:
             return None
         code = str(code)
         line_count = code.count("\n") + 1
+        prefix = preamble + "\n\n" if preamble.strip() else ""
+        line_offset = prefix.count("\n")
         record_addr = self._as_int(rec.get("address"), file_addr)
         size = self._as_int(rec.get("size"), 0)
         address_delta = file_addr - record_addr
@@ -318,15 +392,15 @@ class RawKunaDecompiler(Decompiler):
                 }
             )
             if addresses:
-                line_to_addresses.setdefault(line_number, set()).update(addresses)
+                line_to_addresses.setdefault(line_number + line_offset, set()).update(addresses)
         line_mappings = common.merge_line_addresses(line_to_addresses)
         return FunctionDecompilation(
             name=name,
             address=file_addr,
-            decompiled_code=code,
-            line_count=line_count,
+            decompiled_code=prefix + code,
+            line_count=line_count + line_offset,
             line_mappings=line_mappings,
-            variables=self._variables(rec, line_count, _evidence_address),
+            variables=self._variables(rec, line_count, _evidence_address, line_offset),
             metadata=common.extract_metrics(code),
         )
 
@@ -342,13 +416,14 @@ class RawKunaDecompiler(Decompiler):
         rec: dict[str, Any],
         line_count: int | None = None,
         address_converter: Any = None,
+        line_offset: int = 0,
     ) -> list[VariableInfo]:
         out: list[VariableInfo] = []
         for v in rec.get("variables") or []:
             kind = str(v.get("kind") or "stack")
             line_numbers = sorted(
                 {
-                    line_number
+                    line_number + line_offset
                     for value in v.get("line_numbers") or []
                     if (line_number := RawKunaDecompiler._as_int(value, 0)) > 0
                     and (line_count is None or line_number <= line_count)

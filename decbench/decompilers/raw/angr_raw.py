@@ -264,6 +264,7 @@ class RawAngrDecompiler(Decompiler):
             function_name=func_name,
         )
         metadata = common.extract_metrics(code)
+        code = insert_c_prototypes(codegen, func, line_mappings, variables)
 
         return FunctionDecompilation(
             name=func_name,
@@ -575,3 +576,58 @@ class RawAngrDecompiler(Decompiler):
                 line_to_addrs.setdefault(line_no, set()).add(file_addr)
 
         return common.merge_line_addresses(line_to_addrs)
+
+
+def insert_c_prototypes(
+    codegen: Any,
+    func: Any,
+    line_mappings: list[LineMapping],
+    variables: list[VariableInfo],
+) -> str:
+    """Insert canonical SDK callee prototypes at the SDK function-header boundary."""
+    code: str = codegen.text
+    try:
+        from angr.analyses.decompiler.structured_codegen.c import CFunctionCall
+        from angr.sim_type import SimTypeFunction
+
+        cfunc = codegen.cfunc
+        chunks = list(cfunc.c_repr_chunks(indent=codegen._indent))
+        if "".join(text for text, _node in chunks) != code:
+            raise ValueError("SDK chunk rendering differs from captured text")
+        rendered_calls = {
+            id(node): (node, text) for text, node in chunks if isinstance(node, CFunctionCall)
+        }
+        prototypes: dict[tuple[int, str], str] = {}
+        for node, name in rendered_calls.values():
+            callee = node.callee_func
+            canonical = getattr(callee, "prototype", None) if callee is not None else None
+            if (
+                callee is not None
+                and isinstance(canonical, SimTypeFunction)
+                and callee.addr != func.addr
+            ):
+                prototypes[(int(callee.addr), name)] = canonical.c_repr(name=name, full=True) + ";"
+        if not prototypes:
+            return code
+        name_index = next(i for i, (_text, node) in enumerate(chunks) if node is cfunc)
+        header_index = name_index - 2
+        if header_index < 0 or chunks[header_index][1] is not cfunc.functy.returnty:
+            raise ValueError("unsupported SDK function-header chunk boundary")
+        prefix = "".join(text for text, _node in chunks[:header_index])
+        suffix = "".join(text for text, _node in chunks[header_index:])
+        if prefix and not prefix.endswith("\n"):
+            raise ValueError("SDK function header does not start on a new line")
+        declarations = "\n".join(text for _key, text in sorted(prototypes.items())) + "\n"
+        boundary = prefix.count("\n") + 1
+        shift = declarations.count("\n")
+        for mapping in line_mappings:
+            if mapping.line_number >= boundary:
+                mapping.line_number += shift
+        for variable in variables:
+            variable.line_numbers = [
+                line + shift if line >= boundary else line for line in variable.line_numbers
+            ]
+        return prefix + declarations + suffix
+    except Exception as exc:  # noqa: BLE001
+        _l.debug("angr-raw: SDK prototypes unavailable: %s", exc)
+        return code
