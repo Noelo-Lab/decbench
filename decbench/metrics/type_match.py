@@ -522,8 +522,8 @@ def _parse_variable_die(
 
     if "DW_AT_abstract_origin" in die.attributes:
         try:
-            attr = die.attributes["DW_AT_abstract_origin"]
-            die = dwarfinfo.get_DIE_from_refaddr(attr.value + die.cu.cu_offset)
+            # DW_FORM_ref_addr is absolute; CU-relative forms have a different base.
+            die = die.get_DIE_from_attribute("DW_AT_abstract_origin")
         except Exception:
             pass
 
@@ -615,9 +615,8 @@ def _parse_type_die(die: Any, dwarfinfo: Any) -> tuple[list[str], int]:
     if "DW_AT_type" not in die.attributes:
         return ["void"], 0
 
-    attr = die.attributes["DW_AT_type"]
-    type_offset = attr.value + die.cu.cu_offset
-    type_die = dwarfinfo.get_DIE_from_refaddr(type_offset)
+    # Let the DWARF reader honor absolute, CU-relative and signature references.
+    type_die = die.get_DIE_from_attribute("DW_AT_type")
     tag = type_die.tag
 
     if tag == "DW_TAG_base_type":
@@ -1041,7 +1040,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "18"
+    cache_version = "19"
 
     weight = 1.0
     lower_is_better = False
