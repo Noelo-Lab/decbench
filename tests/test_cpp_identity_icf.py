@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -13,8 +14,8 @@ from decbench.utils import binfmt
 from decbench.utils.function_identity import dwarf_function_identities
 
 pytestmark = pytest.mark.skipif(
-    shutil.which("g++") is None or shutil.which("ld.lld") is None,
-    reason="g++ and ld.lld required",
+    sys.platform != "linux" or shutil.which("g++") is None or shutil.which("ld.lld") is None,
+    reason="ELF-producing GNU g++ and ld.lld required",
 )
 
 ICF_SRC = r"""
@@ -97,9 +98,7 @@ def test_linker_icf_sentinel_zero_is_not_a_concrete_binary_target(tmp_path: Path
             follow_abstract_origin=True,
         )
         alias_targets = {
-            address: name
-            for address, (name, _stem) in owners.items()
-            if name in {"foo", "bar"}
+            address: name for address, (name, _stem) in owners.items() if name in {"foo", "bar"}
         }
         assert alias_targets == {shared: identities[0].name}
         selections.append(identities[0].name)

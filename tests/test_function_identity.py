@@ -171,9 +171,7 @@ def test_ghidra_function_lookup_is_address_keyed() -> None:
     class Program:
         def __init__(self):
             self.base = Address(0x1000)
-            self.manager = FunctionManager(
-                [Function("same", 0x1010), Function("same", 0x1020)]
-            )
+            self.manager = FunctionManager([Function("same", 0x1010), Function("same", 0x1020)])
 
         def getImageBase(self) -> Address:
             return self.base
@@ -229,7 +227,7 @@ def test_type_match_prefers_address_ground_truth_for_same_name(tmp_path: Path) -
 
     metric = TypeMatchMetric()
     cache_key = str(result.binary_path)
-    metric._ground_truth_cache[cache_key] = {"same": int_gt}
+    metric._ground_truth_cache[cache_key] = {"same": {0x1000: int_gt, 0x2000: double_gt}}
     metric._ground_truth_address_cache[cache_key] = {
         0x1000: int_gt,
         0x2000: double_gt,

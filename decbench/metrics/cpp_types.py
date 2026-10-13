@@ -14,7 +14,7 @@ from typing import Any
 
 from decbench.utils import binfmt
 
-POLICY_VERSION = "cpp-types-v1-proposal"
+POLICY_VERSION = "cpp-types-v2-proposal"
 
 
 @dataclass(frozen=True)
@@ -140,7 +140,7 @@ def parse_type(spelling: str, data_model: str) -> CppType:
     if source_alias:
         ty = replace(ty, rank="fixed_width_alias")
     i = boundary
-    array_counts = []
+    array_counts: list[int] = []
     while i < len(tokens):
         token = tokens[i]
         i += 1

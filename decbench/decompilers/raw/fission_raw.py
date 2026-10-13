@@ -21,6 +21,7 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    LineMapping,
     VariableInfo,
 )
 
@@ -57,20 +58,26 @@ class RawFissionDecompiler(Decompiler):
         if not isinstance(code, str) or not code.strip():
             return None
         variables = [VariableInfo.model_validate(v) for v in record.get("variables", [])]
+        mappings = [LineMapping.model_validate(m) for m in record.get("line_mappings_nir", [])]
+        for variable in variables:
+            variable.line_numbers = sorted(
+                {
+                    m.line_number
+                    for m in mappings
+                    if m.defined_variables is not None and variable.name in m.defined_variables
+                }
+            )
         return FunctionDecompilation(
             name=name,
             address=address,
             decompiled_code=code,
             line_count=len(code.splitlines()),
             variables=variables,
-            # Fission currently traces a high variable's def/use sites, not
-            # each rendered occurrence. Copying those sites to all C lines
-            # would make unrelated occurrences look address-exact.
-            line_mappings=[],
+            line_mappings=mappings,
             metadata={
                 **common.extract_metrics(code),
                 "provenance_source": "fission_scalar_ssa",
-                "provenance_granularity": "variable_def_use",
+                "provenance_granularity": "variable_def_use_and_scoped_definition_lines",
                 "code_layer": "nir",
             },
         )

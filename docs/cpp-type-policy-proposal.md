@@ -1,4 +1,4 @@
-# C++ type policy v1 — proposal for upstream review
+# C++ type policy v2 — proposal for upstream review
 
 Status: **experimental proposal, not an official DecBench policy**. This is a
 separate, explicitly configured `CppTypeMatchMetric`. It is not registered among
@@ -19,7 +19,7 @@ propose publishing **source** and **ABI** results side by side; neither is silen
 substituted for the other. Which view, if either, enters Union is an upstream
 policy decision. This implementation does not make that decision.
 
-## Implemented v1 comparison contract
+## Implemented v2 comparison contract
 
 | Feature | Source view | ABI storage view |
 | --- | --- | --- |
@@ -33,9 +33,12 @@ policy decision. This implementation does not make that decision.
 | Oracle typedef | resolved by the debug type graph | resolved / projected |
 | Recovered fixed-width/platform alias | no inferred fundamental rank credit | documented storage aliases supported |
 | Unknown `undefinedN` | incorrect | incorrect; width alone earns no credit |
-| Namespace/class/template/enum | unsupported in v1 | unsupported in v1 |
-| Object fields, inheritance, vtables | unsupported in v1 | unsupported in v1 |
-| Function/member pointers | unsupported in v1 | unsupported in v1 |
+| Named complete objects | qualified identity and complete instance graph | complete instance layout graph; names erased |
+| Enum | nominal identity, values, underlying type | underlying storage |
+| Fields / ordinary bases | field names, offsets, types, access and base identity | offsets, field/base storage and relation |
+| Virtual bases | explicit debug locator and base relation | locator and base storage; never offset zero |
+| Vtables / RTTI | not a complete behavior/API metric | missing physical vptr evidence abstains |
+| Function/member pointers | unsupported in v2 | unsupported in v2 |
 
 Plain `char` deliberately remains distinct from `signed char`/`unsigned char` in
 both views; this first profile does not infer compiler-default character
@@ -59,8 +62,8 @@ describe the pointer (`int* const`), not its pointee (`const int*`).
    Never grade only its easy variables and call it perfect.
 3. Reuse type-blind ABI argument, calibrated stack, and native address matching.
    PDB exposes no proven argument ordinals or backend stack origins; it therefore
-   uses native addresses only. DWARF aggregate returns are excluded before using
-   ABI formal positions. Thresholds stay at overlap 0.1 / ambiguity margin 0.03.
+   uses native addresses only. DWARF aggregate returns disable unproven
+   formal ordinals; remaining correspondence must stand independently. Thresholds stay at overlap 0.1 / ambiguity margin 0.03.
 4. Validate every producer PC against the exact function's decoded instruction
    starts. Validation proves instruction membership, not that the producer's
    variable association is semantically correct. The producer owns that claim.
@@ -92,10 +95,20 @@ score = metric.compute_for_binary(result)
 # Repeat with view="abi"; preserve separate result labels and populations.
 ```
 
+A reproducible single-image entry point consumes canonical producer JSON and a
+fixed requested population, without invoking a producer:
+
+```bash
+python scripts/evaluate_cpp_type_policy.py --binary original-with-debug \
+  --decompilation producer-result.json --requested-functions functions.json \
+  --view source --data-model LP64 --output cpp-source.json
+# Repeat with --view abi and a distinct output file.
+```
+
 Optional `preprocessed_sources=[Path(...)]` supplies evaluator-only TU/source
 line correspondence. It must never be passed to the producer. No new runtime
 dependencies are introduced by this profile. It currently does not use disk
-score caches; its version is `cpp-types-v1-proposal`.
+score caches; its version is `cpp-types-v2-proposal`.
 
 For a fixed comparison, pass the same `requested_functions=[(name, address), ...]`
 to both producers' `compute_for_binary` calls. Missing entries become empty
@@ -112,34 +125,88 @@ Set `FISSION_BIN`, optionally `FISSION_RESOURCE_ROOT` and
 entry addresses to `--addresses-file`, enforces timeouts, and forwards native
 variable `addresses` unchanged into `VariableInfo`.
 
-Fission already produces a conservative scalar-SSA high-variable definition/use
-map. This change connects it to DecBench. It does **not** manufacture output-line
-maps by spraying all variable PCs onto every line containing its name. NIR/HIR
-statement occurrence provenance and parameter/stack provenance require further
-producer work. Each backend needs one adapter for its native address convention;
-evaluation's instruction validation and variable matching remain shared.
+Fission's existing conservative scalar-SSA variable definition/use PCs remain
+primary evidence. The companion Fission change also exports `line_mappings_nir`
+and `line_mappings_hir`, each containing 1-based physical `line_number`, native
+instruction `addresses`, and `defined_variables`. The adapter takes NIR maps
+only. These are **partial assignment-result definition origins**, not all RHS
+references or complete effect lineage. Header, predicate, ambiguous/cloned,
+phi/input, repeated-definition and unproved lines remain unmapped. Old Fission
+versions continue to transport direct variable PCs with no invented line maps.
+
+`LineMapping.defined_variables=None` preserves the historical whole-line
+contract. A supplied list scopes ownership: only those bindings can inherit
+that line's PCs. Even on a scoped row a direct variable PC list takes precedence.
+The adapter gives only those variables line occurrences; evaluation repeats the
+same scope check. Scoped rows outside the returned code are rejected. Native
+instruction validation proves membership, not the producer's semantic claim.
 
 The legacy metric now recognizes direct variable PCs as well as line PCs when
-choosing the native path (cache generation 22). Functions with neither retain
+choosing the native path (cache generation 23). Functions with neither retain
 their prior fallback behavior. Address validation remains mandatory at producer
 and final evaluator boundaries. PDB default scoring still abstains;
 `pdb_abi_diagnostic=True` remains a separate legacy diagnostic.
 
-## Remaining decisions before an official C++ benchmark
+## Complete object graph contract
 
-* Define semantic identity versus ABI layout for qualified nominal types,
-  template arguments, anonymous/local types and ODR duplicates.
-* Add oracle and recovered structural graphs for fields, offsets, sizes,
-  bitfields, bases/virtual bases, padding and member pointers. Neither name nor
-  total size alone is proof of object recovery. Decide separately whether names
-  are required or structurally equivalent anonymous objects receive credit.
-* Define split variables, inline instances, piecewise locations, hidden ABI
-  parameters, unknown calling conventions and aggregate returns.
-* Qualify source provenance/toolchains, PDB and dSYM support, then fix a balanced
-  cross-platform population and publish exclusions independently of producers.
-* Validate source/ABI profiles on real corpus outputs, compare unchanged C rows,
-  run formal repository tests/CI, and obtain maintainer agreement before any
-  headline migration. A scalar-only subset is not a complete C++ ranking.
+The native DWARF reader follows DIE edges for instance members, literal byte
+positions or `data_bit_offset`, ordinary and virtual inheritance, enums, arrays,
+modifiers and recursive ordinary pointers. A forward-only or anonymous object,
+unsupported method/member pointer, legacy bit offset or uncertain location
+abstains. CodeView follows actual TPI indices, LF_FIELDLIST continuations,
+LF_MEMBER/BCLASS/VBCLASS/IVBCLASS, bitfield leaves and enum constants. A forward
+record must resolve to exactly one complete identity; conflicting definitions
+abstain. Methods/static members are not instance storage. CodeView VFUNCTAB
+lacks its physical position: such a graph abstains rather than guessing zero.
+
+Producer output can supply `metadata.type_graphs[complete_type_spelling]`:
+
+```json
+{
+  "schema": "decbench-cpp-type-graph-v1",
+  "root": "object",
+  "nodes": {
+    "object": {"kind": "record", "size": 4, "name": "demo::Object", "complete": true,
+      "edges": [{"role": "field", "target": "integer", "name": "value",
+                 "offset_bits": 0, "access": 3}]},
+    "integer": {"kind": "signed", "size": 4, "rank": "int", "complete": true}
+  }
+}
+```
+
+Nodes use byte sizes; edges use bit offsets. All targets must exist. Partial
+nodes, impossible extents, by-value cycles and missing virtual locators are
+rejected. Pointer cycles are compared structurally; local node IDs and edge
+ordering do not earn credit. Source comparison retains qualified names, cv,
+rank, field names/access, enum values and inheritance. ABI comparison erases
+names/cv/rank/access, projects references to pointers and enums to their
+underlying storage. It retains base relations: it does not infer a flattened
+base from a similarly named or sized recovered field. Virtual locators retain
+their debug encoding; cross-format locator equivalence is not inferred.
+Instance fields and bases are compared; this is not a complete class API metric.
+
+Complete ordinary emitted C `struct`/`union` and typedef definitions are also
+read with Tree-sitter. Natural layout is limited to explicit LP64/LLP64,
+supported scalar/pointer/array fields, and unambiguous complete definitions.
+Unknown class ABI, inheritance, packing, bitfields and alignment attributes
+require explicit producer graphs. ILP32 record alignment is not guessed.
+Opaque nominal spellings are incorrect recovery, never oracle exclusions.
+
+## Validation and adoption
+
+The `C++ evaluation contracts` workflow runs focused policy/provenance/source
+identity regressions on Ubuntu, compiling actual DWARF and CodeView/PDB fixtures
+with Clang and lld. Rust-Joern is the existing CFG dependency, pinned for this
+lane. Style and type checks cover new policy owners. Full local repository
+results and baseline failures are reported separately; skipped real-decompiler
+or platform tests are not end-to-end success.
+
+The fixed qualification measurements and exclusion inventory live in
+`docs/validation/`. They describe a supported subset, not an official C++
+ranking. Upstream must agree on source versus ABI headline policy, templates,
+anonymous/ODR types, split/inline locations, hidden parameters, source
+provenance, and a balanced qualified population before adoption and full rescore.
+A contribution must follow DecBench's mandatory human review policy.
 
 References: [DecBench methodology](https://decbench.com/about/),
 [LLVM CodeView type records](https://llvm.org/docs/PDB/CodeViewTypes.html).

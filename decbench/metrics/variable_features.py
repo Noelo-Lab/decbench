@@ -31,14 +31,15 @@ def _parser() -> Parser:
 def _parse_source(source: bytes):
     """Retain C behavior; use C++ when its declarators require that grammar."""
     c_tree = _parser().parse(source)
-    if not c_tree.root_node.has_error:
-        return c_tree
     cpp_tree = Parser(_CPP_LANGUAGE).parse(source)
     if any(
         node.type in {"namespace_definition", "class_specifier", "template_declaration"}
+        and not node.has_error
         for node in _walk(cpp_tree.root_node)
     ):
         return cpp_tree
+    if not c_tree.root_node.has_error:
+        return c_tree
     cpp_declarators = {"qualified_identifier", "operator_name", "destructor_name"}
     for function in _walk(cpp_tree.root_node):
         if function.type != "function_definition":
@@ -161,6 +162,23 @@ def index_c_functions(code: str) -> dict[str, tuple[str, ...]]:
         if leaf and leaf not in definitions and len(names) == 1:
             definitions[leaf] = list(definitions[next(iter(names))])
     return {name: tuple(rows) for name, rows in definitions.items()}
+
+
+def function_definition_at_line(code: str, function_name: str, line: int) -> str | None:
+    """Select one parsed definition containing a proven original-source line."""
+    if line < 1:
+        return None
+    source = code.encode("utf-8", "replace")
+    tree = _parse_source(source)
+    definitions = [node for node in _walk(tree.root_node) if node.type == "function_definition"]
+    exact = [node for node in definitions if _function_name(node, source) == function_name]
+    candidates = exact or [
+        node for node in definitions if _function_leaf(node, source) == function_name
+    ]
+    containing = [
+        node for node in candidates if node.start_point.row < line <= node.end_point.row + 1
+    ]
+    return _text(containing[0], source) if len(containing) == 1 else None
 
 
 def _select_function(root: Node, source: bytes, function_name: str) -> Node | None:

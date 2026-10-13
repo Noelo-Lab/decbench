@@ -191,6 +191,8 @@ class _Types:
     def __init__(self, data: bytes):
         self.records: dict[int, tuple[int, bytes]] = {}
         self.cache: dict[int, PdbType | None] = {}
+        self._full_records: dict[tuple[int, str, str], list[int]] | None = None
+        self._layout_cache: dict[int, dict[str, Any]] = {}
         if data:
             _version, header, first, last, size = _unpack("<5I", data)
             if header < 20 or first < 0x1000 or last < first:
@@ -265,7 +267,13 @@ class _Types:
                 _count, flags = _unpack("<HH", p)
                 size, name_offset = _numeric(p, 8 if kind == 0x1506 else 16)
                 name, _ = _string(p, name_offset)
-                result = PdbType(name, name, None if flags & 0x80 else size, "aggregate")
+                if flags & 0x80:
+                    try:
+                        full = self.full_record_index(index)
+                        size, _ = _numeric(self.records[full][1], 8 if kind == 0x1506 else 16)
+                    except ValueError:
+                        size = None
+                result = PdbType(name, name, size, "aggregate")
             elif kind == 0x1507:  # enum retains its source name, integer ABI
                 base = _unpack("<I", p, 4)[0]
                 name, _ = _string(p, 12)
@@ -299,6 +307,160 @@ class _Types:
             options = _unpack("<B", p, 13)[0]
             return _unpack("<H", p, 14)[0] + bool(_unpack("<I", p, 8)[0]) + bool(options & 1)
         return None
+
+    def field_records(self, index: int, seen: frozenset[int] = frozenset()) -> tuple[dict, ...]:
+        """Bounded CodeView instance data, base and virtual-table facts.
+
+        Methods/static members/nested declarations are not instance storage.
+        An unknown leaf invalidates the list instead of yielding partial data.
+        """
+        if not index:
+            return ()
+        if index in seen or len(seen) > 32:
+            raise ValueError("cyclic CodeView field-list continuation")
+        record = self.records.get(index)
+        if record is None or record[0] != 0x1203:
+            raise ValueError("missing CodeView field list")
+        data = record[1]
+        offset = 0
+        result = []
+        while offset < len(data):
+            if data[offset] >= 0xF0:
+                padding = data[offset] & 15
+                if not padding or data[offset : offset + padding] != bytes(
+                    range(0xF0 + padding, 0xF0, -1)
+                ):
+                    raise ValueError("invalid CodeView field padding")
+                offset += padding
+                continue
+            kind = _unpack("<H", data, offset)[0]
+            offset += 2
+            if kind == 0x150D:  # instance member
+                attrs, type_index = _unpack("<HI", data, offset)
+                position, offset = _numeric(data, offset + 6)
+                name, offset = _string(data, offset)
+                result.append(
+                    {
+                        "kind": "field",
+                        "name": name,
+                        "type_index": type_index,
+                        "offset": position,
+                        "access": attrs & 3,
+                    }
+                )
+            elif kind in {0x1400, 0x151A}:  # ordinary base / interface
+                attrs, type_index = _unpack("<HI", data, offset)
+                position, offset = _numeric(data, offset + 6)
+                result.append(
+                    {
+                        "kind": "base",
+                        "type_index": type_index,
+                        "offset": position,
+                        "virtual": False,
+                        "access": attrs & 3,
+                    }
+                )
+            elif kind in {0x1401, 0x1402}:
+                attrs, type_index, vbptr = _unpack("<HII", data, offset)
+                position, offset = _numeric(data, offset + 10)
+                slot, offset = _numeric(data, offset)
+                result.append(
+                    {
+                        "kind": "base",
+                        "type_index": type_index,
+                        "offset": None,
+                        "virtual": True,
+                        "access": attrs & 3,
+                        "locator": {
+                            "kind": "codeview_vbtable",
+                            "vbptr_type": vbptr,
+                            "vbptr_offset": position,
+                            "table_index": slot,
+                        },
+                    }
+                )
+            elif kind == 0x1409:
+                _padding, type_index = _unpack("<HI", data, offset)
+                offset += 6
+                result.append({"kind": "vptr", "type_index": type_index})
+            elif kind == 0x1404:
+                _padding, continuation = _unpack("<HI", data, offset)
+                offset += 6
+                result.extend(self.field_records(continuation, seen | {index}))
+            elif kind in {0x150E, 0x150F, 0x1510, 0x1512}:
+                _attributes, _type_index = _unpack("<HI", data, offset)
+                _name, offset = _string(data, offset + 6)
+            elif kind == 0x1511:
+                attrs, _type_index = _unpack("<HI", data, offset)
+                offset += 6
+                if (attrs >> 2) & 7 in {4, 6}:
+                    _unpack("<i", data, offset)
+                    offset += 4
+                _name, offset = _string(data, offset)
+            elif kind == 0x1502:
+                _attrs = _unpack("<H", data, offset)[0]
+                value, offset = _numeric(data, offset + 2)
+                name, offset = _string(data, offset)
+                result.append({"kind": "enumerator", "name": name, "value": value})
+            else:
+                raise ValueError(f"unsupported CodeView field leaf 0x{kind:x}")
+            if len(result) > 16384:
+                raise ValueError("CodeView field list exceeds bound")
+        return tuple(result)
+
+    def full_record_index(self, index: int) -> int:
+        """Resolve a CodeView forward by exact unique identity, with ambiguity abstention."""
+        record = self.records.get(index)
+        if record is None or record[0] not in {0x1504, 0x1505, 0x1519, 0x1506}:
+            raise ValueError("not a CodeView record type")
+        kind, data = record
+        _count, flags = _unpack("<HH", data)
+        if not flags & 0x80:
+            return index
+        if self._full_records is None:
+            self._full_records = {}
+            for candidate, (leaf, payload) in self.records.items():
+                if leaf not in {0x1504, 0x1505, 0x1519, 0x1506}:
+                    continue
+                _count, properties = _unpack("<HH", payload)
+                if properties & 0x80:
+                    continue
+                _size, pos = _numeric(payload, 8 if leaf == 0x1506 else 16)
+                name, pos = _string(payload, pos)
+                unique = _string(payload, pos)[0] if properties & 0x200 else None
+                self._full_records.setdefault((leaf, "name", name), []).append(candidate)
+                if unique is not None:
+                    self._full_records.setdefault((leaf, "unique", unique), []).append(candidate)
+        _size, pos = _numeric(data, 8 if kind == 0x1506 else 16)
+        name, pos = _string(data, pos)
+        unique = _string(data, pos)[0] if flags & 0x200 else None
+        matches = self._full_records.get(
+            (kind, "unique", unique) if unique is not None else (kind, "name", name), []
+        )
+        if len(matches) != 1:
+            raise ValueError("ambiguous/incomplete CodeView forward record")
+        return matches[0]
+
+    def record_layout(self, index: int) -> dict[str, Any]:
+        """Expose raw instance layout without a scoring policy or name-only join."""
+        index = self.full_record_index(index)
+        if index not in self._layout_cache:
+            kind, data = self.records[index]
+            count, flags, fields = _unpack("<HHI", data)
+            size, offset = _numeric(data, 8 if kind == 0x1506 else 16)
+            name, offset = _string(data, offset)
+            unique = _string(data, offset)[0] if flags & 0x200 else None
+            if size < 0:
+                raise ValueError("negative CodeView object extent")
+            self._layout_cache[index] = {
+                "kind": "union" if kind == 0x1506 else "record",
+                "name": name,
+                "size": size,
+                "unique_name": unique,
+                "members": self.field_records(fields),
+                "member_count": count,
+            }
+        return self._layout_cache[index]
 
 
 @dataclass(frozen=True)
@@ -346,6 +508,7 @@ class PdbInfo:
     guid: str
     age: int
     functions: tuple[PdbFunction, ...]
+    types: _Types | None = field(default=None, repr=False)
     _by_address: dict[int, PdbFunction | None] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self):
@@ -798,7 +961,7 @@ def read_pdb(binary_path: Path, debug_path: Path | None = None) -> PdbInfo | Non
                 0x1168,
             }:
                 current.exclusions.append(f"unsupported symbol in procedure 0x{kind:x}")
-    return PdbInfo(path, guid, age, tuple(functions))
+    return PdbInfo(path, guid, age, tuple(functions), types)
 
 
 def reference_addresses(binary_path: Path, function: PdbFunction) -> dict[str, list[int]]:

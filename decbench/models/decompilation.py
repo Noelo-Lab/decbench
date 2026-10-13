@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
 
 
 class LineMapping(BaseModel):
@@ -16,6 +16,18 @@ class LineMapping(BaseModel):
         default_factory=list,
         description="Binary addresses corresponding to this line",
     )
+
+    defined_variables: list[str] | None = Field(
+        default=None,
+        description="Optional occurrence scope: only these defined variables own these PCs",
+    )
+
+    @model_serializer(mode="wrap")
+    def serialize_mapping(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if self.defined_variables is None:
+            data.pop("defined_variables", None)
+        return data
 
 
 class VariableInfo(BaseModel):

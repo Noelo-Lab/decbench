@@ -692,10 +692,7 @@ def extract_decompiler_evidence(
     include_unnamed: bool = False,
 ) -> list[VariableEvidence]:
     evidence_prefix = backend if identity_prefix is None else identity_prefix
-    line_addresses = {
-        int(mapping.line_number): frozenset(int(address) for address in mapping.addresses)
-        for mapping in (getattr(function, "line_mappings", []) or [])
-    }
+    mappings = getattr(function, "line_mappings", []) or []
     variables: list[VariableEvidence] = []
     for index, variable in enumerate(getattr(function, "variables", []) or []):
         if not variable.name and not include_unnamed:
@@ -704,7 +701,14 @@ def extract_decompiler_evidence(
         addresses = {int(address) for address in getattr(variable, "addresses", [])}
         if not addresses:
             addresses = {
-                address for line in lines for address in line_addresses.get(line, frozenset())
+                int(address)
+                for mapping in mappings
+                if int(mapping.line_number) in lines
+                and (
+                    getattr(mapping, "defined_variables", None) is None
+                    or variable.name in mapping.defined_variables
+                )
+                for address in mapping.addresses
             }
         stack_offsets = (int(variable.stack_offset),) if variable.stack_offset is not None else ()
         variables.append(

@@ -8,12 +8,12 @@ from typing import Any
 
 from decbench.decompilers.provenance import NativeProvenanceContext, sanitize_native_provenance
 from decbench.metrics.base import Metric, MetricConfig
+from decbench.metrics.cpp_recovered_types import RecoveredTypeContext
+from decbench.metrics.cpp_type_graph import dwarf_graph, pdb_graph, recovered_graph
 from decbench.metrics.cpp_types import (
     POLICY_VERSION,
     UnsupportedType,
     dwarf_location_supported,
-    dwarf_type,
-    parse_type,
 )
 from decbench.metrics.type_evidence import PreprocessedSourceContext, build_source_evidence
 from decbench.metrics.type_match import _get_location
@@ -42,7 +42,7 @@ class CppOracleContext:
         self.dwarf = binfmt.dwarf_info(self.path)
         self.pdb = binfmt.pdb_info(self.path) if self.dwarf is None else None
         self.native = NativeProvenanceContext(self.path)
-        self.index = {}
+        self.index: dict[int, list[Any]] = {}
         if self.dwarf is not None:
             for cu in self.dwarf.iter_CUs():
                 for die in cu.iter_DIEs():
@@ -52,11 +52,11 @@ class CppOracleContext:
                     if ranges:
                         self.index.setdefault(min(a for a, _ in ranges), []).append(die)
 
-    def _signature(self):
+    def _signature(self) -> tuple[int, int, int]:
         stat = self.path.stat()
         return stat.st_ino, stat.st_size, stat.st_mtime_ns
 
-    def validate(self, path: Path):
+    def validate(self, path: Path) -> None:
         if path.resolve() != self.path or self._signature() != self.signature:
             raise ValueError("C++ oracle context does not match immutable input")
 
@@ -66,13 +66,13 @@ class CppTypeMatchMetric(Metric):
     display_name = "C++ Types (proposal, supported subset)"
     lower_is_better = False
     perfect_value = 1.0
-    cache_version = "1"
+    cache_version = "2"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
         options = self.config.extra_options
         self.view = options.get("view", "source")
-        self.data_model = options.get("data_model")
+        self.data_model = str(options.get("data_model"))
         if self.view not in {"source", "abi"}:
             raise ValueError("C++ view must be source or abi")
         if self.data_model not in {"LP64", "LLP64", "ILP32"}:
@@ -96,14 +96,17 @@ class CppTypeMatchMetric(Metric):
         by_id = {f"decompiler:{i}": v for i, v in enumerate(decompiled.variables)}
         mapping = {m.source_id: m.decompiled_id for m in match.matches}
         decisions = []
+        recovered_types = RecoveredTypeContext(decompiled.decompiled_code, self.data_model)
         for row in gt:
             expected = row["descriptor"].project(self.view)
-            variable = by_id.get(mapping.get(row["identity"]))
+            variable = by_id.get(mapping.get(row["identity"], ""))
             actual = None
             reason = "unmatched"
             if variable is not None:
                 try:
-                    actual = parse_type(variable.type, self.data_model).project(self.view)
+                    actual = recovered_graph(
+                        variable.type, self.data_model, decompiled.metadata, recovered_types
+                    ).project(self.view)
                     reason = "correct" if actual == expected else "type_mismatch"
                     if variable.size is not None and variable.size != actual.byte_size():
                         reason = "inconsistent_recovered_storage_width"
@@ -136,7 +139,9 @@ class CppTypeMatchMetric(Metric):
             },
         )
 
-    def _dwarf_rows(self, dwarf, address_candidates, oracle_index) -> list[dict]:
+    def _dwarf_rows(
+        self, dwarf: Any, address_candidates: tuple[int, ...], oracle_index: dict[int, list[Any]]
+    ) -> list[dict]:
         candidates = {
             die.offset: die
             for address in address_candidates
@@ -145,13 +150,17 @@ class CppTypeMatchMetric(Metric):
         if len(candidates) != 1:
             raise UnsupportedType("DWARF function missing or entry identity ambiguous")
         function_die = next(iter(candidates.values()))
-        # C++ ABI aggregate return/hidden sret ordinals are not established by
-        # this subset. Reject a complex return before using formal ABI indices.
-        dwarf_type(function_die, self.data_model)
+        # Aggregate returns do not prove ordinary ABI formal ordinals.
+        return_type = dwarf_graph(function_die, self.data_model)
+        formal_ordinals_proven = return_type.nodes[return_type.root].kind not in {
+            "record",
+            "union",
+            "array",
+        }
         rows = []
         arg_index = 0
 
-        def walk(parent):
+        def walk(parent: Any) -> None:
             nonlocal arg_index
             for child in parent.iter_children():
                 if child.tag == "DW_TAG_inlined_subroutine":
@@ -164,7 +173,7 @@ class CppTypeMatchMetric(Metric):
                 if child.tag not in {"DW_TAG_formal_parameter", "DW_TAG_variable"}:
                     continue
                 is_arg = child.tag == "DW_TAG_formal_parameter" and parent is function_die
-                ordinal = arg_index if is_arg else None
+                ordinal = arg_index if is_arg and formal_ordinals_proven else None
                 if is_arg:
                     arg_index += 1
                 offsets, observable = _get_location(child, dwarf)
@@ -172,8 +181,8 @@ class CppTypeMatchMetric(Metric):
                 if not observable:
                     # Optimized-out oracle variables are excluded uniformly.
                     continue
-                descriptor = dwarf_type(child, self.data_model)
-                if descriptor.kind == "void":
+                descriptor = dwarf_graph(child, self.data_model)
+                if descriptor.nodes[descriptor.root].kind == "void":
                     raise UnsupportedType("missing variable type")
                 rows.append(
                     {
@@ -200,6 +209,14 @@ class CppTypeMatchMetric(Metric):
     ) -> MetricResult:
         # Do not mutate reused producer output when removing unverifiable PCs.
         working = decompilation.model_copy(deep=True)
+        requested = kwargs.get("requested_functions")
+        if requested is not None:
+            addresses = {address for _, address in requested}
+            if len(addresses) != len(requested):
+                raise ValueError("duplicate requested function entry")
+            working.functions = {
+                key: f for key, f in working.functions.items() if f.address in addresses
+            }
         # Evaluation plans own the population. A missing producer result is an
         # empty recovery at the requested entry, not a new oracle exclusion.
         returned = {f.address for f in working.functions.values()}
@@ -248,10 +265,13 @@ class CppTypeMatchMetric(Metric):
                         gt = []
                         evidence = []
                         for row in raw:
-                            # Source spelling must itself be supported even in
-                            # ABI mode. This keeps named enums/classes outside
-                            # the v1 population instead of silently flattening.
-                            descriptor = parse_type(row["source_type"], self.data_model)
+                            # The oracle graph is independent of the selected view.
+                            if pdb.types is None:
+                                raise UnsupportedType("PDB type graph context unavailable")
+                            variable = next(
+                                v for v in oracle.variables if v.identity == row["identity"]
+                            )
+                            descriptor = pdb_graph(pdb.types, variable.type_index, self.data_model)
                             if descriptor.byte_size() != row["size"]:
                                 raise UnsupportedType("PDB width disagrees with data model")
                             gt.append({**row, "descriptor": descriptor})

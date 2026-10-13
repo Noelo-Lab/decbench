@@ -197,10 +197,14 @@ def extract_from_text(text: str, func_name: str, decl_line: int = 0) -> str | No
     When ``decl_line`` (1-based) is given, prefer the candidate nearest it.
     Returns the signature + body, or ``None`` if no definition is found.
     """
-    from decbench.metrics.variable_features import index_c_functions
+    from decbench.metrics.variable_features import function_definition_at_line, index_c_functions
 
     definitions = index_c_functions(text)
     if any("::" in key or key.startswith(("operator", "~")) for key in definitions):
+        if decl_line:
+            selected = function_definition_at_line(text, func_name, decl_line)
+            if selected is not None:
+                return selected
         candidates = definitions.get(func_name, ())
         return candidates[0] if len(candidates) == 1 else None
     name = re.escape(func_name)

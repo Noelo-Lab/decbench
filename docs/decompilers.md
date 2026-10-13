@@ -874,3 +874,11 @@ submission zip out of git too (`private/` is ignored for exactly this).
     --base results/full_run/sample_set_manifest.json --drop-unscoreable \
     -o /tmp/manifest_repaired.json     # inspect the diff, then install it
   ```
+
+### Fission scoped definition lines
+
+The native Fission adapter forwards `line_mappings_nir` when supplied by the
+producer. Each `defined_variables` list scopes an assignment-result definition
+PC to its LHS; it must not be assigned to RHS names. Maps are partial and
+1-based in the returned NIR text. Old CLIs with direct variable addresses remain
+supported. See [the C++ policy proposal](cpp-type-policy-proposal.md).
