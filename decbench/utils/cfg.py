@@ -44,6 +44,14 @@ _FUNCTION_MARKER = re.compile(
 # :func:`rewrite_computed_gotos`) so literals and comments are never rewritten;
 # a plain ``goto label;`` has no ``*`` and never matches.
 _COMPUTED_GOTO = re.compile(r"\bgoto\s*\*")
+# `while (<integer literal>)` / `while (true)` loop heads; the lookahead skips the tail of a do-while
+_CONST_WHILE = re.compile(r"\bwhile\s*\(\s*([-+]?(?:0[xX][0-9a-fA-F]+|0[0-7]*|[1-9][0-9]*)[uUlL]*|true)\s*\)(?!\s*;)")
+
+
+def _is_nonzero_literal(token: str) -> bool:
+    if token == "true":
+        return True
+    return int(token.rstrip("uUlL"), 0) != 0
 
 # Tab and newline are the emitted source's own layout, not literal payload.
 _KEEP_RAW_BYTES = frozenset({0x09, 0x0A})
@@ -108,6 +116,32 @@ def rewrite_computed_gotos(text: str) -> str:
         pieces.append(text[pos : match.start()])
         pieces.append("{}")
         pos = end + 1
+    pieces.append(text[pos:])
+    return "".join(pieces)
+
+
+def canonicalize_infinite_loops(text: str) -> str:
+    """Rewrite constant-true ``while`` loop heads to ``for (;;)``.
+
+    Joern builds a condition node with an exit edge for a constant-true ``while``
+    but an unconditional loop for ``for (;;)``, so the same control flow scores
+    differently depending on which spelling a compiler-preprocessed source or a
+    decompiler happens to use (``while (1)`` from angr and IDA, ``while (2)``
+    from IDA, ``while (true)`` from kuna). Any nonzero integer literal or ``true``
+    counts; ``while (0)`` is a dead loop and is kept. Applied to source and
+    decompiled C alike, so both sides of GED see one spelling. ``do { } while (1);``
+    is left alone: it has no ``for`` form, and the lookahead keeps its tail from
+    being rewritten. Comments and string/char literals are not touched.
+    """
+    code = _mask_c_noncode(text)
+    pieces: list[str] = []
+    pos = 0
+    for match in _CONST_WHILE.finditer(code):
+        if not _is_nonzero_literal(match.group(1)):
+            continue
+        pieces.append(text[pos : match.start()])
+        pieces.append("for (;;)")
+        pos = match.end()
     pieces.append(text[pos:])
     return "".join(pieces)
 
@@ -478,6 +512,7 @@ def extract_cfgs_from_source(
         text = sanitize_decompiled_c(text)
         if preprocess_decompiled:
             text = preprocess_decompiled_c(text)
+    text = canonicalize_infinite_loops(text)
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=temp_parse_suffix(source_path), delete=False
@@ -514,7 +549,7 @@ def extract_cfgs_from_decompilation(
             (f"// Function: {func.name}\n" f"{sanitize_decompiled_c(func.decompiled_code)}")
             for func in decompilation.functions.values()
         ]
-        f.write(preprocess_decompiled_c("\n\n".join(marked_sources)))
+        f.write(canonicalize_infinite_loops(preprocess_decompiled_c("\n\n".join(marked_sources))))
 
         temp_path = Path(f.name)
 
