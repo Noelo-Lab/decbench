@@ -177,8 +177,9 @@ class NativeCodeResolver:
         if info.fmt not in SUPPORTED_FORMATS or info.arch not in SUPPORTED_ARCHITECTURES:
             raise ValueError(f"unsupported binary format/architecture {info.fmt}/{info.arch}")
         dwarfinfo = binfmt.dwarf_info(self.binary_path)
-        if dwarfinfo is None:
-            raise ValueError("binary has no readable DWARF")
+        pdb = binfmt.pdb_info(self.binary_path) if dwarfinfo is None else None
+        if dwarfinfo is None and pdb is None:
+            raise ValueError("binary has no readable DWARF or matching PDB")
         self.info = info
         self.regions = binfmt.executable_regions(self.binary_path)
         self.mclass = (
@@ -193,6 +194,12 @@ class NativeCodeResolver:
             set
         )
         self._resolved: dict[tuple[str, int], FunctionCode | str] = {}
+        if pdb is not None:
+            for function in pdb.functions:
+                self._ranges[(function.name, function.address)].add(
+                    ((function.address, function.end),)
+                )
+            return
         for cu in dwarfinfo.iter_CUs():
             for die in cu.iter_DIEs():
                 if die.tag != "DW_TAG_subprogram":

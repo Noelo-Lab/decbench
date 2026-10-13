@@ -326,6 +326,16 @@ def extract_ground_truth_type_index(binary_path: Path) -> GroundTruthTypeIndex:
     try:
         dwarfinfo = binfmt.dwarf_info(binary_path)
         if dwarfinfo is None:
+            native = binfmt.pdb_info(binary_path)
+            if native is not None:
+                from decbench.utils.pdb_info import ground_truth_variables
+
+                for function in native.functions:
+                    exact = native.at_address(function.address)
+                    if exact is not None:
+                        result.setdefault(function.address, {})[function.name] = (
+                            ground_truth_variables(binary_path, function, include_addresses=False)
+                        )
             logger.debug("No DWARF info in %s", binary_path)
             return result
 
@@ -364,6 +374,17 @@ def extract_ground_truth_types_by_address(
     try:
         dwarfinfo = binfmt.dwarf_info(binary_path)
         if dwarfinfo is None:
+            native = binfmt.pdb_info(binary_path)
+            if native is not None:
+                from decbench.utils.pdb_info import ground_truth_variables
+
+                for function in native.functions:
+                    exact = native.at_address(function.address)
+                    result[function.address] = (
+                        ground_truth_variables(binary_path, exact, include_addresses=False)
+                        if exact is not None
+                        else []
+                    )
             return result
 
         for CU in dwarfinfo.iter_CUs():
@@ -788,6 +809,11 @@ def _find_definition_params(code: str, func_name: str) -> str | None:
     """
     if not func_name:
         return None
+    from decbench.metrics.variable_features import function_parameters, index_c_functions
+
+    definitions = index_c_functions(code)
+    if any("::" in name or name.startswith(("operator", "~")) for name in definitions):
+        return function_parameters(code, func_name)
     for m in re.finditer(r"\b" + re.escape(func_name) + r"\s*\(", code):
         open_i = code.index("(", m.start())
         depth = 0
@@ -1040,7 +1066,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "20"
+    cache_version = "21"
 
     weight = 1.0
     lower_is_better = False
@@ -1624,6 +1650,15 @@ class TypeMatchMetric(Metric):
 
         binary_info = binfmt.detect(binary_path)
         architecture = binary_info.arch if binary_info is not None else ""
+        if (
+            binary_info is not None
+            and binary_info.fmt == "pe"
+            and binfmt.dwarf_info(binary_path) is None
+        ):
+            # No partially supported PDB function may be reported as perfect.
+            # CodeView formal flags carry no ordinal; the legacy no-address
+            # fallback would invent parameter order from their record order.
+            return self._compute_pdb_binary(decompilation)
         preprocessed_sources = tuple(
             sorted({Path(path).resolve() for path in (kwargs.get("preprocessed_sources") or [])})
         )
@@ -1739,6 +1774,80 @@ class TypeMatchMetric(Metric):
 
         result.compute_aggregates(perfect_value=self.perfect_value)
 
+        return result
+
+    def _compute_pdb_binary(self, decompilation: DecompilationResult) -> MetricResult:
+        import time
+
+        from decbench.utils import binfmt
+        from decbench.utils.pdb_info import ground_truth_variables
+
+        start = time.time()
+        values = {}
+        errors = []
+        if self.config.extra_options.get("pdb_abi_diagnostic", False) is not True:
+            return MetricResult(
+                metric_name=self.name,
+                decompiler_name=decompilation.decompiler.decompiler_name,
+                binary_name=decompilation.binary_name,
+                function_results={},
+                errors=[
+                    "PDB source-level scoring policy is not qualified; "
+                    "pdb_abi_diagnostic opt-in measures only the ABI projection"
+                ],
+            )
+        try:
+            native = binfmt.pdb_info(decompilation.binary_path)
+            if native is None:
+                raise ValueError("no matching adjacent PDB")
+            for key, function in decompilation.functions.items():
+                _name, address = parse_function_storage_key(key)
+                address = address if address is not None else int(function.address)
+                oracle = native.at_address(address)
+                if oracle is None:
+                    errors.append(f"{key}: PDB function absent or ICF identity ambiguous")
+                    continue
+                reasons = sorted(
+                    set(
+                        oracle.exclusions
+                        + [reason for v in oracle.variables for reason in v.exclusions]
+                    )
+                )
+                if reasons:
+                    errors.append(f"{key}: PDB unmeasurable: {'; '.join(reasons)}")
+                    continue
+                if not oracle.variables:
+                    errors.append(f"{key}: PDB has no variable ground truth")
+                    continue
+                if uses_legacy_correspondence(
+                    decompilation.decompiler.decompiler_name
+                ) and not has_line_address_evidence(function):
+                    errors.append(
+                        f"{key}: PDB requires native address correspondence; "
+                        "parameter ordinals/stack origin are unproven"
+                    )
+                    continue
+                gt = ground_truth_variables(decompilation.binary_path, oracle)
+                value = self.compute_for_function(
+                    function,
+                    ground_truth_vars=gt,
+                    backend=decompilation.decompiler.decompiler_name,
+                    address_provenance=True,
+                )
+                value.metadata["ground_truth_format"] = "pdb"
+                value.metadata["ground_truth_type_view"] = "abi_projection"
+                values[key] = value
+        except Exception as exc:
+            errors.append(f"PDB oracle unavailable: {exc}")
+        result = MetricResult(
+            metric_name=self.name,
+            decompiler_name=decompilation.decompiler.decompiler_name,
+            binary_name=decompilation.binary_name,
+            function_results=values,
+            computation_time_seconds=time.time() - start,
+            errors=errors,
+        )
+        result.compute_aggregates(perfect_value=self.perfect_value)
         return result
 
     @staticmethod

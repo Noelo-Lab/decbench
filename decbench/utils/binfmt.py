@@ -134,7 +134,7 @@ _CROSS_ELF_GCC = {
 }
 
 
-def recompiler_for(info: BinInfo) -> str | None:
+def recompiler_for(info: BinInfo, path: Path | None = None) -> str | None:
     """The compiler that builds for this binary's format+arch (the 'same way').
 
     Returns the compiler executable name, or None for arch/format we can't
@@ -150,11 +150,23 @@ def recompiler_for(info: BinInfo) -> str | None:
             return "gcc"
         return _CROSS_ELF_GCC.get(info.arch)
     if info.fmt == "pe":
+        if path is not None and dwarf_info(path) is None:
+            return None
         return {
             "x86": "i686-w64-mingw32-gcc",
             "x86-64": "x86_64-w64-mingw32-gcc",
         }.get(info.arch)
     return None
+
+
+def pdb_info(path: Path, *, debug_path: Path | None = None):
+    """Native PE oracle transport; mismatches are errors, absence is None."""
+    info = detect(path)
+    if info is None or info.fmt != "pe":
+        return None
+    from decbench.utils.pdb_info import read_pdb
+
+    return read_pdb(path, debug_path)
 
 
 def tool_available(name: str) -> bool:
@@ -741,6 +753,30 @@ def source_function_owners(
     except Exception:  # noqa: BLE001
         return {}
     if dw is None:
+        native = pdb_info(path)
+        if native is not None:
+            owners = {}
+            stem_index = build_stem_index(source_stems)
+            for function in native.functions:
+                if not function.source_file:
+                    continue
+                decl_stem = strip_source_ext(
+                    function.source_file.replace("\\", "/").rsplit("/", 1)[-1]
+                )
+                matches = [
+                    original
+                    for normalized, original in stem_index.items()
+                    if normalized == decl_stem
+                    or normalized.endswith("-" + decl_stem)
+                    or normalized.endswith("_" + decl_stem)
+                ]
+                if len(set(matches)) == 1:
+                    value = (function.name, matches[0])
+                    if function.address in owners and owners[function.address] != value:
+                        owners[function.address] = None
+                    else:
+                        owners.setdefault(function.address, value)
+            return {address: owner for address, owner in owners.items() if owner is not None}
         return {}
 
     owners: dict[int, tuple[str, str]] = {}

@@ -122,6 +122,12 @@ def dwarf_function_identities(binary_path: Path) -> list[FunctionIdentity]:
     """
     dwarf = binfmt.dwarf_info(binary_path)
     if dwarf is None:
+        native = binfmt.pdb_info(binary_path)
+        if native is not None:
+            # Keep ICF aliases as separate named rows; do not pick their types
+            # by address. The PDB type oracle rejects ambiguous addresses.
+            rows = sorted({(f.address, f.name) for f in native.functions})
+            return [FunctionIdentity(address=address, name=name) for address, name in rows]
         return []
 
     by_address: dict[int, FunctionIdentity] = {}

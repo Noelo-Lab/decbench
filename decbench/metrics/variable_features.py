@@ -8,9 +8,11 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
 import tree_sitter_c
+import tree_sitter_cpp
 from tree_sitter import Language, Node, Parser
 
 _C_LANGUAGE = Language(tree_sitter_c.language())
+_CPP_LANGUAGE = Language(tree_sitter_cpp.language())
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,29 @@ class DiscoveredVariable:
 
 def _parser() -> Parser:
     return Parser(_C_LANGUAGE)
+
+
+def _parse_source(source: bytes):
+    """Retain C behavior; use C++ when its declarators require that grammar."""
+    c_tree = _parser().parse(source)
+    if not c_tree.root_node.has_error:
+        return c_tree
+    cpp_tree = Parser(_CPP_LANGUAGE).parse(source)
+    if any(
+        node.type in {"namespace_definition", "class_specifier", "template_declaration"}
+        for node in _walk(cpp_tree.root_node)
+    ):
+        return cpp_tree
+    cpp_declarators = {"qualified_identifier", "operator_name", "destructor_name"}
+    for function in _walk(cpp_tree.root_node):
+        if function.type != "function_definition":
+            continue
+        declarator = function.child_by_field_name("declarator")
+        if declarator is not None and any(
+            node.type in cpp_declarators for node in _walk(declarator)
+        ):
+            return cpp_tree
+    return c_tree
 
 
 def _walk(node: Node) -> Iterator[Node]:
@@ -49,7 +74,13 @@ def _field_name(node: Node) -> str | None:
 def _declarator_identifier(node: Node | None) -> Node | None:
     if node is None:
         return None
-    if node.type == "identifier":
+    if node.type in {
+        "identifier",
+        "field_identifier",
+        "qualified_identifier",
+        "operator_name",
+        "destructor_name",
+    }:
         return node
     declarator = node.child_by_field_name("declarator")
     if declarator is not None:
@@ -65,6 +96,50 @@ def _declarator_identifier(node: Node | None) -> Node | None:
 
 def _function_name(node: Node, source: bytes) -> str:
     identifier = _declarator_identifier(node.child_by_field_name("declarator"))
+    name = _text(identifier, source) if identifier is not None else ""
+    if not name or name.startswith("::"):
+        return name
+    scopes = []
+    parent = node.parent
+    while parent is not None:
+        if parent.type in {"namespace_definition", "class_specifier", "struct_specifier"}:
+            scope = parent.child_by_field_name("name")
+            if scope is not None:
+                scopes.append(_text(scope, source))
+        parent = parent.parent
+    prefix = "::".join(reversed(scopes))
+    if prefix and not name.startswith(prefix + "::"):
+        return prefix + "::" + name
+    return name
+
+
+def function_parameters(code: str, function_name: str) -> str | None:
+    """Read the real argument list, including operator() and cv/noexcept suffixes."""
+    source = code.encode("utf-8", "replace")
+    tree = _parse_source(source)
+    candidates = [
+        node
+        for node in _walk(tree.root_node)
+        if node.type == "function_definition"
+        and (
+            _function_name(node, source) == function_name
+            or _function_leaf(node, source) == function_name
+        )
+    ]
+    if len(candidates) != 1:
+        return None
+    declarator = candidates[0].child_by_field_name("declarator")
+    for node in _walk(declarator) if declarator is not None else ():
+        if node.type == "parameter_list":
+            text = _text(node, source)
+            return text[1:-1]
+    return None
+
+
+def _function_leaf(node: Node, source: bytes) -> str:
+    identifier = _declarator_identifier(node.child_by_field_name("declarator"))
+    while identifier is not None and identifier.type == "qualified_identifier":
+        identifier = identifier.child_by_field_name("name")
     return _text(identifier, source) if identifier is not None else ""
 
 
@@ -72,14 +147,19 @@ def index_c_functions(code: str) -> dict[str, tuple[str, ...]]:
     """Index every named function definition in a translation unit."""
 
     source = code.encode("utf-8", "replace")
-    tree = _parser().parse(source)
+    tree = _parse_source(source)
     definitions: dict[str, list[str]] = defaultdict(list)
+    aliases: dict[str, set[str]] = defaultdict(set)
     for node in _walk(tree.root_node):
         if node.type != "function_definition":
             continue
         name = _function_name(node, source)
         if name:
             definitions[name].append(_text(node, source))
+            aliases[_function_leaf(node, source)].add(name)
+    for leaf, names in aliases.items():
+        if leaf and leaf not in definitions and len(names) == 1:
+            definitions[leaf] = list(definitions[next(iter(names))])
     return {name: tuple(rows) for name, rows in definitions.items()}
 
 
@@ -88,6 +168,13 @@ def _select_function(root: Node, source: bytes, function_name: str) -> Node | No
     exact = [node for node in definitions if _function_name(node, source) == function_name]
     if len(exact) == 1:
         return exact[0]
+    if len(exact) > 1:
+        return None
+    leaves = [node for node in definitions if _function_leaf(node, source) == function_name]
+    if len(leaves) == 1:
+        return leaves[0]
+    if len(leaves) > 1:
+        return None
     return definitions[0] if len(definitions) == 1 else None
 
 
@@ -185,12 +272,16 @@ def variable_occurrence_lines(
     """Locate unambiguous local-variable identifiers in exact rendered C."""
 
     source = code.encode("utf-8", "replace")
-    tree = _parser().parse(source)
+    tree = _parse_source(source)
     if require_exact_function_name:
         exact = [
             node
             for node in _walk(tree.root_node)
-            if node.type == "function_definition" and _function_name(node, source) == function_name
+            if node.type == "function_definition"
+            and (
+                _function_name(node, source) == function_name
+                or _function_leaf(node, source) == function_name
+            )
         ]
         function = exact[0] if len(exact) == 1 else None
     else:

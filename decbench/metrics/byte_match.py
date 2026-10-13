@@ -273,7 +273,7 @@ class ByteMatchMetric(Metric):
         info = binfmt.detect(original_binary_path)
         if info is None:
             return MetricValue(value=0.0, metadata={"error": "Unrecognized binary format"})
-        recompiler = binfmt.recompiler_for(info)
+        recompiler = binfmt.recompiler_for(info, original_binary_path)
         if recompiler is None or not binfmt.tool_available(recompiler):
             return MetricValue(
                 value=0.0,
@@ -435,7 +435,7 @@ class ByteMatchMetric(Metric):
 
             info = binfmt.detect(original_binary_path)
             if info is not None:
-                recompiler = binfmt.recompiler_for(info)
+                recompiler = binfmt.recompiler_for(info, original_binary_path)
                 if recompiler is None or not binfmt.tool_available(recompiler):
                     return MetricResult(
                         metric_name=self.name,
@@ -460,8 +460,7 @@ class ByteMatchMetric(Metric):
             {
                 fd.name: fd.decompiled_code or ""
                 for storage_key, fd in decompilation.functions.items()
-                if name_counts[fd.name] == 1
-                and parse_function_storage_key(storage_key)[1] is None
+                if name_counts[fd.name] == 1 and parse_function_storage_key(storage_key)[1] is None
             }
         )
 

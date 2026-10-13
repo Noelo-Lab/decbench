@@ -70,6 +70,20 @@ def _dwarf_addr_to_name(binary: Path, stems: set[str] | None) -> dict[int, str]:
         _l.warning("DWARF read failed for %s: %s", binary, e)
         return {}
     if dw is None:
+        native = binfmt.pdb_info(binary)
+        if native is not None:
+            if stems is not None:
+                return {
+                    address: name
+                    for address, (name, _stem) in binfmt.source_function_owners(
+                        binary, stems
+                    ).items()
+                }
+            return {
+                f.address: f.name
+                for f in native.functions
+                if native.at_address(f.address) is not None
+            }
         return {}
     addr2name: dict[int, str] = {}
     file_tables: dict[int, list[str | None]] = {}

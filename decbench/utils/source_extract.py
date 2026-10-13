@@ -49,6 +49,21 @@ def _dwarf_decl_maps(binary_path: Path) -> tuple[dict[str, DeclHint], dict[int, 
     try:
         dw = binfmt.dwarf_info(binary_path)
         if dw is None:
+            native = binfmt.pdb_info(binary_path)
+            if native is not None:
+                from collections import Counter
+
+                names = Counter(f.name for f in native.functions)
+                for function in native.functions:
+                    if function.source_file:
+                        hint = (
+                            function.source_file.replace("\\", "/").rsplit("/", 1)[-1],
+                            function.source_line,
+                        )
+                        if names[function.name] == 1:
+                            by_name[function.name] = hint
+                        if native.at_address(function.address) is not None:
+                            by_address[function.address] = hint
             return by_name, by_address
         file_tables: dict[int, list] = {}
         for cu in dw.iter_CUs():
@@ -182,6 +197,12 @@ def extract_from_text(text: str, func_name: str, decl_line: int = 0) -> str | No
     When ``decl_line`` (1-based) is given, prefer the candidate nearest it.
     Returns the signature + body, or ``None`` if no definition is found.
     """
+    from decbench.metrics.variable_features import index_c_functions
+
+    definitions = index_c_functions(text)
+    if any("::" in key or key.startswith(("operator", "~")) for key in definitions):
+        candidates = definitions.get(func_name, ())
+        return candidates[0] if len(candidates) == 1 else None
     name = re.escape(func_name)
     pat = re.compile(r"(?<!\w)(?:" + name + r"\s*|\(\s*" + name + r"\s*\)\s*)(\()")
     lines = text.splitlines(keepends=True)
