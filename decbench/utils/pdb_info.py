@@ -663,7 +663,7 @@ def read_pdb(binary_path: Path, debug_path: Path | None = None) -> PdbInfo | Non
                         )
                         name_pos = 10 if kind == 0x1111 else 8
                     name, _ = _string(p, name_pos)
-                    is_parameter = False if parameter_count == 0 else None
+                    is_parameter = None
                     begin = max([current.debug_start, *[block_extents[b][0] for b in blocks]])
                     end = min([current.debug_end, *[block_extents[b][1] for b in blocks]])
                     location = PdbStorage(register, offset, begin, end)
