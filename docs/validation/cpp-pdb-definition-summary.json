@@ -1,0 +1,288 @@
+{
+  "validated_code_commit": "bb5ccfb5a30335982abc4e7240613d8b0d736624",
+  "prerequisite_branch_head": "e216d9cb6475a8ea0c7d60a2334519ee1e3960b4",
+  "dataset_revision": "07dd95dbe6214b8a78fc1e4a55961ab515986489",
+  "definition_coverage": {
+    "fission": {
+      "native_outputs": 244,
+      "before_indexed": 244,
+      "after_indexed": 244,
+      "valid_c_unchanged": 244
+    },
+    "kuna": {
+      "native_outputs": 250,
+      "before_indexed": 247,
+      "after_indexed": 250,
+      "valid_c_unchanged": 154
+    }
+  },
+  "pdb": {
+    "image_pairs": 18,
+    "range_matches": 91418,
+    "range_records": 91418,
+    "packaged_name_differences": 15145,
+    "isolated_inputs_without_pdb": 18,
+    "rows": [
+      {
+        "project": "OpenCC",
+        "optimization": "O0",
+        "functions": 10280,
+        "range_matches": 6237,
+        "packaged_function_records": 6237,
+        "packaged_name_differences": 843,
+        "source_line_provenance": 7749,
+        "measurable_procedures": 747
+      },
+      {
+        "project": "detours",
+        "optimization": "O0",
+        "functions": 3437,
+        "range_matches": 136,
+        "packaged_function_records": 136,
+        "packaged_name_differences": 0,
+        "source_line_provenance": 2084,
+        "measurable_procedures": 2150
+      },
+      {
+        "project": "ninja",
+        "optimization": "O0",
+        "functions": 7434,
+        "range_matches": 5424,
+        "packaged_function_records": 5424,
+        "packaged_name_differences": 112,
+        "source_line_provenance": 6048,
+        "measurable_procedures": 585
+      },
+      {
+        "project": "snappy",
+        "optimization": "O0",
+        "functions": 477,
+        "range_matches": 408,
+        "packaged_function_records": 408,
+        "packaged_name_differences": 21,
+        "source_line_provenance": 425,
+        "measurable_procedures": 57
+      },
+      {
+        "project": "tracy",
+        "optimization": "O0",
+        "functions": 45663,
+        "range_matches": 28431,
+        "packaged_function_records": 28431,
+        "packaged_name_differences": 5811,
+        "source_line_provenance": 40783,
+        "measurable_procedures": 619
+      },
+      {
+        "project": "winsparkle",
+        "optimization": "O0",
+        "functions": 38402,
+        "range_matches": 2267,
+        "packaged_function_records": 2267,
+        "packaged_name_differences": 229,
+        "source_line_provenance": 18945,
+        "measurable_procedures": 18679
+      },
+      {
+        "project": "OpenCC",
+        "optimization": "O2",
+        "functions": 4122,
+        "range_matches": 1363,
+        "packaged_function_records": 1363,
+        "packaged_name_differences": 212,
+        "source_line_provenance": 1853,
+        "measurable_procedures": 1563
+      },
+      {
+        "project": "detours",
+        "optimization": "O2",
+        "functions": 3437,
+        "range_matches": 136,
+        "packaged_function_records": 136,
+        "packaged_name_differences": 0,
+        "source_line_provenance": 2075,
+        "measurable_procedures": 2163
+      },
+      {
+        "project": "ninja",
+        "optimization": "O2",
+        "functions": 2700,
+        "range_matches": 800,
+        "packaged_function_records": 800,
+        "packaged_name_differences": 39,
+        "source_line_provenance": 1432,
+        "measurable_procedures": 1070
+      },
+      {
+        "project": "snappy",
+        "optimization": "O2",
+        "functions": 447,
+        "range_matches": 378,
+        "packaged_function_records": 378,
+        "packaged_name_differences": 9,
+        "source_line_provenance": 225,
+        "measurable_procedures": 312
+      },
+      {
+        "project": "tracy",
+        "optimization": "O2",
+        "functions": 14674,
+        "range_matches": 5132,
+        "packaged_function_records": 5132,
+        "packaged_name_differences": 1220,
+        "source_line_provenance": 8147,
+        "measurable_procedures": 5838
+      },
+      {
+        "project": "winsparkle",
+        "optimization": "O2",
+        "functions": 37752,
+        "range_matches": 1048,
+        "packaged_function_records": 1048,
+        "packaged_name_differences": 165,
+        "source_line_provenance": 18015,
+        "measurable_procedures": 19560
+      },
+      {
+        "project": "OpenCC",
+        "optimization": "O2-noinline",
+        "functions": 8516,
+        "range_matches": 5604,
+        "packaged_function_records": 5604,
+        "packaged_name_differences": 787,
+        "source_line_provenance": 4384,
+        "measurable_procedures": 5124
+      },
+      {
+        "project": "detours",
+        "optimization": "O2-noinline",
+        "functions": 3437,
+        "range_matches": 136,
+        "packaged_function_records": 136,
+        "packaged_name_differences": 0,
+        "source_line_provenance": 2076,
+        "measurable_procedures": 2162
+      },
+      {
+        "project": "ninja",
+        "optimization": "O2-noinline",
+        "functions": 6799,
+        "range_matches": 4896,
+        "packaged_function_records": 4896,
+        "packaged_name_differences": 107,
+        "source_line_provenance": 3737,
+        "measurable_procedures": 4164
+      },
+      {
+        "project": "snappy",
+        "optimization": "O2-noinline",
+        "functions": 476,
+        "range_matches": 407,
+        "packaged_function_records": 407,
+        "packaged_name_differences": 21,
+        "source_line_provenance": 274,
+        "measurable_procedures": 320
+      },
+      {
+        "project": "tracy",
+        "optimization": "O2-noinline",
+        "functions": 40574,
+        "range_matches": 26455,
+        "packaged_function_records": 26455,
+        "packaged_name_differences": 5341,
+        "source_line_provenance": 25278,
+        "measurable_procedures": 23929
+      },
+      {
+        "project": "winsparkle",
+        "optimization": "O2-noinline",
+        "functions": 38300,
+        "range_matches": 2160,
+        "packaged_function_records": 2160,
+        "packaged_name_differences": 228,
+        "source_line_provenance": 18414,
+        "measurable_procedures": 19974
+      }
+    ]
+  },
+  "windows_abi_diagnostic": {
+    "fission": {
+      "requested": 97,
+      "measured": 0,
+      "excluded": 97,
+      "perfect": 0,
+      "mean": null
+    },
+    "kuna": {
+      "requested": 97,
+      "measured": 32,
+      "excluded": 65,
+      "perfect": 0,
+      "mean": 0.015625
+    }
+  },
+  "controls": [
+    {
+      "control": "wrong-project-GUID",
+      "rejected": true,
+      "reason": "PE/PDB GUID or Age mismatch"
+    },
+    {
+      "control": "wrong-age",
+      "rejected": true,
+      "reason": "PE/PDB GUID or Age mismatch"
+    },
+    {
+      "control": "wrong-dbi-architecture",
+      "rejected": true,
+      "reason": "PE/PDB DBI Age or architecture mismatch"
+    },
+    {
+      "control": "wrong-section-rva",
+      "rejected": true,
+      "reason": "PE/PDB section mapping mismatch"
+    },
+    {
+      "control": "truncated",
+      "rejected": true,
+      "reason": "invalid MSF block geometry"
+    },
+    {
+      "control": "missing",
+      "unavailable": true
+    },
+    {
+      "control": "positive-consumers",
+      "identities": 447,
+      "source_owners": 94,
+      "native_instruction_entry": true,
+      "source_hint": true,
+      "evalkit_address_identity": true
+    }
+  ],
+  "existing_elf_macho_type_values": {
+    "compared": 66,
+    "all_equal": true,
+    "cells_per_tool": 6
+  },
+  "default_pdb_scoring_enabled": false,
+  "msvc_byte_match_abstains": true,
+  "formal_parameter_ordinals_inferred": false,
+  "full_test_suite_run": false,
+  "official_cpp_union_or_rank": false,
+  "new_python_dependency": "tree-sitter-cpp 0.23.4",
+  "lint_limitation": "Existing SIM105 in type_match.py is present in prerequisite code; all other scoped Ruff checks pass.",
+  "code_sha256": {
+    "decbench/evalkit/resolve.py": "6d9a8f3fe293d31f18decac53787de6ecf2d173302380688959028d1cd67a196",
+    "decbench/metrics/byte_match.py": "a0fdf6c41ea2dbcae54cd06d3e5d3a8cd3533abeebe7c71a8c05f1f52bb3d4ca",
+    "decbench/metrics/type_match.py": "3b04a69838a9b24810ec16f8981660b208c0b5e2cd1eaf951bd17d7586cb81fa",
+    "decbench/metrics/variable_features.py": "41f824db2871ab07ba80cb99c5b21cfd8620a1c03024c18da1952aaf2a01d6f0",
+    "decbench/utils/binfmt.py": "99a5ee30210818c335713778cff39c6b8326f421daddfe3f515baaa6755059ad",
+    "decbench/utils/function_identity.py": "e5e25f2659de88ff18c0c0b3ac10c08dd7a8abb3b9bf1e67ea4e974371b1a6f7",
+    "decbench/utils/native_code.py": "9f936705eefa9a1c178c836ce4da928dad98c436357d783fd499060581fcf97c",
+    "decbench/utils/pdb_info.py": "4af30e58a31f5871aaa103cab7bdd7250579ec220273c8b36ef33792314861fe",
+    "decbench/utils/source_extract.py": "c7b885abfab08060be48b58f96157bd09fdc7720bc45e7937bf450f2d67d14f4",
+    "pyproject.toml": "4b2ed19dcb63f2e6e9dd1f09a9d9bb316f8d86e2670a81c4415d9f678a7ba7f9",
+    "tests/test_type_match_correspondence.py": "0ebcd1d7ba5af4e6b385e088431144332bde5aee9b0e4860c19da6d2b0cada12"
+  }
+}
