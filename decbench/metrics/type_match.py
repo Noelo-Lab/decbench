@@ -302,6 +302,18 @@ def has_line_address_evidence(decompiled: FunctionDecompilation) -> bool:
     return any(mapping.addresses for mapping in decompiled.line_mappings)
 
 
+def has_native_address_evidence(decompiled: FunctionDecompilation) -> bool:
+    """Direct variable PCs are evidence even when no output-line map exists.
+
+    The producer boundary must validate PCs with sanitize_native_provenance.
+    A variable's definition/use map must never be expanded onto every line
+    mentioning its name: that would invent per-occurrence provenance.
+    """
+    return has_line_address_evidence(decompiled) or any(
+        variable.addresses for variable in decompiled.variables
+    )
+
+
 def extract_ground_truth_type_index(binary_path: Path) -> GroundTruthTypeIndex:
     """Extract DWARF variable types keyed by function address and name.
 
@@ -1066,7 +1078,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "21"
+    cache_version = "22"
 
     weight = 1.0
     lower_is_better = False
@@ -1119,7 +1131,7 @@ class TypeMatchMetric(Metric):
         if address_provenance is None:
             address_provenance = not uses_legacy_correspondence(
                 backend
-            ) or has_line_address_evidence(decompiled)
+            ) or has_native_address_evidence(decompiled)
         if not address_provenance:
             return self._legacy_value(decompiled, ground_truth_vars, calibration_shift)
 
@@ -1727,7 +1739,7 @@ class TypeMatchMetric(Metric):
                     source_context=source_context,
                     backend=decompilation.decompiler.decompiler_name,
                     address_provenance=(
-                        native_address_provenance or has_line_address_evidence(func_decomp)
+                        native_address_provenance or has_native_address_evidence(func_decomp)
                     ),
                 )
                 function_results[storage_key] = value
@@ -1821,7 +1833,7 @@ class TypeMatchMetric(Metric):
                     continue
                 if uses_legacy_correspondence(
                     decompilation.decompiler.decompiler_name
-                ) and not has_line_address_evidence(function):
+                ) and not has_native_address_evidence(function):
                     errors.append(
                         f"{key}: PDB requires native address correspondence; "
                         "parameter ordinals/stack origin are unproven"

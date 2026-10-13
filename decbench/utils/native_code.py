@@ -296,6 +296,19 @@ class NativeCodeResolver:
         expected = function_address & ~1 if self.info.arch == "arm" else function_address
         candidates = self._ranges.get((function_name, expected), set())
         if not candidates:
+            # A stripped producer may emit sub_<VA>, or a PDB demangler may
+            # include a signature the oracle's procedure name does not carry.
+            # Instruction membership is keyed by the physical entry, not the
+            # spelling of that label. Admit only one identity at that entry;
+            # aliases/ICF collisions must not select another function's range.
+            at_entry = [
+                ranges for (_name, entry), ranges in self._ranges.items() if entry == expected
+            ]
+            if len(at_entry) == 1:
+                candidates = at_entry[0]
+            elif len(at_entry) > 1:
+                raise ValueError(f"ambiguous DWARF function at entry 0x{function_address:x}")
+        if not candidates:
             raise ValueError(
                 f"no DWARF function matches {function_name!r} at 0x{function_address:x}"
             )

@@ -184,6 +184,7 @@ class PdbType:
     source_name: str
     abi_name: str | None
     size: int | None
+    category: str = "scalar"
 
 
 class _Types:
@@ -214,7 +215,11 @@ class _Types:
             source, abi, size = base
             if mode:
                 pointer_size = {4: 4, 6: 8}.get(mode)
-                return PdbType(source + "*", abi + "*", pointer_size) if pointer_size else None
+                return (
+                    PdbType(source + "*", abi + "*", pointer_size, "pointer")
+                    if pointer_size
+                    else None
+                )
             return PdbType(source, abi, size)
         self.cache[index] = None  # cycles must never manufacture a type
         record = self.records.get(index)
@@ -224,16 +229,21 @@ class _Types:
             if kind == 0x1001:  # modifier
                 base, flags = _unpack("<IH", p)
                 t = self.resolve(base, depth + 1)
-                if t and not flags & ~7:
+                if t and not flags & ~7 and not (t.category == "reference" and flags):
                     qualifier = (
                         ("const " if flags & 1 else "")
                         + ("volatile " if flags & 2 else "")
                         + ("__unaligned " if flags & 4 else "")
                     )
                     result = PdbType(
-                        qualifier + t.source_name,
+                        (
+                            (t.source_name + " " + qualifier.strip())
+                            if t.category == "pointer"
+                            else qualifier + t.source_name
+                        ),
                         qualifier + t.abi_name if t.abi_name else None,
                         t.size,
+                        t.category,
                     )
             elif kind == 0x1002:  # pointer / reference, never member pointers
                 base, attrs = _unpack("<II", p)
@@ -249,18 +259,19 @@ class _Types:
                         t.source_name + suffix + source_qualifiers,
                         t.abi_name + "*" if t.abi_name else None,
                         size,
+                        "pointer" if mode == 0 else "reference",
                     )
             elif kind in {0x1504, 0x1505, 0x1519, 0x1506}:  # named aggregate
                 _count, flags = _unpack("<HH", p)
                 size, name_offset = _numeric(p, 8 if kind == 0x1506 else 16)
                 name, _ = _string(p, name_offset)
-                result = PdbType(name, name, None if flags & 0x80 else size)
+                result = PdbType(name, name, None if flags & 0x80 else size, "aggregate")
             elif kind == 0x1507:  # enum retains its source name, integer ABI
                 base = _unpack("<I", p, 4)[0]
                 name, _ = _string(p, 12)
                 t = self.resolve(base, depth + 1)
                 if t:
-                    result = PdbType(name, t.abi_name, t.size)
+                    result = PdbType(name, t.abi_name, t.size, "enum")
             elif kind == 0x1503:
                 base = _unpack("<I", p)[0]
                 size, _ = _numeric(p, 8)
@@ -268,7 +279,10 @@ class _Types:
                 if t and t.size and size >= 0 and size % t.size == 0:
                     suffix = f"[{size // t.size}]"
                     result = PdbType(
-                        t.source_name + suffix, t.abi_name + suffix if t.abi_name else None, size
+                        t.source_name + suffix,
+                        t.abi_name + suffix if t.abi_name else None,
+                        size,
+                        "array",
                     )
         self.cache[index] = result
         return result

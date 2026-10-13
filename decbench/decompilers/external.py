@@ -83,12 +83,6 @@ class ExternalDecompiler(Decompiler):
 
 EXTERNAL_DECOMPILERS: tuple[ExternalSpec, ...] = (
     ExternalSpec(
-        id="fission",
-        display_name="Fission",
-        url="https://github.com/fission-systems/Fission",
-        version="0.2.3",
-    ),
-    ExternalSpec(
         id="ventris",
         display_name="Ventris",
         url="https://reveng.ai/",
