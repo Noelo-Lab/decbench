@@ -60,6 +60,23 @@ These are real-corpus transport/provenance checks, not recovered-code execution
 parity, a full test-suite run, C++ type-policy validation or a decompiler score.
 The local JSON reports, logs and reproduction probes are under Fission's
 `benchmark/artifacts/cpp-native-debug/2026-10-13/` in the operator workspace.
+The portable [evidence summary](validation/cpp-native-debug-summary.json)
+records the immutable data revision, validated code commit, per-image counts,
+ELF comparison fingerprints and validation limits, without local binary paths.
+
+## Review and submission
+
+The feature is prepared separately from PR #91. While #91 remains open, a
+`main`-based PR from this branch would include its prerequisite changes.
+After #91 merges, replay this feature and its evidence-only follow-up onto
+the then-current upstream main and inspect the resulting diff before opening
+the separate PR. Do not merge the prerequisite into upstream main from this
+branch or publish scores as part of the reader change.
+
+Full repository regression tests and an end-to-end metric run remain pending.
+The repository's Pages workflow deploys existing site files; it is not a
+Python regression-test gate. Native debug transport checks should be reviewed
+separately from those remaining validations.
 
 ## Remaining evaluation work
 

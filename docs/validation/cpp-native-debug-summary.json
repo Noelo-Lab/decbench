@@ -1,0 +1,202 @@
+{
+  "schema": "cpp-native-debug-corpus-evidence-v1",
+  "data_repo": "sjkim1127/decbench-cpp-qualification",
+  "data_revision": "07dd95dbe6214b8a78fc1e4a55961ab515986489",
+  "validated_code_commit": "a8a4ae7a56c30bc894be2dd526026a285fe55bec",
+  "baseline_reader_commit": "8eeceb82088e97ace88d15a592db1ee76ab37384",
+  "comparison_scope": "native debug transport and address/range resolution; no decompiler scoring or runtime parity",
+  "baseline_macos_format_recognized": 0,
+  "baseline_macos_dwarf_readable": 0,
+  "macos_images": 9,
+  "macos_source_function_records_resolved": 4129,
+  "wrong_uuid_rejected": true,
+  "isolated_inputs_have_no_oracle": true,
+  "elf_pe_format_and_cu_baseline_unchanged": true,
+  "elf_type_and_source_declaration_fingerprints_equal": true,
+  "elf_fingerprints": [
+    {
+      "mode": "O0",
+      "type_addresses": 357,
+      "declaration_addresses": 357,
+      "sha256": "17b5abf6639c9989f0ec0a02ddb6b1eee995ea3b5982ad3f126e9de9f3cc916d"
+    },
+    {
+      "mode": "O2",
+      "type_addresses": 97,
+      "declaration_addresses": 97,
+      "sha256": "ccc0147f7f49d36789d14b6aca6e0e4646f82b34b7ccba44471decacf9c3155b"
+    },
+    {
+      "mode": "O2-noinline",
+      "type_addresses": 348,
+      "declaration_addresses": 348,
+      "sha256": "9b2c48d015f55eaa4a039d97eb2adca937c8139771b9f2f6bce89f3337968d22"
+    }
+  ],
+  "full_suite_run": false,
+  "score_run": false,
+  "rows": [
+    {
+      "platform": "macos",
+      "project": "OpenCC",
+      "mode": "O0",
+      "detected": {
+        "fmt": "macho",
+        "arch": "aarch64",
+        "bits": 64
+      },
+      "readable_dwarf": true,
+      "dwarf_cus": 33,
+      "source_function_records": 664,
+      "resolved": 664,
+      "function_identities": 8837,
+      "source_declaration_addresses": 8837,
+      "type_ground_truth_addresses": 8911,
+      "linked_base": 4294967296
+    },
+    {
+      "platform": "macos",
+      "project": "ninja",
+      "mode": "O0",
+      "detected": {
+        "fmt": "macho",
+        "arch": "aarch64",
+        "bits": 64
+      },
+      "readable_dwarf": true,
+      "dwarf_cus": 35,
+      "source_function_records": 814,
+      "resolved": 814,
+      "function_identities": 6371,
+      "source_declaration_addresses": 6371,
+      "type_ground_truth_addresses": 6372,
+      "linked_base": 4294967296
+    },
+    {
+      "platform": "macos",
+      "project": "snappy",
+      "mode": "O0",
+      "detected": {
+        "fmt": "macho",
+        "arch": "aarch64",
+        "bits": 64
+      },
+      "readable_dwarf": true,
+      "dwarf_cus": 4,
+      "source_function_records": 227,
+      "resolved": 227,
+      "function_identities": 442,
+      "source_declaration_addresses": 442,
+      "type_ground_truth_addresses": 442,
+      "linked_base": 0
+    },
+    {
+      "platform": "macos",
+      "project": "OpenCC",
+      "mode": "O2",
+      "detected": {
+        "fmt": "macho",
+        "arch": "aarch64",
+        "bits": 64
+      },
+      "readable_dwarf": true,
+      "dwarf_cus": 33,
+      "source_function_records": 323,
+      "resolved": 323,
+      "function_identities": 1296,
+      "source_declaration_addresses": 1296,
+      "type_ground_truth_addresses": 1365,
+      "linked_base": 4294967296
+    },
+    {
+      "platform": "macos",
+      "project": "ninja",
+      "mode": "O2",
+      "detected": {
+        "fmt": "macho",
+        "arch": "aarch64",
+        "bits": 64
+      },
+      "readable_dwarf": true,
+      "dwarf_cus": 35,
+      "source_function_records": 437,
+      "resolved": 437,
+      "function_identities": 571,
+      "source_declaration_addresses": 571,
+      "type_ground_truth_addresses": 572,
+      "linked_base": 4294967296
+    },
+    {
+      "platform": "macos",
+      "project": "snappy",
+      "mode": "O2",
+      "detected": {
+        "fmt": "macho",
+        "arch": "aarch64",
+        "bits": 64
+      },
+      "readable_dwarf": true,
+      "dwarf_cus": 4,
+      "source_function_records": 105,
+      "resolved": 105,
+      "function_identities": 134,
+      "source_declaration_addresses": 134,
+      "type_ground_truth_addresses": 134,
+      "linked_base": 0
+    },
+    {
+      "platform": "macos",
+      "project": "OpenCC",
+      "mode": "O2-noinline",
+      "detected": {
+        "fmt": "macho",
+        "arch": "aarch64",
+        "bits": 64
+      },
+      "readable_dwarf": true,
+      "dwarf_cus": 33,
+      "source_function_records": 586,
+      "resolved": 586,
+      "function_identities": 4529,
+      "source_declaration_addresses": 4529,
+      "type_ground_truth_addresses": 4599,
+      "linked_base": 4294967296
+    },
+    {
+      "platform": "macos",
+      "project": "ninja",
+      "mode": "O2-noinline",
+      "detected": {
+        "fmt": "macho",
+        "arch": "aarch64",
+        "bits": 64
+      },
+      "readable_dwarf": true,
+      "dwarf_cus": 35,
+      "source_function_records": 759,
+      "resolved": 759,
+      "function_identities": 2654,
+      "source_declaration_addresses": 2654,
+      "type_ground_truth_addresses": 2655,
+      "linked_base": 4294967296
+    },
+    {
+      "platform": "macos",
+      "project": "snappy",
+      "mode": "O2-noinline",
+      "detected": {
+        "fmt": "macho",
+        "arch": "aarch64",
+        "bits": 64
+      },
+      "readable_dwarf": true,
+      "dwarf_cus": 4,
+      "source_function_records": 214,
+      "resolved": 214,
+      "function_identities": 355,
+      "source_declaration_addresses": 355,
+      "type_ground_truth_addresses": 355,
+      "linked_base": 0
+    }
+  ]
+}
