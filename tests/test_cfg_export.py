@@ -24,7 +24,7 @@ from decbench.utils.cfg import (
 
 
 class Nop:
-    """Stands in for pyjoern's FUNCTION_START/FUNCTION_END filler statements."""
+    """Stands in for Joern's FUNCTION_START/FUNCTION_END filler statements."""
 
 
 class Stmt:
@@ -32,7 +32,7 @@ class Stmt:
 
 
 class Block:
-    """Minimal stand-in for a pyjoern CFG block."""
+    """Minimal stand-in for a Joern CFG block."""
 
     def __init__(
         self,

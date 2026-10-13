@@ -812,8 +812,50 @@ def test_eval_one_uses_dwarf_tu_ownership_for_corrected_source(
     assert seen == [4]
 
 
+def test_eval_one_scores_survive_unparseable_unexpanded_audit_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decompiled = tmp_path / "O0" / "proj" / "decompiled"
+    decompiled.mkdir(parents=True)
+    artifact = decompiled / "codex_bin.c"
+    artifact.write_text("#define FLAG 1\n// Function: f @ 0x1000\nint f(void) { return FLAG; }\n")
+    source = tmp_path / "current.pkl"
+    source.write_bytes(pickle.dumps({"per_stem": {"bin": {"f": _graph(3, 2)}}}))
+    candidate_cfg = _graph(3, 2)
+    monkeypatch.setattr("decbench.utils.results_tree.resolve_binary", lambda *_args: None)
+
+    def extract(
+        _path: Path,
+        sanitize_decompiled: bool = False,
+        preprocess_decompiled: bool = True,
+        raise_on_error: bool = False,
+    ) -> dict:
+        if preprocess_decompiled:
+            return {"f": candidate_cfg}
+        if raise_on_error:
+            raise RuntimeError("unsupported macro expansion")
+        return {}
+
+    monkeypatch.setattr("decbench.utils.cfg.extract_cfgs_from_source", extract)
+    monkeypatch.setattr(
+        "decbench.metrics.ged.GEDMetric.compute_for_function",
+        lambda _self, _result, *, source_cfg, decompiled_cfg: SimpleNamespace(
+            value=0.0,
+            metadata={"method": "isomorphism", "isomorphic": True, "approximated": False},
+        ),
+    )
+
+    key, scores, _audit = eval_one(
+        ("O0", "proj", "bin", "codex", str(artifact), str(source), "", False, {})
+    )
+
+    assert key == "O0::proj::bin::codex"
+    assert scores == {"f": {"value": 0.0, "perfect": True}}
+
+
 def test_checkpoint_schema_tracks_dwarf_tu_ownership(tmp_path: Path) -> None:
-    assert reeval_ged.checkpoint_signature()["schema_version"] == 7
+    assert reeval_ged.checkpoint_signature()["schema_version"] == 8
 
     checkpoint_dir = tmp_path / "reeval_ged"
     checkpoint_dir.mkdir()

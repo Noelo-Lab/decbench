@@ -383,7 +383,7 @@ Like most GED algorithms, VJ-GED is an approximation and can report more distanc
 Larger non-isomorphic graphs use a nonzero lower bound from their node and edge count differences.
 
 There are other ways to inject error here.
-We largely use [Joern](https://joern.io/) to parse the decompilation of each project.
+We use [Rust Joern](https://github.com/Noelo-Lab/rust-joern), a Rust port of [Joern](https://joern.io/)'s C/C++ front end, to parse the source and the decompilation of each project.
 If Joern fails, we fail.
 There is also ways the `.i` files, which we parse, can have false information left behind by the compiler.
 When we sampled this process, we found it was small.

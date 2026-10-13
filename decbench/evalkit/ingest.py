@@ -15,7 +15,7 @@ kit's ``package.py`` — see :mod:`decbench.evalkit.kit_package`) into a new
   :func:`decbench.pipeline.evaluate.evaluate_decompilation` path the run
   driver uses, with source CFGs from the tree's ``.i`` files.
 
-All evaluation imports are lazy: ``evaluate=False`` never touches pyjoern.
+All evaluation imports are lazy: ``evaluate=False`` never touches rust_joern.
 
 Drop/count semantics: a submitted function whose address is not one of the
 frozen manifest's addresses for its (project, opt, binary) slice is dropped

@@ -163,7 +163,7 @@ non-finite fails the build loudly instead of shipping a payload `JSON.parse`
 rejects).
 
 **`.github/workflows/pages.yml` is deploy-ONLY** — CI CANNOT generate the
-site (needs the decompilers + ~1.9 GB Joern + ~15 GB of binaries); the
+site (needs the decompilers + a native Rust Joern build + ~15 GB of binaries); the
 maintainer builds locally and commits `site/` (no longer gitignored), and the
 workflow only uploads it, failing if `site/index.html` or
 `site/data/aggregates.json` is missing. The workflow triggers on pushes to

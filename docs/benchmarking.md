@@ -82,14 +82,32 @@ structurer was fully retired 2026-07-23; see CHANGELOG.md.)
   run into a tree's history points (stored in `function_results.json` —
   unshipped since the Historical view was removed 2026-07-22).
 
-### pyjoern / Joern (GED's engine)
+### Rust Joern (GED's CFG parser)
 
-`pyjoern` bundles a ~1.9 GB Joern under site-packages and powers the GED
-metric. Gotcha: the wheel can ship a MISMATCHED joern-cli bundle (1.2.18 jars
-under a 4.x wrapper) which silently breaks `parse_source` → GED scores
-nothing. Fix: drop the matching Joern **v4.0.150** `joern-cli` into
-`site-packages/pyjoern/bin/joern-cli/` (its zip SHA-512 must equal
-`pyjoern.__init__.JOERN_ZIP_HASH`). Re-apply after any pyjoern reinstall.
+[Rust Joern](https://github.com/Noelo-Lab/rust-joern) is an in-process Rust
+port of the Joern C/C++ CFG front end and the only parser `decbench/utils/cfg.py`
+uses for GED. It targets CFG parity with Joern 4.0.150 / PyJoern 4.0.150.4, which
+its own audit verified on preprocessed sources and IDA/Kuna output. It is not on
+PyPI and needs Rust 1.90+:
+
+```bash
+git clone https://github.com/Noelo-Lab/rust-joern ~/github/rust-joern
+cd ~/github/rust-joern && cargo build --release
+pip install -e ~/github/rust-joern   # finds target/release/librust_joern.so
+```
+
+On this machine it is installed editable from `~/github/rust-joern`. A
+non-editable install does not carry the native library; point
+`RUST_JOERN_LIBRARY` at a built `librust_joern.so` instead. DecBench calls
+`rust_joern.parse_source(path, no_ddg=True, strict=True, preprocessed=True)`:
+a file with parser error diagnostics fails as a whole instead of yielding
+partially recovered graphs. Use a rust-joern build that includes
+Noelo-Lab/rust-joern#1, which fixed recovery on Binary Ninja, r2dec and angr
+output; earlier builds silently dropped functions. Parsing runs in-process (no
+JVM): a from-scratch `reeval_ged.py` refresh of all 7,293 slices with 24
+workers takes about 24 minutes here (5m07s parsing 5,401 sources, 6m30s
+assembling the per-project caches in the single-threaded parent, 11m55s
+scoring), and reruns are byte-identical.
 
 ## The benchmark corpus
 
@@ -547,7 +565,10 @@ reevaluation instead of silently reusing it. A semantic refresh promotes
 `ged_new.json` only after every current artifact slice has a matching
 checkpoint. Its source CFG caches are keyed by optimization level and by the
 content of the stripped `.i` input; O0 source CFGs must never be reused for O2
-or O2-noinline merely because the project is the same. It also writes
+or O2-noinline merely because the project is the same. Neither key names the
+parser, so a parser change must bump both `CHECKPOINT_SCHEMA_VERSION` and
+`SOURCE_CACHE_SCHEMA_VERSION` (the Rust Joern switch moved them to 8 and 2;
+caches live under `ged_src/v<N>/`). It also writes
 `ged_large_graph_audit.json`, containing separate per-decompiler censuses for
 the CFG inputs seen by the historical 60-node evaluator and the corrected
 same-optimization/macro-expanded inputs, graph sizes and methods, and old/new

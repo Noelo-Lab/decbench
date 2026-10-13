@@ -53,10 +53,11 @@ def escape_literal_control_bytes(text: str) -> str:
     """Escape raw control bytes appearing inside string/char literals.
 
     A decompiler that inlines ``.rodata`` verbatim emits e.g. an ANSI colour
-    sequence as a raw ``0x1B``. That is valid C, but it makes pyjoern's fast
-    parser emit non-JSON, which fails the whole invocation rather than the one
-    function. Only literal interiors are rewritten, and ``\\x1b`` is the same
-    bytes to the compiler, so control flow is untouched.
+    sequence as a raw ``0x1B``. That is valid C, but the JVM Joern front end
+    failed the whole file on it rather than the one function, and the escape is
+    kept so the parsed text matches what published scores were computed from.
+    Only literal interiors are rewritten, and ``\\x1b`` is the same bytes to the
+    compiler, so control flow is untouched.
     """
     out: list[str] = []
     in_string = in_char = pending_escape = False
@@ -127,7 +128,7 @@ def sanitize_decompiled_c(text: str) -> str:
     * **Computed gotos** (any decompiler emitting GNU C): ``goto *EXPR;`` becomes
       an empty compound statement — see :func:`rewrite_computed_gotos`.
     * **Raw control bytes in literals**: escaped, so a verbatim ``.rodata`` string
-      cannot make pyjoern's fast parser emit non-JSON and void the invocation.
+      cannot void the whole file's parse (see :func:`escape_literal_control_bytes`).
     """
     text = _AGG_RETURN.sub(r"\1 \2", text)
     text = _REG_ANNOTATION.sub("", text)
@@ -415,13 +416,41 @@ def temp_parse_suffix(source_path: Path) -> str:
     return ".cpp" if source_path.suffix in CXX_PREPROC_EXTS else ".c"
 
 
+def _parse_cfgs(path: Path) -> dict[str, DiGraph]:
+    """Parse one C/C++ file with Rust Joern and return its CFGs keyed by function name.
+
+    ``strict`` rejects files with parser error diagnostics instead of returning
+    partially recovered graphs, and ``preprocessed`` tells the parser that macros
+    and headers are already resolved by the caller. The file suffix selects the C
+    or C++ frontend.
+    """
+    try:
+        from rust_joern import parse_source
+    except ImportError as e:
+        raise ImportError(
+            "rust_joern is required for CFG extraction. Build and install it from "
+            "https://github.com/Noelo-Lab/rust-joern (see docs/benchmarking.md)."
+        ) from e
+
+    parsed = parse_source(path, no_ddg=True, strict=True, preprocessed=True)
+    if parsed is None:
+        raise RuntimeError(f"Rust Joern returned no parse result for {path}")
+    cfgs: dict[str, DiGraph] = {}
+    for key, func in parsed.items():
+        func_name = func.name if hasattr(func, "name") else str(key)
+        cfg = func.cfg if hasattr(func, "cfg") else None
+        if cfg is not None:
+            cfgs[func_name] = cfg
+    return cfgs
+
+
 def extract_cfgs_from_source(
     source_path: Path,
     sanitize_decompiled: bool = False,
     preprocess_decompiled: bool = True,
     raise_on_error: bool = False,
 ) -> dict[str, DiGraph]:
-    """Extract CFGs from a C or C++ source file using pyjoern.
+    """Extract CFGs from a C or C++ source file using Rust Joern.
 
     Args:
         source_path: Path to a source file (``.c``, or preprocessed ``.i``/``.ii``).
@@ -442,14 +471,6 @@ def extract_cfgs_from_source(
     Returns:
         Dictionary mapping function names to CFG DiGraphs
     """
-    try:
-        from pyjoern import parse_source
-    except ImportError as e:
-        raise ImportError(
-            "pyjoern is required for CFG extraction. " "Install with: pip install pyjoern"
-        ) from e
-
-    cfgs: dict[str, DiGraph] = {}
     text = source_path.read_text(errors="replace")
     if source_path.suffix in PREPROC_EXTS:
         text = strip_system_headers(text)
@@ -458,40 +479,23 @@ def extract_cfgs_from_source(
         if preprocess_decompiled:
             text = preprocess_decompiled_c(text)
 
-    # Joern names its workspace after the input basename, so a unique temp name is
-    # what keeps concurrent parses of the same filename from colliding. The suffix
-    # is what selects Joern's frontend (see :func:`temp_parse_suffix`).
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=temp_parse_suffix(source_path), delete=False
     ) as f:
         f.write(text)
-        temp_c_path = Path(f.name)
-    parse_path = temp_c_path
+        temp_path = Path(f.name)
 
     try:
-        parsed = parse_source(parse_path)
-
-        if parsed is None:
-            if raise_on_error:
-                raise RuntimeError(f"Joern returned no parse result for {source_path}")
-            return cfgs
-
-        for key, func in parsed.items():
-            func_name = func.name if hasattr(func, "name") else str(key)
-            cfg = func.cfg if hasattr(func, "cfg") else None
-
-            if cfg is not None:
-                cfgs[func_name] = cfg
-
+        return _parse_cfgs(temp_path)
+    except ImportError:
+        raise
     except Exception as e:
         logger.warning("CFG extraction from source %s failed: %s", source_path, e)
         if raise_on_error:
             raise
+        return {}
     finally:
-        if temp_c_path is not None:
-            temp_c_path.unlink(missing_ok=True)
-
-    return cfgs
+        temp_path.unlink(missing_ok=True)
 
 
 def extract_cfgs_from_decompilation(
@@ -505,15 +509,6 @@ def extract_cfgs_from_decompilation(
     Returns:
         Dictionary mapping function names to CFG DiGraphs
     """
-    try:
-        from pyjoern import parse_source
-    except ImportError as e:
-        raise ImportError(
-            "pyjoern is required for CFG extraction. " "Install with: pip install pyjoern"
-        ) from e
-
-    cfgs: dict[str, DiGraph] = {}
-
     with tempfile.NamedTemporaryFile(mode="w", suffix=".c", delete=False) as f:
         marked_sources = [
             (f"// Function: {func.name}\n" f"{sanitize_decompiled_c(func.decompiled_code)}")
@@ -524,19 +519,11 @@ def extract_cfgs_from_decompilation(
         temp_path = Path(f.name)
 
     try:
-        parsed = parse_source(temp_path)
-
-        if parsed is not None:
-            for key, func in parsed.items():
-                func_name = func.name if hasattr(func, "name") else str(key)
-                cfg = func.cfg if hasattr(func, "cfg") else None
-
-                if cfg is not None:
-                    cfgs[func_name] = cfg
-
+        return _parse_cfgs(temp_path)
+    except ImportError:
+        raise
     except Exception as e:
         logger.warning("CFG extraction from decompilation failed: %s", e)
+        return {}
     finally:
         temp_path.unlink(missing_ok=True)
-
-    return cfgs

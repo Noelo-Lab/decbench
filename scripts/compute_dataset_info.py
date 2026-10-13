@@ -82,11 +82,11 @@ def _parse_one(ip: Path) -> tuple[bool, int]:
 def joern_failures(samples: list[Path], workers: int = 8, deadline_s: int = 420) -> dict:
     """Parse each sampled .i with Joern (parallel); count files yielding no CFGs.
 
-    Each Joern run is a subprocess (GIL-free). Bounded by an overall deadline:
-    files that don't finish in time (some preprocessed units are huge and very
-    slow, distinct from a parse *failure* which errors out fast) are reported as
-    "timed_out" and excluded from the failure rate, so a few slow/hung JVMs can't
-    stall the whole measurement.
+    Rust Joern parses in-process through ctypes, which releases the GIL during the
+    native call. Bounded by an overall deadline: files that don't finish in time
+    (some preprocessed units are huge and slow, distinct from a parse *failure*
+    which errors out fast) are reported as "timed_out" and excluded from the
+    failure rate, so a few slow files can't stall the whole measurement.
     """
     import concurrent.futures as cf
 
