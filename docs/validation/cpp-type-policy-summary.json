@@ -1,0 +1,5494 @@
+{
+  "schema": "decbench-cpp-type-policy-validation-v1",
+  "status": "experimental-proposal",
+  "official_score": false,
+  "producer_code_changed": false,
+  "requested_functions": 250,
+  "cells": 45,
+  "pins": {
+    "dataset_revision": "07dd95dbe6214b8a78fc1e4a55961ab515986489",
+    "manifest_sha256": "0744ffeea002d3e9a5ce0ee26cd24bfbe5c648ca216655c5af6189f146b9ae7e",
+    "fission_version": "0.2.3",
+    "fission_source_commit": "91890827d8e0490e963f670e925b29540a444802",
+    "fission_cli_sha256": "0fdb3b1899c50b7838c035624228cc9728391378426c42400ee5876983efe765",
+    "kuna_version": "1.808",
+    "kuna_cli_sha256": "46cd0f8109557f8fe1e8bae53e191bd6b92a7d0410ee2b279a37621c5a2c3e05",
+    "decbench_commit": "e216d9cb6475a8ea0c7d60a2334519ee1e3960b4",
+    "sample_sha256": "f432c528e3071efa60fdaecc132aafa8c351e386bf7203d252e2875d6de02620",
+    "runner_sha256": "184668257366b7f58ca809e1162e0cc90a6c9259fd2d7f2a56e6ef12b9cdb34f",
+    "source_or_type_hints_to_decompilers": false,
+    "entry_address_hints": true,
+    "cache_disabled": true,
+    "function_timeout_seconds": 30,
+    "batch_timeout_seconds": 240,
+    "official_score": false,
+    "fission_config_sha256": "6616da4ed598f3a1016fd5e94dcda24304e67a9e680664731531cd706becaa37",
+    "diagnostic_runner_sha256": {
+      "measure_types.py": "6b8872c483210641cf38164adff2a760140fba8b7799adfa904d1181ef5f1ac9",
+      "write_report.py": "f771aab5c8968fe0dc3dd1805efbd2898b9491877d66e1213c555797cf92ac01"
+    },
+    "metric_source_sha256": {
+      "decbench/metrics/type_match.py": "eea984dff6a4bbf1f33df0bbb3d1ab5b5e7fb661e0234ea9c88ad89f658caba4",
+      "decbench/decompilers/raw/kuna_raw.py": "2a096834da324725ad7fcfd2164dab7832710e414ab3443e7fecd4a3aa915d6f"
+    }
+  },
+  "tools": {
+    "fission": {
+      "profiles": {
+        "source": {
+          "measured": 5,
+          "excluded": 245,
+          "perfect": 0,
+          "mean": 0.0,
+          "exclusion_reasons": {
+            "DWARF function missing or entry identity ambiguous": 16,
+            "DW_TAG_class_type": 51,
+            "DW_TAG_structure_type": 21,
+            "oracle variable correspondence unavailable": 2,
+            "DW_TAG_union_type": 1,
+            "partial/composite/computed DWARF location": 58,
+            "DW_TAG_enumeration_type": 1,
+            "PDB identity/storage/formal classification incomplete": 64,
+            "no observable variable ground truth": 1,
+            "opencc::Segments*": 1,
+            "TCLAP::ValueArg<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >*": 1,
+            "std::locale::facet*": 1,
+            "std::_Temporary_owner<opencc::`anonymous namespace'::SharedLibrary>*": 1,
+            "std::basic_string<char,std::char_traits<char>,std::allocator<char> >*": 2,
+            "std::_Tree_val<std::_Tree_simple_types<Node const *> >*": 1,
+            "snappy::ByteArraySource*": 1,
+            "const snappy::iovec*": 1,
+            "tracy::detail::Table<1,80,short,tracy::Worker::SourceLocationZones,tracy::hash<short,void>,std::equal_to<short> >*": 1,
+            "nlohmann::json_abi_v3_12_0::basic_json<std::map,std::vector,std::basic_string<char,std::char_traits<char>,std::allocator<char> >,bool,__int64,unsigned __int64,double,std::allocator,nlohmann::json_abi_v3_12_0::adl_serializer,std::vector<unsigned char,std::allocator<unsigned char> >,void>*": 1,
+            "std::vector<unsigned char,std::allocator<unsigned char> >*": 1,
+            "tracy::detail::Table<1,80,unsigned int,tracy::View::MemPathData,tracy::hash<unsigned int,void>,std::equal_to<unsigned int> >*": 1,
+            "winsparkle::WinSparkleDialog*": 1,
+            "const wxGDIObject*": 1,
+            "opencc::AmbiguityStream*": 1,
+            "std::_Ptr_base<opencc::ResourceProvider>*": 1,
+            "std::vector<opencc::`anonymous namespace'::Run,std::allocator<opencc::`anonymous namespace'::Run> >*": 1,
+            "const std::_Tree<std::_Tset_traits<Edge *,Pool::WeightedEdgeCmp,std::allocator<Edge *>,0> >*": 1,
+            "std::vector<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,enum EvalString::TokenType>,std::allocator<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,enum EvalString::TokenType> > >*": 1,
+            "std::vector<char *,std::allocator<char *> >*": 1,
+            "snappy::SnappyIOVecReader*": 1,
+            "const std::basic_string<char,std::char_traits<char>,std::allocator<char> >*": 1,
+            "const std::pair<unsigned __int64,unsigned __int64>*&&": 1,
+            "tracy::detail::Table<1,80,unsigned __int64,tracy::CallstackFrameTree,tracy::hash<unsigned __int64,void>,std::equal_to<unsigned __int64> >::InsertionState&&": 1,
+            "tracy::Vector<tracy::detail::Table<1,80,unsigned int,unsigned __int64,tracy::hash<unsigned int,void>,std::equal_to<unsigned int> >::Iter<0> >*": 1,
+            "const ppqsort::impl::par_ppqsort::__l2::<lambda_1>&": 1,
+            "std::basic_string<char,std::char_traits<char>,std::allocator<char> >&": 1,
+            "const std::_Vector_const_iterator<std::_Vector_val<std::_Simple_types<winsparkle::Appcast::Enclosure> > >*": 1,
+            "const std::_Vector_iterator<std::_Vector_val<std::_Simple_types<winsparkle::Appcast> > >*": 1
+          }
+        },
+        "abi": {
+          "measured": 5,
+          "excluded": 245,
+          "perfect": 0,
+          "mean": 0.2,
+          "exclusion_reasons": {
+            "DWARF function missing or entry identity ambiguous": 16,
+            "DW_TAG_class_type": 51,
+            "DW_TAG_structure_type": 21,
+            "oracle variable correspondence unavailable": 2,
+            "DW_TAG_union_type": 1,
+            "partial/composite/computed DWARF location": 58,
+            "DW_TAG_enumeration_type": 1,
+            "PDB identity/storage/formal classification incomplete": 64,
+            "no observable variable ground truth": 1,
+            "opencc::Segments*": 1,
+            "TCLAP::ValueArg<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >*": 1,
+            "std::locale::facet*": 1,
+            "std::_Temporary_owner<opencc::`anonymous namespace'::SharedLibrary>*": 1,
+            "std::basic_string<char,std::char_traits<char>,std::allocator<char> >*": 2,
+            "std::_Tree_val<std::_Tree_simple_types<Node const *> >*": 1,
+            "snappy::ByteArraySource*": 1,
+            "const snappy::iovec*": 1,
+            "tracy::detail::Table<1,80,short,tracy::Worker::SourceLocationZones,tracy::hash<short,void>,std::equal_to<short> >*": 1,
+            "nlohmann::json_abi_v3_12_0::basic_json<std::map,std::vector,std::basic_string<char,std::char_traits<char>,std::allocator<char> >,bool,__int64,unsigned __int64,double,std::allocator,nlohmann::json_abi_v3_12_0::adl_serializer,std::vector<unsigned char,std::allocator<unsigned char> >,void>*": 1,
+            "std::vector<unsigned char,std::allocator<unsigned char> >*": 1,
+            "tracy::detail::Table<1,80,unsigned int,tracy::View::MemPathData,tracy::hash<unsigned int,void>,std::equal_to<unsigned int> >*": 1,
+            "winsparkle::WinSparkleDialog*": 1,
+            "const wxGDIObject*": 1,
+            "opencc::AmbiguityStream*": 1,
+            "std::_Ptr_base<opencc::ResourceProvider>*": 1,
+            "std::vector<opencc::`anonymous namespace'::Run,std::allocator<opencc::`anonymous namespace'::Run> >*": 1,
+            "const std::_Tree<std::_Tset_traits<Edge *,Pool::WeightedEdgeCmp,std::allocator<Edge *>,0> >*": 1,
+            "std::vector<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,enum EvalString::TokenType>,std::allocator<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,enum EvalString::TokenType> > >*": 1,
+            "std::vector<char *,std::allocator<char *> >*": 1,
+            "snappy::SnappyIOVecReader*": 1,
+            "const std::basic_string<char,std::char_traits<char>,std::allocator<char> >*": 1,
+            "const std::pair<unsigned __int64,unsigned __int64>*&&": 1,
+            "tracy::detail::Table<1,80,unsigned __int64,tracy::CallstackFrameTree,tracy::hash<unsigned __int64,void>,std::equal_to<unsigned __int64> >::InsertionState&&": 1,
+            "tracy::Vector<tracy::detail::Table<1,80,unsigned int,unsigned __int64,tracy::hash<unsigned int,void>,std::equal_to<unsigned int> >::Iter<0> >*": 1,
+            "const ppqsort::impl::par_ppqsort::__l2::<lambda_1>&": 1,
+            "std::basic_string<char,std::char_traits<char>,std::allocator<char> >&": 1,
+            "const std::_Vector_const_iterator<std::_Vector_val<std::_Simple_types<winsparkle::Appcast::Enclosure> > >*": 1,
+            "const std::_Vector_iterator<std::_Vector_val<std::_Simple_types<winsparkle::Appcast> > >*": 1
+          }
+        }
+      },
+      "transport": {
+        "functions_with_direct_variable_addresses": 142,
+        "variables_with_direct_addresses": 955,
+        "variable_address_pairs_seen": 9474,
+        "invalid_variable_address_pairs": 0,
+        "functions_unresolved": 0
+      },
+      "legacy_windows_abi_diagnostic": {
+        "measured": 19,
+        "perfect": 0,
+        "mean": 0.013157894736842105,
+        "requested": 97
+      }
+    },
+    "kuna": {
+      "profiles": {
+        "source": {
+          "measured": 5,
+          "excluded": 245,
+          "perfect": 1,
+          "mean": 0.4,
+          "exclusion_reasons": {
+            "DWARF function missing or entry identity ambiguous": 16,
+            "DW_TAG_class_type": 51,
+            "DW_TAG_structure_type": 21,
+            "oracle variable correspondence unavailable": 2,
+            "DW_TAG_union_type": 1,
+            "partial/composite/computed DWARF location": 58,
+            "DW_TAG_enumeration_type": 1,
+            "PDB identity/storage/formal classification incomplete": 64,
+            "no observable variable ground truth": 1,
+            "opencc::Segments*": 1,
+            "TCLAP::ValueArg<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >*": 1,
+            "std::locale::facet*": 1,
+            "std::_Temporary_owner<opencc::`anonymous namespace'::SharedLibrary>*": 1,
+            "std::basic_string<char,std::char_traits<char>,std::allocator<char> >*": 2,
+            "std::_Tree_val<std::_Tree_simple_types<Node const *> >*": 1,
+            "snappy::ByteArraySource*": 1,
+            "const snappy::iovec*": 1,
+            "tracy::detail::Table<1,80,short,tracy::Worker::SourceLocationZones,tracy::hash<short,void>,std::equal_to<short> >*": 1,
+            "nlohmann::json_abi_v3_12_0::basic_json<std::map,std::vector,std::basic_string<char,std::char_traits<char>,std::allocator<char> >,bool,__int64,unsigned __int64,double,std::allocator,nlohmann::json_abi_v3_12_0::adl_serializer,std::vector<unsigned char,std::allocator<unsigned char> >,void>*": 1,
+            "std::vector<unsigned char,std::allocator<unsigned char> >*": 1,
+            "tracy::detail::Table<1,80,unsigned int,tracy::View::MemPathData,tracy::hash<unsigned int,void>,std::equal_to<unsigned int> >*": 1,
+            "winsparkle::WinSparkleDialog*": 1,
+            "const wxGDIObject*": 1,
+            "opencc::AmbiguityStream*": 1,
+            "std::_Ptr_base<opencc::ResourceProvider>*": 1,
+            "std::vector<opencc::`anonymous namespace'::Run,std::allocator<opencc::`anonymous namespace'::Run> >*": 1,
+            "const std::_Tree<std::_Tset_traits<Edge *,Pool::WeightedEdgeCmp,std::allocator<Edge *>,0> >*": 1,
+            "std::vector<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,enum EvalString::TokenType>,std::allocator<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,enum EvalString::TokenType> > >*": 1,
+            "std::vector<char *,std::allocator<char *> >*": 1,
+            "snappy::SnappyIOVecReader*": 1,
+            "const std::basic_string<char,std::char_traits<char>,std::allocator<char> >*": 1,
+            "const std::pair<unsigned __int64,unsigned __int64>*&&": 1,
+            "tracy::detail::Table<1,80,unsigned __int64,tracy::CallstackFrameTree,tracy::hash<unsigned __int64,void>,std::equal_to<unsigned __int64> >::InsertionState&&": 1,
+            "tracy::Vector<tracy::detail::Table<1,80,unsigned int,unsigned __int64,tracy::hash<unsigned int,void>,std::equal_to<unsigned int> >::Iter<0> >*": 1,
+            "const ppqsort::impl::par_ppqsort::__l2::<lambda_1>&": 1,
+            "std::basic_string<char,std::char_traits<char>,std::allocator<char> >&": 1,
+            "const std::_Vector_const_iterator<std::_Vector_val<std::_Simple_types<winsparkle::Appcast::Enclosure> > >*": 1,
+            "const std::_Vector_iterator<std::_Vector_val<std::_Simple_types<winsparkle::Appcast> > >*": 1
+          }
+        },
+        "abi": {
+          "measured": 5,
+          "excluded": 245,
+          "perfect": 1,
+          "mean": 0.4,
+          "exclusion_reasons": {
+            "DWARF function missing or entry identity ambiguous": 16,
+            "DW_TAG_class_type": 51,
+            "DW_TAG_structure_type": 21,
+            "oracle variable correspondence unavailable": 2,
+            "DW_TAG_union_type": 1,
+            "partial/composite/computed DWARF location": 58,
+            "DW_TAG_enumeration_type": 1,
+            "PDB identity/storage/formal classification incomplete": 64,
+            "no observable variable ground truth": 1,
+            "opencc::Segments*": 1,
+            "TCLAP::ValueArg<std::basic_string<char,std::char_traits<char>,std::allocator<char> > >*": 1,
+            "std::locale::facet*": 1,
+            "std::_Temporary_owner<opencc::`anonymous namespace'::SharedLibrary>*": 1,
+            "std::basic_string<char,std::char_traits<char>,std::allocator<char> >*": 2,
+            "std::_Tree_val<std::_Tree_simple_types<Node const *> >*": 1,
+            "snappy::ByteArraySource*": 1,
+            "const snappy::iovec*": 1,
+            "tracy::detail::Table<1,80,short,tracy::Worker::SourceLocationZones,tracy::hash<short,void>,std::equal_to<short> >*": 1,
+            "nlohmann::json_abi_v3_12_0::basic_json<std::map,std::vector,std::basic_string<char,std::char_traits<char>,std::allocator<char> >,bool,__int64,unsigned __int64,double,std::allocator,nlohmann::json_abi_v3_12_0::adl_serializer,std::vector<unsigned char,std::allocator<unsigned char> >,void>*": 1,
+            "std::vector<unsigned char,std::allocator<unsigned char> >*": 1,
+            "tracy::detail::Table<1,80,unsigned int,tracy::View::MemPathData,tracy::hash<unsigned int,void>,std::equal_to<unsigned int> >*": 1,
+            "winsparkle::WinSparkleDialog*": 1,
+            "const wxGDIObject*": 1,
+            "opencc::AmbiguityStream*": 1,
+            "std::_Ptr_base<opencc::ResourceProvider>*": 1,
+            "std::vector<opencc::`anonymous namespace'::Run,std::allocator<opencc::`anonymous namespace'::Run> >*": 1,
+            "const std::_Tree<std::_Tset_traits<Edge *,Pool::WeightedEdgeCmp,std::allocator<Edge *>,0> >*": 1,
+            "std::vector<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,enum EvalString::TokenType>,std::allocator<std::pair<std::basic_string<char,std::char_traits<char>,std::allocator<char> >,enum EvalString::TokenType> > >*": 1,
+            "std::vector<char *,std::allocator<char *> >*": 1,
+            "snappy::SnappyIOVecReader*": 1,
+            "const std::basic_string<char,std::char_traits<char>,std::allocator<char> >*": 1,
+            "const std::pair<unsigned __int64,unsigned __int64>*&&": 1,
+            "tracy::detail::Table<1,80,unsigned __int64,tracy::CallstackFrameTree,tracy::hash<unsigned __int64,void>,std::equal_to<unsigned __int64> >::InsertionState&&": 1,
+            "tracy::Vector<tracy::detail::Table<1,80,unsigned int,unsigned __int64,tracy::hash<unsigned int,void>,std::equal_to<unsigned int> >::Iter<0> >*": 1,
+            "const ppqsort::impl::par_ppqsort::__l2::<lambda_1>&": 1,
+            "std::basic_string<char,std::char_traits<char>,std::allocator<char> >&": 1,
+            "const std::_Vector_const_iterator<std::_Vector_val<std::_Simple_types<winsparkle::Appcast::Enclosure> > >*": 1,
+            "const std::_Vector_iterator<std::_Vector_val<std::_Simple_types<winsparkle::Appcast> > >*": 1
+          }
+        }
+      },
+      "transport": {
+        "functions_with_direct_variable_addresses": 222,
+        "variables_with_direct_addresses": 1019,
+        "variable_address_pairs_seen": 6910,
+        "invalid_variable_address_pairs": 0,
+        "functions_unresolved": 0
+      },
+      "legacy_windows_abi_diagnostic": {
+        "measured": 32,
+        "perfect": 0,
+        "mean": 0.015625,
+        "requested": 97
+      }
+    }
+  },
+  "formal_test_suite_run": false,
+  "recovered_code_execution_run": false,
+  "generation_scope": "three fresh corpus functions, twice each; other output reused from pinned native run",
+  "sampling_scope": "fixed address-guided project-owned entries; not autonomous discovery",
+  "oracle_eligibility_same_for_both_tools": true,
+  "implementation_source_sha256": {
+    "decbench/metrics/cpp_types.py": "6872b75e0b69ffb09c4fdd2e0d6da6d9a1e2d21d21d962eac68b1e49dc366dcf",
+    "decbench/metrics/cpp_type_match.py": "f488014aada5a5f3ad14d18dce757359acbaeb045fb3d52be3ff29320374f8f6",
+    "decbench/metrics/type_match.py": "bda8336bba8faf916961a965886cf981b15b28881ec118701b98e2b1b476779b",
+    "decbench/utils/pdb_info.py": "f67e67fc6c84e6188c13cf5d8b6a3128a9481d99a18bb315d49ce6d22dde0e4e",
+    "decbench/utils/native_code.py": "e6f9c7bceffe3d5a2f6788e5f04001cc69acadcbcf696801bdcb1eb9291c75ea",
+    "decbench/decompilers/raw/fission_raw.py": "8d7295535801d65a6029d356f7a273327242daf2d21d667af2a858c0e6e67bd8"
+  },
+  "implementation_commit": "0b4a2de9394a4321735165156bd0bba3dca95e25",
+  "prerequisite_commit": "f68f60aca7e47e81733fbf19c2b455d9b60bfd5e",
+  "live_adapter": [
+    {
+      "cell": "03",
+      "row": "048",
+      "platform": "linux",
+      "optimization": "O0",
+      "runs": [
+        {
+          "code_sha256": "d4c6e80685f1df79a9387cb33d514868809608a55af9bb136bcbbee92b6e7b76",
+          "code_equal_to_frozen_baseline": true,
+          "variables": [
+            {
+              "name": "param_1",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 0,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_2",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 1,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_3",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 2,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_4",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 3,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_20",
+              "type": "unsigned long long",
+              "stack_offset": 32,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_28",
+              "type": "uint",
+              "stack_offset": 40,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_2c",
+              "type": "int",
+              "stack_offset": 44,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_30",
+              "type": "unsigned long long",
+              "stack_offset": 48,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_38",
+              "type": "unsigned long long",
+              "stack_offset": 56,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_40",
+              "type": "long long",
+              "stack_offset": 64,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_48",
+              "type": "uchar *",
+              "stack_offset": 72,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_50",
+              "type": "int",
+              "stack_offset": 80,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_54",
+              "type": "int",
+              "stack_offset": 84,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_58",
+              "type": "uint",
+              "stack_offset": 88,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_5c",
+              "type": "uint",
+              "stack_offset": 92,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_60",
+              "type": "uchar *",
+              "stack_offset": 96,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_68",
+              "type": "unsigned long long",
+              "stack_offset": 104,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_70",
+              "type": "uchar *",
+              "stack_offset": 112,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_78",
+              "type": "uchar *",
+              "stack_offset": 120,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_80",
+              "type": "uchar *",
+              "stack_offset": 128,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_90",
+              "type": "uchar *",
+              "stack_offset": 144,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_98",
+              "type": "uchar *",
+              "stack_offset": 152,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_a0",
+              "type": "ushort *",
+              "stack_offset": 160,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_a8",
+              "type": "uchar *",
+              "stack_offset": 168,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_b0",
+              "type": "ushort *",
+              "stack_offset": 176,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_b8",
+              "type": "uchar *",
+              "stack_offset": 184,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_c0",
+              "type": "long long",
+              "stack_offset": 192,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_c8",
+              "type": "long long",
+              "stack_offset": 200,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_d0",
+              "type": "long long",
+              "stack_offset": 208,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_d8",
+              "type": "ushort *",
+              "stack_offset": 216,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1325",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1326",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1327",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1328",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1329",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1000",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1016",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1027",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1056",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1145",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar478",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar572",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar936",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar952",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar968",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar984",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "w4",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "w6",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x0",
+              "type": "ushort *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x19",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x5",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar10",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62068
+              ]
+            },
+            {
+              "name": "xVar1005",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62720
+              ]
+            },
+            {
+              "name": "xVar1021",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62776
+              ]
+            },
+            {
+              "name": "xVar1033",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62812
+              ]
+            },
+            {
+              "name": "xVar1042",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1055",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1063",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1093",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar1122",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60776,
+                60820,
+                60872,
+                60928,
+                61116,
+                61140,
+                61292,
+                61340,
+                61492,
+                61560,
+                61608,
+                62368,
+                62396,
+                62552,
+                62976,
+                63184
+              ]
+            },
+            {
+              "name": "xVar1152",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1182",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar125",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar215",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar219",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar226",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                61984,
+                62000,
+                62032
+              ]
+            },
+            {
+              "name": "xVar231",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar234",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar27",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar325",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar348",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar352",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar39",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62124
+              ]
+            },
+            {
+              "name": "xVar427",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar440",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar477",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar498",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar534",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar56",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar592",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar628",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar658",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar792",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar912",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar924",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar928",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar941",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62496
+              ]
+            },
+            {
+              "name": "xVar973",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62608
+              ]
+            },
+            {
+              "name": "xVar989",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62664
+              ]
+            },
+            {
+              "name": "xVar365_low",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar484_low",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar578_low",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "vVar_local_a0_0_v1",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "vVar_local_a0_0_v5",
+              "type": "ushort",
+              "stack_offset": null,
+              "size": 2,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "vVar_local_d8_0_v21",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            }
+          ],
+          "validated_variables": [
+            {
+              "name": "param_1",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 0,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_2",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 1,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_3",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 2,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_4",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 3,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_20",
+              "type": "unsigned long long",
+              "stack_offset": 32,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_28",
+              "type": "uint",
+              "stack_offset": 40,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_2c",
+              "type": "int",
+              "stack_offset": 44,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_30",
+              "type": "unsigned long long",
+              "stack_offset": 48,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_38",
+              "type": "unsigned long long",
+              "stack_offset": 56,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_40",
+              "type": "long long",
+              "stack_offset": 64,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_48",
+              "type": "uchar *",
+              "stack_offset": 72,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_50",
+              "type": "int",
+              "stack_offset": 80,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_54",
+              "type": "int",
+              "stack_offset": 84,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_58",
+              "type": "uint",
+              "stack_offset": 88,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_5c",
+              "type": "uint",
+              "stack_offset": 92,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_60",
+              "type": "uchar *",
+              "stack_offset": 96,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_68",
+              "type": "unsigned long long",
+              "stack_offset": 104,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_70",
+              "type": "uchar *",
+              "stack_offset": 112,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_78",
+              "type": "uchar *",
+              "stack_offset": 120,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_80",
+              "type": "uchar *",
+              "stack_offset": 128,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_90",
+              "type": "uchar *",
+              "stack_offset": 144,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_98",
+              "type": "uchar *",
+              "stack_offset": 152,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_a0",
+              "type": "ushort *",
+              "stack_offset": 160,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_a8",
+              "type": "uchar *",
+              "stack_offset": 168,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_b0",
+              "type": "ushort *",
+              "stack_offset": 176,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_b8",
+              "type": "uchar *",
+              "stack_offset": 184,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_c0",
+              "type": "long long",
+              "stack_offset": 192,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_c8",
+              "type": "long long",
+              "stack_offset": 200,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_d0",
+              "type": "long long",
+              "stack_offset": 208,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_d8",
+              "type": "ushort *",
+              "stack_offset": 216,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1325",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1326",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1327",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1328",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1329",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1000",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1016",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1027",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1056",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1145",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar478",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar572",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar936",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar952",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar968",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar984",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "w4",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "w6",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x0",
+              "type": "ushort *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x19",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x5",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar10",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62068
+              ]
+            },
+            {
+              "name": "xVar1005",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62720
+              ]
+            },
+            {
+              "name": "xVar1021",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62776
+              ]
+            },
+            {
+              "name": "xVar1033",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62812
+              ]
+            },
+            {
+              "name": "xVar1042",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1055",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1063",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1093",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar1122",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60776,
+                60820,
+                60872,
+                60928,
+                61116,
+                61140,
+                61292,
+                61340,
+                61492,
+                61560,
+                61608,
+                62368,
+                62396,
+                62552,
+                62976,
+                63184
+              ]
+            },
+            {
+              "name": "xVar1152",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1182",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar125",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar215",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar219",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar226",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                61984,
+                62000,
+                62032
+              ]
+            },
+            {
+              "name": "xVar231",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar234",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar27",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar325",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar348",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar352",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar39",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62124
+              ]
+            },
+            {
+              "name": "xVar427",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar440",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar477",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar498",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar534",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar56",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar592",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar628",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar658",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar792",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar912",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar924",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar928",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar941",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62496
+              ]
+            },
+            {
+              "name": "xVar973",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62608
+              ]
+            },
+            {
+              "name": "xVar989",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62664
+              ]
+            },
+            {
+              "name": "xVar365_low",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar484_low",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar578_low",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "vVar_local_a0_0_v1",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "vVar_local_a0_0_v5",
+              "type": "ushort",
+              "stack_offset": null,
+              "size": 2,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "vVar_local_d8_0_v21",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            }
+          ],
+          "sanitizer": {
+            "schema": "decbench-native-provenance-sanitizer-v2",
+            "status": "validated",
+            "functions_seen": 1,
+            "functions_with_address_provenance": 1,
+            "functions_resolved": 1,
+            "functions_unresolved": 0,
+            "functions_modified": 0,
+            "line_mapping_rows_seen": 0,
+            "line_mapping_rows_dropped": 0,
+            "line_mapping_addresses_seen": 0,
+            "line_mapping_addresses_dropped": 0,
+            "line_mapping_addresses_normalized": 0,
+            "line_mapping_address_duplicates_removed": 0,
+            "variable_addresses_seen": 99,
+            "variable_addresses_dropped": 0,
+            "variable_addresses_normalized": 0,
+            "variable_address_duplicates_removed": 0,
+            "variable_line_numbers_dropped": 0,
+            "legacy_additive_fields_hydrated": 0,
+            "address_drop_reasons": {},
+            "function_failure_reasons": {}
+          }
+        },
+        {
+          "code_sha256": "d4c6e80685f1df79a9387cb33d514868809608a55af9bb136bcbbee92b6e7b76",
+          "code_equal_to_frozen_baseline": true,
+          "variables": [
+            {
+              "name": "param_1",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 0,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_2",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 1,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_3",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 2,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_4",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 3,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_20",
+              "type": "unsigned long long",
+              "stack_offset": 32,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_28",
+              "type": "uint",
+              "stack_offset": 40,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_2c",
+              "type": "int",
+              "stack_offset": 44,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_30",
+              "type": "unsigned long long",
+              "stack_offset": 48,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_38",
+              "type": "unsigned long long",
+              "stack_offset": 56,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_40",
+              "type": "long long",
+              "stack_offset": 64,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_48",
+              "type": "uchar *",
+              "stack_offset": 72,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_50",
+              "type": "int",
+              "stack_offset": 80,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_54",
+              "type": "int",
+              "stack_offset": 84,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_58",
+              "type": "uint",
+              "stack_offset": 88,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_5c",
+              "type": "uint",
+              "stack_offset": 92,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_60",
+              "type": "uchar *",
+              "stack_offset": 96,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_68",
+              "type": "unsigned long long",
+              "stack_offset": 104,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_70",
+              "type": "uchar *",
+              "stack_offset": 112,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_78",
+              "type": "uchar *",
+              "stack_offset": 120,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_80",
+              "type": "uchar *",
+              "stack_offset": 128,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_90",
+              "type": "uchar *",
+              "stack_offset": 144,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_98",
+              "type": "uchar *",
+              "stack_offset": 152,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_a0",
+              "type": "ushort *",
+              "stack_offset": 160,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_a8",
+              "type": "uchar *",
+              "stack_offset": 168,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_b0",
+              "type": "ushort *",
+              "stack_offset": 176,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_b8",
+              "type": "uchar *",
+              "stack_offset": 184,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_c0",
+              "type": "long long",
+              "stack_offset": 192,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_c8",
+              "type": "long long",
+              "stack_offset": 200,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_d0",
+              "type": "long long",
+              "stack_offset": 208,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_d8",
+              "type": "ushort *",
+              "stack_offset": 216,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1325",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1326",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1327",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1328",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1329",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1000",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1016",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1027",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1056",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1145",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar478",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar572",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar936",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar952",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar968",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar984",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "w4",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "w6",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x0",
+              "type": "ushort *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x19",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x5",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar10",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62068
+              ]
+            },
+            {
+              "name": "xVar1005",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62720
+              ]
+            },
+            {
+              "name": "xVar1021",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62776
+              ]
+            },
+            {
+              "name": "xVar1033",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62812
+              ]
+            },
+            {
+              "name": "xVar1042",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1055",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1063",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1093",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar1122",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60776,
+                60820,
+                60872,
+                60928,
+                61116,
+                61140,
+                61292,
+                61340,
+                61492,
+                61560,
+                61608,
+                62368,
+                62396,
+                62552,
+                62976,
+                63184
+              ]
+            },
+            {
+              "name": "xVar1152",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1182",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar125",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar215",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar219",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar226",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                61984,
+                62000,
+                62032
+              ]
+            },
+            {
+              "name": "xVar231",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar234",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar27",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar325",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar348",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar352",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar39",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62124
+              ]
+            },
+            {
+              "name": "xVar427",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar440",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar477",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar498",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar534",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar56",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar592",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar628",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar658",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar792",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar912",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar924",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar928",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar941",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62496
+              ]
+            },
+            {
+              "name": "xVar973",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62608
+              ]
+            },
+            {
+              "name": "xVar989",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62664
+              ]
+            },
+            {
+              "name": "xVar365_low",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar484_low",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar578_low",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "vVar_local_a0_0_v1",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "vVar_local_a0_0_v5",
+              "type": "ushort",
+              "stack_offset": null,
+              "size": 2,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "vVar_local_d8_0_v21",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            }
+          ],
+          "validated_variables": [
+            {
+              "name": "param_1",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 0,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_2",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 1,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_3",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 2,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_4",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 3,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_20",
+              "type": "unsigned long long",
+              "stack_offset": 32,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_28",
+              "type": "uint",
+              "stack_offset": 40,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_2c",
+              "type": "int",
+              "stack_offset": 44,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_30",
+              "type": "unsigned long long",
+              "stack_offset": 48,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_38",
+              "type": "unsigned long long",
+              "stack_offset": 56,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_40",
+              "type": "long long",
+              "stack_offset": 64,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_48",
+              "type": "uchar *",
+              "stack_offset": 72,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_50",
+              "type": "int",
+              "stack_offset": 80,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_54",
+              "type": "int",
+              "stack_offset": 84,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_58",
+              "type": "uint",
+              "stack_offset": 88,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_5c",
+              "type": "uint",
+              "stack_offset": 92,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_60",
+              "type": "uchar *",
+              "stack_offset": 96,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_68",
+              "type": "unsigned long long",
+              "stack_offset": 104,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_70",
+              "type": "uchar *",
+              "stack_offset": 112,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_78",
+              "type": "uchar *",
+              "stack_offset": 120,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_80",
+              "type": "uchar *",
+              "stack_offset": 128,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_90",
+              "type": "uchar *",
+              "stack_offset": 144,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_98",
+              "type": "uchar *",
+              "stack_offset": 152,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_a0",
+              "type": "ushort *",
+              "stack_offset": 160,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_a8",
+              "type": "uchar *",
+              "stack_offset": 168,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_b0",
+              "type": "ushort *",
+              "stack_offset": 176,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_b8",
+              "type": "uchar *",
+              "stack_offset": 184,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_c0",
+              "type": "long long",
+              "stack_offset": 192,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_c8",
+              "type": "long long",
+              "stack_offset": 200,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_d0",
+              "type": "long long",
+              "stack_offset": 208,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "local_d8",
+              "type": "ushort *",
+              "stack_offset": 216,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1325",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1326",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1327",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1328",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "bVar1329",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1000",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1016",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1027",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1056",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar1145",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar478",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar572",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar936",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar952",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar968",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "uVar984",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "w4",
+              "type": "int",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "w6",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x0",
+              "type": "ushort *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x19",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x5",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar10",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62068
+              ]
+            },
+            {
+              "name": "xVar1005",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62720
+              ]
+            },
+            {
+              "name": "xVar1021",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62776
+              ]
+            },
+            {
+              "name": "xVar1033",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62812
+              ]
+            },
+            {
+              "name": "xVar1042",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1055",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1063",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1093",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar1122",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60776,
+                60820,
+                60872,
+                60928,
+                61116,
+                61140,
+                61292,
+                61340,
+                61492,
+                61560,
+                61608,
+                62368,
+                62396,
+                62552,
+                62976,
+                63184
+              ]
+            },
+            {
+              "name": "xVar1152",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar1182",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar125",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar215",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar219",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar226",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                61984,
+                62000,
+                62032
+              ]
+            },
+            {
+              "name": "xVar231",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar234",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar27",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar325",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar348",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar352",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar39",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62124
+              ]
+            },
+            {
+              "name": "xVar427",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar440",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar477",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar498",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar534",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar56",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar592",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar628",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar658",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar792",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                60780,
+                60816,
+                60868,
+                60924,
+                61112,
+                61288,
+                61336,
+                61448,
+                61468,
+                61556,
+                61604,
+                61716,
+                61736,
+                62232,
+                62928,
+                62948,
+                63092,
+                63112
+              ]
+            },
+            {
+              "name": "xVar912",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar924",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar928",
+              "type": "long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar941",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62496
+              ]
+            },
+            {
+              "name": "xVar973",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62608
+              ]
+            },
+            {
+              "name": "xVar989",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                62664
+              ]
+            },
+            {
+              "name": "xVar365_low",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar484_low",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar578_low",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "vVar_local_a0_0_v1",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "vVar_local_a0_0_v5",
+              "type": "ushort",
+              "stack_offset": null,
+              "size": 2,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "vVar_local_d8_0_v21",
+              "type": "uchar *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            }
+          ],
+          "sanitizer": {
+            "schema": "decbench-native-provenance-sanitizer-v2",
+            "status": "validated",
+            "functions_seen": 1,
+            "functions_with_address_provenance": 1,
+            "functions_resolved": 1,
+            "functions_unresolved": 0,
+            "functions_modified": 0,
+            "line_mapping_rows_seen": 0,
+            "line_mapping_rows_dropped": 0,
+            "line_mapping_addresses_seen": 0,
+            "line_mapping_addresses_dropped": 0,
+            "line_mapping_addresses_normalized": 0,
+            "line_mapping_address_duplicates_removed": 0,
+            "variable_addresses_seen": 99,
+            "variable_addresses_dropped": 0,
+            "variable_addresses_normalized": 0,
+            "variable_address_duplicates_removed": 0,
+            "variable_line_numbers_dropped": 0,
+            "legacy_additive_fields_hydrated": 0,
+            "address_drop_reasons": {},
+            "function_failure_reasons": {}
+          }
+        }
+      ]
+    },
+    {
+      "cell": "27",
+      "row": "072",
+      "platform": "windows",
+      "optimization": "O2",
+      "runs": [
+        {
+          "code_sha256": "4ae3c8068630cc68eedd3ae66e43c1b3a869a5f884439145b6244411c40d424f",
+          "code_equal_to_frozen_baseline": true,
+          "variables": [
+            {
+              "name": "param_1",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 0,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_2",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "arg",
+              "arg_index": 1,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "home_30",
+              "type": "unsigned long long",
+              "stack_offset": 48,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "rbx",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "rdi",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                6442471964,
+                6442471982,
+                6442471995
+              ]
+            }
+          ],
+          "validated_variables": [
+            {
+              "name": "param_1",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 0,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_2",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "arg",
+              "arg_index": 1,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "home_30",
+              "type": "unsigned long long",
+              "stack_offset": 48,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "rbx",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "rdi",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                6442471964,
+                6442471982,
+                6442471995
+              ]
+            }
+          ],
+          "sanitizer": {
+            "schema": "decbench-native-provenance-sanitizer-v2",
+            "status": "validated",
+            "functions_seen": 1,
+            "functions_with_address_provenance": 1,
+            "functions_resolved": 1,
+            "functions_unresolved": 0,
+            "functions_modified": 0,
+            "line_mapping_rows_seen": 0,
+            "line_mapping_rows_dropped": 0,
+            "line_mapping_addresses_seen": 0,
+            "line_mapping_addresses_dropped": 0,
+            "line_mapping_addresses_normalized": 0,
+            "line_mapping_address_duplicates_removed": 0,
+            "variable_addresses_seen": 3,
+            "variable_addresses_dropped": 0,
+            "variable_addresses_normalized": 0,
+            "variable_address_duplicates_removed": 0,
+            "variable_line_numbers_dropped": 0,
+            "legacy_additive_fields_hydrated": 0,
+            "address_drop_reasons": {},
+            "function_failure_reasons": {}
+          }
+        },
+        {
+          "code_sha256": "4ae3c8068630cc68eedd3ae66e43c1b3a869a5f884439145b6244411c40d424f",
+          "code_equal_to_frozen_baseline": true,
+          "variables": [
+            {
+              "name": "param_1",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 0,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_2",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "arg",
+              "arg_index": 1,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "home_30",
+              "type": "unsigned long long",
+              "stack_offset": 48,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "rbx",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "rdi",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                6442471964,
+                6442471982,
+                6442471995
+              ]
+            }
+          ],
+          "validated_variables": [
+            {
+              "name": "param_1",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 0,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_2",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "arg",
+              "arg_index": 1,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "home_30",
+              "type": "unsigned long long",
+              "stack_offset": 48,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "rbx",
+              "type": "uint",
+              "stack_offset": null,
+              "size": 4,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "rdi",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                6442471964,
+                6442471982,
+                6442471995
+              ]
+            }
+          ],
+          "sanitizer": {
+            "schema": "decbench-native-provenance-sanitizer-v2",
+            "status": "validated",
+            "functions_seen": 1,
+            "functions_with_address_provenance": 1,
+            "functions_resolved": 1,
+            "functions_unresolved": 0,
+            "functions_modified": 0,
+            "line_mapping_rows_seen": 0,
+            "line_mapping_rows_dropped": 0,
+            "line_mapping_addresses_seen": 0,
+            "line_mapping_addresses_dropped": 0,
+            "line_mapping_addresses_normalized": 0,
+            "line_mapping_address_duplicates_removed": 0,
+            "variable_addresses_seen": 3,
+            "variable_addresses_dropped": 0,
+            "variable_addresses_normalized": 0,
+            "variable_address_duplicates_removed": 0,
+            "variable_line_numbers_dropped": 0,
+            "legacy_additive_fields_hydrated": 0,
+            "address_drop_reasons": {},
+            "function_failure_reasons": {}
+          }
+        }
+      ]
+    },
+    {
+      "cell": "40",
+      "row": "040",
+      "platform": "macos",
+      "optimization": "O2",
+      "runs": [
+        {
+          "code_sha256": "f16452e1c607c0c11d9072519b1c12ec946874da53f56e2f7af77873184b5241",
+          "code_equal_to_frozen_baseline": true,
+          "variables": [
+            {
+              "name": "param_1",
+              "type": "fission_agg48 *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 0,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_2",
+              "type": "fission_agg24 *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 1,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_3",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 2,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_4",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 3,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_5",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 4,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_6",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 5,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x19",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                4295011752,
+                4295011824
+              ]
+            },
+            {
+              "name": "x20",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x21",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x22",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                4295011764,
+                4295011816
+              ]
+            },
+            {
+              "name": "x8",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar14",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar27",
+              "type": "fission_agg48 *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            }
+          ],
+          "validated_variables": [
+            {
+              "name": "param_1",
+              "type": "fission_agg48 *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 0,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_2",
+              "type": "fission_agg24 *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 1,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_3",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 2,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_4",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 3,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_5",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 4,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_6",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 5,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x19",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                4295011752,
+                4295011824
+              ]
+            },
+            {
+              "name": "x20",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x21",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x22",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                4295011764,
+                4295011816
+              ]
+            },
+            {
+              "name": "x8",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar14",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar27",
+              "type": "fission_agg48 *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            }
+          ],
+          "sanitizer": {
+            "schema": "decbench-native-provenance-sanitizer-v2",
+            "status": "validated",
+            "functions_seen": 1,
+            "functions_with_address_provenance": 1,
+            "functions_resolved": 1,
+            "functions_unresolved": 0,
+            "functions_modified": 0,
+            "line_mapping_rows_seen": 0,
+            "line_mapping_rows_dropped": 0,
+            "line_mapping_addresses_seen": 0,
+            "line_mapping_addresses_dropped": 0,
+            "line_mapping_addresses_normalized": 0,
+            "line_mapping_address_duplicates_removed": 0,
+            "variable_addresses_seen": 4,
+            "variable_addresses_dropped": 0,
+            "variable_addresses_normalized": 0,
+            "variable_address_duplicates_removed": 0,
+            "variable_line_numbers_dropped": 0,
+            "legacy_additive_fields_hydrated": 0,
+            "address_drop_reasons": {},
+            "function_failure_reasons": {}
+          }
+        },
+        {
+          "code_sha256": "f16452e1c607c0c11d9072519b1c12ec946874da53f56e2f7af77873184b5241",
+          "code_equal_to_frozen_baseline": true,
+          "variables": [
+            {
+              "name": "param_1",
+              "type": "fission_agg48 *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 0,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_2",
+              "type": "fission_agg24 *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 1,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_3",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 2,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_4",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 3,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_5",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 4,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_6",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 5,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x19",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                4295011752,
+                4295011824
+              ]
+            },
+            {
+              "name": "x20",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x21",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x22",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                4295011764,
+                4295011816
+              ]
+            },
+            {
+              "name": "x8",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar14",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar27",
+              "type": "fission_agg48 *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            }
+          ],
+          "validated_variables": [
+            {
+              "name": "param_1",
+              "type": "fission_agg48 *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 0,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_2",
+              "type": "fission_agg24 *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 1,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_3",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 2,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_4",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 3,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_5",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 4,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "param_6",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "arg",
+              "arg_index": 5,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x19",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                4295011752,
+                4295011824
+              ]
+            },
+            {
+              "name": "x20",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x21",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "x22",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": [
+                4295011764,
+                4295011816
+              ]
+            },
+            {
+              "name": "x8",
+              "type": "unsigned long long",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar14",
+              "type": "bool",
+              "stack_offset": null,
+              "size": 1,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            },
+            {
+              "name": "xVar27",
+              "type": "fission_agg48 *",
+              "stack_offset": null,
+              "size": 8,
+              "kind": "stack",
+              "arg_index": null,
+              "line_numbers": [],
+              "addresses": []
+            }
+          ],
+          "sanitizer": {
+            "schema": "decbench-native-provenance-sanitizer-v2",
+            "status": "validated",
+            "functions_seen": 1,
+            "functions_with_address_provenance": 1,
+            "functions_resolved": 1,
+            "functions_unresolved": 0,
+            "functions_modified": 0,
+            "line_mapping_rows_seen": 0,
+            "line_mapping_rows_dropped": 0,
+            "line_mapping_addresses_seen": 0,
+            "line_mapping_addresses_dropped": 0,
+            "line_mapping_addresses_normalized": 0,
+            "line_mapping_address_duplicates_removed": 0,
+            "variable_addresses_seen": 4,
+            "variable_addresses_dropped": 0,
+            "variable_addresses_normalized": 0,
+            "variable_address_duplicates_removed": 0,
+            "variable_line_numbers_dropped": 0,
+            "legacy_additive_fields_hydrated": 0,
+            "address_drop_reasons": {},
+            "function_failure_reasons": {}
+          }
+        }
+      ]
+    }
+  ]
+}
