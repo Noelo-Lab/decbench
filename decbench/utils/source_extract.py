@@ -47,34 +47,28 @@ def _dwarf_decl_maps(binary_path: Path) -> tuple[dict[str, DeclHint], dict[int, 
     by_name: dict[str, DeclHint] = {}
     by_address: dict[int, DeclHint] = {}
     try:
-        from elftools.elf.elffile import ELFFile
-    except Exception:  # noqa: BLE001
-        return by_name, by_address
-    try:
-        with open(binary_path, "rb") as f:
-            elf = ELFFile(f)
-            if not elf.has_dwarf_info():
-                return by_name, by_address
-            dw = elf.get_dwarf_info()
-            file_tables: dict[int, list] = {}
-            for cu in dw.iter_CUs():
-                for die in cu.iter_DIEs():
-                    if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
-                        continue
-                    name = binfmt.die_str_attr(die, "DW_AT_name")
-                    if name is None:
-                        continue
-                    fi, fi_owner = binfmt.die_attr_owner(die, "DW_AT_decl_file")
-                    ln = binfmt.die_attr(die, "DW_AT_decl_line")
-                    fname = None
-                    if fi is not None:
-                        files = binfmt.cu_file_table(dw, fi_owner.cu, file_tables)
-                        if 0 <= fi.value < len(files):
-                            fname = files[fi.value]
-                    line = int(ln.value) if ln is not None else 0
-                    hint = (os.path.basename(fname) if fname else "", line)
-                    by_name[name] = hint
-                    by_address[int(die.attributes["DW_AT_low_pc"].value)] = hint
+        dw = binfmt.dwarf_info(binary_path)
+        if dw is None:
+            return by_name, by_address
+        file_tables: dict[int, list] = {}
+        for cu in dw.iter_CUs():
+            for die in cu.iter_DIEs():
+                if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
+                    continue
+                name = binfmt.die_str_attr(die, "DW_AT_name")
+                if name is None:
+                    continue
+                fi, fi_owner = binfmt.die_attr_owner(die, "DW_AT_decl_file")
+                ln = binfmt.die_attr(die, "DW_AT_decl_line")
+                fname = None
+                if fi is not None:
+                    files = binfmt.cu_file_table(dw, fi_owner.cu, file_tables)
+                    if 0 <= fi.value < len(files):
+                        fname = files[fi.value]
+                line = int(ln.value) if ln is not None else 0
+                hint = (os.path.basename(fname) if fname else "", line)
+                by_name[name] = hint
+                by_address[int(die.attributes["DW_AT_low_pc"].value)] = hint
     except Exception:  # noqa: BLE001
         return by_name, by_address
     return by_name, by_address

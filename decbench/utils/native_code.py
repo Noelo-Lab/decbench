@@ -11,7 +11,7 @@ from typing import Any, cast
 
 from decbench.utils import binfmt
 
-SUPPORTED_FORMATS = frozenset({"elf", "pe"})
+SUPPORTED_FORMATS = frozenset({"elf", "pe", "macho"})
 SUPPORTED_ARCHITECTURES = frozenset({"x86", "x86-64", "arm", "aarch64"})
 
 

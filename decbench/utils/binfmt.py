@@ -1,20 +1,21 @@
 """Binary-format helpers shared by the type_match and byte_match metrics.
 
-Lets the metrics work on **PE** (MinGW-built Windows malware) as well as **ELF**,
+Lets DWARF consumers read **ELF**, **PE/MinGW** and **thin Mach-O/dSYM**,
 and — critically for byte_match — recompile the decompiled code *the same way the
 source was compiled*: with the toolchain and arch/opt flags that match the
 original binary's own format and architecture.
 
 What's here:
-  * :func:`detect` — format (elf/pe/coff) + arch of a binary.
+  * :func:`detect` — format (elf/pe/macho) + arch of a linked binary.
   * :func:`recompiler_for` / :func:`producer_flags` — the matching compiler and
     the original `-m*/-O*` flags (from the DWARF producer), so a recompile is
     "the same way as source"; :func:`tool_available` gates on it being installed.
   * :func:`capstone_arch_mode` — the right capstone arch for disassembly.
-  * :func:`dwarf_info` / :func:`pe_dwarf_info` — a pyelftools ``DWARFInfo`` for an
-    ELF *or* a PE (PE: read the `.debug_*` sections via objdump file offsets and
+  * :func:`dwarf_info` / :func:`pe_dwarf_info` / :func:`mach_o_dwarf_info` —
+    self-contained ``DWARFInfo``; dSYM companions require matching UUIDs.
+    For PE, read the `.debug_*` sections via objdump file offsets and
     build the DWARFInfo by hand — LIEF's community build has no DWARF reader and
-    PE COFF long section names defeat name lookups).
+    PE COFF long section names defeat name lookups.
   * :func:`function_bytes` / :func:`object_text_bytes` — original function bytes
     from a final ELF/PE, and the `.text` of a single-function recompiled object
     (ELF or COFF), for byte_match.
@@ -58,6 +59,20 @@ _PE_MACHINES = {
     0x1C2: "arm",
     0x1C4: "arm",
 }
+_MACH_MAGICS = {
+    b"\xce\xfa\xed\xfe": ("<", 32),
+    b"\xcf\xfa\xed\xfe": ("<", 64),
+    b"\xfe\xed\xfa\xce": (">", 32),
+    b"\xfe\xed\xfa\xcf": (">", 64),
+}
+_MACH_CPUS = {
+    7: "x86",
+    0x1000007: "x86-64",
+    12: "arm",
+    0x100000C: "aarch64",
+    18: "ppc",
+    0x1000012: "ppc64",
+}
 
 
 @dataclass
@@ -71,6 +86,12 @@ def detect(path: Path) -> BinInfo | None:
     """Detect (format, arch, bits) of a linked binary, or None if unrecognized."""
     try:
         with open(path, "rb") as f:
+            magic = f.read(4)
+            if magic in _MACH_MAGICS:
+                endian, bits = _MACH_MAGICS[magic]
+                cpu = struct.unpack(endian + "I", f.read(4))[0]
+                return BinInfo("macho", _MACH_CPUS.get(cpu, "other"), bits)
+            f.seek(0)
             head = f.read(2)
             if head == b"\x7fE":
                 f.seek(0)
@@ -141,13 +162,20 @@ def tool_available(name: str) -> bool:
 
 
 def executable_address_status(path: Path, address: int) -> bool | None:
-    """Whether ``address`` belongs to a concrete executable ELF section.
+    """Whether ``address`` belongs to a concrete executable ELF/Mach-O section.
 
     ``False`` is returned only when executable sections are available and none
     contains the address. ``None`` means the format/section table could not
     provide a reliable answer.
     """
     info = detect(path)
+    if info is not None and info.fmt == "macho":
+        regions = executable_regions(path)
+        return (
+            any(start <= address < start + len(data) for start, data in regions)
+            if regions
+            else None
+        )
     if info is None or info.fmt != "elf":
         return None
     try:
@@ -242,7 +270,7 @@ def capstone_arch_mode(
 
 
 def executable_regions(path: Path) -> tuple[tuple[int, bytes], ...]:
-    """Return executable virtual-address regions from an ELF or PE binary."""
+    """Return file-backed executable regions from ELF, PE or thin Mach-O."""
     info = detect(path)
     if info is None:
         return ()
@@ -277,6 +305,17 @@ def executable_regions(path: Path) -> tuple[tuple[int, bytes], ...]:
             return tuple(sorted(regions))
         except Exception:
             return ()
+    if info.fmt == "macho":
+        binary = _mach_o_binary(path)
+        if binary is None:
+            return ()
+        return tuple(
+            sorted(
+                (int(section.virtual_address), bytes(section.content))
+                for section in binary.sections
+                if int(section.flags) & (0x80000000 | 0x400) and section.content
+            )
+        )
     return ()
 
 
@@ -455,8 +494,87 @@ def pe_dwarf_info(path: Path):
     return _build_dwarfinfo(secs, little_endian=True, addr_size=addr_size, march=march)
 
 
-def dwarf_info(path: Path):
-    """Return a pyelftools DWARFInfo for an ELF or PE binary, or None.
+def _mach_o_binary(path: Path):
+    """Read one thin Mach-O without implicitly choosing a universal slice."""
+    info = detect(path)
+    if info is None or info.fmt != "macho":
+        return None
+    try:
+        import lief
+
+        image = lief.MachO.parse(str(path))
+        return image[0] if image is not None and len(image) == 1 else None
+    except Exception:
+        return None
+
+
+def mach_o_image_base(path: Path) -> int | None:
+    """Linked Mach-O load base, excluding unmapped __PAGEZERO segments."""
+    binary = _mach_o_binary(path)
+    if binary is None:
+        return None
+    bases = [int(segment.virtual_address) for segment in binary.segments if segment.file_size]
+    return min(bases) if bases else None
+
+
+def mach_o_dwarf_info(path: Path, *, debug_path: Path | None = None):
+    """Read embedded DWARF or a UUID/architecture-matched dSYM companion.
+
+    Without an explicit debug path, only the canonical adjacent dSYM bundle
+    is considered. A dSYM belongs to the evaluator; this does not copy it next
+    to a stripped producer input or search unrelated debug files.
+    """
+    image = _mach_o_binary(path)
+    if image is None:
+        return None
+    info = detect(path)
+
+    def sections(binary):
+        result = {}
+        for section in binary.sections:
+            if section.segment_name != "__DWARF" or not section.name.startswith("__debug_"):
+                continue
+            name = "." + section.name[2:]
+            if name == ".debug_str_offs":
+                name = ".debug_str_offsets"
+            if name in _DWARF_SECS:
+                result[name] = bytes(section.content)
+        return result
+
+    secs = sections(image)
+    if not secs.get(".debug_info"):
+        companion = debug_path or path.with_name(path.name + ".dSYM")
+        if companion.is_dir():
+            companion = companion / "Contents" / "Resources" / "DWARF" / path.name
+        debug = _mach_o_binary(companion)
+        if debug is None or detect(companion) != info:
+            return None
+        if (
+            not image.has_uuid
+            or not debug.has_uuid
+            or bytes(image.uuid.uuid) != bytes(debug.uuid.uuid)
+        ):
+            return None
+        secs = sections(debug)
+    if not secs.get(".debug_info") or not secs.get(".debug_abbrev"):
+        return None
+    with path.open("rb") as stream:
+        endian, bits = _MACH_MAGICS[stream.read(4)]
+    march = {
+        "x86": "x86",
+        "x86-64": "x64",
+        "arm": "ARM",
+        "aarch64": "AArch64",
+        "ppc": "PowerPC",
+        "ppc64": "PowerPC64",
+    }.get(info.arch)
+    if march is None:
+        return None
+    return _build_dwarfinfo(secs, endian == "<", bits // 8, march)
+
+
+def dwarf_info(path: Path, *, debug_path: Path | None = None):
+    """Return self-contained DWARF from ELF, PE or UUID-matched Mach-O/dSYM.
 
     For ELF, sections are read into memory so the result is self-contained
     (no dependence on an open file handle).
@@ -466,6 +584,8 @@ def dwarf_info(path: Path):
         return None
     if info.fmt == "pe":
         return pe_dwarf_info(path)
+    if info.fmt == "macho":
+        return mach_o_dwarf_info(path, debug_path=debug_path)
     try:
         from elftools.elf.elffile import ELFFile
 

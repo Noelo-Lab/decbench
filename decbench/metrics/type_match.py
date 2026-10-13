@@ -305,12 +305,12 @@ def has_line_address_evidence(decompiled: FunctionDecompilation) -> bool:
 def extract_ground_truth_type_index(binary_path: Path) -> GroundTruthTypeIndex:
     """Extract DWARF variable types keyed by function address and name.
 
-    Works for **ELF and PE** binaries (the PE/MinGW malware targets) — the DWARF
+    Works for **ELF, PE/MinGW and thin Mach-O/dSYM** — the DWARF
     is read via :func:`decbench.utils.binfmt.dwarf_info`, which handles PE's
     string-table-encoded section names. The DIE-walking below is format-agnostic.
 
     Args:
-        binary_path: Path to an ELF or PE binary compiled with -g
+        binary_path: Debug-bearing binary, with its adjacent dSYM for Mach-O
 
     Returns:
         Dict mapping function address -> function name -> variable dicts with:
@@ -1040,7 +1040,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "19"
+    cache_version = "20"
 
     weight = 1.0
     lower_is_better = False
@@ -1053,9 +1053,7 @@ class TypeMatchMetric(Metric):
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
         self._ground_truth_cache: dict[str, GroundTruthTypeIndex] = {}
-        self._ground_truth_address_cache: dict[
-            str, dict[int, list[dict[str, Any]]]
-        ] = {}
+        self._ground_truth_address_cache: dict[str, dict[int, list[dict[str, Any]]]] = {}
         self._source_context_key: tuple[Path, str, tuple[Path, ...]] | None = None
         self._source_context: PreprocessedSourceContext | None = None
         options = self.config.extra_options
