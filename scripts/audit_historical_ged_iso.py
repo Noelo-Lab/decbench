@@ -20,7 +20,6 @@ import json
 import math
 import multiprocessing as mp
 import pickle
-import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -31,6 +30,8 @@ from decbench.utils.cfg import (
     extract_cfgs_from_source,
     resolved_source_for_binary,
 )
+from decbench.utils.function_identity import parse_function_storage_key
+from decbench.utils.results_tree import split_functions
 
 if __package__:
     from scripts.reeval_ged import (
@@ -69,7 +70,6 @@ else:
 
 HISTORICAL_ISO_SCHEMA_VERSION = 4
 HISTORICAL_ISO_SEMANTICS = "directed-role-aware-networkx-all-large-pairs-v3"
-_MARKER = re.compile(r"^// Function: (\S+) @ 0x[0-9a-fA-F]+\s*$", re.M)
 
 Artifact = tuple[str, str, str, str, str]
 ReplayTask = tuple[str, str, str, str, dict[str, dict[str, Any]], dict[str, Any]]
@@ -223,8 +223,14 @@ def eval_historical_iso_one(task: ReplayTask) -> tuple[str, dict[str, dict], dic
     slice_key, c_path, same_opt_path, legacy_path, targets, metadata = task
     _opt, _project, stem, _decompiler = slice_key.split("::", 3)
     artifact = Path(c_path)
-    text = artifact.read_text(errors="replace")
-    markers = set(_MARKER.findall(text))
+    # Historical target keys are source-level function names, so compare against
+    # the semantic half of each storage key rather than the key itself. Reading
+    # through split_functions also keeps a marker whose name contains a space
+    # visible, which the previous local `(\S+)` pattern silently skipped -- and
+    # a skipped marker here raises below rather than degrading quietly.
+    markers = {
+        parse_function_storage_key(storage_key)[0] for storage_key in split_functions(artifact)
+    }
     missing_markers = set(targets) - markers
     if missing_markers:
         raise RuntimeError(f"{slice_key} missing function markers: {sorted(missing_markers)}")
