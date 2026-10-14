@@ -230,7 +230,7 @@ class ByteMatchMetric(Metric):
     requires_source_cfg = False
     requires_decompiled_cfg = False
 
-    cache_version = "7"
+    cache_version = "8"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
@@ -295,7 +295,6 @@ class ByteMatchMetric(Metric):
                 metadata={"error": "Could not extract original function bytes"},
             )
 
-        context_decls: dict[str, str] | None = kwargs.get("context_decls")
         key_inputs = [
             decompiled.decompiled_code,
             decompiled.name,
@@ -303,12 +302,11 @@ class ByteMatchMetric(Metric):
             original_bytes.hex(),
             recompiler,
             list(flags),
-            sorted(context_decls.items()) if context_decls else None,
         ]
         return self._cached_value(
             key_inputs,
             lambda: self._compute_uncached(
-                decompiled, original_bytes, recompiler, flags, arch_mode, context_decls
+                decompiled, original_bytes, recompiler, flags, arch_mode
             ),
         )
 
@@ -319,7 +317,6 @@ class ByteMatchMetric(Metric):
         compiler: str,
         flags: list[str],
         arch_mode: tuple | None,
-        context_decls: dict[str, str] | None = None,
     ) -> MetricValue:
         import shutil
 
@@ -331,7 +328,6 @@ class ByteMatchMetric(Metric):
             decompiled.name,
             compiler,
             flags,
-            context_decls=context_decls,
         )
         obj_path = fix.obj_path
 
@@ -447,18 +443,11 @@ class ByteMatchMetric(Metric):
                         ],
                     )
 
-        from decbench.metrics.fixup import derive_context_decls
-
-        context_decls = derive_context_decls(
-            {name: fd.decompiled_code or "" for name, fd in decompilation.functions.items()}
-        )
-
         for func_name, func_decomp in decompilation.functions.items():
             try:
                 value = self.compute_for_function(
                     func_decomp,
                     original_binary_path=original_binary_path,
-                    context_decls=context_decls,
                 )
                 function_results[func_name] = value
 

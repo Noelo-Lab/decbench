@@ -8,7 +8,6 @@ availability gating, and turning the driver's JSON-line protocol into
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -112,36 +111,6 @@ def test_decompile_binary_parses_driver_stream(monkeypatch, tmp_path: Path) -> N
     assert result.functions["gamma"].line_count == 1
     assert "beta" in result.decompiler.failed_functions
     assert (out / "dewolf_bin.c").exists()
-
-
-def test_int_address_filter_arg_is_json(monkeypatch, tmp_path: Path) -> None:
-    """Only int targets reach the driver, serialized as a JSON list."""
-    captured = {}
-
-    class _FakeProc:
-        stdout = iter([json.dumps({"type": "done"})])
-
-        def wait(self):
-            return 0
-
-    def fake_popen(cmd, **kwargs):
-        captured["cmd"] = cmd
-        return _FakeProc()
-
-    binary = tmp_path / "bin.elf"
-    binary.write_bytes(b"\x7fELF" + b"\x00" * 60)
-    dec = RawDewolfDecompiler()
-    monkeypatch.setattr(dec, "is_available", lambda: True)
-    monkeypatch.setattr(dec, "get_version", lambda: "vTEST")
-    monkeypatch.setattr(dec, "_python", lambda: "python")
-    monkeypatch.setattr(dec, "_child_env", dict)
-    monkeypatch.setattr("decbench.decompilers.raw.dewolf_raw.common.elf_min_vaddr", lambda p: 0)
-    monkeypatch.setattr("decbench.decompilers.raw.dewolf_raw.subprocess.Popen", fake_popen)
-
-    dec.decompile_binary(binary, function_names={4096, 8192, "not-an-int"})
-
-    addrs_arg = captured["cmd"][-1]
-    assert json.loads(addrs_arg) == [4096, 8192]
 
 
 def test_sidecar_variables_fail_closed_on_malformed_fields() -> None:

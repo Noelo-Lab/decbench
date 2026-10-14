@@ -710,7 +710,7 @@ benchmark's fairness contract:
   where byte_match was measured]`. The denominator is per-decompiler (functions
   where that decompiler has a byte_match value — decompiled AND the target arch
   had a recompile toolchain), so ARM/PE abstentions never enter it. This is the
-  compilability-fixup success rate, and it moves with the dataset preset like the
+  returned-C compilation success rate, and it moves with the dataset preset like the
   metric columns (O0 code compiles more readily than O2). It is rendered in its
   own `#compile-table` in the **data** page's `#compiles` section (it used to be
   a leaderboard column); the combo key is unchanged.
