@@ -1,0 +1,129 @@
+{
+  "policy": "cpp-types-v2-proposal",
+  "official_score": false,
+  "dataset_revision": "07dd95dbe6214b8a78fc1e4a55961ab515986489",
+  "population_sha256": "f432c528e3071efa60fdaecc132aafa8c351e386bf7203d252e2875d6de02620",
+  "requested": 250,
+  "platforms": {
+    "linux": 108,
+    "windows": 97,
+    "macos": 45
+  },
+  "producer_binary_sha256": "20b4ccf68b5562084953fb4441b0e84dea25c1151b1dc1b325d05e36505571d0",
+  "fission_baseline_source": "52c81dd15e9b2c9efa8cd29f4b5153f1a2690f45",
+  "rust_joern_revision": "9fd97f50885202596b125ebd2504e64910874bcb",
+  "profiles": {
+    "fission": {
+      "source": {
+        "eligible": 26,
+        "perfect": 0,
+        "mean": 0.009615384615384616
+      },
+      "abi": {
+        "eligible": 26,
+        "perfect": 0,
+        "mean": 0.04807692307692308
+      },
+      "legacy_pdb_abi_diagnostic": {
+        "eligible": 19,
+        "perfect": 0,
+        "mean": 0.013157894736842105
+      }
+    },
+    "kuna": {
+      "source": {
+        "eligible": 26,
+        "perfect": 1,
+        "mean": 0.09615384615384616
+      },
+      "abi": {
+        "eligible": 26,
+        "perfect": 1,
+        "mean": 0.09615384615384616
+      },
+      "legacy_pdb_abi_diagnostic": {
+        "eligible": 32,
+        "perfect": 0,
+        "mean": 0.015625
+      }
+    }
+  },
+  "exclusions": {
+    "DWARF function missing or entry identity ambiguous": 16,
+    "oracle variable correspondence unavailable": 5,
+    "anonymous object identity unsupported": 31,
+    "unsupported DWARF graph DW_TAG_subroutine_type": 10,
+    "incomplete DWARF object definition": 10,
+    "inline variable identity policy unsupported": 1,
+    "partial/composite/computed DWARF location": 67,
+    "PDB identity/storage/formal classification incomplete": 64,
+    "no observable variable ground truth": 1,
+    "ambiguous/incomplete CodeView forward record": 11,
+    "CodeView vptr physical offset unavailable": 8
+  },
+  "native_validation": {
+    "fission": {
+      "functions_seen": 250,
+      "functions_with_address_provenance": 144,
+      "functions_resolved": 144,
+      "functions_unresolved": 0,
+      "functions_modified": 0,
+      "line_mapping_rows_seen": 237,
+      "line_mapping_rows_dropped": 0,
+      "line_mapping_addresses_seen": 237,
+      "line_mapping_addresses_dropped": 0,
+      "line_mapping_addresses_normalized": 0,
+      "line_mapping_address_duplicates_removed": 0,
+      "variable_addresses_seen": 9482,
+      "variable_addresses_dropped": 0,
+      "variable_addresses_normalized": 0,
+      "variable_address_duplicates_removed": 0,
+      "variable_line_numbers_dropped": 0,
+      "legacy_additive_fields_hydrated": 0
+    },
+    "kuna": {
+      "functions_seen": 250,
+      "functions_with_address_provenance": 250,
+      "functions_resolved": 250,
+      "functions_unresolved": 0,
+      "functions_modified": 0,
+      "line_mapping_rows_seen": 5341,
+      "line_mapping_rows_dropped": 0,
+      "line_mapping_addresses_seen": 8042,
+      "line_mapping_addresses_dropped": 0,
+      "line_mapping_addresses_normalized": 0,
+      "line_mapping_address_duplicates_removed": 0,
+      "variable_addresses_seen": 6910,
+      "variable_addresses_dropped": 0,
+      "variable_addresses_normalized": 0,
+      "variable_address_duplicates_removed": 0,
+      "variable_line_numbers_dropped": 0,
+      "legacy_additive_fields_hydrated": 0
+    }
+  },
+  "line_transport": {
+    "requested": 250,
+    "successful_code": 250,
+    "functions_with_lines": 105,
+    "line_rows": 237,
+    "by_platform": {
+      "linux": 57,
+      "windows": 24,
+      "macos": 24
+    },
+    "changed_code_or_direct_variables": []
+  },
+  "code_hashes": {
+    "decbench/metrics/cpp_types.py": "fe2cfbbce486685aba6a6aee5bd566a10fbb6d798d9e35f810e4ef079332c6d8",
+    "decbench/metrics/cpp_type_match.py": "b3e90e9d2d9ece2b7c812cf1ba28e7a1b7fe5a5120952cbda6fe230e981adf40",
+    "decbench/metrics/cpp_recovered_types.py": "3f187bd522d619dd7551a9367e5a983b37c289a7690e5cb74112ec433025c7c1",
+    "decbench/metrics/cpp_type_graph.py": "1f84f2276e910792c27111c331bad2869941f24db5cf294d10520197f8ec29f1",
+    "decbench/utils/pdb_info.py": "5cb3ccbd90e184a5a7088a63cc0f3285fb2ecc047465df9d5d4da0bfd3ff0994",
+    "decbench/decompilers/raw/fission_raw.py": "ed1c46f39f66cdb4f3fdf4d9fc86e9a791d03ba94d96246034fd907615691d5c",
+    "decbench/models/decompilation.py": "588d57d94ab688660c44ae6f973b4d576e9db20538458394ed5a17fd59a305f5",
+    "decbench/metrics/variable_features.py": "687684f44310359de7c72cea28869fe94d3a29944fbf4b635d29400ce301857b",
+    "decbench/utils/source_extract.py": "bd6ebab375c229601761e2dbb817e5577637e2ef95428bb819ee8dd5c16440ae"
+  },
+  "eligible_with_object_graph": 21,
+  "excluded": 224
+}

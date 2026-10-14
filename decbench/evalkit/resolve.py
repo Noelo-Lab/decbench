@@ -27,6 +27,7 @@ import struct
 from pathlib import Path
 
 from decbench.utils.dwarf_policy import dwarf_follow_abstract_origin
+from decbench.utils.function_identity import parse_function_storage_key
 from decbench.utils.langs import PREPROC_EXTS, build_stem_index, strip_source_ext
 
 _l = logging.getLogger(__name__)
@@ -69,6 +70,20 @@ def _dwarf_addr_to_name(binary: Path, stems: set[str] | None) -> dict[int, str]:
         _l.warning("DWARF read failed for %s: %s", binary, e)
         return {}
     if dw is None:
+        native = binfmt.pdb_info(binary)
+        if native is not None:
+            if stems is not None:
+                return {
+                    address: name
+                    for address, (name, _stem) in binfmt.source_function_owners(
+                        binary, stems
+                    ).items()
+                }
+            return {
+                f.address: f.name
+                for f in native.functions
+                if native.at_address(f.address) is not None
+            }
         return {}
     addr2name: dict[int, str] = {}
     file_tables: dict[int, list[str | None]] = {}
@@ -80,6 +95,9 @@ def _dwarf_addr_to_name(binary: Path, stems: set[str] | None) -> dict[int, str]:
                     continue
                 name = binfmt.die_str_attr(die, "DW_AT_name", follow_abstract_origin=follow)
                 if name is None:
+                    continue
+                address = int(die.attributes["DW_AT_low_pc"].value)
+                if not binfmt.dwarf_low_pc_is_concrete(binary, address):
                     continue
                 if stems is not None:
                     fi, owner = binfmt.die_attr_owner(
@@ -95,7 +113,7 @@ def _dwarf_addr_to_name(binary: Path, stems: set[str] | None) -> dict[int, str]:
                         s.endswith("-" + stem) or s.endswith("_" + stem) for s in stem_index
                     ):
                         continue
-                addr2name[int(die.attributes["DW_AT_low_pc"].value)] = name
+                addr2name[address] = name
     except Exception as e:  # noqa: BLE001
         _l.warning("DWARF walk failed for %s: %s", binary, e)
         return {}
@@ -117,19 +135,28 @@ def name_to_addr(
     addr2name = _dwarf_addr_to_name(Path(binary), stems)
     by_name: dict[str, list[int]] = {}
     for addr, nm in addr2name.items():
-        if names is not None and nm not in names:
-            continue
         by_name.setdefault(nm, []).append(addr)
+
     out: dict[str, int] = {}
-    for nm, addrs in by_name.items():
+    requested = sorted(names) if names is not None else sorted(by_name)
+    for storage_key in requested:
+        semantic_name, keyed_address = parse_function_storage_key(storage_key)
+        if keyed_address is not None:
+            if addr2name.get(keyed_address) == semantic_name:
+                out[storage_key] = keyed_address
+            continue
+
+        addrs = by_name.get(semantic_name, [])
+        if not addrs:
+            continue
         if len(addrs) > 1:
             _l.warning(
                 "%s: name %r is ambiguous in DWARF (%s); keeping the lowest address",
                 Path(binary).name,
-                nm,
+                semantic_name,
                 ", ".join(hex(a) for a in sorted(addrs)),
             )
-        out[nm] = min(addrs)
+        out[storage_key] = min(addrs)
     return out
 
 
@@ -154,15 +181,23 @@ class AddrLookup:
         binary = Path(binary)
         return cls(_dwarf_addr_to_name(binary, stems), common.elf_min_vaddr(binary))
 
+    def resolve(self, addr: int) -> tuple[int, str] | None:
+        """Return the canonical ``(low_pc, name)`` for a reported address."""
+        a = int(addr)
+        seen: set[int] = set()
+        for candidate in (a, a & ~1, a + self.min_vaddr, (a + self.min_vaddr) & ~1):
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            name = self._map.get(candidate)
+            if name is not None:
+                return candidate, name
+        return None
+
     def name_for(self, addr: int) -> str | None:
         """The DWARF name at ``addr``, or None when no tolerance rule matches."""
-        a = int(addr)
-        return (
-            self._map.get(a)
-            or self._map.get(a & ~1)
-            or self._map.get(a + self.min_vaddr)
-            or self._map.get((a + self.min_vaddr) & ~1)
-        )
+        resolved = self.resolve(addr)
+        return resolved[1] if resolved is not None else None
 
 
 def _is_linked_elf(path: Path) -> bool:

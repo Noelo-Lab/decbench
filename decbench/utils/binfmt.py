@@ -1,20 +1,21 @@
 """Binary-format helpers shared by the type_match and byte_match metrics.
 
-Lets the metrics work on **PE** (MinGW-built Windows malware) as well as **ELF**,
+Lets DWARF consumers read **ELF**, **PE/MinGW** and **thin Mach-O/dSYM**,
 and — critically for byte_match — recompile the decompiled code *the same way the
 source was compiled*: with the toolchain and arch/opt flags that match the
 original binary's own format and architecture.
 
 What's here:
-  * :func:`detect` — format (elf/pe/coff) + arch of a binary.
+  * :func:`detect` — format (elf/pe/macho) + arch of a linked binary.
   * :func:`recompiler_for` / :func:`producer_flags` — the matching compiler and
     the original `-m*/-O*` flags (from the DWARF producer), so a recompile is
     "the same way as source"; :func:`tool_available` gates on it being installed.
   * :func:`capstone_arch_mode` — the right capstone arch for disassembly.
-  * :func:`dwarf_info` / :func:`pe_dwarf_info` — a pyelftools ``DWARFInfo`` for an
-    ELF *or* a PE (PE: read the `.debug_*` sections via objdump file offsets and
+  * :func:`dwarf_info` / :func:`pe_dwarf_info` / :func:`mach_o_dwarf_info` —
+    self-contained ``DWARFInfo``; dSYM companions require matching UUIDs.
+    For PE, read the `.debug_*` sections via objdump file offsets and
     build the DWARFInfo by hand — LIEF's community build has no DWARF reader and
-    PE COFF long section names defeat name lookups).
+    PE COFF long section names defeat name lookups.
   * :func:`function_bytes` / :func:`object_text_bytes` — original function bytes
     from a final ELF/PE, and the `.text` of a single-function recompiled object
     (ELF or COFF), for byte_match.
@@ -58,6 +59,20 @@ _PE_MACHINES = {
     0x1C2: "arm",
     0x1C4: "arm",
 }
+_MACH_MAGICS = {
+    b"\xce\xfa\xed\xfe": ("<", 32),
+    b"\xcf\xfa\xed\xfe": ("<", 64),
+    b"\xfe\xed\xfa\xce": (">", 32),
+    b"\xfe\xed\xfa\xcf": (">", 64),
+}
+_MACH_CPUS = {
+    7: "x86",
+    0x1000007: "x86-64",
+    12: "arm",
+    0x100000C: "aarch64",
+    18: "ppc",
+    0x1000012: "ppc64",
+}
 
 
 @dataclass
@@ -71,6 +86,12 @@ def detect(path: Path) -> BinInfo | None:
     """Detect (format, arch, bits) of a linked binary, or None if unrecognized."""
     try:
         with open(path, "rb") as f:
+            magic = f.read(4)
+            if magic in _MACH_MAGICS:
+                endian, bits = _MACH_MAGICS[magic]
+                cpu = struct.unpack(endian + "I", f.read(4))[0]
+                return BinInfo("macho", _MACH_CPUS.get(cpu, "other"), bits)
+            f.seek(0)
             head = f.read(2)
             if head == b"\x7fE":
                 f.seek(0)
@@ -113,7 +134,7 @@ _CROSS_ELF_GCC = {
 }
 
 
-def recompiler_for(info: BinInfo) -> str | None:
+def recompiler_for(info: BinInfo, path: Path | None = None) -> str | None:
     """The compiler that builds for this binary's format+arch (the 'same way').
 
     Returns the compiler executable name, or None for arch/format we can't
@@ -129,6 +150,8 @@ def recompiler_for(info: BinInfo) -> str | None:
             return "gcc"
         return _CROSS_ELF_GCC.get(info.arch)
     if info.fmt == "pe":
+        if path is not None and dwarf_info(path) is None:
+            return None
         return {
             "x86": "i686-w64-mingw32-gcc",
             "x86-64": "x86_64-w64-mingw32-gcc",
@@ -136,8 +159,70 @@ def recompiler_for(info: BinInfo) -> str | None:
     return None
 
 
+def pdb_info(path: Path, *, debug_path: Path | None = None):
+    """Native PE oracle transport; mismatches are errors, absence is None."""
+    info = detect(path)
+    if info is None or info.fmt != "pe":
+        return None
+    from decbench.utils.pdb_info import read_pdb
+
+    return read_pdb(path, debug_path)
+
+
 def tool_available(name: str) -> bool:
     return shutil.which(name) is not None
+
+
+def executable_address_status(path: Path, address: int) -> bool | None:
+    """Whether ``address`` belongs to a concrete executable ELF/Mach-O section.
+
+    ``False`` is returned only when executable sections are available and none
+    contains the address. ``None`` means the format/section table could not
+    provide a reliable answer.
+    """
+    info = detect(path)
+    if info is not None and info.fmt == "macho":
+        regions = executable_regions(path)
+        return (
+            any(start <= address < start + len(data) for start, data in regions)
+            if regions
+            else None
+        )
+    if info is None or info.fmt != "elf":
+        return None
+    try:
+        from elftools.elf.elffile import ELFFile
+
+        with path.open("rb") as stream:
+            elf = ELFFile(stream)
+            saw_executable = False
+            for section in elf.iter_sections():
+                if section.header["sh_type"] == "SHT_NOBITS":
+                    continue
+                if not int(section.header["sh_flags"]) & 0x4:  # SHF_EXECINSTR
+                    continue
+                size = int(section.header["sh_size"])
+                if size <= 0:
+                    continue
+                saw_executable = True
+                start = int(section.header["sh_addr"])
+                if start <= address < start + size:
+                    return True
+            return False if saw_executable else None
+    except Exception:
+        return None
+
+
+def dwarf_low_pc_is_concrete(path: Path, address: int) -> bool:
+    """Whether a DWARF ``low_pc`` should be treated as a concrete code address.
+
+    Linker ICF can leave a superseded subprogram DIE with ``low_pc == 0`` even
+    though normal linked ELF code starts elsewhere. Reject zero only when the
+    ELF section table proves that address zero is not executable. If the image
+    genuinely has executable code at zero (embedded/bare-metal) or the format
+    cannot answer reliably, preserve the historical behavior.
+    """
+    return address != 0 or executable_address_status(path, 0) is not False
 
 
 # Codegen-relevant flags carried over from the original build (never -g). Only
@@ -197,7 +282,7 @@ def capstone_arch_mode(
 
 
 def executable_regions(path: Path) -> tuple[tuple[int, bytes], ...]:
-    """Return executable virtual-address regions from an ELF or PE binary."""
+    """Return file-backed executable regions from ELF, PE or thin Mach-O."""
     info = detect(path)
     if info is None:
         return ()
@@ -232,6 +317,17 @@ def executable_regions(path: Path) -> tuple[tuple[int, bytes], ...]:
             return tuple(sorted(regions))
         except Exception:
             return ()
+    if info.fmt == "macho":
+        binary = _mach_o_binary(path)
+        if binary is None:
+            return ()
+        return tuple(
+            sorted(
+                (int(section.virtual_address), bytes(section.content))
+                for section in binary.sections
+                if int(section.flags) & (0x80000000 | 0x400) and section.content
+            )
+        )
     return ()
 
 
@@ -410,8 +506,87 @@ def pe_dwarf_info(path: Path):
     return _build_dwarfinfo(secs, little_endian=True, addr_size=addr_size, march=march)
 
 
-def dwarf_info(path: Path):
-    """Return a pyelftools DWARFInfo for an ELF or PE binary, or None.
+def _mach_o_binary(path: Path):
+    """Read one thin Mach-O without implicitly choosing a universal slice."""
+    info = detect(path)
+    if info is None or info.fmt != "macho":
+        return None
+    try:
+        import lief
+
+        image = lief.MachO.parse(str(path))
+        return image[0] if image is not None and len(image) == 1 else None
+    except Exception:
+        return None
+
+
+def mach_o_image_base(path: Path) -> int | None:
+    """Linked Mach-O load base, excluding unmapped __PAGEZERO segments."""
+    binary = _mach_o_binary(path)
+    if binary is None:
+        return None
+    bases = [int(segment.virtual_address) for segment in binary.segments if segment.file_size]
+    return min(bases) if bases else None
+
+
+def mach_o_dwarf_info(path: Path, *, debug_path: Path | None = None):
+    """Read embedded DWARF or a UUID/architecture-matched dSYM companion.
+
+    Without an explicit debug path, only the canonical adjacent dSYM bundle
+    is considered. A dSYM belongs to the evaluator; this does not copy it next
+    to a stripped producer input or search unrelated debug files.
+    """
+    image = _mach_o_binary(path)
+    if image is None:
+        return None
+    info = detect(path)
+
+    def sections(binary):
+        result = {}
+        for section in binary.sections:
+            if section.segment_name != "__DWARF" or not section.name.startswith("__debug_"):
+                continue
+            name = "." + section.name[2:]
+            if name == ".debug_str_offs":
+                name = ".debug_str_offsets"
+            if name in _DWARF_SECS:
+                result[name] = bytes(section.content)
+        return result
+
+    secs = sections(image)
+    if not secs.get(".debug_info"):
+        companion = debug_path or path.with_name(path.name + ".dSYM")
+        if companion.is_dir():
+            companion = companion / "Contents" / "Resources" / "DWARF" / path.name
+        debug = _mach_o_binary(companion)
+        if debug is None or detect(companion) != info:
+            return None
+        if (
+            not image.has_uuid
+            or not debug.has_uuid
+            or bytes(image.uuid.uuid) != bytes(debug.uuid.uuid)
+        ):
+            return None
+        secs = sections(debug)
+    if not secs.get(".debug_info") or not secs.get(".debug_abbrev"):
+        return None
+    with path.open("rb") as stream:
+        endian, bits = _MACH_MAGICS[stream.read(4)]
+    march = {
+        "x86": "x86",
+        "x86-64": "x64",
+        "arm": "ARM",
+        "aarch64": "AArch64",
+        "ppc": "PowerPC",
+        "ppc64": "PowerPC64",
+    }.get(info.arch)
+    if march is None:
+        return None
+    return _build_dwarfinfo(secs, endian == "<", bits // 8, march)
+
+
+def dwarf_info(path: Path, *, debug_path: Path | None = None):
+    """Return self-contained DWARF from ELF, PE or UUID-matched Mach-O/dSYM.
 
     For ELF, sections are read into memory so the result is self-contained
     (no dependence on an open file handle).
@@ -421,6 +596,8 @@ def dwarf_info(path: Path):
         return None
     if info.fmt == "pe":
         return pe_dwarf_info(path)
+    if info.fmt == "macho":
+        return mach_o_dwarf_info(path, debug_path=debug_path)
     try:
         from elftools.elf.elffile import ELFFile
 
@@ -576,6 +753,30 @@ def source_function_owners(
     except Exception:  # noqa: BLE001
         return {}
     if dw is None:
+        native = pdb_info(path)
+        if native is not None:
+            owners = {}
+            stem_index = build_stem_index(source_stems)
+            for function in native.functions:
+                if not function.source_file:
+                    continue
+                decl_stem = strip_source_ext(
+                    function.source_file.replace("\\", "/").rsplit("/", 1)[-1]
+                )
+                matches = [
+                    original
+                    for normalized, original in stem_index.items()
+                    if normalized == decl_stem
+                    or normalized.endswith("-" + decl_stem)
+                    or normalized.endswith("_" + decl_stem)
+                ]
+                if len(set(matches)) == 1:
+                    value = (function.name, matches[0])
+                    if function.address in owners and owners[function.address] != value:
+                        owners[function.address] = None
+                    else:
+                        owners.setdefault(function.address, value)
+            return {address: owner for address, owner in owners.items() if owner is not None}
         return {}
 
     owners: dict[int, tuple[str, str]] = {}
@@ -585,6 +786,9 @@ def source_function_owners(
         for cu in dw.iter_CUs():
             for die in cu.iter_DIEs():
                 if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
+                    continue
+                address = int(die.attributes["DW_AT_low_pc"].value)
+                if not dwarf_low_pc_is_concrete(path, address):
                     continue
                 name = die_str_attr(
                     die, "DW_AT_name", follow_abstract_origin=follow_abstract_origin
@@ -610,32 +814,46 @@ def source_function_owners(
                     ]
                     matched = suffix_matches[0] if len(suffix_matches) == 1 else None
                 if matched is not None:
-                    owners[int(die.attributes["DW_AT_low_pc"].value)] = (name, matched)
+                    owners[address] = (name, matched)
     except Exception:  # noqa: BLE001
         return {}
     return owners
 
 
-def _dwarf_function_range(path: Path, func_name: str) -> tuple[int, int] | None:
-    """(low_pc, high_pc) absolute VA for a function, from DWARF."""
+def _dwarf_function_range(
+    path: Path, func_name: str, address: int | None = None
+) -> tuple[int, int] | None:
+    """``(low_pc, high_pc)`` for one function, by exact address when given.
+
+    An ``address`` identifies exactly one subprogram, so it is matched or the
+    lookup fails: falling back to the first DIE sharing the short name would
+    hand back a *different* overload, which is the collision this module exists
+    to prevent. The name-only search runs only when no address is supplied, as
+    the historical compatibility path.
+    """
     di = dwarf_info(path)
     if di is None:
         return None
+    name_fallback: tuple[int, int] | None = None
     for cu in di.iter_CUs():
         for die in cu.iter_DIEs():
             if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
                 continue
-            nm = die.attributes.get("DW_AT_name")
-            name = nm.value.decode() if nm and isinstance(nm.value, bytes) else None
-            if name != func_name:
+            lo = int(die.attributes["DW_AT_low_pc"].value)
+            if not dwarf_low_pc_is_concrete(path, lo):
                 continue
-            lo = die.attributes["DW_AT_low_pc"].value
             hi_at = die.attributes.get("DW_AT_high_pc")
             if hi_at is None:
-                return None
-            hi = lo + hi_at.value if hi_at.form != "DW_FORM_addr" else hi_at.value
-            return (lo, hi)
-    return None
+                continue
+            hi = lo + int(hi_at.value) if hi_at.form != "DW_FORM_addr" else int(hi_at.value)
+            rng = (lo, hi)
+            if address is not None:
+                if lo == address:
+                    return rng
+                continue
+            if name_fallback is None and die_str_attr(die, "DW_AT_name") == func_name:
+                name_fallback = rng
+    return None if address is not None else name_fallback
 
 
 def function_bytes(path: Path, func_name: str, address: int) -> bytes | None:
@@ -647,7 +865,7 @@ def function_bytes(path: Path, func_name: str, address: int) -> bytes | None:
         b = _elf_function_bytes(path, func_name, address)
         if b is not None:
             return b
-    rng = _dwarf_function_range(path, func_name)
+    rng = _dwarf_function_range(path, func_name, address)
     if rng is None:
         return None
     lo, hi = rng

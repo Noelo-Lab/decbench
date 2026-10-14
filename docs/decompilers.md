@@ -40,13 +40,18 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
   `glaurung` results came from an external sample-set submission (Part III) at
   `git-fb4ee6b`, flagged `external_submission` in its metadata; the new
   sample-set pass uses this runnable backend.
+- **Fission CLI** (`raw/fission_raw.py`: `fission`): set `FISSION_BIN` to
+  `fission_cli`, optionally `FISSION_RESOURCE_ROOT` and `FISSION_WORKING_DIR`.
+  The backend selects NIR, forwards per-variable scalar-SSA definition/use
+  addresses, and leaves line mappings empty when the producer has no
+  occurrence-level trace. See [C++ policy proposal](cpp-type-policy-proposal.md).
 - **Dockerized** (`dockerized.py`: `reko`/`retdec`/`r2dec`): Reko and RetDec
   split container-produced C into functions. r2dec uses `pdd` through its
   versioned image and returns address-keyed functions. Build images with
   `decbench decompiler-build <name>`; Dockerfiles live in `docker/`.
 - **LLM / coding-agent** (`llm_dec.py`: `codex`, `claude-code`, `kimi-code`):
   Part II below.
-- **External / not runnable here** (`external.py`: `fission`, `ventris`): ids we
+- **External / not runnable here** (`external.py`: `ventris`): ids we
   publish but can never execute — their numbers arrive as sample-set submissions
   (Part III) and there is no tool to drive. Each is one row in
   `EXTERNAL_DECOMPILERS`; the generated class has `runnable = False`,
@@ -869,3 +874,11 @@ submission zip out of git too (`private/` is ignored for exactly this).
     --base results/full_run/sample_set_manifest.json --drop-unscoreable \
     -o /tmp/manifest_repaired.json     # inspect the diff, then install it
   ```
+
+### Fission scoped definition lines
+
+The native Fission adapter forwards `line_mappings_nir` when supplied by the
+producer. Each `defined_variables` list scopes an assignment-result definition
+PC to its LHS; it must not be assigned to RHS names. Maps are partial and
+1-based in the returned NIR text. Old CLIs with direct variable addresses remain
+supported. See [the C++ policy proposal](cpp-type-policy-proposal.md).

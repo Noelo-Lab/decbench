@@ -115,6 +115,9 @@ def _hydrate_additive_provenance(
 ) -> None:
     """Hydrate additive fields absent from legacy pickled model instances."""
     for mapping in function.line_mappings:
+        if not hasattr(mapping, "defined_variables"):
+            mapping.defined_variables = None
+            report.increment("legacy_additive_fields_hydrated")
         if not isinstance(getattr(mapping, "addresses", None), list):
             mapping.addresses = []
             report.increment("legacy_additive_fields_hydrated")
@@ -179,6 +182,13 @@ def _sanitize_function(
     sanitized_mappings = []
     report.increment("line_mapping_rows_seen", len(function.line_mappings))
     for mapping in function.line_mappings:
+        if mapping.defined_variables is not None and not 1 <= mapping.line_number <= len(
+            function.decompiled_code.splitlines()
+        ):
+            modified = True
+            report.increment("line_mapping_rows_dropped")
+            report.record_address_drop("line_outside_output")
+            continue
         addresses = _filter_addresses(
             mapping.addresses,
             code=code,

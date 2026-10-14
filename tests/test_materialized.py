@@ -108,6 +108,57 @@ def test_load_source_cfgs_rebuilds_ged_ready_graphs(tmp_path: Path) -> None:
     assert load_source_cfgs(tmp_path, "O2", "demo") is None
 
 
+COLLISION_C = """\
+// Function: same@0x1000 @ 0x1000
+int same(int x) { return x + 1; }
+
+// Function: same@0x2000 @ 0x2000
+int same(int x) { return x + 2; }
+
+// Function: operator new @ 0x3000
+void *operator_new_stub(unsigned long n) { return 0; }
+"""
+
+
+def test_load_decompilation_keeps_storage_keys_and_semantic_names(tmp_path: Path) -> None:
+    """A collision-qualified artifact must round-trip without leaking its key.
+
+    The dictionary key is the storage key, so two overloads stay distinct. The
+    ``FunctionDecompilation.name`` field stays a real source name, because
+    ByteMatch hands it to ``function_bytes`` and to the compile fixup as a C
+    identifier -- ``same@0x1000`` arriving there breaks the metric rather than
+    merely looking odd.
+    """
+    artifact = tmp_path / "ghidra_demo.c"
+    artifact.write_text(COLLISION_C)
+
+    dr = load_decompilation(artifact, "ghidra", tmp_path / "demo")
+
+    assert set(dr.functions) == {"same@0x1000", "same@0x2000", "operator new"}
+    assert dr.functions["same@0x1000"].name == "same"
+    assert dr.functions["same@0x2000"].name == "same"
+    assert dr.functions["same@0x1000"].address == 0x1000
+    assert dr.functions["same@0x2000"].address == 0x2000
+    assert "x + 1" in dr.functions["same@0x1000"].decompiled_code
+    assert "x + 2" in dr.functions["same@0x2000"].decompiled_code
+
+
+def test_load_decompilation_reads_a_dwarf_name_containing_a_space(tmp_path: Path) -> None:
+    """``operator new`` has a space, which the old ``(\\S+)`` marker could not see.
+
+    The marker was invisible to that regex, so the function was dropped from the
+    artifact entirely rather than mis-keyed.
+    """
+    artifact = tmp_path / "ghidra_demo.c"
+    artifact.write_text(COLLISION_C)
+
+    dr = load_decompilation(artifact, "ghidra", tmp_path / "demo")
+
+    assert "operator new" in dr.functions
+    assert dr.functions["operator new"].name == "operator new"
+    assert dr.functions["operator new"].address == 0x3000
+
+
 def test_discover_tree_projects(tmp_path: Path) -> None:
     _write_tree(tmp_path)
     projects, opts = discover_tree_projects(tmp_path)

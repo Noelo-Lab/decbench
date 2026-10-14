@@ -11,7 +11,7 @@ from typing import Any, cast
 
 from decbench.utils import binfmt
 
-SUPPORTED_FORMATS = frozenset({"elf", "pe"})
+SUPPORTED_FORMATS = frozenset({"elf", "pe", "macho"})
 SUPPORTED_ARCHITECTURES = frozenset({"x86", "x86-64", "arm", "aarch64"})
 
 
@@ -177,8 +177,9 @@ class NativeCodeResolver:
         if info.fmt not in SUPPORTED_FORMATS or info.arch not in SUPPORTED_ARCHITECTURES:
             raise ValueError(f"unsupported binary format/architecture {info.fmt}/{info.arch}")
         dwarfinfo = binfmt.dwarf_info(self.binary_path)
-        if dwarfinfo is None:
-            raise ValueError("binary has no readable DWARF")
+        pdb = binfmt.pdb_info(self.binary_path) if dwarfinfo is None else None
+        if dwarfinfo is None and pdb is None:
+            raise ValueError("binary has no readable DWARF or matching PDB")
         self.info = info
         self.regions = binfmt.executable_regions(self.binary_path)
         self.mclass = (
@@ -193,6 +194,12 @@ class NativeCodeResolver:
             set
         )
         self._resolved: dict[tuple[str, int], FunctionCode | str] = {}
+        if pdb is not None:
+            for function in pdb.functions:
+                self._ranges[(function.name, function.address)].add(
+                    ((function.address, function.end),)
+                )
+            return
         for cu in dwarfinfo.iter_CUs():
             for die in cu.iter_DIEs():
                 if die.tag != "DW_TAG_subprogram":
@@ -288,6 +295,19 @@ class NativeCodeResolver:
     def _resolve_uncached(self, function_name: str, function_address: int) -> FunctionCode:
         expected = function_address & ~1 if self.info.arch == "arm" else function_address
         candidates = self._ranges.get((function_name, expected), set())
+        if not candidates:
+            # A stripped producer may emit sub_<VA>, or a PDB demangler may
+            # include a signature the oracle's procedure name does not carry.
+            # Instruction membership is keyed by the physical entry, not the
+            # spelling of that label. Admit only one identity at that entry;
+            # aliases/ICF collisions must not select another function's range.
+            at_entry = [
+                ranges for (_name, entry), ranges in self._ranges.items() if entry == expected
+            ]
+            if len(at_entry) == 1:
+                candidates = at_entry[0]
+            elif len(at_entry) > 1:
+                raise ValueError(f"ambiguous DWARF function at entry 0x{function_address:x}")
         if not candidates:
             raise ValueError(
                 f"no DWARF function matches {function_name!r} at 0x{function_address:x}"

@@ -121,6 +121,12 @@ def elf_min_vaddr(binary_path: Path) -> int:
             if base is not None:
                 return base
             return 0
+        from decbench.utils import binfmt
+
+        info = binfmt.detect(binary_path)
+        if info is not None and info.fmt == "macho":
+            base = binfmt.mach_o_image_base(binary_path)
+            return base if base is not None else 0
         with open(binary_path, "rb") as f:
             elf = ELFFile(f)
             vaddrs = [seg["p_vaddr"] for seg in elf.iter_segments() if seg["p_type"] == "PT_LOAD"]

@@ -33,48 +33,75 @@ from pathlib import Path
 from decbench.utils import binfmt
 from decbench.utils.langs import PREPROC_EXTS, SOURCE_EXTS, strip_source_ext
 
+DeclHint = tuple[str, int]
 
-def _dwarf_decl(binary_path: Path) -> dict[str, tuple[str, int]]:
-    """Map function name -> (decl_file basename, decl_line) from DWARF.
 
-    Attributes are read through ``DW_AT_specification``/``DW_AT_abstract_origin``
-    so a C++ out-of-line member definition, which carries none of them itself,
-    still resolves to its declaring file and line.
+def _dwarf_decl_maps(binary_path: Path) -> tuple[dict[str, DeclHint], dict[int, DeclHint]]:
+    """Return DWARF declaration hints keyed by name and concrete address.
 
-    Empty dict when DWARF is missing/unreadable (callers then search all
-    sibling sources without a line hint).
+    The name map preserves the historical API.  The address map is the
+    collision-safe C++ path: overloads and same-named methods can share a
+    ``DW_AT_name`` but cannot share a concrete ``DW_AT_low_pc`` within one
+    binary.
     """
-    out: dict[str, tuple[str, int]] = {}
+    by_name: dict[str, DeclHint] = {}
+    by_address: dict[int, DeclHint] = {}
     try:
-        from elftools.elf.elffile import ELFFile
+        dw = binfmt.dwarf_info(binary_path)
+        if dw is None:
+            native = binfmt.pdb_info(binary_path)
+            if native is not None:
+                from collections import Counter
+
+                names = Counter(f.name for f in native.functions)
+                for function in native.functions:
+                    if function.source_file:
+                        hint = (
+                            function.source_file.replace("\\", "/").rsplit("/", 1)[-1],
+                            function.source_line,
+                        )
+                        if names[function.name] == 1:
+                            by_name[function.name] = hint
+                        if native.at_address(function.address) is not None:
+                            by_address[function.address] = hint
+            return by_name, by_address
+        file_tables: dict[int, list] = {}
+        for cu in dw.iter_CUs():
+            for die in cu.iter_DIEs():
+                if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
+                    continue
+                name = binfmt.die_str_attr(die, "DW_AT_name")
+                if name is None:
+                    continue
+                fi, fi_owner = binfmt.die_attr_owner(die, "DW_AT_decl_file")
+                ln = binfmt.die_attr(die, "DW_AT_decl_line")
+                fname = None
+                if fi is not None:
+                    files = binfmt.cu_file_table(dw, fi_owner.cu, file_tables)
+                    if 0 <= fi.value < len(files):
+                        fname = files[fi.value]
+                line = int(ln.value) if ln is not None else 0
+                hint = (os.path.basename(fname) if fname else "", line)
+                by_name[name] = hint
+                by_address[int(die.attributes["DW_AT_low_pc"].value)] = hint
     except Exception:  # noqa: BLE001
-        return out
-    try:
-        with open(binary_path, "rb") as f:
-            elf = ELFFile(f)
-            if not elf.has_dwarf_info():
-                return out
-            dw = elf.get_dwarf_info()
-            file_tables: dict[int, list] = {}
-            for cu in dw.iter_CUs():
-                for die in cu.iter_DIEs():
-                    if die.tag != "DW_TAG_subprogram" or "DW_AT_low_pc" not in die.attributes:
-                        continue
-                    name = binfmt.die_str_attr(die, "DW_AT_name")
-                    if name is None:
-                        continue
-                    fi, fi_owner = binfmt.die_attr_owner(die, "DW_AT_decl_file")
-                    ln = binfmt.die_attr(die, "DW_AT_decl_line")
-                    fname = None
-                    if fi is not None:
-                        files = binfmt.cu_file_table(dw, fi_owner.cu, file_tables)
-                        if 0 <= fi.value < len(files):
-                            fname = files[fi.value]
-                    line = int(ln.value) if ln is not None else 0
-                    out[name] = (os.path.basename(fname) if fname else "", line)
-    except Exception:  # noqa: BLE001
-        return out
-    return out
+        return by_name, by_address
+    return by_name, by_address
+
+
+def _dwarf_decl(binary_path: Path) -> dict[str, DeclHint]:
+    """Map function name -> ``(decl_file basename, decl_line)`` from DWARF.
+
+    This is the backward-compatible name-keyed view.  New C++ call sites should
+    pass a function address to :func:`function_source_ex`, which uses the
+    collision-safe address map instead.
+    """
+    return _dwarf_decl_maps(binary_path)[0]
+
+
+def _dwarf_decl_by_address(binary_path: Path) -> dict[int, DeclHint]:
+    """Map concrete function address -> declaration hint from DWARF."""
+    return _dwarf_decl_maps(binary_path)[1]
 
 
 def _match_braces(text: str, open_idx: int) -> int | None:
@@ -170,6 +197,16 @@ def extract_from_text(text: str, func_name: str, decl_line: int = 0) -> str | No
     When ``decl_line`` (1-based) is given, prefer the candidate nearest it.
     Returns the signature + body, or ``None`` if no definition is found.
     """
+    from decbench.metrics.variable_features import function_definition_at_line, index_c_functions
+
+    definitions = index_c_functions(text)
+    if any("::" in key or key.startswith(("operator", "~")) for key in definitions):
+        if decl_line:
+            selected = function_definition_at_line(text, func_name, decl_line)
+            if selected is not None:
+                return selected
+        candidates = definitions.get(func_name, ())
+        return candidates[0] if len(candidates) == 1 else None
     name = re.escape(func_name)
     pat = re.compile(r"(?<!\w)(?:" + name + r"\s*|\(\s*" + name + r"\s*\)\s*)(\()")
     lines = text.splitlines(keepends=True)
@@ -203,7 +240,6 @@ def extract_from_text(text: str, func_name: str, decl_line: int = 0) -> str | No
                 continue
             j = body
         line_no = text.count("\n", 0, m.start())
-        sig_start = text.rfind("\n", 0, m.start())
         k = line_no
         while k > 0:
             prev = lines[k - 1].strip()
@@ -225,8 +261,16 @@ def extract_from_text(text: str, func_name: str, decl_line: int = 0) -> str | No
     return snippet or None
 
 
-def function_source_ex(binary_path: Path | None, func_name: str) -> tuple[str | None, str]:
-    """Best-effort source text for ``func_name`` plus a provenance/miss status.
+def function_source_ex(
+    binary_path: Path | None,
+    func_name: str,
+    func_address: int | None = None,
+) -> tuple[str | None, str]:
+    """Best-effort source text for one function plus a provenance/miss status.
+
+    ``func_address`` is optional for backward compatibility.  When supplied it
+    selects the DWARF declaration hint by concrete address, avoiding C++
+    overload/scope collisions in the historical name-keyed declaration map.
 
     Searches the sources kept next to the binary (the compile stage writes them
     into ``compiled/``), guided by DWARF when available: the original ``.c``/
@@ -236,17 +280,28 @@ def function_source_ex(binary_path: Path | None, func_name: str) -> tuple[str | 
 
     Returns ``(code, status)`` where ``status`` is ``""`` when ``code`` came from
     an original source, ``"preprocessed"`` when from a preprocessed unit, and one
-    of ``"binary_not_found"`` / ``"no_source_files"`` / ``"func_not_in_sources"``
-    / ``"extract_failed"`` when ``code`` is ``None``.
+    of ``"binary_not_found"`` / ``"no_source_files"`` / ``"func_not_in_sources"`` /
+    ``"extract_failed"`` when ``code`` is ``None``.
     """
+    # Report/evaluation layers may carry DecBench's canonical storage key
+    # instead of the semantic source name. Decode it here so existing callers
+    # automatically get address-aware C++ source recovery.
+    if func_address is None:
+        storage_match = re.fullmatch(r"(.+)@0x([0-9a-fA-F]+)", func_name)
+        if storage_match is not None:
+            func_name = storage_match.group(1)
+            func_address = int(storage_match.group(2), 16)
+
     if binary_path is None:
         return None, "binary_not_found"
     binary_path = Path(binary_path)
     if not binary_path.parent.is_dir():
         return None, "binary_not_found"
 
-    decl = _dwarf_decl(binary_path)
-    decl_file, decl_line = decl.get(func_name, ("", 0))
+    if func_address is not None:
+        decl_file, decl_line = _dwarf_decl_by_address(binary_path).get(func_address, ("", 0))
+    else:
+        decl_file, decl_line = _dwarf_decl(binary_path).get(func_name, ("", 0))
     decl_stem = os.path.splitext(decl_file)[0] if decl_file else ""
     search_dir = binary_path.parent
 
@@ -284,9 +339,10 @@ def function_source_ex(binary_path: Path | None, func_name: str) -> tuple[str | 
     return None, "extract_failed"
 
 
-def function_source(binary_path: Path, func_name: str) -> str | None:
-    """Best-effort source text for ``func_name`` (back-compat wrapper).
-
-    Thin wrapper over :func:`function_source_ex` that drops the status code.
-    """
-    return function_source_ex(binary_path, func_name)[0]
+def function_source(
+    binary_path: Path,
+    func_name: str,
+    func_address: int | None = None,
+) -> str | None:
+    """Best-effort source text for one function (back-compat wrapper)."""
+    return function_source_ex(binary_path, func_name, func_address)[0]
