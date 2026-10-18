@@ -10,6 +10,7 @@ import signal
 import subprocess
 import tempfile
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,8 @@ class RawFissionDecompiler(Decompiler):
     @staticmethod
     def _binary() -> str | None:
         value = os.environ.get("FISSION_BIN")
-        return value if value and Path(value).is_file() else shutil.which("fission_cli")
+        executable = value if value and Path(value).is_file() else shutil.which("fission_cli")
+        return str(Path(executable).resolve()) if executable else None
 
     def is_available(self) -> bool:
         return self._binary() is not None
@@ -59,12 +61,16 @@ class RawFissionDecompiler(Decompiler):
             return None
         variables = [VariableInfo.model_validate(v) for v in record.get("variables", [])]
         mappings = [LineMapping.model_validate(m) for m in record.get("line_mappings_nir", [])]
+        name_counts = Counter(variable.name for variable in variables)
         for variable in variables:
             variable.line_numbers = sorted(
                 {
                     m.line_number
                     for m in mappings
-                    if m.defined_variables is not None and variable.name in m.defined_variables
+                    if variable.name
+                    and name_counts[variable.name] == 1
+                    and m.defined_variables is not None
+                    and variable.name in m.defined_variables
                 }
             )
         return FunctionDecompilation(

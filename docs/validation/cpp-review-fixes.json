@@ -1,0 +1,147 @@
+{
+  "date": "2026-10-18",
+  "base": "cfcc485e964a9298d08714816cd4839809be3d6b",
+  "upstream_main_checked": "ae070b885b4e005ed37510a2c3445af6284dc2b9",
+  "submission": "local proposed follow-up to PR103; human review required before submission",
+  "new_tests_before": "10 failed",
+  "new_tests_after": "10 passed",
+  "focused_baseline": {
+    "passed": 156,
+    "skipped": 5
+  },
+  "focused_candidate": {
+    "passed": 166,
+    "skipped": 5
+  },
+  "full_repository": {
+    "baseline": "20 failed, 863 passed, 28 skipped, 24 errors",
+    "candidate": "20 failed, 873 passed, 28 skipped, 24 errors",
+    "new_failure_identities": [],
+    "same_failure_identities": [
+      "tests/test_byte_match_fixup.py::TestCompileWithFixup::test_undeclared_symbol_stubbed",
+      "tests/test_caching_dataset_subset.py::test_byte_match_caches_with_real_binary",
+      "tests/test_content.py::test_about_view_keeps_intro_and_outro_around_the_cards",
+      "tests/test_content.py::test_goal_card_parse_yields_three_cards",
+      "tests/test_content.py::test_goal_card_perfect_lines_match_the_metric_registry",
+      "tests/test_content.py::test_inline_html_passes_through_unescaped",
+      "tests/test_content.py::test_metric_viz_blocks_open_by_default_and_carry_a_visualization",
+      "tests/test_decompilers.py::TestSmokeDecompile::test_decompile_tiny_binary[angr]",
+      "tests/test_e2e_pipeline.py::TestFullPipelineIntegration::test_ged_pipeline",
+      "tests/test_evalkit.py::test_cli_export_smoke",
+      "tests/test_evalkit.py::test_cli_ingest_smoke",
+      "tests/test_evalkit.py::test_export_anon_assignment_deterministic",
+      "tests/test_evalkit.py::test_export_functions_json_matches_dwarf_truth",
+      "tests/test_evalkit.py::test_export_layout_and_zip",
+      "tests/test_evalkit.py::test_export_strict_vs_allow_unresolved",
+      "tests/test_evalkit.py::test_export_strip_verification",
+      "tests/test_evalkit.py::test_force_reingest_purges_slices_the_new_submission_dropped",
+      "tests/test_evalkit.py::test_ingest_drops_extra_and_unparseable_addresses",
+      "tests/test_evalkit.py::test_ingest_force_semantics",
+      "tests/test_evalkit.py::test_ingest_packaged_zip_happy_path",
+      "tests/test_evalkit.py::test_ingest_partial_submission_failed_functions",
+      "tests/test_evalkit.py::test_ingest_rejects_bad_dec_id",
+      "tests/test_evalkit.py::test_ingest_relabel_collision_keeps_larger_body",
+      "tests/test_evalkit.py::test_ingest_requires_sample_manifest",
+      "tests/test_evalkit.py::test_ingest_warns_when_the_tree_manifest_drifted_from_the_kit",
+      "tests/test_evalkit.py::test_package_address_not_in_public_list",
+      "tests/test_evalkit.py::test_package_duplicate_addresses_in_one_file",
+      "tests/test_evalkit.py::test_package_duplicate_function_names",
+      "tests/test_evalkit.py::test_package_happy_path",
+      "tests/test_evalkit.py::test_package_listed_c_file_missing",
+      "tests/test_evalkit.py::test_package_missing_results_json",
+      "tests/test_evalkit.py::test_package_non_identifier_function_name",
+      "tests/test_evalkit.py::test_package_out_flag_writes_elsewhere",
+      "tests/test_evalkit.py::test_package_partial_submission_warns_but_packages",
+      "tests/test_evalkit.py::test_package_tolerates_thumb_odd_addresses",
+      "tests/test_evalkit.py::test_package_unknown_binary",
+      "tests/test_evalkit.py::test_package_unparseable_results_json",
+      "tests/test_evalkit.py::test_verify_strip_rejects_an_unstripped_binary",
+      "tests/test_glaurung_decompilers.py::TestDockerInstall::test_docker_decompile_is_static_address_scoped",
+      "tests/test_glaurung_decompilers.py::TestDockerInstall::test_nonzero_exit_with_json_fails_closed",
+      "tests/test_manifold_backend.py::test_decompile_binary_maps_fun_names_to_addresses",
+      "tests/test_manifold_backend.py::test_decompile_binary_narrows_to_requested_addresses",
+      "tests/test_manifold_backend.py::test_docker_run_mounts_the_binary_and_reads_back_the_unit",
+      "tests/test_source_native_arch_evidence.py::test_pe_source_variables_receive_native_addresses"
+    ]
+  },
+  "pdb_reader_ast": {
+    "only_typed_error_class_and_explicit_raises_changed": true,
+    "explicit_parser_raise_sites": 55
+  },
+  "validation": {
+    "scoped_style": "scoped Black and Ruff passed",
+    "policy_mypy": "4 modules clean",
+    "shared_ruff": "one unchanged baseline SIM105 in type_match.py; shared files not globally lint-clean",
+    "real_codeview_fixture": "passed",
+    "diff_check": "passed",
+    "remote_ci": "not run for proposed follow-up; existing PR103 run 38410600522 action_required"
+  },
+  "population": {
+    "dataset_revision": "07dd95dbe6214b8a78fc1e4a55961ab515986489",
+    "sample_sha256": "f432c528e3071efa60fdaecc132aafa8c351e386bf7203d252e2875d6de02620",
+    "scope": "fresh evaluator replay of frozen producer outputs; producers not rerun",
+    "cells": 45,
+    "requested": 250,
+    "all_nonduration_reports_equal": true,
+    "excluded_fields": [
+      "tools.*.legacy_pdb_abi_diagnostic.computation_time_seconds"
+    ],
+    "totals": {
+      "fission": {
+        "source": {
+          "eligible": 26,
+          "perfect": 0,
+          "mean": 0.009615384615384616
+        },
+        "abi": {
+          "eligible": 26,
+          "perfect": 0,
+          "mean": 0.04807692307692308
+        }
+      },
+      "kuna": {
+        "source": {
+          "eligible": 26,
+          "perfect": 1,
+          "mean": 0.09615384615384616
+        },
+        "abi": {
+          "eligible": 26,
+          "perfect": 1,
+          "mean": 0.09615384615384616
+        }
+      }
+    }
+  },
+  "source_files": {
+    ".github/workflows/cpp-policy.yml": "e1115b6c373baec12e5eba4750281b4c9f49b5f4a45128e12cf84d083712219f",
+    "decbench/decompilers/raw/fission_raw.py": "c29097cf1b8c397d7c6ea328c1eeb510cf38ab3f018332ab4555438a5d08b93e",
+    "decbench/metrics/cpp_type_match.py": "e71b21c467ee2ae06b4864b276568436a2ec93f6422fcc8615911b504666f66b",
+    "decbench/metrics/cpp_types.py": "a70c866f4fd82bbe620e2de4961e21fa3a33bf1a592e02b8b048e6936d384fb6",
+    "decbench/metrics/type_match.py": "7b867508e2d839b2d792784b8c68a1de0df7bc2fdf6e7ee5eb12ca60b60efb9e",
+    "decbench/metrics/variable_match.py": "32e5839c3c16cf7af2d835200cf0aac3e301a8945cb354bde7c78518d8d1308b",
+    "decbench/models/decompilation.py": "2e01cb817a9c21b41e7890b4736c7f03521167cba8eef87686ad74a646479c83",
+    "decbench/utils/pdb_info.py": "e4df4798555320a343eb3d34085f347947e7208880fb234a902b3b4eb467c395",
+    "docs/cpp-type-policy-proposal.md": "7b0ee4b3a97b2c95d42027969e411d28e7603d98ca5a48e0103d30203186021b",
+    "tests/test_type_match_correspondence.py": "972ec91623b53425a791ea64835fecd87cd4dd904a04ae316af453400cd37ec8",
+    "tests/test_cpp_review_contracts.py": "5a5b3955e07c6d13f474896a06876b4ad17bbe86235b5dbbe16c63f99d798a38"
+  },
+  "frozen_inputs": {
+    "dataset_revision": "07dd95dbe6214b8a78fc1e4a55961ab515986489",
+    "sample_sha256": "f432c528e3071efa60fdaecc132aafa8c351e386bf7203d252e2875d6de02620",
+    "files_hashed": 572,
+    "producer_records_found": {
+      "fission": 250,
+      "kuna": 250
+    },
+    "fission_duplicate_or_empty_name_records": 0
+  },
+  "versions": {
+    "type_match_cache": "24",
+    "cpp_type_match_cache": "3",
+    "cpp_policy": "cpp-types-v2-proposal"
+  },
+  "official_score": false,
+  "producer_rerun": false,
+  "fission_performance_changes_included": false
+}

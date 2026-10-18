@@ -19,7 +19,10 @@ class LineMapping(BaseModel):
 
     defined_variables: list[str] | None = Field(
         default=None,
-        description="Optional occurrence scope: only these defined variables own these PCs",
+        description=(
+            "Optional occurrence scope: only variables with these nonempty, "
+            "function-unique display names own these PCs"
+        ),
     )
 
     @model_serializer(mode="wrap")

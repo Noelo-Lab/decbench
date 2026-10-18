@@ -84,16 +84,20 @@ _SIMPLE = {
 }
 
 
+class PdbFormatError(ValueError):
+    """A recognized unsupported or invalid native PDB/CodeView representation."""
+
+
 def _unpack(fmt: str, data: bytes, offset: int = 0):
     if offset < 0 or offset + struct.calcsize(fmt) > len(data):
-        raise ValueError("truncated PDB record")
+        raise PdbFormatError("truncated PDB record")
     return struct.unpack_from(fmt, data, offset)
 
 
 def _string(data: bytes, offset: int) -> tuple[str, int]:
     end = data.find(b"\0", offset)
     if not 0 <= offset <= end:
-        raise ValueError("unterminated PDB string")
+        raise PdbFormatError("unterminated PDB string")
     return data[offset:end].decode("utf-8", "replace"), end + 1
 
 
@@ -111,19 +115,19 @@ def _numeric(data: bytes, offset: int) -> tuple[int, int]:
         0x800A: "<Q",
     }.get(tag)
     if fmt is None:
-        raise ValueError(f"unsupported CodeView numeric leaf 0x{tag:x}")
+        raise PdbFormatError(f"unsupported CodeView numeric leaf 0x{tag:x}")
     return _unpack(fmt, data, offset + 2)[0], offset + 2 + struct.calcsize(fmt)
 
 
 def _records(data: bytes, start: int, end: int):
     if not 0 <= start <= end <= len(data):
-        raise ValueError("PDB record stream exceeds its extent")
+        raise PdbFormatError("PDB record stream exceeds its extent")
     offset = start
     while offset < end:
         length, kind = _unpack("<HH", data, offset)
         following = offset + 2 + length
         if length < 2 or following > end:
-            raise ValueError("invalid CodeView record length")
+            raise PdbFormatError("invalid CodeView record length")
         yield offset, kind, data[offset + 4 : following]
         offset = following
 
@@ -131,10 +135,10 @@ def _records(data: bytes, start: int, end: int):
 class _MSF:
     def __init__(self, path: Path):
         if path.stat().st_size > _MAX_SIZE:
-            raise ValueError("PDB exceeds the supported 512 MiB reader bound")
+            raise PdbFormatError("PDB exceeds the supported 512 MiB reader bound")
         self.data = path.read_bytes()
         if self.data[:32] != _MAGIC:
-            raise ValueError("not an MSF 7 PDB")
+            raise PdbFormatError("not an MSF 7 PDB")
         self.block_size, _free, count, directory_size, _unknown, directory_map = _unpack(
             "<6I", self.data, 32
         )
@@ -142,15 +146,15 @@ class _MSF:
             self.block_size not in {512, 1024, 2048, 4096}
             or len(self.data) != count * self.block_size
         ):
-            raise ValueError("invalid MSF block geometry")
+            raise PdbFormatError("invalid MSF block geometry")
         n = (directory_size + self.block_size - 1) // self.block_size
         if n > self.block_size // 4 or directory_size > len(self.data):
-            raise ValueError("unsupported MSF directory extent")
+            raise PdbFormatError("unsupported MSF directory extent")
         blocks = _unpack(f"<{n}I", self.data, directory_map * self.block_size)
         directory = self._join(blocks, directory_size)
         nstreams = _unpack("<I", directory)[0]
         if 4 + 4 * nstreams > len(directory):
-            raise ValueError("invalid MSF stream count")
+            raise PdbFormatError("invalid MSF stream count")
         sizes = _unpack(f"<{nstreams}I", directory, 4)
         self.streams = []
         self.named_streams: dict[str, bytes] = {}
@@ -160,7 +164,7 @@ class _MSF:
                 self.streams.append(None)
                 continue
             if size > len(self.data):
-                raise ValueError("invalid MSF stream size")
+                raise PdbFormatError("invalid MSF stream size")
             nblocks = (size + self.block_size - 1) // self.block_size
             blocks = _unpack(f"<{nblocks}I", directory, offset)
             offset += nblocks * 4
@@ -168,14 +172,14 @@ class _MSF:
 
     def _join(self, blocks, size):
         if any(b * self.block_size + self.block_size > len(self.data) for b in blocks):
-            raise ValueError("MSF block outside file")
+            raise PdbFormatError("MSF block outside file")
         return b"".join(self.data[b * self.block_size : (b + 1) * self.block_size] for b in blocks)[
             :size
         ]
 
     def stream(self, index: int) -> bytes:
         if not 0 <= index < len(self.streams) or self.streams[index] is None:
-            raise ValueError(f"missing PDB stream {index}")
+            raise PdbFormatError(f"missing PDB stream {index}")
         return self._join(*self.streams[index])
 
 
@@ -196,13 +200,13 @@ class _Types:
         if data:
             _version, header, first, last, size = _unpack("<5I", data)
             if header < 20 or first < 0x1000 or last < first:
-                raise ValueError("invalid PDB type header")
+                raise PdbFormatError("invalid PDB type header")
             for index, (_, kind, payload) in enumerate(
                 _records(data, header, header + size), first
             ):
                 self.records[index] = kind, payload
             if len(self.records) != last - first:
-                raise ValueError("PDB type index/record count mismatch")
+                raise PdbFormatError("PDB type index/record count mismatch")
 
     def resolve(self, index: int, depth: int = 0) -> PdbType | None:
         if depth > 32:
@@ -317,10 +321,10 @@ class _Types:
         if not index:
             return ()
         if index in seen or len(seen) > 32:
-            raise ValueError("cyclic CodeView field-list continuation")
+            raise PdbFormatError("cyclic CodeView field-list continuation")
         record = self.records.get(index)
         if record is None or record[0] != 0x1203:
-            raise ValueError("missing CodeView field list")
+            raise PdbFormatError("missing CodeView field list")
         data = record[1]
         offset = 0
         result = []
@@ -330,7 +334,7 @@ class _Types:
                 if not padding or data[offset : offset + padding] != bytes(
                     range(0xF0 + padding, 0xF0, -1)
                 ):
-                    raise ValueError("invalid CodeView field padding")
+                    raise PdbFormatError("invalid CodeView field padding")
                 offset += padding
                 continue
             kind = _unpack("<H", data, offset)[0]
@@ -403,16 +407,16 @@ class _Types:
                 name, offset = _string(data, offset)
                 result.append({"kind": "enumerator", "name": name, "value": value})
             else:
-                raise ValueError(f"unsupported CodeView field leaf 0x{kind:x}")
+                raise PdbFormatError(f"unsupported CodeView field leaf 0x{kind:x}")
             if len(result) > 16384:
-                raise ValueError("CodeView field list exceeds bound")
+                raise PdbFormatError("CodeView field list exceeds bound")
         return tuple(result)
 
     def full_record_index(self, index: int) -> int:
         """Resolve a CodeView forward by exact unique identity, with ambiguity abstention."""
         record = self.records.get(index)
         if record is None or record[0] not in {0x1504, 0x1505, 0x1519, 0x1506}:
-            raise ValueError("not a CodeView record type")
+            raise PdbFormatError("not a CodeView record type")
         kind, data = record
         _count, flags = _unpack("<HH", data)
         if not flags & 0x80:
@@ -438,7 +442,7 @@ class _Types:
             (kind, "unique", unique) if unique is not None else (kind, "name", name), []
         )
         if len(matches) != 1:
-            raise ValueError("ambiguous/incomplete CodeView forward record")
+            raise PdbFormatError("ambiguous/incomplete CodeView forward record")
         return matches[0]
 
     def record_layout(self, index: int) -> dict[str, Any]:
@@ -451,7 +455,7 @@ class _Types:
             name, offset = _string(data, offset)
             unique = _string(data, offset)[0] if flags & 0x200 else None
             if size < 0:
-                raise ValueError("negative CodeView object extent")
+                raise PdbFormatError("negative CodeView object extent")
             self._layout_cache[index] = {
                 "kind": "union" if kind == 0x1506 else "record",
                 "name": name,
@@ -526,7 +530,7 @@ def _source_files(dbi: bytes, offset: int, size: int, nmodules: int) -> list[tup
     p = dbi[offset : offset + size]
     count, _unused = _unpack("<HH", p)
     if count != nmodules:
-        raise ValueError("PDB module/source count mismatch")
+        raise PdbFormatError("PDB module/source count mismatch")
     counts = _unpack(f"<{count}H", p, 4 + count * 2)
     offsets = _unpack(f"<{sum(counts)}I", p, 4 + count * 4)
     names = 4 + count * 4 + sum(counts) * 4
@@ -552,7 +556,7 @@ def _named_stream(msf: _MSF, name: str) -> bytes:
         words = _unpack("<I", info, offset)[0]
         offset += 4
         if words * 32 > capacity + 31:
-            raise ValueError("invalid PDB named-stream bit vector")
+            raise PdbFormatError("invalid PDB named-stream bit vector")
         values = _unpack(f"<{words}I", info, offset)
         offset += words * 4
         if vector == 0:
@@ -563,7 +567,7 @@ def _named_stream(msf: _MSF, name: str) -> bytes:
                 if value & (1 << bit)
             ]
     if len(present) != count or any(v >= capacity for v in present):
-        raise ValueError("invalid PDB named-stream count")
+        raise PdbFormatError("invalid PDB named-stream count")
     found = []
     for _ in present:
         key, index = _unpack("<II", info, offset)
@@ -571,7 +575,7 @@ def _named_stream(msf: _MSF, name: str) -> bytes:
         if _string(strings, key)[0] == name:
             found.append(index)
     if len(found) != 1:
-        raise ValueError("missing or ambiguous PDB string table")
+        raise PdbFormatError("missing or ambiguous PDB string table")
     result = msf.stream(found[0])
     msf.named_streams[name] = result
     return result
@@ -582,13 +586,13 @@ def _module_lines(msf: _MSF, data: bytes, start: int, size: int, address):
     if not size:
         return []
     if not 0 <= start <= start + size <= len(data):
-        raise ValueError("PDB C13 extent outside module stream")
+        raise PdbFormatError("PDB C13 extent outside module stream")
     subsections = []
     offset = start
     while offset < start + size:
         kind, length = _unpack("<II", data, offset)
         if offset + 8 + length > start + size:
-            raise ValueError("PDB C13 subsection outside stream")
+            raise PdbFormatError("PDB C13 subsection outside stream")
         subsections.append((kind, data[offset + 8 : offset + 8 + length]))
         offset = (offset + 8 + length + 3) & ~3
     checksums = {}
@@ -599,7 +603,7 @@ def _module_lines(msf: _MSF, data: bytes, start: int, size: int, address):
         while pos < len(p):
             name, length, _kind = _unpack("<IBB", p, pos)
             if pos + 6 + length > len(p):
-                raise ValueError("truncated PDB file checksum")
+                raise PdbFormatError("truncated PDB file checksum")
             checksums[pos] = name
             pos = (pos + 6 + length + 3) & ~3
     if not checksums:
@@ -607,7 +611,7 @@ def _module_lines(msf: _MSF, data: bytes, start: int, size: int, address):
     strings = _named_stream(msf, "/names")
     signature, version, length = _unpack("<III", strings)
     if signature != 0xEFFEEFFE or version not in {1, 2} or 12 + length > len(strings):
-        raise ValueError("unsupported PDB string table")
+        raise PdbFormatError("unsupported PDB string table")
     strings = strings[12 : 12 + length]
     rows = []
     for kind, p in subsections:
@@ -619,14 +623,14 @@ def _module_lines(msf: _MSF, data: bytes, start: int, size: int, address):
         while pos < len(p):
             file_id, count, block_size = _unpack("<III", p, pos)
             if block_size < 12 + count * (12 if flags & 1 else 8) or pos + block_size > len(p):
-                raise ValueError("invalid PDB line block")
+                raise PdbFormatError("invalid PDB line block")
             if file_id not in checksums:
-                raise ValueError("PDB line block has no file checksum")
+                raise PdbFormatError("PDB line block has no file checksum")
             name = _string(strings, checksums[file_id])[0]
             for n in range(count):
                 pc, line = _unpack("<II", p, pos + 12 + n * 8)
                 if pc >= size:
-                    raise ValueError("PDB source line PC outside code contribution")
+                    raise PdbFormatError("PDB source line PC outside code contribution")
                 rows.append((begin + pc, name, line & 0xFFFFFF))
             pos += block_size
     return rows
@@ -643,7 +647,7 @@ def read_pdb(binary_path: Path, debug_path: Path | None = None) -> PdbInfo | Non
     if not codeviews:
         return None
     if len(codeviews) != 1:
-        raise ValueError("ambiguous PE CodeView identity")
+        raise PdbFormatError("ambiguous PE CodeView identity")
     cv = codeviews[0]
     path = (
         Path(debug_path)
@@ -658,27 +662,27 @@ def read_pdb(binary_path: Path, debug_path: Path | None = None) -> PdbInfo | Non
     _unpack("<16s", info, 12)
     guid = str(uuid.UUID(bytes_le=info[12:28]))
     if guid.lower() != str(cv.guid).lower() or age != cv.age:
-        raise ValueError("PE/PDB GUID or Age mismatch")
+        raise PdbFormatError("PE/PDB GUID or Age mismatch")
     dbi = msf.stream(3)
     machine = _unpack("<H", dbi, 58)[0]
     if _unpack("<I", dbi, 8)[0] != age or machine != int(binary.header.machine):
-        raise ValueError("PE/PDB DBI Age or architecture mismatch")
+        raise PdbFormatError("PE/PDB DBI Age or architecture mismatch")
     if machine not in {0x14C, 0x8664}:
-        raise ValueError("native PDB storage supports x86/x86-64 only")
+        raise PdbFormatError("native PDB storage supports x86/x86-64 only")
     sizes = _unpack("<5i", dbi, 24)
     optional, ec = _unpack("<2i", dbi, 48)
     if min(*sizes, optional, ec) < 0 or 64 + sum(sizes) + optional + ec > len(dbi):
-        raise ValueError("invalid PDB DBI substream bounds")
+        raise PdbFormatError("invalid PDB DBI substream bounds")
     mod_size, contrib, secmap, files_size, _typeserver = sizes
     debug_header = 64 + sum(sizes) + ec
     indices = _unpack(f"<{optional // 2}H", dbi, debug_header)
     if len(indices) < 6 or indices[5] == 0xFFFF:
-        raise ValueError("PDB has no section headers")
+        raise PdbFormatError("PDB has no section headers")
     if any(i != 0xFFFF and msf.stream(i) for i in indices[3:5]):
-        raise ValueError("OMAP address translation is not supported")
+        raise PdbFormatError("OMAP address translation is not supported")
     sections = msf.stream(indices[5])
     if len(sections) % 40 or len(sections) // 40 != len(binary.sections):
-        raise ValueError("PE/PDB section count mismatch")
+        raise PdbFormatError("PE/PDB section count mismatch")
     for n, section in enumerate(binary.sections):
         name, vsize, rva, raw_size, raw_pointer = _unpack("<8s4I", sections, n * 40)
         if (name.rstrip(b"\0").decode(errors="replace"), vsize, rva, raw_size, raw_pointer) != (
@@ -688,11 +692,11 @@ def read_pdb(binary_path: Path, debug_path: Path | None = None) -> PdbInfo | Non
             section.sizeof_raw_data,
             section.pointerto_raw_data,
         ):
-            raise ValueError("PE/PDB section mapping mismatch")
+            raise PdbFormatError("PE/PDB section mapping mismatch")
 
     def address(segment: int, offset: int, size: int) -> int:
         if not 1 <= segment <= len(binary.sections):
-            raise ValueError("CodeView section index outside image")
+            raise PdbFormatError("CodeView section index outside image")
         section = binary.sections[segment - 1]
         if (
             offset < 0
@@ -700,7 +704,7 @@ def read_pdb(binary_path: Path, debug_path: Path | None = None) -> PdbInfo | Non
             or offset + size > len(section.content)
             or not int(section.characteristics) & 0x20000000
         ):
-            raise ValueError(
+            raise PdbFormatError(
                 f"CodeView range outside executable section {segment}: {offset}+{size}"
             )
         return int(binary.imagebase) + section.virtual_address + offset
@@ -713,7 +717,7 @@ def read_pdb(binary_path: Path, debug_path: Path | None = None) -> PdbInfo | Non
         _obj, end = _string(dbi, end)
         cursor = (end + 3) & ~3
         if cursor > 64 + mod_size:
-            raise ValueError("PDB module record outside module substream")
+            raise PdbFormatError("PDB module record outside module substream")
         modules.append((module, stream, sym_size, c11, c13))
     files = _source_files(dbi, 64 + mod_size + contrib + secmap, files_size, len(modules))
     types = _Types(msf.stream(2))
@@ -724,7 +728,7 @@ def read_pdb(binary_path: Path, debug_path: Path | None = None) -> PdbInfo | Non
             continue
         data = msf.stream(stream)
         if _unpack("<I", data)[0] != 4:
-            raise ValueError("unsupported CodeView symbol stream version")
+            raise PdbFormatError("unsupported CodeView symbol stream version")
         lines = sorted(_module_lines(msf, data, sym_size + _c11, _c13, address))
         line_pcs = [row[0] for row in lines]
         current = None
@@ -754,10 +758,10 @@ def read_pdb(binary_path: Path, debug_path: Path | None = None) -> PdbInfo | Non
                 ) = _unpack("<8IH", p)
                 name, _ = _string(p, 35)
                 if parent or not position < end_offset < sym_size:
-                    raise ValueError("unsupported or invalid procedure scope")
+                    raise PdbFormatError("unsupported or invalid procedure scope")
                 begin = address(segment, offset, length)
                 if not 0 <= dbg_start <= dbg_end <= length:
-                    raise ValueError("invalid procedure debug bounds")
+                    raise PdbFormatError("invalid procedure debug bounds")
                 if kind in {0x1146, 0x1147}:
                     id_record = ids.records.get(signature)
                     signature = (
@@ -803,13 +807,13 @@ def read_pdb(binary_path: Path, debug_path: Path | None = None) -> PdbInfo | Non
             if kind == 0x1103:
                 block_end = _unpack("<I", p, 4)[0]
                 if not position < block_end <= end_offset:
-                    raise ValueError("invalid CodeView block scope")
+                    raise PdbFormatError("invalid CodeView block scope")
                 blocks.append(block_end)
                 code_size, code_offset, segment = _unpack("<IIH", p, 8)
                 if code_size:
                     code_start = address(segment, code_offset, code_size)
                     if not current.address <= code_start < code_start + code_size <= current.end:
-                        raise ValueError("CodeView block outside procedure")
+                        raise PdbFormatError("CodeView block outside procedure")
                     block_extents[block_end] = (code_start, code_start + code_size)
                 else:
                     block_extents[block_end] = (current.debug_start, current.debug_start)
@@ -921,17 +925,17 @@ def read_pdb(binary_path: Path, debug_path: Path | None = None) -> PdbInfo | Non
                         continue
                     gaps = []
                     if (len(p) - range_offset - 8) % 4:
-                        raise ValueError("invalid CodeView storage gaps")
+                        raise PdbFormatError("invalid CodeView storage gaps")
                     for pos in range(range_offset + 8, len(p), 4):
                         gap, size = _unpack("<HH", p, pos)
                         if gap + size > length:
-                            raise ValueError("CodeView gap outside storage range")
+                            raise PdbFormatError("CodeView gap outside storage range")
                         gaps.append((begin + gap, begin + gap + size))
                     spans = []
                     cursor = begin
                     for start, stop in sorted(gaps):
                         if start < cursor:
-                            raise ValueError("overlapping CodeView storage gaps")
+                            raise PdbFormatError("overlapping CodeView storage gaps")
                         if cursor < start:
                             spans.append((cursor, start))
                         cursor = stop
@@ -984,7 +988,7 @@ def reference_addresses(binary_path: Path, function: PdbFunction) -> dict[str, l
         None,
     )
     if region is None:
-        raise ValueError("PDB procedure is not file backed")
+        raise PdbFormatError("PDB procedure is not file backed")
     result = {v.identity: [] for v in function.variables}
     for instruction in decoder.disasm(region, function.address):
         for variable in function.variables:

@@ -48,7 +48,7 @@ class CppType:
 
 
 class UnsupportedType(ValueError):
-    """The ground truth cannot support a complete v1 type verdict."""
+    """The ground truth cannot support a complete policy verdict."""
 
 
 def parse_type(spelling: str, data_model: str) -> CppType:

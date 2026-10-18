@@ -31,7 +31,7 @@ jobs:
         env:
           DECBENCH_NO_CACHE: '1'
         run: |
-          python -m pytest --no-cov tests/test_cpp_type_graph.py \
+          python -m pytest --no-cov tests/test_cpp_type_graph.py tests/test_cpp_review_contracts.py \
             tests/test_cpp_support.py tests/test_cpp_identity_backends.py \
             tests/test_cpp_identity_deep_validation.py tests/test_cpp_identity_end_to_end.py \
             tests/test_cpp_identity_optimized_dwarf.py tests/test_cpp_identity_progress.py \
@@ -44,11 +44,11 @@ jobs:
           black --check decbench/metrics/cpp_type_graph.py decbench/metrics/cpp_recovered_types.py \
             decbench/metrics/cpp_types.py decbench/metrics/cpp_type_match.py \
             decbench/utils/pdb_info.py decbench/decompilers/raw/fission_raw.py \
-            tests/test_cpp_type_graph.py
+            tests/test_cpp_type_graph.py tests/test_cpp_review_contracts.py
           ruff check decbench/metrics/cpp_type_graph.py decbench/metrics/cpp_recovered_types.py \
             decbench/metrics/cpp_types.py decbench/metrics/cpp_type_match.py \
             decbench/utils/pdb_info.py decbench/decompilers/raw/fission_raw.py \
-            tests/test_cpp_type_graph.py
+            tests/test_cpp_type_graph.py tests/test_cpp_review_contracts.py
       - name: New policy type contracts
         run: |
           mypy --follow-imports=silent decbench/metrics/cpp_type_graph.py \

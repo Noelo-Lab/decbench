@@ -5,7 +5,7 @@ from __future__ import annotations
 import bisect
 import contextlib
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -693,8 +693,10 @@ def extract_decompiler_evidence(
 ) -> list[VariableEvidence]:
     evidence_prefix = backend if identity_prefix is None else identity_prefix
     mappings = getattr(function, "line_mappings", []) or []
+    recovered = getattr(function, "variables", []) or []
+    name_counts = Counter(variable.name for variable in recovered)
     variables: list[VariableEvidence] = []
-    for index, variable in enumerate(getattr(function, "variables", []) or []):
+    for index, variable in enumerate(recovered):
         if not variable.name and not include_unnamed:
             continue
         lines = {int(line) for line in getattr(variable, "line_numbers", [])}
@@ -706,7 +708,11 @@ def extract_decompiler_evidence(
                 if int(mapping.line_number) in lines
                 and (
                     getattr(mapping, "defined_variables", None) is None
-                    or variable.name in mapping.defined_variables
+                    or (
+                        bool(variable.name)
+                        and name_counts[variable.name] == 1
+                        and variable.name in mapping.defined_variables
+                    )
                 )
                 for address in mapping.addresses
             }

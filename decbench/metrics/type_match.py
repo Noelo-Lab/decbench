@@ -1078,7 +1078,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "23"
+    cache_version = "24"
 
     weight = 1.0
     lower_is_better = False

@@ -59,7 +59,10 @@ describe the pointer (`int* const`), not its pointee (`const int*`).
 2. Exclude optimized-out variables uniformly. An unsupported oracle type,
    partial/computed storage, inline identity, incomplete formal classification,
    or unavailable correspondence makes the **whole function** unmeasurable.
-   Never grade only its easy variables and call it perfect.
+   Never grade only its easy variables and call it perfect. Explicit
+   `UnsupportedType` and native `PdbFormatError` are oracle abstentions only
+   during oracle preparation. An unrelated parser/evaluator `ValueError` must
+   surface as an evaluation failure; recovery scoring runs outside that boundary.
 3. Reuse type-blind ABI argument, calibrated stack, and native address matching.
    PDB exposes no proven argument ordinals or backend stack origins; it therefore
    uses native addresses only. DWARF aggregate returns disable unproven
@@ -80,6 +83,11 @@ The two producer runs must share exactly the same oracle-eligible function set.
 These supported-subset results must not be extrapolated to all C++ or combined
 with the legacy C headline. Unmeasurable is not zero; missing recovery on an
 otherwise eligible function is zero.
+
+Virtual-base locators still compare native debug encodings. This can be stricter
+than binary-observable semantic equivalence across DWARF and CodeView; no
+cross-format normalization is claimed. Maintainers must resolve this policy
+question before official adoption.
 
 ## API
 
@@ -106,9 +114,11 @@ python scripts/evaluate_cpp_type_policy.py --binary original-with-debug \
 ```
 
 Optional `preprocessed_sources=[Path(...)]` supplies evaluator-only TU/source
-line correspondence. It must never be passed to the producer. No new runtime
-dependencies are introduced by this profile. It currently does not use disk
-score caches; its version is `cpp-types-v2-proposal`.
+line correspondence. It must never be passed to the producer. This branch adds
+`tree-sitter-cpp>=0.23,<0.24` as a normal runtime dependency for C++ definition
+extraction. The type profile itself adds no further runtime dependency. It does
+not use disk score caches; its policy version is `cpp-types-v2-proposal`, and
+its evaluator/cache revision is 3.
 
 For a fixed comparison, pass the same `requested_functions=[(name, address), ...]`
 to both producers' `compute_for_binary` calls. Missing entries become empty
@@ -121,7 +131,9 @@ immutable for that evaluation run.
 
 The raw `fission` backend replaces the previously non-runnable external entry.
 Set `FISSION_BIN`, optionally `FISSION_RESOURCE_ROOT` and
-`FISSION_WORKING_DIR`. It runs NIR, uses one load per requested image, sends only
+`FISSION_WORKING_DIR`. Resolve the executable (including a relative
+`FISSION_BIN` or PATH entry) to an absolute path before changing the child
+working directory. It runs NIR, uses one load per requested image, sends only
 entry addresses to `--addresses-file`, enforces timeouts, and forwards native
 variable `addresses` unchanged into `VariableInfo`.
 
@@ -138,12 +150,17 @@ versions continue to transport direct variable PCs with no invented line maps.
 contract. A supplied list scopes ownership: only those bindings can inherit
 that line's PCs. Even on a scoped row a direct variable PC list takes precedence.
 The adapter gives only those variables line occurrences; evaluation repeats the
-same scope check. Scoped rows outside the returned code are rejected. Native
-instruction validation proves membership, not the producer's semantic claim.
+same scope check. A scoped display name must be nonempty and unique among
+all variables in the function. Shadowed/duplicate names inherit no scoped PCs;
+direct per-variable addresses remain primary and legacy whole-line maps retain
+their historical contract. A future stable binding-ID transport would be needed
+to resolve those ambiguous names. Scoped rows outside the returned code are
+rejected. Native instruction validation proves membership, not the producer's
+semantic claim.
 
 The legacy metric now recognizes direct variable PCs as well as line PCs when
-choosing the native path (cache generation 23). Functions with neither retain
-their prior fallback behavior. Address validation remains mandatory at producer
+choosing the native path (cache generation 24, including ambiguous-scope
+rejection). Functions with neither retain their prior fallback behavior. Address validation remains mandatory at producer
 and final evaluator boundaries. PDB default scoring still abstains;
 `pdb_abi_diagnostic=True` remains a separate legacy diagnostic.
 

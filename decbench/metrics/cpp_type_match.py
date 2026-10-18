@@ -26,6 +26,7 @@ from decbench.models.decompilation import DecompilationResult, FunctionDecompila
 from decbench.models.metrics import MetricResult, MetricValue
 from decbench.utils import binfmt
 from decbench.utils.native_code import die_ranges, entry_address_candidates
+from decbench.utils.pdb_info import PdbFormatError
 
 
 class CppOracleContext:
@@ -66,7 +67,7 @@ class CppTypeMatchMetric(Metric):
     display_name = "C++ Types (proposal, supported subset)"
     lower_is_better = False
     perfect_value = 1.0
-    cache_version = "2"
+    cache_version = "3"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
@@ -287,15 +288,16 @@ class CppTypeMatchMetric(Metric):
                         for v in evidence
                     ):
                         raise UnsupportedType("oracle variable correspondence unavailable")
-                    value = self.compute_for_function(
-                        function, ground_truth_vars=gt, source_evidence=evidence
-                    )
-                    value.metadata.update(
-                        ground_truth_format="dwarf" if dwarf else "pdb", native_provenance=sanitizer
-                    )
-                    values[key] = value
-                except (UnsupportedType, ValueError) as exc:
+                except (UnsupportedType, PdbFormatError) as exc:
                     errors.append(f"{key}: {exc}")
+                    continue
+                value = self.compute_for_function(
+                    function, ground_truth_vars=gt, source_evidence=evidence
+                )
+                value.metadata.update(
+                    ground_truth_format="dwarf" if dwarf else "pdb", native_provenance=sanitizer
+                )
+                values[key] = value
         finally:
             context.close()
         result = MetricResult(
