@@ -25,11 +25,13 @@ jobs:
           git -C ../rust-joern checkout 9fd97f50885202596b125ebd2504e64910874bcb
           cargo build --release --manifest-path ../rust-joern/Cargo.toml
           python -m pip install ../rust-joern
+          test -f ../rust-joern/target/release/librust_joern.so
       - name: Development dependencies
         run: python -m pip install -e '.[dev]'
       - name: Evaluation and provenance regressions
         env:
           DECBENCH_NO_CACHE: '1'
+          RUST_JOERN_LIBRARY: ${{ github.workspace }}/../rust-joern/target/release/librust_joern.so
         run: |
           python -m pytest --no-cov tests/test_cpp_type_graph.py tests/test_cpp_review_contracts.py \
             tests/test_cpp_ged_identity.py tests/test_cpp_ged_compilation_units.py \
