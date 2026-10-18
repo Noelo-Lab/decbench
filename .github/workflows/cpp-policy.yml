@@ -35,6 +35,7 @@ jobs:
         run: |
           python -m pytest --no-cov tests/test_cpp_type_graph.py tests/test_cpp_review_contracts.py \
             tests/test_cpp_ged_identity.py tests/test_cpp_ged_compilation_units.py \
+            tests/test_recompiler_arch.py tests/test_byte_match_fixup_policy.py \
             tests/test_metric_function_identity.py \
             tests/test_cpp_support.py tests/test_cpp_identity_backends.py \
             tests/test_cpp_identity_deep_validation.py tests/test_cpp_identity_end_to_end.py \
@@ -49,6 +50,7 @@ jobs:
             scripts/evaluate_cpp_ged.py tests/test_cpp_ged_identity.py \
             decbench/utils/compilation_units.py tests/test_cpp_ged_compilation_units.py \
             decbench/metrics/variable_features.py \
+            decbench/utils/binfmt.py decbench/metrics/byte_match.py tests/test_recompiler_arch.py \
             decbench/metrics/cpp_type_graph.py decbench/metrics/cpp_recovered_types.py \
             decbench/metrics/cpp_types.py decbench/metrics/cpp_type_match.py \
             decbench/utils/pdb_info.py decbench/decompilers/raw/fission_raw.py \
@@ -57,6 +59,7 @@ jobs:
             scripts/evaluate_cpp_ged.py tests/test_cpp_ged_identity.py \
             decbench/utils/compilation_units.py tests/test_cpp_ged_compilation_units.py \
             decbench/metrics/variable_features.py \
+            decbench/utils/binfmt.py decbench/metrics/byte_match.py tests/test_recompiler_arch.py \
             decbench/metrics/cpp_type_graph.py decbench/metrics/cpp_recovered_types.py \
             decbench/metrics/cpp_types.py decbench/metrics/cpp_type_match.py \
             decbench/utils/pdb_info.py decbench/decompilers/raw/fission_raw.py \

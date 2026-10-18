@@ -60,15 +60,17 @@ class OriginSource:
     text: str
     origins: dict[int, SourceLocation]
     primary: str | None
+    filtered_paths: frozenset[str] = frozenset()
 
 
-def origin_source(text: str) -> OriginSource:
+def origin_source(text: str, *, retain_paths: frozenset[str] = frozenset()) -> OriginSource:
     lines: list[str] = []
     origins: dict[int, SourceLocation] = {}
     current = ""
     logical = 0
     system = True
     primary = None
+    filtered: set[str] = set()
     for physical, line in enumerate(text.splitlines(), 1):
         marker = _MARKER.match(line)
         if marker:
@@ -77,6 +79,8 @@ def origin_source(text: str) -> OriginSource:
             system = _is_system_header(current) or "3" in marker[3].split()
             if primary is None and not system and logical <= 1 and not current.endswith("/"):
                 primary = current
+            if system and current and not current.startswith("<") and current in retain_paths:
+                system = False
             lines.append("")
             continue
         if not system and current and logical > 0:
@@ -84,8 +88,10 @@ def origin_source(text: str) -> OriginSource:
             origins[physical] = SourceLocation(current, logical)
         else:
             lines.append("")
+            if current and logical > 0:
+                filtered.add(current)
         logical += 1
-    return OriginSource("\n".join(lines) + "\n", origins, primary)
+    return OriginSource("\n".join(lines) + "\n", origins, primary, frozenset(filtered))
 
 
 @dataclass
@@ -368,13 +374,27 @@ class SourceCfgIndex:
     )
     inputs: list[dict[str, Any]] = field(default_factory=list)
 
-    def add(self, text: str, filename: str) -> None:
+    def add(
+        self, text: str, filename: str, *, native_records: tuple[NativeSource, ...] = ()
+    ) -> None:
         """Index a preprocessed C++ TU with full physical/logical origin evidence."""
         source = origin_source(text)
+        retained = frozenset(
+            path
+            for path in source.filtered_paths
+            for record in native_records
+            if record.location is not None
+            and source_unit_matches(source.primary, record)
+            and compilation_path(path, record.compilation_directory) == record.location.path
+        )
+        if retained:
+            source = origin_source(text, retain_paths=retained)
         report: dict[str, Any] = {
             "input": filename,
             "unit": source.primary,
             "origin_paths": sorted({location.path for location in source.origins.values()}),
+            "filtered_origin_paths": sorted(source.filtered_paths),
+            "retained_origin_paths": sorted(retained),
         }
         definitions = function_definitions(source.text)
         for definition in definitions:
@@ -426,7 +446,16 @@ class SourceCfgIndex:
                     "missing_source_tu"
                     if not units
                     else (
-                        "missing_source_origin"
+                        (
+                            "filtered_source_origin"
+                            if any(
+                                compilation_path(path, record.compilation_directory)
+                                == record.location.path
+                                for row in units
+                                for path in row["filtered_origin_paths"]
+                            )
+                            else "missing_source_origin"
+                        )
                         if not any(
                             compilation_path(path, record.compilation_directory)
                             == record.location.path
@@ -445,6 +474,7 @@ class SourceCfgIndex:
                 evidence.update(
                     input=filename,
                     definition=definition.name,
+                    definition_sha256=hashlib.sha256(definition.code.encode("utf-8")).hexdigest(),
                     span=[definition.start_line, definition.end_line],
                     parser_scope="definition_only",
                 )

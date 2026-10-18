@@ -446,3 +446,132 @@ def test_cpp_ged_cli_smoke(tmp_path: Path) -> None:
     assert report["paired"] == report["metric"]["perfect_count"] == 1
     assert report["metric"]["metric_name"] == "cpp_ged_diagnostic"
     assert report["official_score"] is False
+
+
+def test_filtered_origins_are_distinct_from_absent_source() -> None:
+    text = '# 1 "/src/a.cpp"\n# 1 "/usr/include/target.hpp" 1 3\nint f(){return 1;}\n'
+    index = _index(text)
+    native = {16: [_native(16, "f", "/usr/include/target.hpp", 1)]}
+    joined = index.resolve(_result(("f", 16, "int f(){return 1;}")), native)
+    assert joined.evidence["f"]["status"] == "filtered_source_origin"
+    assert index.inputs[0]["filtered_origin_paths"] == ["/usr/include/target.hpp"]
+    assert index.inputs[0]["retained_origin_paths"] == []
+
+
+def test_native_origin_retention_is_exact_and_scoped_to_proven_unit(tmp_path: Path) -> None:
+    text = (
+        '# 1 "/src/a.cpp"\n# 1 "/usr/include/target.hpp" 1 3\nint f(){return 1;}\n'
+        '# 1 "/usr/include/unrequested.hpp" 1 3\nint other(){return 2;}\n'
+    )
+    path = tmp_path / "captured.ii"
+    path.write_text(text)
+    binary = tmp_path / "debug"
+    binary.write_bytes(b"synthetic debug")
+    result = _result(("f", 16, "int f(){return 1;}"))
+    result.binary_path = binary
+    row = _native(16, "f", "/usr/include/target.hpp", 1)
+    report = evaluate_cpp_ged(result, [path], native_index=NativeSourceIndex(binary, {16: [row]}))
+    assert report.paired == 1
+    assert report.source_inputs[0]["retained_origin_paths"] == ["/usr/include/target.hpp"]
+    assert report.source_inputs[0]["filtered_origin_paths"] == ["/usr/include/unrequested.hpp"]
+    wrong = _native(16, "f", "/usr/include/target.hpp", 1, "/other/a.cpp")
+    rejected = evaluate_cpp_ged(
+        result, [path], native_index=NativeSourceIndex(binary, {16: [wrong]})
+    )
+    assert rejected.source_eligible == 0
+    assert rejected.source_inputs[0]["retained_origin_paths"] == []
+    ambiguous = evaluate_cpp_ged(
+        result, [path], native_index=NativeSourceIndex(binary, {16: [row, row]})
+    )
+    assert ambiguous.source_eligible == 0
+    assert ambiguous.source_inputs[0]["retained_origin_paths"] == []
+
+
+def test_retention_requires_full_path_and_native_compilation_directory() -> None:
+    from dataclasses import replace
+
+    text = '# 1 "src/a.cpp"\n# 10 "include/h.hpp" 1 3\nint f(){return 1;}\n'
+    row = NativeSource(
+        16,
+        "f",
+        ("/build/src/a.cpp",),
+        SourceLocation("/build/include/h.hpp", 10),
+        "fixture",
+        compilation_directory="/build",
+    )
+    index = SourceCfgIndex()
+    index.add(text, "local.ii", native_records=(row,))
+    assert index.inputs[0]["retained_origin_paths"] == ["include/h.hpp"]
+    result = _result(("f", 16, "int f(){return 1;}"))
+    assert index.resolve(result, {16: [row]}).evidence["f"]["status"] == "matched"
+    index = SourceCfgIndex()
+    index.add(
+        text,
+        "local.ii",
+        native_records=(replace(row, location=SourceLocation("/other/h.hpp", 10)),),
+    )
+    assert index.inputs[0]["retained_origin_paths"] == []
+    synthetic = origin_source(
+        '# 1 "<built-in>"\nint fake(){return 0;}\n', retain_paths=frozenset({"<built-in>"})
+    )
+    assert not synthetic.origins
+
+
+def test_real_native_system_header_recovery(tmp_path: Path) -> None:
+    import shutil
+    import subprocess
+
+    from decbench.utils.cfg_identity import native_sources
+    from decbench.utils.function_identity import dwarf_function_identities
+
+    compiler = shutil.which("clang++")
+    if compiler is None:
+        pytest.skip("clang++ required")
+    include = tmp_path / "sysinclude"
+    include.mkdir()
+    header = include / "helper.hpp"
+    header.write_text(
+        "namespace n {\n__attribute__((noinline)) int helper(int x){if(x)return 3;return 4;}\n}\n"
+    )
+    source, binary, obj, preprocessed = (
+        tmp_path / n for n in ("unit.cpp", "unit", "unit.o", "unit.ii")
+    )
+    source.write_text("#include <helper.hpp>\nint main(){return n::helper(0);}\n")
+    flags = [compiler, "-O0", "-g", "-isystem", str(include)]
+    subprocess.run([*flags, "-c", str(source), "-o", str(obj)], check=True, capture_output=True)
+    subprocess.run([compiler, str(obj), "-o", str(binary)], check=True, capture_output=True)
+    if binary.read_bytes()[:4] != b"\x7fELF":
+        subprocess.run(["dsymutil", str(binary)], check=True, capture_output=True)
+    preprocessed.write_bytes(
+        subprocess.run([*flags, "-E", str(source)], check=True, capture_output=True).stdout
+    )
+    row = next(r for r in dwarf_function_identities(binary) if r.name == "helper")
+    native = native_sources(binary, {row.address})
+    result = _result(("helper", row.address, "int sub_10(int x){if(x)return 3;return 4;}"))
+    result.binary_path = binary
+    before = SourceCfgIndex()
+    before.add(preprocessed.read_text(), str(preprocessed))
+    assert before.resolve(result, native).evidence["helper"]["status"] == "filtered_source_origin"
+    report = evaluate_cpp_ged(result, [preprocessed], native_index=native)
+    assert report.source_eligible == report.paired == report.metric.perfect_count == 1
+    assert report.source_inputs[0]["retained_origin_paths"] == [str(header)]
+
+
+def test_retained_header_does_not_replace_primary_unit() -> None:
+    text = (
+        '# 1 "/usr/include/prelude.hpp" 3\nint f(){return 1;}\n'
+        '# 1 "/src/a.cpp"\nint g(){return 2;}\n'
+    )
+    source = origin_source(text, retain_paths=frozenset({"/usr/include/prelude.hpp"}))
+    assert source.primary == "/src/a.cpp"
+    assert source.origins[2] == SourceLocation("/usr/include/prelude.hpp", 1)
+
+
+def test_selected_source_definition_has_exact_body_digest() -> None:
+    import hashlib
+
+    body = "int f(){return 1;}"
+    index = _index('# 1 "/src/a.cpp"\n' + body + "\n")
+    row = _native(16, "f", "/src/a.cpp", 1)
+    evidence = index.resolve(_result(("f", 16, body)), {16: [row]}).evidence["f"]
+    assert evidence["definition_sha256"] == hashlib.sha256(body.encode()).hexdigest()

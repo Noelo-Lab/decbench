@@ -285,11 +285,20 @@ Assembly similarity after recompiling the decompiled C **the same way the
 source was compiled** — the toolchain and `-m*/-O*` flags matching the
 original binary's own format+arch (PE→MinGW, ARM→arm-none-eabi, and bare `gcc`
 only for an architecture the host builds natively — the cross triplet
-otherwise; flags read from the DWARF producer), via `decbench/utils/binfmt.py`.
+otherwise; bare `gcc` is selected only on Linux, and flags are read from the
+DWARF producer), via `decbench/utils/binfmt.py`.
 Returns a non-scoring result (an **abstention**, not a 0) if that toolchain
 isn't installed — don't fake a wrong-arch recompile. Works on ELF and PE.
 
-### The two fairness passes (`cache_version="7"`)
+The emitted relocatable object must match the original format family,
+architecture and bitness before byte extraction. Ordinary COFF objects map to
+the PE family. Unknown/incompatible objects abstain and are excluded from the
+binary aggregate, rather than scored as a failed decompilation. The selection
+and object-validation boundary uses byte-match cache generation **9**. This does
+not prove a matching C++ compiler version, standard library, exception model or
+ABI options; it is not a native MSVC/Clang/GCC C++ qualification policy.
+
+### The two fairness passes
 
 Raw decompiler output rarely recompiles as-is (pseudo-types like
 `undefined4`, illegal tokens like `GLIBC_2.2.5::stderr`), so naive
@@ -392,6 +401,15 @@ A binary-local native entry must have one concrete DWARF/PDB identity and a
 uniquely corresponding TU/file/line definition. Duplicate native entries (including
 ICF), duplicate source definitions and missing evidence abstain explicitly.
 No short-name, basename, largest-CFG or cross-TU fallback is used.
+
+When building a source index, a unique native request may retain its exact
+defining header even when preprocessor system-header filtering would drop it.
+Retention requires that header's complete logical path and a proven TU, and
+does not change the primary TU or retain unrelated headers. Source input
+evidence records `retained_origin_paths` and `filtered_origin_paths`; absent
+source and filtered source are distinct failures. Prebuilt indexes can opt into
+the same path with `SourceCfgIndex.add(..., native_records=...)`. No template
+instantiation or source rewriting is performed by retention.
 
 Producer records are parsed independently with the non-reducing Rust Joern
 `parse_code` API. One real definition, excluding prototypes, is associated with

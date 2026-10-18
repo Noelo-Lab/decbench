@@ -80,14 +80,8 @@ def evaluate_cpp_ged(
                     FunctionDecompilation(name=name, address=address, decompiled_code="")
                 )
         decompilation = working
-    if source_index is None:
-        source_index = SourceCfgIndex()
-        for path in preprocessed_sources or []:
-            if path.suffix != ".ii":
-                raise ValueError("C++ GED diagnostics require preprocessed .ii inputs")
-            data = path.read_bytes()
-            source_index.add(data.decode("utf-8", "replace"), str(path))
-            source_index.inputs[-1]["sha256"] = hashlib.sha256(data).hexdigest()
+    if any(path.suffix != ".ii" for path in preprocessed_sources or []):
+        raise ValueError("C++ GED diagnostics require preprocessed .ii inputs")
     if native_index is None:
         native_index = native_sources(
             decompilation.binary_path,
@@ -96,6 +90,13 @@ def evaluate_cpp_ged(
     if compilation_database is not None:
         native_index = native_index.with_compilation_database(compilation_database)
     native_index.validate(decompilation.binary_path)
+    if source_index is None:
+        source_index = SourceCfgIndex()
+        records = tuple(rows[0] for rows in native_index.values() if len(rows) == 1)
+        for path in preprocessed_sources or []:
+            data = path.read_bytes()
+            source_index.add(data.decode("utf-8", "replace"), str(path), native_records=records)
+            source_index.inputs[-1]["sha256"] = hashlib.sha256(data).hexdigest()
     source = source_index.resolve(decompilation, native_index)
     decompiled = decompiled_cfgs(decompilation)
     metric = MetricResult(

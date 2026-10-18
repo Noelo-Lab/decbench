@@ -140,13 +140,15 @@ def recompiler_for(info: BinInfo, path: Path | None = None) -> str | None:
     Returns the compiler executable name, or None for arch/format we can't
     recompile to. Callers should also check :func:`tool_available`.
 
-    Bare ``gcc`` is the answer only where the host builds that architecture
-    natively. Elsewhere it is the cross triplet, so a corpus built for a
+    Bare ``gcc`` is selected only on a Linux host with a native architecture.
+    Elsewhere it is the cross triplet, so a corpus built for a
     different architecture than the host abstains (no toolchain) instead of
     recompiling every function with the host's own ``-march``.
     """
     if info.fmt == "elf":
-        if info.arch in _HOST_NATIVE_ARCHES.get(platform.machine().lower(), ()):
+        if platform.system() == "Linux" and info.arch in _HOST_NATIVE_ARCHES.get(
+            platform.machine().lower(), ()
+        ):
             return "gcc"
         return _CROSS_ELF_GCC.get(info.arch)
     if info.fmt == "pe":
@@ -906,6 +908,45 @@ def _elf_function_bytes(path: Path, func_name: str, address: int) -> bytes | Non
     except Exception:
         pass
     return None
+
+
+def object_info(obj_path: Path) -> BinInfo | None:
+    """Identify a compiled ELF/Mach-O or ordinary COFF object before byte comparison.
+
+    COFF objects use the PE target family but have no DOS/PE image wrapper.
+    Compiler executable names alone do not prove the format or architecture.
+    """
+    info = detect(obj_path)
+    if info is not None:
+        with obj_path.open("rb") as stream:
+            header = stream.read(20)
+        if info.fmt == "elf":
+            if len(header) < 20 or header[4] not in {1, 2} or header[5] not in {1, 2}:
+                return None
+            endian = "<" if header[5] == 1 else ">"
+            if struct.unpack(endian + "H", header[16:18])[0] != 1:
+                return None
+            info = BinInfo("elf", info.arch, 32 if header[4] == 1 else 64)
+        elif info.fmt == "macho":
+            endian, _bits = _MACH_MAGICS[header[:4]]
+            if len(header) < 16 or struct.unpack(endian + "I", header[12:16])[0] != 1:
+                return None
+        else:
+            return None
+        return info
+    with obj_path.open("rb") as stream:
+        header = stream.read(20)
+        if len(header) < 20:
+            return None
+        machine, sections, _time, _symbols, _count, optional_size, _flags = struct.unpack(
+            "<HHIIIHH", header
+        )
+        arch = _PE_MACHINES.get(machine)
+        if arch is None or not sections or optional_size:
+            return None
+        if len(stream.read(sections * 40)) != sections * 40:
+            return None
+    return BinInfo("pe", arch, 64 if arch in {"x86-64", "aarch64"} else 32)
 
 
 def object_text_bytes(obj_path: Path, func_name: str) -> bytes | None:

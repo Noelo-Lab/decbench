@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from networkx import DiGraph
 
     from decbench.models.decompilation import DecompilationResult, FunctionDecompilation
+    from decbench.utils.binfmt import BinInfo
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +233,7 @@ class ByteMatchMetric(Metric):
     requires_source_cfg = False
     requires_decompiled_cfg = False
 
-    cache_version = "8"
+    cache_version = "9"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
@@ -306,11 +307,12 @@ class ByteMatchMetric(Metric):
             recompiler,
             list(flags),
             sorted(context_decls.items()) if context_decls else None,
+            (info.fmt, info.arch, info.bits),
         ]
         return self._cached_value(
             key_inputs,
             lambda: self._compute_uncached(
-                decompiled, original_bytes, recompiler, flags, arch_mode, context_decls
+                decompiled, original_bytes, recompiler, flags, arch_mode, context_decls, info
             ),
         )
 
@@ -322,6 +324,7 @@ class ByteMatchMetric(Metric):
         flags: list[str],
         arch_mode: tuple | None,
         context_decls: dict[str, str] | None = None,
+        expected_info: BinInfo | None = None,
     ) -> MetricValue:
         import shutil
 
@@ -354,6 +357,18 @@ class ByteMatchMetric(Metric):
             "fixup_injected": len(fix.injected),
         }
         try:
+            if expected_info is not None:
+                actual_info = binfmt.object_info(obj_path)
+                if actual_info != expected_info:
+                    return MetricValue(
+                        value=0.0,
+                        metadata={
+                            "skipped": True,
+                            "reason": "compiler emitted an unproven or incompatible target",
+                            "expected_target": vars(expected_info),
+                            "emitted_target": vars(actual_info) if actual_info else None,
+                        },
+                    )
             recompiled_bytes = binfmt.object_text_bytes(obj_path, decompiled.name)
 
             if recompiled_bytes is None:
@@ -471,6 +486,9 @@ class ByteMatchMetric(Metric):
                     original_binary_path=original_binary_path,
                     context_decls=context_decls,
                 )
+                if value.metadata.get("skipped"):
+                    errors.append(f"{func_name}: abstained: {value.metadata.get('reason')}")
+                    continue
                 function_results[func_name] = value
 
             except Exception as e:
