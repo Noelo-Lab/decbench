@@ -81,7 +81,8 @@ class RecoveredTypeContext:
         except UnsupportedType:
             pass
         match = re.fullmatch(
-            r"(const |volatile )?(?:(?:struct|union) )?([\w:]+)\s*([*&]*)", spelling.strip()
+            r"(const |volatile )?(?:(?:struct|union) )?([\w:]+)((?:\s*(?:&&|[&*]))*)",
+            spelling.strip(),
         )
         if match is None:
             raise UnsupportedType("unsupported recovered object spelling")
@@ -97,12 +98,16 @@ class RecoveredTypeContext:
                 )
                 self.alignments[qkey] = self.alignments[base]
             base = qkey
-        for i, char in enumerate(suffix):
+        for i, token in enumerate(re.findall(r"&&|[&*]", suffix)):
+            if self.builder.nodes[base].kind in {"lref", "rref"}:
+                raise UnsupportedType("invalid nested reference")
             key = spelling + f"/indirection{i}"
             size = 4 if self.data_model == "ILP32" else 8
             if self.builder.reserve(key):
                 self.builder.nodes[key] = TypeNode(
-                    "pointer" if char == "*" else "lref", size, edges=(TypeEdge("element", base),)
+                    {"*": "pointer", "&": "lref", "&&": "rref"}[token],
+                    size,
+                    edges=(TypeEdge("element", base),),
                 )
                 self.alignments[key] = size
             base = key

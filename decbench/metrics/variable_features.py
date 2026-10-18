@@ -32,6 +32,8 @@ def _parse_source(source: bytes):
     """Retain C behavior; use C++ when its declarators require that grammar."""
     c_tree = _parser().parse(source)
     cpp_tree = Parser(_CPP_LANGUAGE).parse(source)
+    if c_tree.root_node.has_error and not cpp_tree.root_node.has_error:
+        return cpp_tree
     if any(
         node.type in {"namespace_definition", "class_specifier", "template_declaration"}
         and not node.has_error

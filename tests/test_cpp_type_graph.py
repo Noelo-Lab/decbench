@@ -531,3 +531,132 @@ def test_real_oracle_population_does_not_depend_on_missing_recovery(tmp_path: Pa
         assert not excluded.function_results
         assert any("DW_TAG_subroutine_type" in e for e in excluded.errors)
     assert missing.functions == {}
+
+
+@pytest.mark.parametrize("data_model", ["LP64", "LLP64"])
+@pytest.mark.parametrize(
+    "suffix,kinds",
+    [
+        ("&&", ["rref", "record"]),
+        ("&", ["lref", "record"]),
+        ("*&&", ["rref", "pointer", "record"]),
+        (" * &", ["lref", "pointer", "record"]),
+    ],
+)
+def test_nominal_reference_suffixes_preserve_indirection_tokens(
+    data_model: str, suffix: str, kinds: list[str]
+) -> None:
+    context = RecoveredTypeContext("namespace demo { struct Object { int value; }; }", data_model)
+    graph = context.graph("demo::Object" + suffix)
+    root = graph.root
+    observed = []
+    while True:
+        node = graph.nodes[root]
+        observed.append(node.kind)
+        if node.kind == "record":
+            break
+        assert node.size == (4 if data_model == "ILP32" else 8)
+        root = node.edges[0].target
+    assert observed == kinds
+    if suffix == "&&":
+        pointer = context.graph("demo::Object*")
+        lref = context.graph("demo::Object&")
+        assert graph != pointer and graph != lref
+        assert graph.project("abi") == pointer.project("abi") == lref.project("abi")
+
+
+@pytest.mark.parametrize("suffix", ["&&&", "&*", "&&*", "& &", "&&&&"])
+def test_invalid_nominal_nested_references_abstain(suffix: str) -> None:
+    with pytest.raises(UnsupportedType):
+        RecoveredTypeContext("struct Object { int value; };", "LP64").graph("Object" + suffix)
+
+
+def test_ilp32_record_layout_still_requires_explicit_evidence() -> None:
+    with pytest.raises(UnsupportedType, match="requires explicit graph"):
+        RecoveredTypeContext("struct Object { int value; };", "ILP32").graph("Object&&")
+
+
+@pytest.mark.skipif(shutil.which("clang++") is None, reason="clang++ needed")
+def test_recovered_rvalue_reference_matches_real_dwarf_graph(tmp_path: Path) -> None:
+    source = tmp_path / "reference.cpp"
+    code = "namespace demo { struct Object { int value; }; }"
+    source.write_text(
+        code + "\nint consume(demo::Object&& x){return x.value;}\n"
+        "int main(){return consume(demo::Object{1});}\n"
+    )
+    obj, binary = tmp_path / "reference.o", tmp_path / "reference"
+    subprocess.run(
+        ["clang++", "-g", "-O0", "-c", str(source), "-o", str(obj)], check=True, capture_output=True
+    )
+    subprocess.run(["clang++", str(obj), "-o", str(binary)], check=True, capture_output=True)
+    if binary.read_bytes()[:4] != b"\x7fELF":
+        subprocess.run(["dsymutil", str(binary)], check=True, capture_output=True)
+    dwarf = binfmt.dwarf_info(binary)
+    assert dwarf is not None
+    param = next(
+        d
+        for cu in dwarf.iter_CUs()
+        for d in cu.iter_DIEs()
+        if d.tag == "DW_TAG_formal_parameter" and binfmt.die_str_attr(d, "DW_AT_name") == "x"
+    )
+    native = dwarf_graph(param, "LP64")
+    recovered = RecoveredTypeContext(code, "LP64").graph("demo::Object&&")
+    assert native.nodes[native.root].kind == "rref"
+    assert recovered == native
+    assert recovered.project("abi") == native.project("abi")
+
+
+@pytest.mark.skipif(
+    shutil.which("clang-cl") is None or shutil.which("lld-link") is None,
+    reason="clang-cl/lld-link needed",
+)
+def test_recovered_rvalue_reference_matches_real_pdb_graph(tmp_path: Path) -> None:
+    from decbench.utils.pdb_info import read_pdb
+
+    source = tmp_path / "reference.cpp"
+    code = "namespace demo { struct Object { int value; }; }"
+    source.write_text(
+        code + "\nint consume(demo::Object&& x){return x.value;}\n"
+        'extern "C" int entry(){return consume(demo::Object{1});}\n'
+    )
+    obj, binary, pdb_path = (
+        tmp_path / "reference.obj",
+        tmp_path / "reference.exe",
+        tmp_path / "reference.pdb",
+    )
+    subprocess.run(
+        [
+            "clang-cl",
+            "--target=x86_64-pc-windows-msvc",
+            "/c",
+            "/Z7",
+            "/Od",
+            "/GS-",
+            str(source),
+            f"/Fo{obj}",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "lld-link",
+            str(obj),
+            "/entry:entry",
+            "/subsystem:console",
+            "/nodefaultlib",
+            "/debug:full",
+            f"/pdb:{pdb_path}",
+            f"/out:{binary}",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    pdb = read_pdb(binary)
+    assert pdb is not None and pdb.types is not None
+    variable = next(v for f in pdb.functions for v in f.variables if v.name == "x")
+    native = pdb_graph(pdb.types, variable.type_index, "LLP64")
+    recovered = RecoveredTypeContext(code, "LLP64").graph("demo::Object&&")
+    assert native.nodes[native.root].kind == "rref"
+    assert recovered == native
+    assert recovered.project("abi") == native.project("abi")

@@ -114,7 +114,10 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="17"`, bumped for agent-reported line-address support.
+Current `cache_version="25"`. The latest bump covers the shared source/variable
+parser choosing an error-free C++ AST when the C AST rejects valid reference
+declarators. Existing valid C inputs retain their C grammar. Earlier generations
+added agent-reported line addresses and native provenance validation.
 The per-function key covers source and
 decompiler address evidence, argument/stack anchors, recovered types, source
 selection diagnostics, and the matching thresholds.
@@ -234,6 +237,21 @@ scoring-policy changes and must bump `cache_version`.
   decompiler renders it as one. Without it every reference-typed ground-truth
   variable was `void` and unmatchable for all decompilers (17.5% of leveldb's).
   C has no reference DIEs, so this rule cannot move a C result.
+
+### Experimental C++ object/reference proposal
+
+The opt-in `CppTypeMatchMetric` remains separate from default `type_match` and
+Union. Its cache generation is **4**. After filtering to the requested population,
+multiple producer records at one native address are rejected before oracle
+preparation or scoring; records outside the plan cannot expand the denominator.
+Missing requested output remains empty recovery rather than an oracle exclusion.
+
+Its source view distinguishes `T&`, `T&&` and `T*`. Nominal object spellings are
+tokenized with `&&` as one reference layer; invalid nested references are rejected
+rather than interpreted as multiple ABI pointers. ABI projection maps one reference
+layer to one pointer layer, preserving the remaining pointee structure. Recovered
+object layout still requires the existing complete LP64/LLP64 evidence; these fixes
+do not qualify new target ABIs, templates, lifetime or exception semantics.
 
 ### Argument positions must be ABI positions
 

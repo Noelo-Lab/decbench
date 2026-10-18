@@ -224,3 +224,74 @@ def test_relative_path_lookup_is_also_frozen_before_child_cwd(
     monkeypatch.delenv("FISSION_BIN", raising=False)
     monkeypatch.setenv("PATH", "bin")
     assert RawFissionDecompiler._binary() == str(executable.resolve())
+
+
+@pytest.mark.parametrize("with_plan", [False, True])
+def test_cpp_type_population_rejects_duplicate_producer_entries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, with_plan: bool
+) -> None:
+    from decbench.models.metrics import MetricValue
+
+    metric, result, oracle, _closed = _evaluation(monkeypatch, tmp_path)
+    result.add_function(
+        FunctionDecompilation(
+            name="alias", address=0x1000, decompiled_code="int alias(){return 1;}"
+        )
+    )
+    monkeypatch.setattr(metric, "compute_for_function", lambda *a, **kw: MetricValue(value=1.0))
+    kwargs: dict[str, Any] = {"oracle_context": oracle}
+    if with_plan:
+        kwargs["requested_functions"] = [("f", 0x1000)]
+    with pytest.raises(ValueError, match="ambiguous producer records at one requested address"):
+        metric.compute_for_binary(result, **kwargs)
+    assert list(result.functions) == ["f", "alias"]
+
+
+def test_cpp_type_population_filters_extras_and_retains_empty_recovery(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from decbench.models.metrics import MetricValue
+
+    metric, result, oracle, _closed = _evaluation(monkeypatch, tmp_path)
+    for name in ["extra", "extra_alias"]:
+        result.add_function(
+            FunctionDecompilation(
+                name=name, address=0x2000, decompiled_code="int extra(){return 0;}"
+            )
+        )
+    monkeypatch.setattr(
+        metric,
+        "compute_for_function",
+        lambda f, **kw: MetricValue(value=float(bool(f.decompiled_code))),
+    )
+    scored = metric.compute_for_binary(
+        result, oracle_context=oracle, requested_functions=[("f", 0x1000), ("missing", 0x3000)]
+    )
+    assert set(scored.function_results) == {"f", "missing"}
+    assert scored.function_results["missing"].value == 0.0
+    assert len(result.functions) == 3
+
+
+@pytest.mark.parametrize("suffix", ["&", "&&"])
+def test_valid_cpp_reference_declarator_selects_error_free_ast(suffix: str) -> None:
+    from decbench.metrics.variable_features import (
+        _CPP_LANGUAGE,
+        _parse_source,
+        function_parameters,
+        variable_occurrence_lines,
+    )
+
+    code = f"int f(int{suffix} x) {{\n return x;\n}}\n"
+    tree = _parse_source(code.encode())
+    assert not tree.root_node.has_error
+    assert tree.language == _CPP_LANGUAGE
+    assert function_parameters(code, "f") == f"int{suffix} x"
+    assert variable_occurrence_lines(code, "f", ["x"]) == {"x": (1, 2)}
+
+
+def test_valid_c_ast_keeps_c_grammar() -> None:
+    from decbench.metrics.variable_features import _C_LANGUAGE, _parse_source
+
+    tree = _parse_source(b"int f(int *restrict p) { return *p; }")
+    assert not tree.root_node.has_error
+    assert tree.language == _C_LANGUAGE

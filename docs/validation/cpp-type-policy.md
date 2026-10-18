@@ -109,3 +109,49 @@ The code is based on DecBench main `14e14b87429043aa06f64e067847ac0a925e41a6`
 and includes the still-open #91 prerequisites. Submit as a dependent draft and
 remove the prerequisite diff once #91 lands. Human review is required by DecBench
 AGENTS.md before submission; no leaderboard/site publication is requested.
+
+## Correctness review follow-up (base 9f50ebf)
+
+Three review findings are fixed locally and remain subject to submission review:
+
+* The C++ type evaluator rejects multiple producer records at one native address
+  after requested-address filtering and before oracle preparation. Missing output
+  stays empty recovery; extra records outside the plan do not expand the population.
+* The shared parser selects an error-free C++ AST when C parsing fails, including
+  ordinary `int&`/`int&&` parameter declarations without special function names.
+  Valid C inputs retain their C grammar.
+* Nominal object indirections tokenize `&&`, `&` and `*`. An object rvalue reference
+  has one `rref` layer and one pointer layer in ABI projection. Invalid nested
+  references abstain; ILP32 object-layout requirements are unchanged.
+
+C++ type cache generation is 4; the shared-parser change bumps legacy type-match
+cache generation from 24 to 25. No default C++ metric or policy adoption is added.
+
+Pre-fix reproduction: 14 failed / 6 passed. Current focused workflow locally:
+268 passed / 5 platform skips, with scoped Black/Ruff and C++ owner mypy clean.
+Full baseline: 927 passed / 19 failed / 28 skipped / 24 errors. Candidate:
+949 passed / 19 failed / 28 skipped / 24 errors. All 43 existing failure/error
+identities are unchanged. Real DWARF and clang-cl/PDB fixtures compare recovered
+rvalue-reference object graphs in source and ABI views without running them;
+these graph fixtures do not qualify the whole native MSVC evaluation pipeline.
+
+Fresh type-policy evaluation of all frozen 250 requests across 45 cells completed
+for both baseline and candidate. Eligibility stays 26/250 for both tools/views;
+source/ABI perfect remains Fission 0/26 and frozen Kuna 1.808 1/26. Every
+function result and exclusion list is identical. This is evaluator regression
+evidence, not a new producer run, GED measurement or ranking update.
+
+The local replay harness prepares native debug readers, source indexes and
+oracle rows once per immutable image process, independently for baseline and
+candidate. Metric caches are disabled and metric results are computed fresh.
+An initial unshared attempt exceeded 300 seconds on a large image; it is retained
+as incomplete evidence. Nineteen completed cell executions agree with their
+unshared controls after excluding only timing/preparation metadata. The final
+45-cell replay has no failed or timed-out cell. Complete patch, commands, input
+hashes and reports are retained in the Fission workspace under
+`benchmark/artifacts/cpp-review-correctness/2026-10-18/`.
+
+PR #91 is still open at this review snapshot. Prerequisite removal/rebase and
+exact submitted-head upstream CI remain merge gates. The prior head's green fork
+run is not evidence for this unsubmitted delta. Virtual-base cross-format policy
+and a future malformed-PDB fuzz/property gate remain separate follow-up work.

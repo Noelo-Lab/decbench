@@ -67,7 +67,7 @@ class CppTypeMatchMetric(Metric):
     display_name = "C++ Types (proposal, supported subset)"
     lower_is_better = False
     perfect_value = 1.0
-    cache_version = "3"
+    cache_version = "4"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
@@ -220,8 +220,11 @@ class CppTypeMatchMetric(Metric):
             }
         # Evaluation plans own the population. A missing producer result is an
         # empty recovery at the requested entry, not a new oracle exclusion.
-        returned = {f.address for f in working.functions.values()}
-        for name, address in kwargs.get("requested_functions", []):
+        producer_addresses = [f.address for f in working.functions.values()]
+        if len(producer_addresses) != len(set(producer_addresses)):
+            raise ValueError("ambiguous producer records at one requested address")
+        returned = set(producer_addresses)
+        for name, address in requested or []:
             if address not in returned:
                 working.add_function(
                     FunctionDecompilation(
