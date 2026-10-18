@@ -337,3 +337,72 @@ def variable_occurrence_lines(
         occurrences[name].add(bisect_right(line_starts, node.start_byte))
 
     return {name: tuple(sorted(lines)) for name, lines in sorted(occurrences.items())}
+
+
+@dataclass(frozen=True)
+class FunctionDefinition:
+    """One syntactic definition; display-name collisions retain separate rows."""
+
+    name: str
+    leaf: str
+    code: str
+    start_line: int
+    end_line: int
+    has_error: bool
+    is_template: bool
+
+
+def function_definitions(code: str) -> tuple[FunctionDefinition, ...]:
+    """Retain source spans for exact native-origin joins, without name reduction."""
+    source = code.encode("utf-8", "replace")
+    parser = Parser(_CPP_LANGUAGE)
+    tree = parser.parse(source)
+    line_breaks = [index for index, byte in enumerate(source) if byte == 10]
+    definitions = []
+    for node in _definition_nodes(tree.root_node):
+        if node.type != "function_definition":
+            continue
+        parent = node.parent
+        template = False
+        scope_error = False
+        while parent is not None:
+            template |= parent.type == "template_declaration"
+            if parent.type in {"namespace_definition", "class_specifier", "struct_specifier"}:
+                name = parent.child_by_field_name("name")
+                body = parent.child_by_field_name("body")
+                scope_error |= name is not None and name.has_error
+                end = (
+                    body.child(body.child_count - 1)
+                    if body is not None and body.child_count
+                    else None
+                )
+                scope_error |= end is None
+                if end is not None:
+                    scope_error |= end.type != "}" or end.is_missing
+            parent = parent.parent
+        definitions.append(
+            FunctionDefinition(
+                _function_name(node, source),
+                _function_leaf(node, source),
+                _text(node, source),
+                bisect_right(line_breaks, node.start_byte) + 1,
+                bisect_right(line_breaks, max(node.start_byte, node.end_byte - 1)) + 1,
+                node.has_error or scope_error,
+                template,
+            )
+        )
+    return tuple(definitions)
+
+
+def _definition_nodes(root: Node) -> Iterator[Node]:
+    cursor = root.walk()
+    while True:
+        node = cursor.node
+        is_definition = node.type == "function_definition"
+        if is_definition:
+            yield node
+        if not is_definition and cursor.goto_first_child():
+            continue
+        while not cursor.goto_next_sibling():
+            if not cursor.goto_parent():
+                return

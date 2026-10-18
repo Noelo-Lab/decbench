@@ -378,3 +378,56 @@ semantics — the fairness contract shared with the site — are specified in
 [site.md](site.md#denominator-semantics-must-not-drift). The published
 numbers come from the reeval overlays + guarded finalize, not raw checkpoint
 values — see [benchmarking.md](benchmarking.md#overlays-finalize-and-rebuilds--where-the-published-numbers-come-from).
+
+### Experimental C++ GED connection diagnostics
+
+`decbench.pipeline.cpp_ged.evaluate_cpp_ged()` and
+`scripts/evaluate_cpp_ged.py` provide an opt-in **diagnostic** path. They do not
+register a default metric, write result overlays, qualify a corpus, or contribute
+to Union. GED graph arithmetic is unchanged; existing C extraction is unchanged.
+
+The path indexes every syntactic definition in a preprocessed `.ii` file and
+retains physical-to-logical file/line origins for GCC/Clang `# N` and MSVC `#line N`.
+A binary-local native entry must have one concrete DWARF/PDB identity and a
+uniquely corresponding TU/file/line definition. Duplicate native entries (including
+ICF), duplicate source definitions and missing evidence abstain explicitly.
+No short-name, basename, largest-CFG or cross-TU fallback is used.
+
+Producer records are parsed independently with the non-reducing Rust Joern
+`parse_code` API. One real definition, excluding prototypes, is associated with
+the record's existing storage key; its emitted name may differ from the transport
+name. Multiple real definitions are ambiguous and are not guessed by size/name.
+A failing record does not discard unrelated records.
+
+Source CFG parsing is **definition-only** and accepts no parser error diagnostics.
+This preserves the selected preprocessed definition's explicit control flow but
+has not qualified full-TU callee context, implicit object lifetime/exception
+edges, or template specialization. Templates abstain. A source-eligible function
+can still lack a measurable producer CFG; reports keep those populations separate.
+The resulting `cpp_ged_diagnostic` values are not an official C++ GED score.
+
+```bash
+DECBENCH_NO_CACHE=1 python scripts/evaluate_cpp_ged.py decompilation.json \
+  --requested-functions requested.json --source captured.ii --output cpp-ged-diagnostic.json
+```
+
+The JSON must be a `DecompilationResult` whose `binary_path` points at the matching
+native debug binary (with its matching PDB/dSYM where required). Reports include
+per-function connection evidence, exclusions, source input hashes and the metric
+results. No original program or decompiler is executed by this entry point.
+
+The requested manifest is a JSON list of `{ "name": "...", "address": 1234 }`
+entries with unique nonnegative native entry addresses. Missing producer records
+become empty recovery at those entries; extra records do not expand the population.
+Reusable native indexes reject a different path or changed binary hash. Parser
+error diagnostics are explicit failures; unavailable native parser infrastructure
+and unexpected evaluator exceptions propagate instead of reducing eligibility.
+
+Relative preprocessor origins are resolved only against the native
+`DW_AT_comp_dir`. For object-relative generated CU names, the optional
+`--compilation-database compile_commands.json` transports a recorded original
+input only when `-save-temps=obj`, `-c`, the input, `-o` object path, native CU and
+compilation directory agree exactly. Conflicting commands reusing an output
+provide no binding. Database/command hashes are retained; commands are never
+executed. This evidence connects source units but does not independently prove
+link membership or satisfy the corpus's remaining build-qualification gates.
