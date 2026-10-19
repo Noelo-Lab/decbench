@@ -40,6 +40,7 @@ class CppOracleContext:
     def __init__(self, path: Path):
         self.path = path.resolve()
         self.signature = self._signature()
+        self.debug_snapshot = binfmt.NativeDebugSnapshot.capture(self.path)
         self.info = binfmt.detect(self.path)
         self.dwarf = binfmt.dwarf_info(self.path)
         self.pdb = binfmt.pdb_info(self.path) if self.dwarf is None else None
@@ -53,12 +54,14 @@ class CppOracleContext:
                     ranges = die_ranges(die, self.dwarf)
                     if ranges:
                         self.index.setdefault(min(a for a, _ in ranges), []).append(die)
+        self.validate(self.path)
 
     def _signature(self) -> tuple[int, int, int]:
         stat = self.path.stat()
         return stat.st_ino, stat.st_size, stat.st_mtime_ns
 
     def validate(self, path: Path) -> None:
+        self.debug_snapshot.validate()
         if path.resolve() != self.path or self._signature() != self.signature:
             raise ValueError("C++ oracle context does not match immutable input")
 

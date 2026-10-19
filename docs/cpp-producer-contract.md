@@ -76,3 +76,7 @@ producer-owned declaration context, broad semantic validation and unsupported
 C++ features. Do not admit every new native parse merely by updating the
 Rust-Joern pin. No whitelist/blacklist of functions, addresses or sample IDs is
 used by these checks.
+
+See [C++ qualification gates](cpp-evaluation-qualification.md) for separate
+source identity, instantiated/effect semantics, candidate adoption and compiler
+qualification requirements.

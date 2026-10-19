@@ -33,7 +33,7 @@ jobs:
           DECBENCH_NO_CACHE: '1'
           RUST_JOERN_LIBRARY: ${{ github.workspace }}/../rust-joern/target/release/librust_joern.so
         run: |
-          python -m pytest --no-cov tests/test_producer_validation.py tests/test_cpp_type_graph.py tests/test_cpp_review_contracts.py \
+          python -m pytest --no-cov tests/test_cpp_native_inputs.py tests/test_cpp_toolchain_probe.py tests/test_producer_validation.py tests/test_cpp_type_graph.py tests/test_cpp_review_contracts.py \
             tests/test_cpp_ged_identity.py tests/test_cpp_ged_compilation_units.py \
             tests/test_recompiler_arch.py tests/test_byte_match_fixup_policy.py \
             tests/test_metric_function_identity.py \
@@ -46,7 +46,7 @@ jobs:
             tests/test_raw_line_provenance.py
       - name: New policy code style
         run: |
-          black --check decbench/models/decompilation.py decbench/decompilers/raw/angr_raw.py decbench/decompilers/raw/ghidra_raw.py decbench/decompilers/raw/kuna_raw.py decbench/utils/producer_validation.py tests/test_producer_validation.py decbench/utils/cfg_identity.py decbench/pipeline/cpp_ged.py \
+          black --check scripts/audit_cpp_toolchains.py tests/test_cpp_native_inputs.py tests/test_cpp_toolchain_probe.py decbench/models/decompilation.py decbench/decompilers/raw/angr_raw.py decbench/decompilers/raw/ghidra_raw.py decbench/decompilers/raw/kuna_raw.py decbench/utils/producer_validation.py tests/test_producer_validation.py decbench/utils/cfg_identity.py decbench/pipeline/cpp_ged.py \
             scripts/evaluate_cpp_ged.py tests/test_cpp_ged_identity.py \
             decbench/utils/compilation_units.py tests/test_cpp_ged_compilation_units.py \
             decbench/metrics/variable_features.py \
@@ -55,7 +55,7 @@ jobs:
             decbench/metrics/cpp_types.py decbench/metrics/cpp_type_match.py \
             decbench/utils/pdb_info.py decbench/decompilers/raw/fission_raw.py \
             tests/test_cpp_type_graph.py tests/test_cpp_review_contracts.py
-          ruff check decbench/models/decompilation.py decbench/decompilers/raw/angr_raw.py decbench/decompilers/raw/ghidra_raw.py decbench/decompilers/raw/kuna_raw.py decbench/utils/producer_validation.py tests/test_producer_validation.py decbench/utils/cfg_identity.py decbench/pipeline/cpp_ged.py \
+          ruff check scripts/audit_cpp_toolchains.py tests/test_cpp_native_inputs.py tests/test_cpp_toolchain_probe.py decbench/models/decompilation.py decbench/decompilers/raw/angr_raw.py decbench/decompilers/raw/ghidra_raw.py decbench/decompilers/raw/kuna_raw.py decbench/utils/producer_validation.py tests/test_producer_validation.py decbench/utils/cfg_identity.py decbench/pipeline/cpp_ged.py \
             scripts/evaluate_cpp_ged.py tests/test_cpp_ged_identity.py \
             decbench/utils/compilation_units.py tests/test_cpp_ged_compilation_units.py \
             decbench/metrics/variable_features.py \
@@ -66,7 +66,7 @@ jobs:
             tests/test_cpp_type_graph.py tests/test_cpp_review_contracts.py
       - name: New policy type contracts
         run: |
-          mypy --follow-imports=silent decbench/models/decompilation.py decbench/utils/producer_validation.py decbench/utils/cfg_identity.py \
+          mypy --follow-imports=silent scripts/audit_cpp_toolchains.py decbench/models/decompilation.py decbench/utils/producer_validation.py decbench/utils/cfg_identity.py \
             decbench/utils/compilation_units.py \
             decbench/pipeline/cpp_ged.py decbench/metrics/cpp_type_graph.py \
             decbench/metrics/cpp_recovered_types.py decbench/metrics/cpp_types.py \

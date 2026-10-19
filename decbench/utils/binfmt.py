@@ -161,6 +161,60 @@ def recompiler_for(info: BinInfo, path: Path | None = None) -> str | None:
     return None
 
 
+def native_debug_paths(path: Path) -> tuple[Path, ...]:
+    """Candidate external debug files used by the default native readers.
+
+    Missing canonical companions remain inputs: appearing later invalidates
+    preparation too. No debug search path or arbitrary file discovery is added.
+    """
+    info = detect(path)
+    if info is not None and info.fmt == "macho":
+        image = _mach_o_binary(path)
+        if image is not None and any(
+            section.segment_name == "__DWARF" and section.name == "__debug_info" and section.content
+            for section in image.sections
+        ):
+            return ()
+        companion = path.with_name(path.name + ".dSYM")
+        if companion.is_dir():
+            companion = companion / "Contents" / "Resources" / "DWARF" / path.name
+        return (companion,)
+    if info is not None and info.fmt == "pe":
+        if pe_dwarf_info(path) is not None:
+            return ()
+        from decbench.utils.pdb_info import pdb_path
+
+        pdb_companion = pdb_path(path)
+        return (pdb_companion,) if pdb_companion is not None else ()
+    return ()
+
+
+def _file_version(path: Path) -> tuple[int, int, int, int, int] | None:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+@dataclass(frozen=True)
+class NativeDebugSnapshot:
+    """Filesystem-version guard for reused external debug preparation.
+
+    This is not a cryptographic identity or a replacement for UUID/GUID checks.
+    """
+
+    files: tuple[tuple[Path, tuple[int, int, int, int, int] | None], ...]
+
+    @classmethod
+    def capture(cls, binary: Path) -> NativeDebugSnapshot:
+        return cls(tuple((path, _file_version(path)) for path in native_debug_paths(binary)))
+
+    def validate(self) -> None:
+        if any(_file_version(path) != version for path, version in self.files):
+            raise ValueError("native debug inputs changed after oracle preparation")
+
+
 def pdb_info(path: Path, *, debug_path: Path | None = None):
     """Native PE oracle transport; mismatches are errors, absence is None."""
     info = detect(path)

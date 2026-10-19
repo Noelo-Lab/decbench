@@ -218,10 +218,12 @@ class NativeSourceIndex(dict[int, list[NativeSource]]):
         super().__init__(rows)
         self.binary_path = binary.resolve()
         self.binary_sha256 = hashlib.sha256(binary.read_bytes()).hexdigest()
+        self.debug_snapshot = binfmt.NativeDebugSnapshot.capture(binary.absolute())
         self.compilation_database: Path | None = None
         self.compilation_database_sha256: str | None = None
 
     def validate(self, binary: Path) -> None:
+        self.debug_snapshot.validate()
         if binary.resolve() != self.binary_path:
             raise ValueError("native source index belongs to another binary")
         if hashlib.sha256(binary.read_bytes()).hexdigest() != self.binary_sha256:
@@ -249,6 +251,7 @@ class NativeSourceIndex(dict[int, list[NativeSource]]):
                     )
                 rows[address].append(record)
         result = NativeSourceIndex(self.binary_path, rows)
+        result.debug_snapshot = self.debug_snapshot
         result.compilation_database = database.resolve()
         result.compilation_database_sha256 = hashlib.sha256(database.read_bytes()).hexdigest()
         return result
@@ -300,6 +303,7 @@ def _dwarf_qualified_name(die: Any) -> str | None:
 
 def native_sources(binary: Path, addresses: set[int]) -> NativeSourceIndex:
     """Retain concrete records and reject ambiguity at resolution, including ICF."""
+    index = NativeSourceIndex(binary, {})
     rows: dict[int, list[NativeSource]] = defaultdict(list)
     dwarf = binfmt.dwarf_info(binary)
     if dwarf is None:
@@ -322,7 +326,9 @@ def native_sources(binary: Path, addresses: set[int]) -> NativeSourceIndex:
                             f"pdb:{function.module}:{function.address:x}:{function.name}",
                         )
                     )
-        return NativeSourceIndex(binary, dict(rows))
+        index.update(rows)
+        index.validate(binary)
+        return index
     for cu in dwarf.iter_CUs():
         top = cu.get_top_DIE()
         unit_attr = top.attributes.get("DW_AT_name")
@@ -368,7 +374,9 @@ def native_sources(binary: Path, addresses: set[int]) -> NativeSourceIndex:
                     unit,
                 )
             )
-    return NativeSourceIndex(binary, dict(rows))
+    index.update(rows)
+    index.validate(binary)
+    return index
 
 
 def source_unit_matches(unit: str | None, record: NativeSource) -> bool:
@@ -411,6 +419,7 @@ class SourceCfgIndex:
             source = origin_source(text, retain_paths=retained)
         report: dict[str, Any] = {
             "input": filename,
+            "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
             "unit": source.primary,
             "origin_paths": sorted({location.path for location in source.origins.values()}),
             "filtered_origin_paths": sorted(source.filtered_paths),
@@ -440,7 +449,14 @@ class SourceCfgIndex:
                 }
                 continue
             record = records[0]
-            evidence: dict[str, Any] = {"address": function.address, "native": record.identity}
+            evidence: dict[str, Any] = {
+                "address": function.address,
+                "native": record.identity,
+                "native_name": record.name,
+                "native_units": list(record.units),
+                "physical_unit": record.physical_unit,
+                "compilation_directory": record.compilation_directory,
+            }
             if record.location is None:
                 evidence["status"] = "missing_native_source_location"
                 joined.evidence[key] = evidence

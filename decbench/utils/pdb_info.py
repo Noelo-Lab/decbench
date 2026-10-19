@@ -12,7 +12,10 @@ import uuid
 from bisect import bisect_left
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from lief.PE import Binary, CodeViewPDB
 
 _MAGIC = b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\0\0\0"
 _MAX_SIZE = 512 * 1024 * 1024
@@ -636,8 +639,10 @@ def _module_lines(msf: _MSF, data: bytes, start: int, size: int, address):
     return rows
 
 
-def read_pdb(binary_path: Path, debug_path: Path | None = None) -> PdbInfo | None:
-    """Read only a matching adjacent (or explicitly supplied) native PE PDB."""
+def _pdb_input(
+    binary_path: Path, debug_path: Path | None = None
+) -> tuple[Binary, CodeViewPDB, Path] | None:
+    """Resolve the sole CodeView companion without reading its contents."""
     import lief
 
     binary = lief.PE.parse(str(binary_path))
@@ -649,11 +654,29 @@ def read_pdb(binary_path: Path, debug_path: Path | None = None) -> PdbInfo | Non
     if len(codeviews) != 1:
         raise PdbFormatError("ambiguous PE CodeView identity")
     cv = codeviews[0]
+    filename = cv.filename
+    if isinstance(filename, bytes):
+        filename = filename.decode("utf-8", "replace")
     path = (
         Path(debug_path)
         if debug_path is not None
-        else binary_path.parent / PureWindowsPath(cv.filename).name
+        else binary_path.parent / PureWindowsPath(filename).name
     )
+    return binary, cv, path
+
+
+def pdb_path(binary_path: Path) -> Path | None:
+    """Return the canonical CodeView path, including an absent companion."""
+    inputs = _pdb_input(binary_path)
+    return inputs[2] if inputs is not None else None
+
+
+def read_pdb(binary_path: Path, debug_path: Path | None = None) -> PdbInfo | None:
+    """Read only a matching adjacent (or explicitly supplied) native PE PDB."""
+    inputs = _pdb_input(binary_path, debug_path)
+    if inputs is None:
+        return None
+    binary, cv, path = inputs
     if not path.is_file():
         return None
     msf = _MSF(path)
