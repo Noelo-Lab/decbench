@@ -56,6 +56,7 @@ from decbench.models.decompilation import (
     DecompilationResult,
     DecompilerMetadata,
     FunctionDecompilation,
+    ProducerLanguageContract,
     VariableInfo,
 )
 from decbench.utils.function_identity import insert_function
@@ -173,9 +174,7 @@ class RawKunaDecompiler(Decompiler):
         if functions is not None:
             requested_addrs = {address for (_name, address) in functions}
             enumerated = [
-                (name, address)
-                for name, address in enumerated
-                if address in requested_addrs
+                (name, address) for name, address in enumerated if address in requested_addrs
             ]
         enumerated = common.narrow_to_source(
             enumerated, function_names, backend="kuna", binary_name=binary_path.name
@@ -347,7 +346,12 @@ class RawKunaDecompiler(Decompiler):
             line_count=line_count,
             line_mappings=line_mappings,
             variables=self._variables(rec, line_count, _evidence_address),
-            metadata=common.extract_metrics(code),
+            metadata={
+                **common.extract_metrics(code),
+                "output_contract": ProducerLanguageContract(
+                    surface="c-like-pseudocode", declarations="partial", dialect="kuna-c"
+                ).model_dump(),
+            },
         )
 
     @staticmethod

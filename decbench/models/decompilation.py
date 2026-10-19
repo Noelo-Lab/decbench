@@ -3,9 +3,19 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, model_serializer
+
+
+class ProducerLanguageContract(BaseModel):
+    """Producer assertions about text, never a certificate of source validity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    version: Literal["producer-language-v1"] = "producer-language-v1"
+    surface: Literal["c", "cpp", "c-like-pseudocode", "unknown"] = "unknown"
+    declarations: Literal["partial", "complete", "unknown"] = "unknown"
+    dialect: str | None = None
 
 
 class LineMapping(BaseModel):
@@ -194,7 +204,7 @@ class DecompilationResult(BaseModel):
         """Save decompilation result metadata to TOML."""
         import toml
 
-        data = {
+        data: dict[str, Any] = {
             "binary": self.binary_name,
             "decompiler": self.decompiler.decompiler_name,
             "version": self.decompiler.decompiler_version,

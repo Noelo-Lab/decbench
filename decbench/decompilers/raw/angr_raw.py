@@ -30,6 +30,7 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
     LineMapping,
+    ProducerLanguageContract,
     VariableInfo,
 )
 from decbench.utils.function_identity import insert_function
@@ -265,6 +266,9 @@ class RawAngrDecompiler(Decompiler):
             function_name=func_name,
         )
         metadata = common.extract_metrics(code)
+        metadata["output_contract"] = ProducerLanguageContract(
+            surface="c-like-pseudocode", declarations="partial", dialect="angr-c"
+        ).model_dump()
 
         return FunctionDecompilation(
             name=func_name,

@@ -23,7 +23,7 @@ from decbench.utils.cfg_identity import (
 class CppGedEvaluation(BaseModel):
     """Coverage is explicit; missing CFGs are never silently perfect scores."""
 
-    profile: str = "cpp-ged-origin-v1-diagnostic"
+    profile: str = "cpp-ged-origin-v2-diagnostic"
     official_score: bool = False
     requested: int
     compilation_database_sha256: str | None = None
@@ -43,6 +43,7 @@ class CppGedEvaluation(BaseModel):
             "No template specialization or implicit lifetime/exception-edge qualification",
             "Compilation database is asserted provenance, not independent link qualification",
             "Diagnostic only; no corpus qualification, default GED or Union score",
+            "Producer CFG connection does not establish C++ validity; bounded defects reject",
         ]
     )
     metric: MetricResult

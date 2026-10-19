@@ -23,6 +23,7 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
     LineMapping,
+    ProducerLanguageContract,
     VariableInfo,
 )
 
@@ -85,6 +86,9 @@ class RawFissionDecompiler(Decompiler):
                 "provenance_source": "fission_scalar_ssa",
                 "provenance_granularity": "variable_def_use_and_scoped_definition_lines",
                 "code_layer": "nir",
+                "output_contract": ProducerLanguageContract(
+                    surface="c-like-pseudocode", declarations="partial", dialect="fission-nir-c"
+                ).model_dump(),
             },
         )
 

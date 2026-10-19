@@ -30,6 +30,7 @@ from decbench.utils.compilation_units import (
     saved_temp_units,
 )
 from decbench.utils.native_code import die_ranges
+from decbench.utils.producer_validation import inspect_producer
 
 _MARKER = re.compile(r'^\s*#\s*(?:line\s+)?(\d+)\s+"((?:\\.|[^"\\])*)"(.*)$')
 
@@ -155,15 +156,33 @@ def decompiled_cfgs(result: DecompilationResult) -> CfgJoin:
             joined.evidence[key] = {"status": "empty_output"}
             continue
         code = preprocess_decompiled_c(sanitize_decompiled_c(code))
+        inspection = inspect_producer(code, function.metadata)
+        validation = inspection.evidence()
+        if inspection.invalid:
+            joined.evidence[key] = {
+                "status": "invalid_producer_output",
+                "validation": validation,
+            }
+            continue
         try:
             definitions = parse_definitions(code, "decompiled.cpp", "c++")
         except CfgParseError as error:
-            joined.evidence[key] = {"status": "parser_failure", "error": str(error)}
+            joined.evidence[key] = {
+                "status": "parser_failure",
+                "error": str(error),
+                "validation": validation,
+                "failure_class": (
+                    "unresolved_syntax_or_dialect"
+                    if inspection.grammar_errors
+                    else "frontend_rejected_recognized_syntax"
+                ),
+            }
             continue
         if len(definitions) != 1:
             joined.evidence[key] = {
                 "status": "ambiguous_definitions" if definitions else "missing_definition",
                 "definitions": [definition.fullname for definition in definitions],
+                "validation": validation,
             }
             continue
         definition = definitions[0]
@@ -173,6 +192,7 @@ def decompiled_cfgs(result: DecompilationResult) -> CfgJoin:
             "address": function.address,
             "definition": definition.fullname,
             "span": [definition.start, definition.end],
+            "validation": validation,
         }
     return joined
 

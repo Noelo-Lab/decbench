@@ -42,6 +42,7 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
     LineMapping,
+    ProducerLanguageContract,
     VariableInfo,
 )
 from decbench.utils.function_identity import insert_function
@@ -426,6 +427,9 @@ class RawGhidraDecompiler(Decompiler):
                 {address for line in lines for address in line_addresses.get(line, set())}
             )
         metadata = common.extract_metrics(code)
+        metadata["output_contract"] = ProducerLanguageContract(
+            surface="c-like-pseudocode", declarations="partial", dialect="ghidra-c"
+        ).model_dump()
 
         return FunctionDecompilation(
             name=func_name,

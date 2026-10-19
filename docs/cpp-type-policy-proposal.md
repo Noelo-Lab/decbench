@@ -227,3 +227,12 @@ A contribution must follow DecBench's mandatory human review policy.
 
 References: [DecBench methodology](https://decbench.com/about/),
 [LLVM CodeView type records](https://llvm.org/docs/PDB/CodeViewTypes.html).
+
+### Producer inspection
+
+The supported-subset proposal now retains an optional producer language and
+declaration contract plus bounded, oracle-free defect evidence. Invalid
+recovered text receives zero after oracle eligibility; it never removes an
+oracle-qualified function. See [producer inspection](cpp-producer-contract.md)
+for scope, uncertainty and cache generation. CFG parsing remains separate from
+source validity, and the diagnostic GED profile is version 2.

@@ -27,6 +27,7 @@ from decbench.models.metrics import MetricResult, MetricValue
 from decbench.utils import binfmt
 from decbench.utils.native_code import die_ranges, entry_address_candidates
 from decbench.utils.pdb_info import PdbFormatError
+from decbench.utils.producer_validation import inspect_producer
 
 
 class CppOracleContext:
@@ -67,7 +68,7 @@ class CppTypeMatchMetric(Metric):
     display_name = "C++ Types (proposal, supported subset)"
     lower_is_better = False
     perfect_value = 1.0
-    cache_version = "4"
+    cache_version = "5"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
@@ -90,6 +91,33 @@ class CppTypeMatchMetric(Metric):
         evidence = kwargs.get("source_evidence")
         if evidence is None:
             raise ValueError("C++ policy requires type-blind source evidence")
+        inspection = inspect_producer(decompiled.decompiled_code, decompiled.metadata)
+        if inspection.invalid:
+            return MetricValue(
+                value=0.0,
+                raw_value=len(gt),
+                metadata={
+                    "policy": POLICY_VERSION,
+                    "view": self.view,
+                    "data_model": self.data_model,
+                    "ground_truth_count": len(gt),
+                    "correct_count": 0,
+                    "matched_count": 0,
+                    "producer_failure": "invalid_producer_output",
+                    "producer_validation": inspection.evidence(),
+                    "official_score": False,
+                    "decisions": [
+                        {
+                            "identity": row["identity"],
+                            "matched_identity": None,
+                            "expected": asdict(row["descriptor"].project(self.view)),
+                            "actual": None,
+                            "verdict": "invalid_producer_output",
+                        }
+                        for row in gt
+                    ],
+                },
+            )
         recovered = extract_decompiler_evidence(
             decompiled, backend="decompiler", identity_prefix="decompiler", include_unnamed=True
         )
@@ -137,6 +165,7 @@ class CppTypeMatchMetric(Metric):
                 "unobservable_source": match.unobservable_source,
                 "decisions": decisions,
                 "official_score": False,
+                "producer_validation": inspection.evidence(),
             },
         )
 
