@@ -453,13 +453,60 @@ class TestTypeMatchMetric:
         forms = normalize_type("_DWORD")
         assert "int" in forms
 
+    @pytest.mark.parametrize("keyword", ["struct", "union", "enum"])
+    def test_aggregate_type_normalization(self, keyword: str) -> None:
+        from decbench.metrics.type_match import normalize_type
+
+        assert normalize_type(f"{keyword} record_t") & normalize_type("record_t")
+        assert normalize_type(f"const {keyword} ns::record_t *") & normalize_type("record_t*")
+        assert not normalize_type(f"{keyword} record_t") & normalize_type("other_t")
+        assert not normalize_type(f"{keyword} record_t*") & normalize_type("record_t")
+        assert not normalize_type(f"{keyword} record_t**") & normalize_type("record_t*")
+        for name in ("restructured", "unionized", "enum_value"):
+            assert normalize_type(name) == {name}
+
+    def test_qualifier_tokens_at_pointer_boundaries(self) -> None:
+        from decbench.metrics.type_match import normalize_type
+
+        assert "char*" in normalize_type("const char *const")
+        assert "int**" in normalize_type("int *restrict *volatile")
+        for name in ("constant", "unrestricted", "unsigned_type"):
+            assert normalize_type(name) == {name}
+        assert normalize_type("struct") == {"struct"}
+
+    def test_restrict_die_preserves_typedef_pointer_and_size(self) -> None:
+        from types import SimpleNamespace
+
+        from decbench.metrics.type_match import _parse_type_die
+
+        cu = SimpleNamespace(cu_offset=100)
+        rows = [
+            ("DW_TAG_base_type", {"DW_AT_name": b"int", "DW_AT_byte_size": 4}),
+            ("DW_TAG_pointer_type", {"DW_AT_type": 0, "DW_AT_byte_size": 8}),
+            ("DW_TAG_restrict_type", {"DW_AT_type": 1}),
+            ("DW_TAG_const_type", {"DW_AT_type": 2}),
+            ("DW_TAG_typedef", {"DW_AT_type": 3, "DW_AT_name": b"IntPointer"}),
+            ("DW_TAG_variable", {"DW_AT_type": 4}),
+        ]
+        dies = {
+            cu.cu_offset
+            + index: SimpleNamespace(
+                tag=tag,
+                cu=cu,
+                attributes={key: SimpleNamespace(value=value) for key, value in attrs.items()},
+            )
+            for index, (tag, attrs) in enumerate(rows)
+        }
+        dwarf = SimpleNamespace(get_DIE_from_refaddr=dies.__getitem__)
+        assert _parse_type_die(dies[105], dwarf) == (["IntPointer", "int*"], 8)
+
     def test_type_match_with_matching_types(self) -> None:
         from decbench.metrics.type_match import TypeMatchMetric
 
         func = FunctionDecompilation(
             name="test",
             address=0x1000,
-            decompiled_code="int x;\nchar y;\nlong long z;\n",
+            decompiled_code="void test(void) { int x; char y; long long z; }",
         )
 
         gt_vars = [
@@ -479,7 +526,7 @@ class TestTypeMatchMetric:
         func = FunctionDecompilation(
             name="test",
             address=0x1000,
-            decompiled_code="int x;\nint y;\n",
+            decompiled_code="void test(void) { int x; int y; }",
         )
 
         gt_vars = [
@@ -497,15 +544,15 @@ class TestTypeMatchMetric:
         func = FunctionDecompilation(
             name="test",
             address=0x1000,
-            decompiled_code="int x;\n",
+            decompiled_code="void test(void) { int x; }",
         )
 
         metric = TypeMatchMetric()
         result = metric.compute_for_function(func, ground_truth_vars=None)
         assert result.value == 0.0
 
-    def test_extract_types_from_code(self) -> None:
-        from decbench.metrics.type_match import extract_types_from_decompiled_code
+    def test_parse_types_from_code(self) -> None:
+        from decbench.metrics.type_match import parse_c_variables
 
         code = """
 int main() {
@@ -515,10 +562,12 @@ int main() {
     return 0;
 }
 """
-        vars = extract_types_from_decompiled_code(code)
-        names = [v["name"] for v in vars]
-        assert "x" in names
-        assert "counter" in names
+        variables = parse_c_variables(code, "main")
+        assert [(v.name, v.type) for v in variables] == [
+            ("x", "int"),
+            ("ptr", "char *"),
+            ("counter", "long long"),
+        ]
 
     def test_offset_exact_match(self) -> None:
         """Structured var at the exact GT offset and type -> perfect."""
@@ -808,7 +857,7 @@ int main() {
         func = FunctionDecompilation(
             name="test",
             address=0x1000,
-            decompiled_code="int x;\n",
+            decompiled_code="void test(void) { int x; }",
             variables=[],
         )
         gt_vars = [

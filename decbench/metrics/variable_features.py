@@ -18,6 +18,7 @@ class DiscoveredVariable:
     """One declaration recovered from decompiled C without backend metadata."""
 
     name: str
+    type: str
     kind: str
     arg_index: int | None
 
@@ -53,13 +54,12 @@ def _declarator_identifier(node: Node | None) -> Node | None:
         return node
     declarator = node.child_by_field_name("declarator")
     if declarator is not None:
-        identifier = _declarator_identifier(declarator)
-        if identifier is not None:
-            return identifier
-    for child in node.named_children:
-        identifier = _declarator_identifier(child)
-        if identifier is not None:
-            return identifier
+        return _declarator_identifier(declarator)
+    if node.type in {"parenthesized_declarator", "attributed_declarator"}:
+        for child in node.named_children:
+            identifier = _declarator_identifier(child)
+            if identifier is not None:
+                return identifier
     return None
 
 
@@ -121,6 +121,61 @@ def _storage_classes(node: Node, source: bytes) -> set[str]:
     }
 
 
+def _declaration_type(declaration: Node, identifier: Node, source: bytes) -> str:
+    specifiers: list[str] = []
+    for index, child in enumerate(declaration.children):
+        if declaration.field_name_for_child(index) == "declarator":
+            break
+        if child.type not in {"comment", "storage_class_specifier"}:
+            specifiers.append(_text(child, source))
+
+    removed = [(identifier.start_byte, identifier.end_byte)]
+    declarator = identifier
+    while declarator.parent is not None and declarator.parent != declaration:
+        parent = declarator.parent
+        if parent.type == "init_declarator":
+            break
+        if parent.type == "array_declarator":
+            removed.append((declarator.end_byte, parent.end_byte))
+        if parent.type == "attributed_declarator":
+            removed.extend(
+                (child.start_byte, child.end_byte)
+                for child in parent.named_children
+                if child.type == "attribute_declaration"
+            )
+        declarator = parent
+    pieces: list[bytes] = []
+    start = declarator.start_byte
+    for left, right in sorted(removed):
+        pieces.append(source[start:left])
+        start = right
+    pieces.append(source[start : declarator.end_byte])
+    suffix = b"".join(pieces).decode("utf-8", "replace")
+    return f"{' '.join(specifiers)} {suffix}".strip()
+
+
+def _outermost_bodies(node: Node) -> Iterator[Node]:
+    if node.type == "compound_statement":
+        yield node
+    else:
+        for child in node.named_children:
+            yield from _outermost_bodies(child)
+
+
+def discover_variables(code: str, function_name: str) -> list[DiscoveredVariable]:
+    source = code.encode("utf-8", "replace")
+    tree = _parser().parse(source)
+    function = _select_function(tree.root_node, source, function_name)
+    if function is None:
+        if any(node.type == "function_definition" for node in _walk(tree.root_node)):
+            return []
+        bodies = list(_outermost_bodies(tree.root_node))
+        if len(bodies) != 1:
+            return []
+        function = bodies[0]
+    return _discover_variables(function, source)[0]
+
+
 def _discover_variables(
     function: Node,
     source: bytes,
@@ -128,7 +183,7 @@ def _discover_variables(
     declarations: list[DiscoveredVariable] = []
     declaration_nodes: set[Node] = set()
     binding_ranges: dict[str, list[tuple[int, int]]] = defaultdict(list)
-    body = function.child_by_field_name("body")
+    body = function.child_by_field_name("body") or function
     declarator = function.child_by_field_name("declarator")
     parameter_list = None
     for node in _walk(declarator) if declarator is not None else ():
@@ -141,20 +196,21 @@ def _discover_variables(
             if parameter.type not in {"parameter_declaration", "optional_parameter_declaration"}:
                 continue
             identifier = _declarator_identifier(parameter.child_by_field_name("declarator"))
-            if identifier is None:
+            if identifier is None or parameter.has_error:
                 position += 1
                 continue
             name = _text(identifier, source)
-            declarations.append(DiscoveredVariable(name, "arg", position))
+            declarations.append(
+                DiscoveredVariable(
+                    name, _declaration_type(parameter, identifier, source), "arg", position
+                )
+            )
             declaration_nodes.add(identifier)
-            if body is not None:
-                binding_ranges[name].append((body.start_byte, body.end_byte))
+            binding_ranges[name].append((body.start_byte, body.end_byte))
             position += 1
 
-    if body is None:
-        return declarations, declaration_nodes, binding_ranges
     for node in _walk(body):
-        if node.type != "declaration":
+        if node.type != "declaration" or node.has_error or node.is_missing:
             continue
         if _storage_classes(node, source) & {"typedef", "extern"}:
             continue
@@ -162,7 +218,9 @@ def _discover_variables(
             if _is_function_prototype(identifier):
                 continue
             name = _text(identifier, source)
-            declarations.append(DiscoveredVariable(name, "local", None))
+            declarations.append(
+                DiscoveredVariable(name, _declaration_type(node, identifier, source), "stack", None)
+            )
             declaration_nodes.add(identifier)
             scope = identifier.parent
             while scope is not None and scope != body:
