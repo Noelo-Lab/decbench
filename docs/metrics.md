@@ -114,7 +114,8 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="17"`, bumped for agent-reported line-address support.
+Current `cache_version="18"`, bumped for scoped syntax-aware declaration parsing,
+aggregate/qualifier normalization, and DWARF restrict-type passthrough.
 The per-function key covers source and
 decompiler address evidence, argument/stack anchors, recovered types, source
 selection diagnostics, and the matching thresholds.
@@ -156,10 +157,25 @@ is used per function when a C-line-to-instruction map is reported. The metric
 records `variable_match_evidence = "agent_reported"` for that path. Otherwise
 the function remains evaluable through the older, explicitly caveated fallback:
 ABI argument position, calibrated stack offset, then exact variable name (with
-regex parsing when no structured variables were stored), recorded as
-`"fallback_only"`. Native backend rows record `"native"`, including a
+syntax-aware local declaration parsing when no structured variables were stored),
+recorded as `"fallback_only"`. Native backend rows record `"native"`, including a
 conservative zero-match result. The site marks agent-reported and fallback
 rows with an asterisk.
+
+Code-only argument and local types share tree-sitter declaration discovery with
+occurrence-line extraction. Discovery selects the requested function (or the sole
+definition when its rendered name differs), excluding globals and sibling-function
+locals. If no function definition parses, discovery recovers locals only from a
+single outermost compound statement and does not scan file-scope declarations as
+locals.
+
+Each declarator retains its own pointer depth and function-pointer syntax,
+independently of spacing, comma siblings, and initializers. Array dimensions on
+the variable's name path are dropped while dimensions inside function-pointer parameter
+types are retained. Arbitrary typedef and tag names are accepted. Typedef
+definitions, extern declarations, function prototypes, and aggregate members are
+not locals. Unnamed parameters reserve their ABI positions but produce no named variables,
+`...` produces no variable.
 
 At `-O2`, register locals that decompilers fold into expressions count as misses
 for everyone uniformly.
@@ -187,6 +203,13 @@ form can only ever create a match, never destroy one; *removing* a rule (as the
 pointee narrowing below does) can only destroy matches. Both directions are
 scoring-policy changes and must bump `cache_version`.
 
+- **Aggregate keyword tokens gain bare-tag equivalents.** `struct`, `union`, and
+  `enum` are removed as separate keyword tokens, including in qualified and pointer
+  forms.
+- **Qualifiers are matched as whole tokens, including after pointers.**
+  `const char *const` gains `char*`, without changing identifiers containing
+  qualifier substrings. DWARF `const`, `volatile`, and `restrict` DIEs pass through
+  to the underlying type and size.
 - **`TYPE_MAP` applies through pointers, but only for COMMITTED pointees.**
   `int4 *` normalizes to `int*` exactly as the scalar `int4` normalizes to
   `int`, and `size_t *` to `long long*`. **This does declare new equivalences**

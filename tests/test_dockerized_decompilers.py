@@ -479,7 +479,7 @@ def test_r2_code_inferred_variables_abstain_on_shadowed_names() -> None:
     )
 
     assert function is not None
-    assert [variable.name for variable in function.variables] == ["shadow"]
+    assert [variable.name for variable in function.variables] == ["shadow", "shadow"]
     assert all(variable.line_numbers == [] for variable in function.variables)
     assert all(variable.addresses == [] for variable in function.variables)
 

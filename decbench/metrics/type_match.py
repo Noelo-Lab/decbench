@@ -22,6 +22,7 @@ from decbench.metrics.type_evidence import (
     SourceEvidenceResult,
     build_source_evidence,
 )
+from decbench.metrics.variable_features import discover_variables, variable_occurrence_lines
 from decbench.metrics.variable_match import (
     VariableEvidence,
     extract_decompiler_evidence,
@@ -83,7 +84,7 @@ TYPE_MAP: dict[str, str] = {
     "ssize_t": "long long",
 }
 
-QUALIFIERS = ["unsigned", "signed", "const", "volatile", "register", "static", "extern"]
+QUALIFIERS = ["unsigned", "signed", "const", "volatile", "restrict", "register", "static", "extern"]
 
 # A trailing run of ``*``s, so a pointee spelling can be normalized.
 _PTR_SUFFIX = re.compile(r"^(.*?)((?:\s*\*)+)$")
@@ -155,7 +156,7 @@ def normalize_type(type_str: str) -> set[str]:
 
     normalized = t
     for q in QUALIFIERS:
-        normalized = normalized.replace(f"{q} ", "")
+        normalized = re.sub(rf"\b{q}\b", "", normalized)
     normalized = normalized.strip()
     if normalized:
         forms.add(normalized)
@@ -171,6 +172,8 @@ def normalize_type(type_str: str) -> set[str]:
         for form in list(forms):
             if original in form:
                 forms.add(form.replace(original, replacement))
+
+    forms |= {re.sub(r"\b(?:struct|union|enum)\s+", "", form) for form in forms}
 
     forms = {re.sub(r"\s+", " ", f).strip() for f in forms if f.strip()}
 
@@ -593,7 +596,7 @@ def _parse_type_die(die: Any, dwarfinfo: Any) -> tuple[list[str], int]:
         arr_names = [f"{n}[{length}]" for n in child_names]
         return child_names + arr_names, elem_size * length
 
-    elif tag in ("DW_TAG_const_type", "DW_TAG_volatile_type"):
+    elif tag in ("DW_TAG_const_type", "DW_TAG_volatile_type", "DW_TAG_restrict_type"):
         return _parse_type_die(type_die, dwarfinfo)
 
     elif tag == "DW_TAG_structure_type":
@@ -651,117 +654,6 @@ def _get_array_dims(die: Any) -> list[int | None]:
     return dims
 
 
-_DECL_PATTERN = re.compile(
-    r"^\s*"
-    r"((?:(?:unsigned|signed|const|volatile|static|struct|union|enum)\s+)*"
-    r"(?:(?:long\s+long|long|short|int|char|float|double|void|bool|"
-    r"__int\d+|_DWORD|_QWORD|_WORD|_BYTE|_BOOL|"
-    r"u?int\d+_t|size_t|ssize_t|"
-    r"undefined\d?|ulong|uint|ushort|uchar|"
-    r"\w+_t)\s*\**)"
-    r")"
-    r"\s+"
-    r"(\w+)"
-    r"\s*(?:\[[^\]]*\])?"
-    r"\s*(?:=[^;]*)?"
-    r"\s*;",
-    re.MULTILINE,
-)
-
-_DECL_SKIP = frozenset({"if", "else", "while", "for", "return", "switch", "case", "break"})
-
-
-def _extract_local_decls(code: str) -> list[tuple[str, str]]:
-    """(name, RAW type string) for each local declaration in ``code``."""
-    out: list[tuple[str, str]] = []
-    for match in _DECL_PATTERN.finditer(code):
-        var_name = match.group(2).strip()
-        if var_name in _DECL_SKIP:
-            continue
-        out.append((var_name, match.group(1).strip()))
-    return out
-
-
-def extract_types_from_decompiled_code(code: str) -> list[dict[str, Any]]:
-    """Extract variable declarations and their types from decompiled C code.
-
-    Uses regex-based parsing to find variable declarations.
-    Returns list of dicts with 'name' and 'type' fields.
-    """
-    return [
-        {"name": name, "type": list(normalize_type(type_str))}
-        for name, type_str in _extract_local_decls(code)
-    ]
-
-
-def _split_top_level_commas(s: str) -> list[str]:
-    """Split ``s`` on commas that are not nested inside (), [], or {}."""
-    parts: list[str] = []
-    depth = 0
-    cur: list[str] = []
-    for ch in s:
-        if ch in "([{":
-            depth += 1
-        elif ch in ")]}":
-            depth = max(0, depth - 1)
-        if ch == "," and depth == 0:
-            parts.append("".join(cur))
-            cur = []
-        else:
-            cur.append(ch)
-    if cur:
-        parts.append("".join(cur))
-    return parts
-
-
-def _find_definition_params(code: str, func_name: str) -> str | None:
-    """Raw parameter-list text of ``func_name``'s DEFINITION, or None.
-
-    The definition is the occurrence whose matching ``)`` is followed by ``{``
-    (a call or a prototype ending in ``;`` is not). Balanced-paren scan so
-    function-pointer parameters with nested parens are handled.
-    """
-    if not func_name:
-        return None
-    for m in re.finditer(r"\b" + re.escape(func_name) + r"\s*\(", code):
-        open_i = code.index("(", m.start())
-        depth = 0
-        close_i: int | None = None
-        for j in range(open_i, len(code)):
-            c = code[j]
-            if c == "(":
-                depth += 1
-            elif c == ")":
-                depth -= 1
-                if depth == 0:
-                    close_i = j
-                    break
-        if close_i is None:
-            continue
-        if code[close_i + 1 :].lstrip().startswith("{"):
-            return code[open_i + 1 : close_i]
-    return None
-
-
-def _parse_param(param: str) -> tuple[str, str] | None:
-    """(name, RAW type) for one C parameter, or None for ``void``/unnamed."""
-    p = param.strip()
-    if not p or p == "void":
-        return None
-    m = re.search(r"\(\s*\*+\s*(\w+)\s*(?:\[[^\]]*\])?\s*\)", p)
-    if m:
-        return m.group(1), (p[: m.start()] + "(*)" + p[m.end() :]).strip()
-    p = re.sub(r"\[[^\]]*\]\s*$", "", p).strip()
-    m = re.search(r"([A-Za-z_]\w*)\s*$", p)
-    if not m:
-        return None
-    name = m.group(1)
-    type_ = p[: m.start()].strip()
-    if not type_:
-        return None
-    return name, type_
-
-
 def parse_c_variables(
     code: str, func_name: str, *, include_occurrence_lines: bool = False
 ) -> list[Any]:
@@ -776,51 +668,22 @@ def parse_c_variables(
     """
     from decbench.models.decompilation import VariableInfo
 
-    out: list[Any] = []
-    lines: list[str] = []
-    if include_occurrence_lines:
-        masked = re.sub(
-            r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|/\*.*?\*/|//[^\n]*',
-            lambda match: re.sub(r"[^\n]", " ", match.group()),
-            code,
-            flags=re.DOTALL,
+    discovered = discover_variables(code, func_name)
+    occurrences = (
+        variable_occurrence_lines(code, func_name, [variable.name for variable in discovered])
+        if include_occurrence_lines
+        else {}
+    )
+    return [
+        VariableInfo(
+            name=variable.name,
+            type=variable.type,
+            arg_index=variable.arg_index,
+            kind=variable.kind,
+            line_numbers=list(occurrences.get(variable.name, ())),
         )
-        lines = masked.splitlines()
-
-    def occurrence_lines(name: str) -> list[int]:
-        if not name:
-            return []
-        pattern = re.compile(r"\b" + re.escape(name) + r"\b")
-        return [number for number, line in enumerate(lines, 1) if pattern.search(line)]
-
-    params = _find_definition_params(code, func_name)
-    argnames: set[str] = set()
-    if params is not None:
-        for i, raw in enumerate(_split_top_level_commas(params)):
-            parsed = _parse_param(raw)
-            if parsed is None:
-                token = raw.strip()
-                if token and token != "void":
-                    out.append(VariableInfo(name="", type=token, arg_index=i, kind="arg"))
-                continue
-            name, type_ = parsed
-            argnames.add(name)
-            out.append(
-                VariableInfo(
-                    name=name,
-                    type=type_,
-                    arg_index=i,
-                    kind="arg",
-                    line_numbers=occurrence_lines(name),
-                )
-            )
-    for name, type_ in _extract_local_decls(code):
-        if name in argnames:
-            continue
-        out.append(
-            VariableInfo(name=name, type=type_, kind="stack", line_numbers=occurrence_lines(name))
-        )
-    return out
+        for variable in discovered
+    ]
 
 
 def _candidate_shifts(gt_offsets: list[int], decomp_offsets: list[int]) -> list[int]:
@@ -975,7 +838,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "17"
+    cache_version = "18"
 
     weight = 1.0
     lower_is_better = False
@@ -1307,28 +1170,19 @@ class TypeMatchMetric(Metric):
 
         if not decompiled.variables and decompiled.decompiled_code:
             parsed = parse_c_variables(decompiled.decompiled_code, decompiled.name)
-            if parsed:
-                decompiled = decompiled.model_copy(update={"variables": parsed})
+            decompiled = decompiled.model_copy(update={"variables": parsed})
 
         decomp_stack_vars = sum(
             1 for v in decompiled.variables if _legacy_effective_offset(v) is not None
         )
 
-        if decompiled.variables:
-            value = self._match_structured(
-                decompiled,
-                ground_truth_vars,
-                gt_stack_vars,
-                decomp_stack_vars,
-                calibration_shift,
-            )
-        else:
-            value = self._match_by_regex(
-                decompiled,
-                ground_truth_vars,
-                gt_stack_vars,
-                decomp_stack_vars,
-            )
+        value = self._match_structured(
+            decompiled,
+            ground_truth_vars,
+            gt_stack_vars,
+            decomp_stack_vars,
+            calibration_shift,
+        )
 
         value.metadata.update(
             {
@@ -1482,61 +1336,6 @@ class TypeMatchMetric(Metric):
                 "matched_by_name": pass_counts["name"],
                 "gt_arg_vars": sum(1 for gv in ground_truth_vars if gv.get("is_arg")),
             },
-        )
-
-    def _match_by_regex(
-        self,
-        decompiled: FunctionDecompilation,
-        ground_truth_vars: list[dict[str, Any]],
-        gt_stack_vars: int,
-        decomp_stack_vars: int,
-    ) -> MetricValue:
-        """LEGACY name-only fallback for a producer that exposes no structured variables."""
-        decomp_vars = extract_types_from_decompiled_code(decompiled.decompiled_code)
-
-        if not decomp_vars:
-            fn = len(ground_truth_vars)
-            return self._build_result(
-                0,
-                0,
-                fn,
-                ground_truth_vars,
-                0,
-                "regex",
-                None,
-                gt_stack_vars,
-                decomp_stack_vars,
-            )
-
-        type_by_name: dict[str, set[str]] = {}
-        for var in decomp_vars:
-            type_by_name.setdefault(var["name"], set()).update(var["type"])
-
-        tp = 0
-        fp = 0
-        fn = 0
-
-        for gt_var in ground_truth_vars:
-            gt_name = gt_var.get("name", "")
-            gt_types = set(gt_var.get("type", []))
-            if gt_name in type_by_name:
-                if gt_types.intersection(type_by_name[gt_name]):
-                    tp += 1
-                else:
-                    fp += 1
-            else:
-                fn += 1
-
-        return self._build_result(
-            tp,
-            fp,
-            fn,
-            ground_truth_vars,
-            len(decomp_vars),
-            "regex",
-            None,
-            gt_stack_vars,
-            decomp_stack_vars,
         )
 
     def compute_for_binary(
