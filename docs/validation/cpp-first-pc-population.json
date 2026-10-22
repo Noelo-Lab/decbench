@@ -1,0 +1,415 @@
+{
+  "summary": {
+    "baseline": {
+      "fission": {
+        "requested": 250,
+        "source_eligible": 54,
+        "paired": 54,
+        "perfect": 18,
+        "type_eligible": 26,
+        "type_perfect": 0
+      },
+      "kuna": {
+        "requested": 250,
+        "source_eligible": 54,
+        "paired": 53,
+        "perfect": 21,
+        "type_eligible": 26,
+        "type_perfect": 1
+      },
+      "angr": {
+        "requested": 250,
+        "source_eligible": 54,
+        "paired": 34,
+        "perfect": 14,
+        "type_eligible": 26,
+        "type_perfect": 0
+      },
+      "ghidra": {
+        "requested": 250,
+        "source_eligible": 54,
+        "paired": 50,
+        "perfect": 19,
+        "type_eligible": 26,
+        "type_perfect": 0
+      }
+    },
+    "candidate": {
+      "fission": {
+        "requested": 250,
+        "source_eligible": 56,
+        "paired": 56,
+        "perfect": 19,
+        "type_eligible": 26,
+        "type_perfect": 0
+      },
+      "kuna": {
+        "requested": 250,
+        "source_eligible": 56,
+        "paired": 55,
+        "perfect": 23,
+        "type_eligible": 26,
+        "type_perfect": 1
+      },
+      "angr": {
+        "requested": 250,
+        "source_eligible": 56,
+        "paired": 36,
+        "perfect": 16,
+        "type_eligible": 26,
+        "type_perfect": 0
+      },
+      "ghidra": {
+        "requested": 250,
+        "source_eligible": 56,
+        "paired": 52,
+        "perfect": 21,
+        "type_eligible": 26,
+        "type_perfect": 0
+      }
+    }
+  },
+  "new_rows": [
+    {
+      "cell": "24",
+      "tool": "fission",
+      "name": "opencc::UTF8Util::IdeographicDescriptionOperatorArity",
+      "after": {
+        "address": 5369048736,
+        "native": "pdb:src\\CMakeFiles\\libopencc.dir\\Converter.cpp.obj:140052ea0:opencc::UTF8Util::IdeographicDescriptionOperatorArity",
+        "native_name": "opencc::UTF8Util::IdeographicDescriptionOperatorArity",
+        "physical_unit": null,
+        "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/opencc/src/utf8util.hpp",
+        "line": 124,
+        "native_qualified_name": null,
+        "native_location_candidates": [
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/opencc/src/utf8util.hpp",
+            "line": 124
+          },
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/opencc/src/utf8util.hpp",
+            "line": 125
+          }
+        ],
+        "native_location_policy": "all_first_pc_locations_same_definition",
+        "input": "preprocessed/00014.ii",
+        "definition_sha256": "705c289275160bf527c39ec45ebca7287079454a6d7d6ff5119bda5b37499e51",
+        "span": [
+          402876,
+          402900
+        ],
+        "status": "matched",
+        "native_unit_count": 274,
+        "native_units_sha256": "52d79e36a4591a2072bbcbb8aba22ac13766cc06ac763ebe21653f6016ee50ab"
+      },
+      "metric": {
+        "value": 6.0,
+        "raw_value": 6.0
+      },
+      "before_status": "missing_native_source_location"
+    },
+    {
+      "cell": "24",
+      "tool": "kuna",
+      "name": "opencc::UTF8Util::IdeographicDescriptionOperatorArity",
+      "after": {
+        "address": 5369048736,
+        "native": "pdb:src\\CMakeFiles\\libopencc.dir\\Converter.cpp.obj:140052ea0:opencc::UTF8Util::IdeographicDescriptionOperatorArity",
+        "native_name": "opencc::UTF8Util::IdeographicDescriptionOperatorArity",
+        "physical_unit": null,
+        "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/opencc/src/utf8util.hpp",
+        "line": 124,
+        "native_qualified_name": null,
+        "native_location_candidates": [
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/opencc/src/utf8util.hpp",
+            "line": 124
+          },
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/opencc/src/utf8util.hpp",
+            "line": 125
+          }
+        ],
+        "native_location_policy": "all_first_pc_locations_same_definition",
+        "input": "preprocessed/00014.ii",
+        "definition_sha256": "705c289275160bf527c39ec45ebca7287079454a6d7d6ff5119bda5b37499e51",
+        "span": [
+          402876,
+          402900
+        ],
+        "status": "matched",
+        "native_unit_count": 274,
+        "native_units_sha256": "52d79e36a4591a2072bbcbb8aba22ac13766cc06ac763ebe21653f6016ee50ab"
+      },
+      "metric": {
+        "value": 0.0,
+        "raw_value": 0.0
+      },
+      "before_status": "missing_native_source_location"
+    },
+    {
+      "cell": "24",
+      "tool": "angr",
+      "name": "opencc::UTF8Util::IdeographicDescriptionOperatorArity",
+      "after": {
+        "address": 5369048736,
+        "native": "pdb:src\\CMakeFiles\\libopencc.dir\\Converter.cpp.obj:140052ea0:opencc::UTF8Util::IdeographicDescriptionOperatorArity",
+        "native_name": "opencc::UTF8Util::IdeographicDescriptionOperatorArity",
+        "physical_unit": null,
+        "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/opencc/src/utf8util.hpp",
+        "line": 124,
+        "native_qualified_name": null,
+        "native_location_candidates": [
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/opencc/src/utf8util.hpp",
+            "line": 124
+          },
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/opencc/src/utf8util.hpp",
+            "line": 125
+          }
+        ],
+        "native_location_policy": "all_first_pc_locations_same_definition",
+        "input": "preprocessed/00014.ii",
+        "definition_sha256": "705c289275160bf527c39ec45ebca7287079454a6d7d6ff5119bda5b37499e51",
+        "span": [
+          402876,
+          402900
+        ],
+        "status": "matched",
+        "native_unit_count": 274,
+        "native_units_sha256": "52d79e36a4591a2072bbcbb8aba22ac13766cc06ac763ebe21653f6016ee50ab"
+      },
+      "metric": {
+        "value": 0.0,
+        "raw_value": 0.0
+      },
+      "before_status": "missing_native_source_location"
+    },
+    {
+      "cell": "24",
+      "tool": "ghidra",
+      "name": "opencc::UTF8Util::IdeographicDescriptionOperatorArity",
+      "after": {
+        "address": 5369048736,
+        "native": "pdb:src\\CMakeFiles\\libopencc.dir\\Converter.cpp.obj:140052ea0:opencc::UTF8Util::IdeographicDescriptionOperatorArity",
+        "native_name": "opencc::UTF8Util::IdeographicDescriptionOperatorArity",
+        "physical_unit": null,
+        "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/opencc/src/utf8util.hpp",
+        "line": 124,
+        "native_qualified_name": null,
+        "native_location_candidates": [
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/opencc/src/utf8util.hpp",
+            "line": 124
+          },
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/opencc/src/utf8util.hpp",
+            "line": 125
+          }
+        ],
+        "native_location_policy": "all_first_pc_locations_same_definition",
+        "input": "preprocessed/00014.ii",
+        "definition_sha256": "705c289275160bf527c39ec45ebca7287079454a6d7d6ff5119bda5b37499e51",
+        "span": [
+          402876,
+          402900
+        ],
+        "status": "matched",
+        "native_unit_count": 274,
+        "native_units_sha256": "52d79e36a4591a2072bbcbb8aba22ac13766cc06ac763ebe21653f6016ee50ab"
+      },
+      "metric": {
+        "value": 0.0,
+        "raw_value": 0.0
+      },
+      "before_status": "missing_native_source_location"
+    },
+    {
+      "cell": "33",
+      "tool": "fission",
+      "name": "snappy::UNALIGNED_LOAD64",
+      "after": {
+        "address": 6442481776,
+        "native": "pdb:D:\\a\\Decbench_SampleSet\\Decbench_SampleSet\\_qualification\\build\\snappy\\O2-noinline\\CMakeFiles\\snappy.dir\\snappy.cc.obj:180007870:snappy::UNALIGNED_LOAD64",
+        "native_name": "snappy::UNALIGNED_LOAD64",
+        "physical_unit": null,
+        "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/snappy/snappy-stubs-internal.h",
+        "line": 145,
+        "native_qualified_name": null,
+        "native_location_candidates": [
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/snappy/snappy-stubs-internal.h",
+            "line": 145
+          },
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/snappy/snappy-stubs-internal.h",
+            "line": 149
+          }
+        ],
+        "native_location_policy": "all_first_pc_locations_same_definition",
+        "input": "preprocessed/00003.ii",
+        "definition_sha256": "6ead1d5a0b50ae1c77b5f2cba378700c9c8bac5f42b733447ceb9599be9f68a8",
+        "span": [
+          62141,
+          62146
+        ],
+        "status": "matched",
+        "native_unit_count": 107,
+        "native_units_sha256": "b68f77923827c2c618ec0ac99a68d574ad9f803518ee8a4d069b9befb1b8d8ab"
+      },
+      "metric": {
+        "value": 0.0,
+        "raw_value": 0.0
+      },
+      "before_status": "missing_native_source_location"
+    },
+    {
+      "cell": "33",
+      "tool": "kuna",
+      "name": "snappy::UNALIGNED_LOAD64",
+      "after": {
+        "address": 6442481776,
+        "native": "pdb:D:\\a\\Decbench_SampleSet\\Decbench_SampleSet\\_qualification\\build\\snappy\\O2-noinline\\CMakeFiles\\snappy.dir\\snappy.cc.obj:180007870:snappy::UNALIGNED_LOAD64",
+        "native_name": "snappy::UNALIGNED_LOAD64",
+        "physical_unit": null,
+        "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/snappy/snappy-stubs-internal.h",
+        "line": 145,
+        "native_qualified_name": null,
+        "native_location_candidates": [
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/snappy/snappy-stubs-internal.h",
+            "line": 145
+          },
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/snappy/snappy-stubs-internal.h",
+            "line": 149
+          }
+        ],
+        "native_location_policy": "all_first_pc_locations_same_definition",
+        "input": "preprocessed/00003.ii",
+        "definition_sha256": "6ead1d5a0b50ae1c77b5f2cba378700c9c8bac5f42b733447ceb9599be9f68a8",
+        "span": [
+          62141,
+          62146
+        ],
+        "status": "matched",
+        "native_unit_count": 107,
+        "native_units_sha256": "b68f77923827c2c618ec0ac99a68d574ad9f803518ee8a4d069b9befb1b8d8ab"
+      },
+      "metric": {
+        "value": 0.0,
+        "raw_value": 0.0
+      },
+      "before_status": "missing_native_source_location"
+    },
+    {
+      "cell": "33",
+      "tool": "angr",
+      "name": "snappy::UNALIGNED_LOAD64",
+      "after": {
+        "address": 6442481776,
+        "native": "pdb:D:\\a\\Decbench_SampleSet\\Decbench_SampleSet\\_qualification\\build\\snappy\\O2-noinline\\CMakeFiles\\snappy.dir\\snappy.cc.obj:180007870:snappy::UNALIGNED_LOAD64",
+        "native_name": "snappy::UNALIGNED_LOAD64",
+        "physical_unit": null,
+        "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/snappy/snappy-stubs-internal.h",
+        "line": 145,
+        "native_qualified_name": null,
+        "native_location_candidates": [
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/snappy/snappy-stubs-internal.h",
+            "line": 145
+          },
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/snappy/snappy-stubs-internal.h",
+            "line": 149
+          }
+        ],
+        "native_location_policy": "all_first_pc_locations_same_definition",
+        "input": "preprocessed/00003.ii",
+        "definition_sha256": "6ead1d5a0b50ae1c77b5f2cba378700c9c8bac5f42b733447ceb9599be9f68a8",
+        "span": [
+          62141,
+          62146
+        ],
+        "status": "matched",
+        "native_unit_count": 107,
+        "native_units_sha256": "b68f77923827c2c618ec0ac99a68d574ad9f803518ee8a4d069b9befb1b8d8ab"
+      },
+      "metric": {
+        "value": 0.0,
+        "raw_value": 0.0
+      },
+      "before_status": "missing_native_source_location"
+    },
+    {
+      "cell": "33",
+      "tool": "ghidra",
+      "name": "snappy::UNALIGNED_LOAD64",
+      "after": {
+        "address": 6442481776,
+        "native": "pdb:D:\\a\\Decbench_SampleSet\\Decbench_SampleSet\\_qualification\\build\\snappy\\O2-noinline\\CMakeFiles\\snappy.dir\\snappy.cc.obj:180007870:snappy::UNALIGNED_LOAD64",
+        "native_name": "snappy::UNALIGNED_LOAD64",
+        "physical_unit": null,
+        "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/snappy/snappy-stubs-internal.h",
+        "line": 145,
+        "native_qualified_name": null,
+        "native_location_candidates": [
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/snappy/snappy-stubs-internal.h",
+            "line": 145
+          },
+          {
+            "path": "d:/a/decbench_sampleset/decbench_sampleset/_qualification/src/snappy/snappy-stubs-internal.h",
+            "line": 149
+          }
+        ],
+        "native_location_policy": "all_first_pc_locations_same_definition",
+        "input": "preprocessed/00003.ii",
+        "definition_sha256": "6ead1d5a0b50ae1c77b5f2cba378700c9c8bac5f42b733447ceb9599be9f68a8",
+        "span": [
+          62141,
+          62146
+        ],
+        "status": "matched",
+        "native_unit_count": 107,
+        "native_units_sha256": "b68f77923827c2c618ec0ac99a68d574ad9f803518ee8a4d069b9befb1b8d8ab"
+      },
+      "metric": {
+        "value": 0.0,
+        "raw_value": 0.0
+      },
+      "before_status": "missing_native_source_location"
+    }
+  ],
+  "old_source_losses": [],
+  "old_result_changes": [],
+  "type_profile_changes": [],
+  "bounds": "Same frozen 250 requests per tool, saved producer output reused, fresh metrics; experimental evaluator coverage, no decompiler-quality claim.",
+  "determinism": {
+    "cells": 45,
+    "requested_functions_per_tool": 250,
+    "tools": [
+      "fission",
+      "kuna",
+      "angr",
+      "ghidra"
+    ],
+    "ignored_fields": [
+      "computation_time"
+    ],
+    "changed_cells": [],
+    "deterministic": true
+  },
+  "dataset_revision": "07dd95dbe6214b8a78fc1e4a55961ab515986489",
+  "rust_joern_revision": "9fd97f50885202596b125ebd2504e64910874bcb",
+  "sample_sha256": "f432c528e3071efa60fdaecc132aafa8c351e386bf7203d252e2875d6de02620",
+  "test_comparison": {
+    "baseline_failures_and_errors": 43,
+    "candidate_failures_and_errors": 43,
+    "new_failure_identities": [],
+    "removed_failure_identities": [],
+    "identical_failure_identities": true
+  }
+}

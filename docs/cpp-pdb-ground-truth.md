@@ -50,8 +50,11 @@ Full repository tests and official C++ GED/recompile/Union remain separate gates
 source/module provenance, scalar/pointer/reference/array/named aggregate type
 records and supported CodeView storage ranges. `NativeCodeResolver`, address
 identities, source ownership and source hints consume that same reader. C13's
-first unambiguous PC/source line is a provenance hint, not a recovered C++
-declaration. Original PDB names are preserved, including backticks and templates.
+first-PC source rows are preserved as a candidate set, not a recovered C++
+declaration. The legacy singular file/line hint remains present only for one
+unambiguous pair. The experimental CFG join may accept multiple pairs only
+when all uniquely resolve to the same exact definition in the proven TU; see
+[the bounded first-PC qualification](validation/cpp-first-pc-locations.md). Original PDB names are preserved, including backticks and templates.
 
 The reader merges an MSVC legacy home-copy record only with one S_LOCAL having
 the same source name, type index and lexical scope. This is an oracle-internal

@@ -8,10 +8,10 @@ GED/type/byte metrics or Union. Maintainers must approve a policy before adoptio
 
 1. **Packaging:** immutable image, matching debug companion, preprocessed input
    and effective build commands. Preserve hashes, UUID/GUID/Age and original paths.
-2. **Definition identity:** one native entry, one TU, one file/line and one exact
-   qualified definition. No basename or same-name fallback, including overloads.
+2. **Definition identity:** one native entry, one TU and one exact qualified definition.
+   Every retained first-PC file/line candidate must resolve to that same definition. No basename or same-name fallback, including overloads.
 3. **Syntactic CFG:** a parsed isolated definition with directed entry/exit roles.
-   This is what `cpp-ged-origin-v2-diagnostic` currently reports. Its eligible
+   This is what `cpp-ged-origin-v3-diagnostic` currently reports. Its eligible
    population is not a population qualified for full C++ semantics.
 4. **Semantic/effect qualification:** concrete instantiated definition, resolved
    object lifetimes and exceptional exits under the original build configuration.
@@ -29,7 +29,13 @@ path, copied debug input, or alternate companion is introduced.
 Source indexes retain the exact decoded preprocessed input-text digest. Missing file/line evidence
 now still reports native units, physical unit and compilation directory when
 available, so recollection can target the original build. These fields do not
-make an unproven source match eligible. Explicit debug-path overrides are not
+make an unproven source match eligible. When a PDB retains multiple file/line
+rows at the same first PC, every candidate must uniquely resolve within the
+proven TU to the same exact parsed definition. An unmapped candidate, different
+definition or ambiguity abstains. The reader preserves the complete candidate
+set separately from its legacy singular file/line hint; it does not select the
+smallest line, use the symbol name to choose a candidate, or bypass template
+qualification. See [the frozen replay](validation/cpp-first-pc-locations.md). Explicit debug-path overrides are not
 accepted by these contexts; their snapshot covers the default native readers.
 
 ## Template policy

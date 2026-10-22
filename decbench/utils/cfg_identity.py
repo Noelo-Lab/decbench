@@ -209,6 +209,11 @@ class NativeSource:
     compilation_directory: str | None = None
     physical_unit: str | None = None
     unit_binding: CompilationUnitBinding | None = None
+    candidate_locations: tuple[SourceLocation, ...] = ()
+
+    @property
+    def locations(self) -> tuple[SourceLocation, ...]:
+        return (self.location,) if self.location is not None else self.candidate_locations
 
 
 class NativeSourceIndex(dict[int, list[NativeSource]]):
@@ -324,6 +329,10 @@ def native_sources(binary: Path, addresses: set[int]) -> NativeSourceIndex:
                                 else None
                             ),
                             f"pdb:{function.module}:{function.address:x}:{function.name}",
+                            candidate_locations=tuple(
+                                SourceLocation(source_path(path), line)
+                                for path, line in function.first_source_locations
+                            ),
                         )
                     )
         index.update(rows)
@@ -411,9 +420,10 @@ class SourceCfgIndex:
             path
             for path in source.filtered_paths
             for record in native_records
-            if record.location is not None
+            for location in record.locations
+            if location.line > 0
             and source_unit_matches(source.primary, record)
-            and compilation_path(path, record.compilation_directory) == record.location.path
+            and compilation_path(path, record.compilation_directory) == location.path
         )
         if retained:
             source = origin_source(text, retain_paths=retained)
@@ -457,25 +467,47 @@ class SourceCfgIndex:
                 "physical_unit": record.physical_unit,
                 "compilation_directory": record.compilation_directory,
             }
-            if record.location is None:
+            locations = record.locations
+            if not locations:
                 evidence["status"] = "missing_native_source_location"
                 joined.evidence[key] = evidence
                 continue
+            location = locations[0]
             evidence.update(
-                path=record.location.path,
-                line=record.location.line,
+                path=location.path,
+                line=location.line,
                 native_name=record.name,
                 native_qualified_name=record.qualified_name,
                 native_units=list(record.units),
                 compilation_directory=record.compilation_directory,
                 unit_binding=asdict(record.unit_binding) if record.unit_binding else None,
             )
-            candidates = [
-                (filename, definition)
-                for filename, unit, definition, locations in self.definitions
-                if source_unit_matches(unit, record)
-                and _location_matches(record.location, locations, record)
+            matches = [
+                [
+                    (filename, definition)
+                    for filename, unit, definition, origins in self.definitions
+                    if source_unit_matches(unit, record)
+                    and _location_matches(candidate_location, origins, record)
+                ]
+                for candidate_location in locations
             ]
+            if len(locations) > 1:
+                evidence["native_location_candidates"] = [asdict(row) for row in locations]
+                if not all(len(rows) == 1 for rows in matches) or any(
+                    rows[0][0] != matches[0][0][0] or rows[0][1] is not matches[0][0][1]
+                    for rows in matches[1:]
+                ):
+                    evidence.update(
+                        status="ambiguous_native_source_location",
+                        location_candidate_matches=[
+                            [(file, definition.name) for file, definition in rows]
+                            for rows in matches
+                        ],
+                    )
+                    joined.evidence[key] = evidence
+                    continue
+                evidence["native_location_policy"] = "all_first_pc_locations_same_definition"
+            candidates = matches[0]
             if len(candidates) != 1:
                 units = [row for row in self.inputs if source_unit_matches(row["unit"], record)]
                 missing = (
@@ -486,15 +518,14 @@ class SourceCfgIndex:
                             "filtered_source_origin"
                             if any(
                                 compilation_path(path, record.compilation_directory)
-                                == record.location.path
+                                == location.path
                                 for row in units
                                 for path in row["filtered_origin_paths"]
                             )
                             else "missing_source_origin"
                         )
                         if not any(
-                            compilation_path(path, record.compilation_directory)
-                            == record.location.path
+                            compilation_path(path, record.compilation_directory) == location.path
                             for row in units
                             for path in row["origin_paths"]
                         )

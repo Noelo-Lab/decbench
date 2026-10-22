@@ -1,6 +1,6 @@
 # Experimental C++ producer inspection
 
-This contract applies to the opt-in `cpp-ged-origin-v2-diagnostic` and
+This contract applies to the opt-in `cpp-ged-origin-v3-diagnostic` and
 `cpp_type_match` supported-subset proposal. Default GED, legacy `type_match`,
 byte matching, Union and the existing Rust-Joern dependency pin are unchanged.
 It is not official C++ admission policy or a compiler validation service.

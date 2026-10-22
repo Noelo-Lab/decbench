@@ -503,6 +503,7 @@ class PdbFunction:
     exclusions: list[str] = field(default_factory=list)
     source_file: str | None = None
     source_line: int = 0
+    first_source_locations: tuple[tuple[str, int], ...] = ()
 
     @property
     def measurable(self) -> bool:
@@ -808,6 +809,7 @@ def read_pdb(binary_path: Path, debug_path: Path | None = None) -> PdbInfo | Non
                 if source_rows:
                     first_pc = min(row[0] for row in source_rows)
                     first = {(row[1], row[2]) for row in source_rows if row[0] == first_pc}
+                    current.first_source_locations = tuple(sorted(first))
                     if len(first) == 1:
                         current.source_file, current.source_line = next(iter(first))
                 if parameter_count is None:
