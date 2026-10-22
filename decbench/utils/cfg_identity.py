@@ -548,12 +548,12 @@ class SourceCfgIndex:
                 native_name = record.qualified_name or record.name
                 if not record.scope_known:
                     evidence["status"] = "missing_native_scope"
+                elif definition.has_error:
+                    evidence["status"] = "source_syntax_error"
                 elif definition.is_template:
                     evidence["status"] = "unsupported_template_specialization"
                 elif native_name != definition.name:
                     evidence["status"] = "source_name_mismatch"
-                elif definition.has_error:
-                    evidence["status"] = "source_syntax_error"
                 else:
                     try:
                         parsed = parse_definitions(definition.code, filename, "c++")

@@ -436,6 +436,10 @@ name. Multiple real definitions are ambiguous and are not guessed by size/name.
 A failing record does not discard unrelated records.
 
 Source CFG parsing is **definition-only** and accepts no parser error diagnostics.
+An error-bearing Tree-sitter definition is reported as `source_syntax_error`
+before comparing its recovered name or template shape. Error recovery can swallow
+unrelated declarations into one apparent definition; that name is not reliable
+evidence of a source/native mismatch. Such a span never reaches CFG parsing.
 This preserves the selected preprocessed definition's explicit control flow but
 has not qualified full-TU callee context, implicit object lifetime/exception
 edges, or template specialization. Templates abstain. A source-eligible function

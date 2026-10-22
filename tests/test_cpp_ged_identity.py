@@ -120,6 +120,26 @@ def test_source_location_cannot_borrow_different_named_function() -> None:
     )
 
 
+@pytest.mark.parametrize("native_name", ["bad", "good"])
+@pytest.mark.parametrize("prefix", ["", "template<class T> "])
+def test_error_recovery_span_is_not_evidence_of_a_name_mismatch(
+    native_name: str, prefix: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    text = prefix + "int bad(){ ?\n int good(){return 1;}\n}\n"
+    index = _index('# 1 "/src/a.cpp"\n' + text)
+    definitions = function_definitions(text)
+    assert len(definitions) == 1 and definitions[0].has_error
+
+    def unexpected_parse(*args: Any, **kwargs: Any) -> None:
+        pytest.fail("an erroneous enclosing AST must never reach CFG parsing")
+
+    monkeypatch.setattr("decbench.utils.cfg_identity.parse_definitions", unexpected_parse)
+    result = _result((native_name, 16, "int output(){return 1;}"))
+    joined = index.resolve(result, {16: [_native(16, native_name, "/src/a.cpp", 2)]})
+    assert not joined.cfgs
+    assert joined.evidence[native_name]["status"] == "source_syntax_error"
+
+
 def test_template_definition_abstains_without_specialization_model() -> None:
     index = _index('# 1 "/src/a.cpp"\ntemplate<class T> int f(T x){return x;}\n')
     result = _result(("f", 16, "int sub_10(){return 1;}"))
