@@ -670,7 +670,7 @@ def test_cli_export_smoke(tree: Path, tmp_path: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(main, ["evalkit", "export", str(tree), "-o", str(out)])
     assert result.exit_code == 0, result.output
-    assert "2 binaries, 4 functions" in result.output
+    assert "2 binaries, 4 functions" in " ".join(result.output.split())
     assert (out / "functions.json").is_file()
     assert (tmp_path / "cli-kit.zip").is_file()
 
