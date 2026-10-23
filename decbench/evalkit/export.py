@@ -123,13 +123,15 @@ def _resolve_manifest(
             failures.append(f"{project}/{opt}/{stem}: {e}")
             continue
         stems = resolve.source_stems(tree, opt, project)
-        addr_by_name = resolve.name_to_addr(path, names=names, stems=stems or None)
-        for fn in sorted(names - set(addr_by_name)):
+        from decbench.utils.function_identity import unresolved_manifest_keys
+
+        selected = resolve.manifest_functions(path, names=names, stems=stems or None)
+        for fn in sorted(unresolved_manifest_keys(selected, names)):
             failures.append(
                 f"{project}/{opt}/{stem}::{fn}: no DWARF address "
                 f"(decl-file-filtered subprogram walk over {path.name})"
             )
-        funcs = {fn: addr_by_name[fn] for fn in sorted(names & set(addr_by_name))}
+        funcs = {key: address for address, key in selected.items()}
         if funcs:
             bins.append(_KitBinary(project, opt, stem, path, funcs))
         elif allow_unresolved:

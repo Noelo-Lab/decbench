@@ -58,6 +58,10 @@ from decbench.results_store import gather_project_tomls as gather_tomls
 from decbench.utils import binfmt  # noqa: E402
 from decbench.utils.cfg import extract_cfgs_from_source  # noqa: E402
 from decbench.utils.dwarf_policy import dwarf_follow_abstract_origin  # noqa: E402
+from decbench.utils.function_identity import (  # noqa: E402
+    canonical_target_keys,
+    manifest_target_keys,
+)
 from decbench.utils.native_code import NativeCodeResolver  # noqa: E402
 
 OPT_LEVELS = [
@@ -618,18 +622,10 @@ def discover(project: Project, out_dir: Path) -> int:
 
 def _canonical_target_keys(addr2name: dict[int, str]) -> dict[int, str]:
     """Binary-wide canonical storage key for every DWARF target address."""
-    counts: dict[str, int] = {}
-    for name in addr2name.values():
-        counts[name] = counts.get(name, 0) + 1
-    return {
-        address: (f"{name}@0x{address:x}" if counts[name] > 1 else name)
-        for address, name in addr2name.items()
-    }
+    return canonical_target_keys(addr2name)
 
 
-def _select_manifest_targets(
-    addr2name: dict[int, str], allowed: set[str] | None
-) -> dict[int, str]:
+def _select_manifest_targets(addr2name: dict[int, str], allowed: set[str] | None) -> dict[int, str]:
     """Select a manifest slice without losing binary-wide function identity.
 
     New manifests may contain canonical ``name@0xADDR`` keys and therefore
@@ -639,12 +635,7 @@ def _select_manifest_targets(
     """
     if not allowed:
         return {}
-    canonical = _canonical_target_keys(addr2name)
-    return {
-        address: name
-        for address, name in addr2name.items()
-        if canonical[address] in allowed or name in allowed
-    }
+    return {address: addr2name[address] for address in manifest_target_keys(addr2name, allowed)}
 
 
 def _present_decompilers(

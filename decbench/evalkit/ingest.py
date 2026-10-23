@@ -15,7 +15,7 @@ kit's ``package.py`` — see :mod:`decbench.evalkit.kit_package`) into a new
   :func:`decbench.pipeline.evaluate.evaluate_decompilation` path the run
   driver uses, with source CFGs from the tree's ``.i`` files.
 
-All evaluation imports are lazy: ``evaluate=False`` never touches pyjoern.
+All evaluation imports are lazy: ``evaluate=False`` never touches rust_joern.
 
 Drop/count semantics: a submitted function whose address is not one of the
 frozen manifest's addresses for its (project, opt, binary) slice is dropped
@@ -43,6 +43,7 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
 )
+from decbench.utils.function_identity import unresolved_manifest_keys
 from decbench.utils.langs import preprocessed_by_stem
 
 if TYPE_CHECKING:
@@ -360,8 +361,7 @@ def _build_entry(
 
     stems = resolve.source_stems(tree, opt, project)
     lookup = resolve.AddrLookup.for_binary(binary, stems=stems or None)
-    name2addr = resolve.name_to_addr(binary, names=allowed, stems=stems or None)
-    allowed_by_addr = {address: storage_key for storage_key, address in name2addr.items()}
+    allowed_by_addr = resolve.manifest_functions(binary, names=allowed, stems=stems or None)
     snippets = split_c_functions(c_text)
 
     kept: dict[str, FunctionDecompilation] = {}
@@ -421,7 +421,10 @@ def _build_entry(
             metadata=extract_metrics(code),
         )
 
-    failed = sorted(allowed - set(kept))
+    requested_keys = set(allowed_by_addr.values()) | unresolved_manifest_keys(
+        allowed_by_addr, allowed
+    )
+    failed = sorted(requested_keys - set(kept))
     result = DecompilationResult(
         binary_path=binary,
         binary_name=stem,

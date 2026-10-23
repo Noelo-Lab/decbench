@@ -3,7 +3,7 @@ name: Deploy site to GitHub Pages
 # The site is built LOCALLY by a maintainer, not here.
 #
 # Building it requires the full benchmark run: every decompiler (IDA, Ghidra,
-# Binary Ninja, angr), a ~1.9 GB Joern, and ~15 GB of compiled binaries. None of
+# Binary Ninja, angr), a native Rust Joern build, and ~15 GB of compiled binaries. None of
 # that can live in CI. So the maintainer runs the benchmark on their own machine,
 # renders the site, and commits it:
 #

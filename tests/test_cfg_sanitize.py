@@ -3,10 +3,36 @@
 from __future__ import annotations
 
 from decbench.utils.cfg import (
+    canonicalize_infinite_loops,
     escape_literal_control_bytes,
     rewrite_computed_gotos,
     sanitize_decompiled_c,
 )
+
+
+class TestCanonicalizeInfiniteLoops:
+    def test_while_one_becomes_for(self) -> None:
+        assert canonicalize_infinite_loops("while (1) {\n}") == "for (;;) {\n}"
+
+    def test_spacing_and_spellings(self) -> None:
+        for head in ("while(1)", "while ( 1 )", "while (true)", "while (1u)", "while (0x1)", "while ( 2 )", "while (0xff)", "while (-1)", "while (10UL)"):
+            assert canonicalize_infinite_loops(head + " {}") == "for (;;) {}", head
+
+    def test_zero_is_kept(self) -> None:
+        for head in ("while (0)", "while (0x0)", "while (0U)", "while( 0 )"):
+            assert canonicalize_infinite_loops(head + " {}") == head + " {}", head
+
+    def test_do_while_tail_is_kept(self) -> None:
+        code = "do {\n    x++;\n} while (1);\n"
+        assert canonicalize_infinite_loops(code) == code
+
+    def test_real_condition_is_kept(self) -> None:
+        code = "while (x < 10) {}\nwhile (1 == x) {}\n"
+        assert canonicalize_infinite_loops(code) == code
+
+    def test_literals_and_comments_are_kept(self) -> None:
+        code = 's = "while (1)"; /* while (1) */ // while (true)\nwhile (1) {}'
+        assert canonicalize_infinite_loops(code) == 's = "while (1)"; /* while (1) */ // while (true)\nfor (;;) {}'
 
 
 class TestEscapeLiteralControlBytes:

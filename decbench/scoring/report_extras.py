@@ -323,9 +323,8 @@ def _lookup_source_ex(
 ) -> tuple[str | None, str]:
     """Best-effort source text + provenance/miss status for one function.
 
-    ``func_name`` is the benchmark storage key. For collision-qualified C++
-    keys, recover the semantic source name and canonical address before asking
-    the source extractor to disambiguate DWARF.
+    ``func_name`` is the benchmark storage key. Preserve any known canonical
+    address, including for plain keys unique only within the target population.
     """
     bp = _lookup_binary_path(decompile_results, project, opt_level, binary)
     if bp is None:
@@ -338,18 +337,13 @@ def _lookup_source_ex(
             decompile_results, project, opt_level, binary, func_name
         )
         semantic_name, keyed_address = parse_function_storage_key(func_name)
+        if func is not None:
+            return function_source_ex(Path(bp), func.name, func.address)
         if keyed_address is not None:
-            source_name = getattr(func, "name", semantic_name)
-            source_address = getattr(func, "address", keyed_address)
-            return function_source_ex(Path(bp), source_name, source_address)
+            return function_source_ex(Path(bp), semantic_name, keyed_address)
 
-        # Preserve the historical name-only path for unique/plain keys. Some
-        # imported or synthetic results carry no semantic metadata at all, or a
-        # backend address that is not a usable DWARF low_pc; address
-        # disambiguation is required only when the storage key itself is
-        # collision-qualified.
-        source_name = getattr(func, "name", semantic_name)
-        return function_source_ex(Path(bp), source_name)
+        # Legacy/imported records without function metadata have no address.
+        return function_source_ex(Path(bp), semantic_name)
     except Exception:
         return None, "extract_failed"
 

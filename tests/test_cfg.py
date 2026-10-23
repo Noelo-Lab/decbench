@@ -3,8 +3,8 @@
 import shutil
 from pathlib import Path
 
-import pyjoern
 import pytest
+import rust_joern
 
 from decbench.models.decompilation import (
     DecompilationResult,
@@ -90,11 +90,11 @@ def test_extract_cfgs_from_decompilation_marks_source_before_preprocessing(
 
     parsed_text: list[str] = []
 
-    def capture_parse(path: Path) -> dict[str, object]:
+    def capture_parse(path: Path, **_options: object) -> dict[str, object]:
         parsed_text.append(path.read_text())
         return {}
 
-    monkeypatch.setattr(pyjoern, "parse_source", capture_parse)
+    monkeypatch.setattr(rust_joern, "parse_source", capture_parse)
     result = DecompilationResult(
         binary_path=tmp_path / "binary",
         binary_name="binary",
@@ -127,11 +127,11 @@ def test_extract_cfgs_from_decompilation_preprocesses_combined_source(
 
     parsed_text: list[str] = []
 
-    def capture_parse(path: Path) -> dict[str, object]:
+    def capture_parse(path: Path, **_options: object) -> dict[str, object]:
         parsed_text.append(path.read_text())
         return {}
 
-    monkeypatch.setattr(pyjoern, "parse_source", capture_parse)
+    monkeypatch.setattr(rust_joern, "parse_source", capture_parse)
     result = DecompilationResult(
         binary_path=tmp_path / "binary",
         binary_name="binary",
@@ -170,10 +170,10 @@ def test_extract_cfgs_strict_mode_propagates_parser_failure(
     source_path = tmp_path / "target.c"
     source_path.write_text("void target(void) {}\n")
 
-    def fail_parse(_path: Path) -> None:
+    def fail_parse(_path: Path, **_options: object) -> None:
         raise RuntimeError("parser failed")
 
-    monkeypatch.setattr(pyjoern, "parse_source", fail_parse)
+    monkeypatch.setattr(rust_joern, "parse_source", fail_parse)
 
     assert extract_cfgs_from_source(source_path) == {}
     with pytest.raises(RuntimeError, match="parser failed"):

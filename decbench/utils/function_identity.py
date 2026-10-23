@@ -21,6 +21,7 @@ example ``main`` normally has no C++ linkage name).
 from __future__ import annotations
 
 import re
+from collections import Counter
 from collections.abc import MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -67,6 +68,51 @@ def parse_function_storage_key(storage_key: str) -> tuple[str, int | None]:
     if match is None:
         return storage_key, None
     return match.group(1), int(match.group(2), 16)
+
+
+def canonical_target_keys(addr2name: dict[int, str]) -> dict[int, str]:
+    """Canonical storage identities for the complete target universe."""
+    counts = Counter(addr2name.values())
+    return {
+        address: (f"{name}@0x{address:x}" if counts[name] > 1 else name)
+        for address, name in sorted(addr2name.items())
+    }
+
+
+def manifest_target_keys(addr2name: dict[int, str], names: set[str] | None) -> dict[int, str]:
+    """Select exact qualified requests or every peer of a legacy plain name."""
+    canonical = canonical_target_keys(addr2name)
+    if names is None:
+        return canonical
+    selected = set()
+    requested = set()
+    for key in names:
+        name, address = parse_function_storage_key(key)
+        if address is None:
+            requested.add(name)
+        elif addr2name.get(address) == name:
+            selected.add(address)
+    return {
+        address: key
+        for address, key in canonical.items()
+        if address in selected or addr2name[address] in requested
+    }
+
+
+def unresolved_manifest_keys(selected: dict[int, str], names: set[str]) -> set[str]:
+    """Requested entries with no selected native identity, without adding aliases."""
+    semantic = {parse_function_storage_key(key)[0] for key in selected.values()}
+    missing = set()
+    for key in names:
+        name, address = parse_function_storage_key(key)
+        if address is None:
+            matched = name in semantic
+        else:
+            chosen = selected.get(address)
+            matched = chosen is not None and parse_function_storage_key(chosen)[0] == name
+        if not matched:
+            missing.add(key)
+    return missing
 
 
 def insert_function(

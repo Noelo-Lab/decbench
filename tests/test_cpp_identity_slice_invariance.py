@@ -75,9 +75,7 @@ class _CfgMetric(Metric):
     requires_source_cfg = True
     requires_decompiled_cfg = True
 
-    def compute_for_function(
-        self, decompiled, source_cfg=None, decompiled_cfg=None, **kwargs
-    ):
+    def compute_for_function(self, decompiled, source_cfg=None, decompiled_cfg=None, **kwargs):
         assert source_cfg is not None and decompiled_cfg is not None
         return MetricValue(value=1.0)
 
@@ -130,7 +128,7 @@ def test_qualified_singleton_does_not_borrow_name_keyed_type_ground_truth(
     ]
     metric = TypeMatchMetric()
     key = str(result.binary_path)
-    metric._ground_truth_cache[key] = {"same": gt}
+    metric._ground_truth_cache[key] = {0x2000: {"same": gt}}
     metric._ground_truth_address_cache[key] = {0x2000: gt}
 
     scored = metric.compute_for_binary(result)
@@ -141,9 +139,7 @@ def test_qualified_singleton_does_not_borrow_name_keyed_type_ground_truth(
     assert scored.function_results == {}
 
 
-def test_qualified_singleton_is_not_used_as_bytematch_context(
-    tmp_path: Path, monkeypatch
-):
+def test_qualified_singleton_is_not_used_as_bytematch_context(tmp_path: Path, monkeypatch):
     qualified = _fd("same", 0x1000)
     unique = _fd("unique", 0x3000)
     result = DecompilationResult(
@@ -174,9 +170,7 @@ def test_evalkit_resolves_canonical_manifest_key_exactly(monkeypatch):
     monkeypatch.setattr(resolve, "_dwarf_addr_to_name", lambda _binary, _stems: mapping)
 
     binary = Path("fixture")
-    assert resolve.name_to_addr(binary, {"same@0x2000"}) == {
-        "same@0x2000": 0x2000
-    }
+    assert resolve.name_to_addr(binary, {"same@0x2000"}) == {"same@0x2000": 0x2000}
     assert resolve.name_to_addr(binary, {"same"}) == {"same": 0x1000}
     assert resolve.name_to_addr(binary, {"same@0x9999"}) == {}
 

@@ -3,7 +3,7 @@
 Mirrors the run driver's bookkeeping so the eval-kit speaks the exact same
 address space as the rest of DecBench:
 
-* :func:`name_to_addr` follows ``project_source_functions``
+* :func:`manifest_functions` follows ``project_source_functions``
   (``scripts/run_benchmark.py``): DWARF ``DW_TAG_subprogram`` entries with a
   ``low_pc``, optionally filtered to the project's own translation units via
   ``DW_AT_decl_file`` stems (the compiled ``.i``/``.ii`` stems).
@@ -27,7 +27,7 @@ import struct
 from pathlib import Path
 
 from decbench.utils.dwarf_policy import dwarf_follow_abstract_origin
-from decbench.utils.function_identity import parse_function_storage_key
+from decbench.utils.function_identity import manifest_target_keys, parse_function_storage_key
 from decbench.utils.langs import PREPROC_EXTS, build_stem_index, strip_source_ext
 
 _l = logging.getLogger(__name__)
@@ -116,7 +116,8 @@ def name_to_addr(
     ``stems`` restricts the walk to functions declared in those translation
     units (see :func:`_dwarf_addr_to_name`); ``names`` restricts the result to
     just those functions. An ambiguous name (several distinct addresses) keeps
-    the lowest address and logs a warning.
+    the lowest address and logs a warning. This legacy one-address API must not
+    select a benchmark population; use :func:`manifest_functions` for that.
     """
     addr2name = _dwarf_addr_to_name(Path(binary), stems)
     by_name: dict[str, list[int]] = {}
@@ -144,6 +145,13 @@ def name_to_addr(
             )
         out[storage_key] = min(addrs)
     return out
+
+
+def manifest_functions(
+    binary: Path, names: set[str] | None = None, stems: set[str] | None = None
+) -> dict[int, str]:
+    """Resolve manifest requests to every selected canonical native identity."""
+    return manifest_target_keys(_dwarf_addr_to_name(Path(binary), stems), names)
 
 
 class AddrLookup:

@@ -10,6 +10,7 @@ from decbench.decompilers.raw.binja_raw import RawBinjaDecompiler
 from decbench.decompilers.raw.ghidra_raw import RawGhidraDecompiler
 from decbench.decompilers.raw.ida_raw import RawIDADecompiler
 from decbench.decompilers.raw.kuna_raw import RawKunaDecompiler
+from decbench.decompilers.raw.glaurung_raw import RawGlaurungDecompiler
 from decbench.models.decompilation import LineMapping, VariableInfo
 
 
@@ -407,3 +408,69 @@ def test_kuna_additive_provenance_is_validated_and_rebased() -> None:
     assert no_evidence.line_mappings == []
     assert no_evidence.variables[0].line_numbers == []
     assert no_evidence.variables[0].addresses == []
+
+
+def test_glaurung_additive_provenance_is_validated_and_rebased() -> None:
+    """Glaurung emits both arrays; this pins the filtering on the way in.
+
+    The backend used to hardcode `line_mappings=[]` and `variables=[]`, so
+    type_match fell back to parsing the emitted C and the frame offsets and
+    per-slot machine addresses the CLI already reports were discarded.
+    """
+    record = {
+        "entry_va": 0x5000,
+        "size": 0x20,
+        "pseudocode": "int f(int arg0) {\n    return x;\n}",
+        "line_mappings": [
+            {"line_number": 2, "addresses": [0x5008, 0x5004]},
+            {"line_number": 99, "addresses": [0x5004]},
+            {"line_number": 3, "addresses": [0x6000]},
+        ],
+        "variables": [
+            {
+                "name": "x",
+                "type": "int",
+                "kind": "stack",
+                "stack_offset": -8,
+                "size": 4,
+                "line_numbers": [2, 99],
+                "addresses": [0x5008, 0x6000],
+            },
+            {"name": "arg0", "type": "int", "kind": "arg", "arg_index": 0, "addresses": []},
+        ],
+    }
+    function = RawGlaurungDecompiler()._build_function(record, "f", file_addr=0x1000)
+    assert function is not None
+    assert function.line_mappings == [LineMapping(line_number=2, addresses=[0x1004, 0x1008])]
+    x, arg0 = function.variables
+    assert x.addresses == [0x1008], "0x6000 is outside the function span"
+    assert x.line_numbers == [2], "line 99 does not exist in a 3-line function"
+    assert x.stack_offset == -8
+    assert arg0.kind == "arg" and arg0.arg_index == 0
+    assert arg0.addresses == [], "an argument carries its ABI position, not addresses"
+
+
+def test_glaurung_unknown_size_keeps_evidence_instead_of_voiding_it() -> None:
+    """The CLI reports `size: null` for many functions."""
+    record = {
+        "entry_va": 0x5000,
+        "size": None,
+        "pseudocode": "int f(void) {\n    return x;\n}",
+        "line_mappings": [{"line_number": 2, "addresses": [0x5010]}],
+        "variables": [{"name": "x", "type": "int", "kind": "stack", "addresses": [0x5010]}],
+    }
+    function = RawGlaurungDecompiler()._build_function(record, "f", file_addr=0x5000)
+    assert function is not None
+    assert function.line_mappings == [LineMapping(line_number=2, addresses=[0x5010])]
+    assert function.variables[0].addresses == [0x5010]
+
+
+def test_glaurung_absent_evidence_is_empty_not_none() -> None:
+    function = RawGlaurungDecompiler()._build_function(
+        {"entry_va": 0x1000, "size": 4, "pseudocode": "void f(void) {}"},
+        "f",
+        file_addr=0x1000,
+    )
+    assert function is not None
+    assert function.line_mappings == []
+    assert function.variables == []

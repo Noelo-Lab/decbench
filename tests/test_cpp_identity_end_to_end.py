@@ -89,9 +89,7 @@ def test_sample_set_reader_keeps_collision_storage_keys(tmp_path: Path) -> None:
     assert set(blocks) == {"same@0x1000", "same@0x2000", "unique"}
 
 
-def test_report_source_lookup_uses_semantic_name_and_address(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_report_source_lookup_uses_semantic_name_and_address(tmp_path: Path, monkeypatch) -> None:
     result = _result(tmp_path)
     nested = {"proj": {"O2": {"fixture": {"fixture-dec": result}}}}
     seen: list[tuple[Path, str, int | None]] = []
@@ -104,9 +102,7 @@ def test_report_source_lookup_uses_semantic_name_and_address(
         return "source", "source"
 
     monkeypatch.setattr(source_extract, "function_source_ex", fake_source)
-    source, status = report_extras._lookup_source_ex(
-        nested, "proj", "O2", "fixture", "same@0x1000"
-    )
+    source, status = report_extras._lookup_source_ex(nested, "proj", "O2", "fixture", "same@0x1000")
 
     assert (source, status) == ("source", "source")
     assert seen == [(result.binary_path, "same", 0x1000)]
@@ -224,9 +220,7 @@ def test_c_artifact_marker_supports_spaced_cpp_names(tmp_path: Path) -> None:
     assert blocks["operator new"][0] == 0x4000
 
 
-def test_report_source_lookup_keeps_plain_unique_name_only(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_report_source_lookup_preserves_plain_key_address(tmp_path: Path, monkeypatch) -> None:
     result = _result(tmp_path)
     nested = {"proj": {"O2": {"fixture": {"fixture-dec": result}}}}
     seen: list[tuple[str, int | None]] = []
@@ -238,9 +232,7 @@ def test_report_source_lookup_keeps_plain_unique_name_only(
         return "source", "source"
 
     monkeypatch.setattr(source_extract, "function_source_ex", fake_source)
-    source, status = report_extras._lookup_source_ex(
-        nested, "proj", "O2", "fixture", "unique"
-    )
+    source, status = report_extras._lookup_source_ex(nested, "proj", "O2", "fixture", "unique")
 
     assert (source, status) == ("source", "source")
-    assert seen == [("unique", None)]
+    assert seen == [("unique", result.functions["unique"].address)]

@@ -148,7 +148,11 @@ class DecompilationResult(BaseModel):
 
     @property
     def successful_count(self) -> int:
-        return len(self.functions) - len(self.decompiler.failed_functions)
+        failed = set(self.decompiler.failed_functions) - {"all"}
+        return sum(
+            bool(function.decompiled_code.strip()) and key not in failed
+            for key, function in self.functions.items()
+        )
 
     def add_function(self, function: FunctionDecompilation) -> str:
         """Insert one function without collapsing a C++ name collision.
