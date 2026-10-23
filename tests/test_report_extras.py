@@ -36,7 +36,12 @@ _ELF64_HEADER = b"\x7fELF" + b"\x00" * 14 + b"\x3e\x00"
 
 def _make_decompile_results(binary_path: Path):
     """proj -> opt -> binary -> dec -> DecompilationResult-ish mock."""
-    func = SimpleNamespace(decompiled_code="int target(int a,int b){return a+b+b;}", line_count=1)
+    func = SimpleNamespace(
+        name="target",
+        address=0x1000,
+        decompiled_code="int target(int a,int b){return a+b+b;}",
+        line_count=1,
+    )
     dec_result = SimpleNamespace(binary_path=binary_path, functions={"target": func})
     return {"proj": {"O0": {"bin1": {"angr": dec_result}}}}
 

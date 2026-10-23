@@ -18,7 +18,6 @@ Usage:  python scripts/rebuild_function_data.py results/sailr_full
 from __future__ import annotations
 
 import json
-import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -41,25 +40,13 @@ from decbench.scoring.report_extras import (
 )
 from decbench.scoring.scoreboard import build_scoreboard_from_function_data
 from decbench.scoring.view_samples import DIFFICULTY_TIERS, select_view_functions
-from decbench.utils.results_tree import resolve_binary
+from decbench.utils.function_identity import parse_function_storage_key
+from decbench.utils.results_tree import resolve_binary, split_functions
 from decbench.utils.source_extract import function_source, function_source_ex
 
-MARKER = re.compile(r"^// Function: (\S+) @ (0x[0-9a-fA-F]+)\s*$", re.M)
 PERFECT = {"ged": 0.0, "type_match": 1.0, "byte_match": 1.0}
 PER_TIER = 100
 HARDEST_PER = 12
-
-
-def split_functions(c_path: Path) -> dict[str, str]:
-    """name -> decompiled block for one decompiled .c (code only)."""
-    text = c_path.read_text(errors="replace")
-    out: dict[str, str] = {}
-    ms = list(MARKER.finditer(text))
-    for i, m in enumerate(ms):
-        start = m.end()
-        end = ms[i + 1].start() if i + 1 < len(ms) else len(text)
-        out[m.group(1)] = text[start:end].strip()
-    return out
 
 
 class DiskReader:
@@ -67,7 +54,7 @@ class DiskReader:
 
     def __init__(self, root: Path):
         self.root = root
-        self._dec_cache: dict[tuple, dict[str, str]] = {}
+        self._dec_cache: dict[tuple, dict[str, tuple[int, str]]] = {}
         self._bin_cache: dict[tuple, Path | None] = {}
 
     def binary(self, opt: str, proj: str, stem: str) -> Path | None:
@@ -79,11 +66,29 @@ class DiskReader:
         return found
 
     def decompiled(self, opt: str, proj: str, stem: str, dec: str) -> dict[str, str]:
+        return {key: code for key, (_address, code) in self._blocks(opt, proj, stem, dec).items()}
+
+    def _blocks(self, opt: str, proj: str, stem: str, dec: str) -> dict[str, tuple[int, str]]:
         key = (opt, proj, stem, dec)
         if key not in self._dec_cache:
             cf = self.root / opt / proj / "decompiled" / f"{dec}_{stem}.c"
             self._dec_cache[key] = split_functions(cf) if cf.exists() else {}
         return self._dec_cache[key]
+
+    def source_identity(
+        self, opt: str, proj: str, stem: str, key: str, decompilers: list[str]
+    ) -> tuple[str, int | None]:
+        name, encoded = parse_function_storage_key(key)
+        addresses = {
+            block[0]
+            for dec in decompilers
+            if (block := self._blocks(opt, proj, stem, dec).get(key)) is not None
+        }
+        if encoded is not None:
+            addresses.add(encoded)
+        if len(addresses) > 1:
+            raise ValueError("conflicting function addresses in source-display artifacts")
+        return name, next(iter(addresses)) if addresses else None
 
 
 def build_samples(fd: FunctionData, reader: DiskReader) -> list[SampleEntry]:
@@ -112,7 +117,14 @@ def build_samples(fd: FunctionData, reader: DiskReader) -> list[SampleEntry]:
                     decompiled[dec] = code
             if not decompiled:
                 continue
-            source, source_status = function_source_ex(binary, f.function)
+            try:
+                semantic_name, func_address = reader.source_identity(
+                    g.opt_level, g.project, g.binary, f.function, list(decompiled)
+                )
+            except ValueError:
+                source, source_status = None, "ambiguous_function_address"
+            else:
+                source, source_status = function_source_ex(binary, semantic_name, func_address)
             out.append(
                 SampleEntry(
                     project=g.project,
@@ -166,6 +178,14 @@ def build_hardest(fd: FunctionData, reader: DiskReader) -> list[HardestEntry]:
             if not code:
                 continue
             binary = reader.binary(g.opt_level, g.project, g.binary)
+            try:
+                semantic_name, func_address = reader.source_identity(
+                    g.opt_level, g.project, g.binary, f.function, [dec]
+                )
+            except ValueError:
+                source = None
+            else:
+                source = function_source(binary, semantic_name, func_address) if binary else None
             out.append(
                 HardestEntry(
                     metric=metric,
@@ -179,7 +199,7 @@ def build_hardest(fd: FunctionData, reader: DiskReader) -> list[HardestEntry]:
                     size=f.size,
                     labels=f.labels,
                     decompiled_code=code,
-                    source_code=function_source(binary, f.function) if binary else None,
+                    source_code=source,
                 )
             )
             kept += 1

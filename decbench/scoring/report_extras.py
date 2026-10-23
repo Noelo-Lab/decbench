@@ -284,6 +284,36 @@ def _lookup_binary_path(
     return None
 
 
+def _lookup_function_by_storage_key(
+    decompile_results: Any,
+    project: str,
+    opt_level: Any,
+    binary: str,
+    storage_key: str,
+) -> Any:
+    """Resolve a serialized metric/storage key back to its semantic function."""
+    if not decompile_results:
+        return None
+    try:
+        opt_results = decompile_results.get(project) or {}
+        binary_results = opt_results.get(opt_level)
+        if binary_results is None:
+            ov = _opt_value(opt_level)
+            for key, val in opt_results.items():
+                if _opt_value(key) == ov:
+                    binary_results = val
+                    break
+        if not binary_results:
+            return None
+        for dec_result in (binary_results.get(binary) or {}).values():
+            func = (getattr(dec_result, "functions", None) or {}).get(storage_key)
+            if func is not None:
+                return func
+    except Exception:
+        return None
+    return None
+
+
 def _lookup_source_ex(
     decompile_results: Any,
     project: str,
@@ -291,14 +321,29 @@ def _lookup_source_ex(
     binary: str,
     func_name: str,
 ) -> tuple[str | None, str]:
-    """Best-effort source text + provenance/miss status for one function."""
+    """Best-effort source text + provenance/miss status for one function.
+
+    ``func_name`` is the benchmark storage key. Preserve any known canonical
+    address, including for plain keys unique only within the target population.
+    """
     bp = _lookup_binary_path(decompile_results, project, opt_level, binary)
     if bp is None:
         return None, "binary_not_found"
     try:
+        from decbench.utils.function_identity import parse_function_storage_key
         from decbench.utils.source_extract import function_source_ex
 
-        return function_source_ex(Path(bp), func_name)
+        func = _lookup_function_by_storage_key(
+            decompile_results, project, opt_level, binary, func_name
+        )
+        semantic_name, keyed_address = parse_function_storage_key(func_name)
+        if func is not None:
+            return function_source_ex(Path(bp), func.name, func.address)
+        if keyed_address is not None:
+            return function_source_ex(Path(bp), semantic_name, keyed_address)
+
+        # Legacy/imported records without function metadata have no address.
+        return function_source_ex(Path(bp), semantic_name)
     except Exception:
         return None, "extract_failed"
 

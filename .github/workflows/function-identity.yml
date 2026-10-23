@@ -1,0 +1,124 @@
+name: Function identity validation
+
+on:
+  push:
+    branches: [fix/cpp-function-identity-clean]
+  pull_request:
+    paths:
+      - 'decbench/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/function-identity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DECBENCH_NO_CACHE: '1'
+  IDENTITY_MAIN: ae070b885b4e005ed37510a2c3445af6284dc2b9
+  RUST_JOERN_REV: 9fd97f50885202596b125ebd2504e64910874bcb
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Record exact checkout
+        run: |
+          mkdir -p evidence
+          git rev-parse HEAD HEAD^{tree} | tee evidence/checkout.txt
+          git status --porcelain | tee evidence/status.txt
+      - name: Install compilers and Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld g++ gcc-arm-none-eabi g++-mingw-w64-x86-64
+          python -m pip install -e '.[dev]' r2pipe
+      - name: Build pinned Rust Joern
+        run: |
+          git clone https://github.com/Noelo-Lab/rust-joern "$RUNNER_TEMP/rust-joern"
+          git -C "$RUNNER_TEMP/rust-joern" checkout "$RUST_JOERN_REV"
+          cargo build --manifest-path "$RUNNER_TEMP/rust-joern/Cargo.toml" --release --locked
+          python -m pip install -e "$RUNNER_TEMP/rust-joern"
+          test -f "$RUNNER_TEMP/rust-joern/target/release/librust_joern.so"
+          echo "RUST_JOERN_LIBRARY=$RUNNER_TEMP/rust-joern/target/release/librust_joern.so" >> "$GITHUB_ENV"
+      - name: Record environment
+        run: |
+          python -m pip freeze > evidence/python-environment.txt
+          gcc --version > evidence/gcc.txt
+          arm-none-eabi-g++ --version > evidence/arm.txt
+          x86_64-w64-mingw32-g++ --version > evidence/mingw.txt
+          ld.lld --version > evidence/lld.txt
+      - name: Identity and consumer regressions
+        run: |
+          pytest -q --no-cov tests/test_cpp_identity*.py tests/test_cpp_support.py tests/test_pr91_review_boundaries.py tests/test_evalkit.py tests/test_materialized.py tests/test_report_extras.py tests/test_reeval_ged.py tests/test_arm_thumb_extraction.py --junitxml=evidence/focused.xml
+      - name: Lint review changes
+        run: |
+          ruff check decbench/utils/function_identity.py decbench/evalkit/export.py decbench/evalkit/ingest.py decbench/evalkit/resolve.py decbench/models/decompilation.py decbench/scoring/report_extras.py scripts/run_benchmark.py scripts/rebuild_function_data.py scripts/reeval_ged.py scripts/validate_function_identity.py tests/test_pr91_review_boundaries.py tests/test_cpp_identity_pe_probe.py
+          black --check decbench/utils/function_identity.py decbench/evalkit/export.py decbench/evalkit/ingest.py decbench/evalkit/resolve.py decbench/models/decompilation.py decbench/scoring/report_extras.py scripts/run_benchmark.py scripts/rebuild_function_data.py scripts/reeval_ged.py scripts/validate_function_identity.py tests/test_pr91_review_boundaries.py tests/test_cpp_identity_pe_probe.py
+          mypy --follow-imports=silent decbench/utils/function_identity.py decbench/evalkit/export.py decbench/evalkit/ingest.py decbench/evalkit/resolve.py scripts/validate_function_identity.py
+      - name: Full suite differential against pinned main
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/identity-main" "$IDENTITY_MAIN"
+          set +e
+          (cd "$RUNNER_TEMP/identity-main" && PYTHONPATH="$RUNNER_TEMP/identity-main" python -m pytest -q --no-cov --junitxml="$GITHUB_WORKSPACE/evidence/main.xml") > evidence/main.log 2>&1
+          main_status=$?
+          PYTHONPATH="$GITHUB_WORKSPACE" python -m pytest -q --no-cov --junitxml=evidence/candidate.xml > evidence/candidate.log 2>&1
+          candidate_status=$?
+          set -e
+          printf 'main=%s\ncandidate=%s\n' "$main_status" "$candidate_status" | tee evidence/pytest-status.txt
+          test "$main_status" -le 1
+          test "$candidate_status" -le 1
+          python scripts/validate_function_identity.py compare evidence/main.xml evidence/candidate.xml --output evidence/differential.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: function-identity-${{ github.sha }}
+          path: evidence/
+
+  leveldb:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install dependencies and Ghidra
+        run: |
+          python -m pip install -e . pyghidra
+          curl -L --fail -o "$RUNNER_TEMP/ghidra.zip" https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.0.4_build/ghidra_12.0.4_PUBLIC_20260303.zip
+          echo "c3b458661d69e26e203d739c0c82d143cc8a4a29d9e571f099c2cf4bda62a120  $RUNNER_TEMP/ghidra.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/ghidra.zip" -d "$RUNNER_TEMP"
+          echo "GHIDRA_INSTALL_DIR=$RUNNER_TEMP/ghidra_12.0.4_PUBLIC" >> "$GITHUB_ENV"
+      - name: Build pinned LevelDB
+        run: |
+          git clone https://github.com/google/leveldb "$RUNNER_TEMP/leveldb"
+          git -C "$RUNNER_TEMP/leveldb" checkout 99b3c03b3284f5886f9ef9a4ef703d57373e61be
+          cmake -S "$RUNNER_TEMP/leveldb" -B "$RUNNER_TEMP/leveldb/build" -DCMAKE_BUILD_TYPE= -DCMAKE_CXX_FLAGS='-O0 -g -fno-builtin' -DLEVELDB_BUILD_TESTS=OFF -DLEVELDB_BUILD_BENCHMARKS=OFF -DBUILD_SHARED_LIBS=ON
+          cmake --build "$RUNNER_TEMP/leveldb/build" -j2
+      - name: Stripped cross-decompiler identity
+        env:
+          _JAVA_OPTIONS: '-Xmx4g -Djava.awt.headless=true'
+        run: |
+          mkdir -p evidence
+          git rev-parse HEAD HEAD^{tree} > evidence/checkout.txt
+          python scripts/validate_function_identity.py leveldb "$RUNNER_TEMP/leveldb/build/libleveldb.so.1.23.0" --output evidence/leveldb.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: leveldb-identity-${{ github.sha }}
+          path: evidence/

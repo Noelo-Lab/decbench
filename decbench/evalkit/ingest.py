@@ -43,6 +43,7 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
 )
+from decbench.utils.function_identity import unresolved_manifest_keys
 from decbench.utils.langs import preprocessed_by_stem
 
 if TYPE_CHECKING:
@@ -360,7 +361,7 @@ def _build_entry(
 
     stems = resolve.source_stems(tree, opt, project)
     lookup = resolve.AddrLookup.for_binary(binary, stems=stems or None)
-    name2addr = resolve.name_to_addr(binary, names=allowed, stems=stems or None)
+    allowed_by_addr = resolve.manifest_functions(binary, names=allowed, stems=stems or None)
     snippets = split_c_functions(c_text)
 
     kept: dict[str, FunctionDecompilation] = {}
@@ -373,8 +374,18 @@ def _build_entry(
             )
             counters.dropped_extra += 1
             continue
-        dwarf_name = lookup.name_for(addr)
-        if dwarf_name is None or dwarf_name not in allowed:
+        resolved = lookup.resolve(addr)
+        if resolved is None:
+            _warn(
+                warnings,
+                f"{where}: {sub_name} @ 0x{addr:x} is not a manifest function of this "
+                f"slice — dropped",
+            )
+            counters.dropped_extra += 1
+            continue
+        low_pc, dwarf_name = resolved
+        storage_key = allowed_by_addr.get(low_pc)
+        if storage_key is None:
             _warn(
                 warnings,
                 f"{where}: {sub_name} @ 0x{addr:x} is not a manifest function of this "
@@ -393,17 +404,16 @@ def _build_entry(
         if dwarf_name != sub_name:
             code = re.sub(r"\b" + re.escape(sub_name) + r"\b", dwarf_name, code)
             counters.relabeled += 1
-        low_pc = name2addr.get(dwarf_name, addr)
-        prev = kept.get(dwarf_name)
+        prev = kept.get(storage_key)
         if prev is not None:
             _warn(
                 warnings,
                 f"{where}: {sub_name} and another submitted function both relabel to "
-                f"{dwarf_name} — keeping the larger body",
+                f"{storage_key} — keeping the larger body",
             )
             if len(code) < len(prev.decompiled_code or ""):
                 continue
-        kept[dwarf_name] = FunctionDecompilation(
+        kept[storage_key] = FunctionDecompilation(
             name=dwarf_name,
             address=low_pc,
             decompiled_code=code,
@@ -411,7 +421,10 @@ def _build_entry(
             metadata=extract_metrics(code),
         )
 
-    failed = sorted(allowed - set(kept))
+    requested_keys = set(allowed_by_addr.values()) | unresolved_manifest_keys(
+        allowed_by_addr, allowed
+    )
+    failed = sorted(requested_keys - set(kept))
     result = DecompilationResult(
         binary_path=binary,
         binary_name=stem,
