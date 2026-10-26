@@ -72,6 +72,10 @@ Key conventions (all families):
   `VariableInfo.arg_index` must be the **ABI position**, not the order the tool
   happens to enumerate its locals in — type_match pairs arguments by that index
   (see [metrics.md](metrics.md#argument-positions-must-be-abi-positions)).
+  A pointer is credited as a struct pointer only when `VariableInfo.type`
+  carries the `struct`/`union` keyword or `decompiled_code` declares the
+  pointee name as a struct/union (see
+  [metrics.md](metrics.md#pointers-to-structs-match-by-kind)).
 - **Decompiler identity is `name` or `name@version`** (`spec.py`): the
   registry resolves `ghidra@12.1` to a versioned instance whose `.id` flows
   through results/scoreboard/report as a distinct column. Per-version settings

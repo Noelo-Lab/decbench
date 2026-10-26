@@ -301,6 +301,52 @@ def has_line_address_evidence(decompiled: FunctionDecompilation) -> bool:
     return any(mapping.addresses for mapping in decompiled.line_mappings)
 
 
+_POINTER_SPELLING = re.compile(
+    r"^(?P<base>[A-Za-z_][\w\s:]*?)\s*(?P<stars>(?:\*\s*(?:(?:const|volatile|restrict)\b\s*)*)+)$"
+)
+_AGGREGATE_KEYWORD = re.compile(r"^(struct|union|class)\s+([A-Za-z_][\w:]*)$")
+_TYPE_NAME = re.compile(r"^[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*$")
+_CV_WORDS = re.compile(r"\b(?:const|volatile)\b")
+_DECLARES_AGGREGATE = re.compile(r"\b(?:struct|union)\b")
+
+
+def aggregate_pointer_form(kind: str, depth: int) -> str:
+    """Kind-only form of a pointer to a struct or union: ``<struct>*``, ``<union>**``."""
+    return f"<{kind}>" + "*" * depth
+
+
+def aggregate_pointer_forms(variables: list[Any], code: str) -> list[str | None]:
+    """Kind-only form of each decompiled variable whose type points to a struct or union.
+
+    The kind is read from the spelling's own ``struct``/``union`` keyword, or from a
+    struct/union declaration of the pointee name in the decompiled C itself (angr
+    prints ``typedef struct struct_0 {...} struct_0;``). A bare name is never
+    evidence: ``struct_0 *`` with no declaration in ``code`` has no kind.
+    """
+    from decbench.metrics.variable_features import declared_aggregate_kinds
+
+    declared: dict[str, str] | None = None
+    forms: list[str | None] = []
+    for variable in variables:
+        match = _POINTER_SPELLING.match((getattr(variable, "type", "") or "").strip())
+        if match is None:
+            forms.append(None)
+            continue
+        base = " ".join(_CV_WORDS.sub(" ", match.group("base")).split())
+        kind: str | None = None
+        keyword = _AGGREGATE_KEYWORD.match(base)
+        if keyword:
+            kind = "union" if keyword.group(1) == "union" else "struct"
+        elif _TYPE_NAME.match(base):
+            if declared is None:
+                has_aggregate = bool(code) and _DECLARES_AGGREGATE.search(code) is not None
+                declared = declared_aggregate_kinds(code) if has_aggregate else {}
+            kind = declared.get(base) or declared.get(base.rsplit("::", 1)[-1])
+        depth = match.group("stars").count("*")
+        forms.append(aggregate_pointer_form(kind, depth) if kind else None)
+    return forms
+
+
 def extract_ground_truth_type_index(binary_path: Path) -> GroundTruthTypeIndex:
     """Extract DWARF variable types keyed by function address and name.
 
@@ -435,6 +481,43 @@ def _parse_lexical_block(die: Any, dwarfinfo: Any) -> list[dict[str, Any]]:
     return variables
 
 
+_AGGREGATE_TAGS = {
+    "DW_TAG_structure_type": "struct",
+    "DW_TAG_class_type": "struct",
+    "DW_TAG_union_type": "union",
+}
+_POINTER_TAGS = frozenset(
+    {"DW_TAG_pointer_type", "DW_TAG_reference_type", "DW_TAG_rvalue_reference_type"}
+)
+_TRANSPARENT_TAGS = frozenset(
+    {
+        "DW_TAG_typedef",
+        "DW_TAG_const_type",
+        "DW_TAG_volatile_type",
+        "DW_TAG_restrict_type",
+        "DW_TAG_atomic_type",
+    }
+)
+
+
+def _aggregate_pointer_die_form(die: Any, dwarfinfo: Any) -> str | None:
+    """Kind-only form when ``die``'s type is a pointer (any depth) to a struct or union.
+
+    Typedefs and qualifiers are transparent at every level. Arrays, function
+    pointers, and by-value aggregates have no kind form.
+    """
+    depth = 0
+    while "DW_AT_type" in die.attributes:
+        die = dwarfinfo.get_DIE_from_refaddr(die.attributes["DW_AT_type"].value + die.cu.cu_offset)
+        if die.tag in _POINTER_TAGS:
+            depth += 1
+        elif die.tag in _AGGREGATE_TAGS:
+            return aggregate_pointer_form(_AGGREGATE_TAGS[die.tag], depth) if depth else None
+        elif die.tag not in _TRANSPARENT_TAGS:
+            return None
+    return None
+
+
 def _parse_variable_die(
     die: Any,
     dwarfinfo: Any,
@@ -477,6 +560,10 @@ def _parse_variable_die(
     all_forms: set[str] = set()
     for t in type_names:
         all_forms.update(normalize_type(t))
+    with contextlib.suppress(Exception):
+        kind_form = _aggregate_pointer_die_form(die, dwarfinfo)
+        if kind_form:
+            all_forms.add(kind_form)
 
     # SORTED, not list(set(...)): this payload goes into the type_match cache key
     # via stable_hash -> json.dumps, which orders dict keys but not list elements.
@@ -975,7 +1062,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "17"
+    cache_version = "18"
 
     weight = 1.0
     lower_is_better = False
@@ -1079,6 +1166,13 @@ class TypeMatchMetric(Metric):
         decompiled_by_id = {
             f"decompiler:{index}": variable for index, variable in enumerate(raw_variables)
         }
+        aggregate_forms = dict(
+            zip(
+                decompiled_by_id,
+                aggregate_pointer_forms(raw_variables, decompiled.decompiled_code),
+                strict=True,
+            )
+        )
         stack_shift_hint = calibration_shift
         if stack_shift_hint is None:
             ground_truth_offsets = [
@@ -1114,6 +1208,7 @@ class TypeMatchMetric(Metric):
                     "identity": identity,
                     "type": getattr(variable, "type", ""),
                     "grading_size": getattr(variable, "size", None),
+                    "aggregate_pointer": aggregate_forms[identity],
                 }
                 for identity, variable in sorted(decompiled_by_id.items())
             ],
@@ -1139,6 +1234,7 @@ class TypeMatchMetric(Metric):
                 evidence_error,
                 linemap_present,
                 (decompiled.metadata or {}).get("line_mapping_source"),
+                aggregate_forms,
             ),
         )
 
@@ -1154,6 +1250,7 @@ class TypeMatchMetric(Metric):
         evidence_error: str | None,
         linemap_present: bool,
         line_mapping_source: str | None,
+        aggregate_forms: dict[str, str | None],
     ) -> MetricValue:
         gt_stack_vars = sum(1 for gv in ground_truth_vars if gv.get("rbp_offset"))
         decomp_stack_vars = sum(bool(variable.stack_offsets) for variable in decompiled_evidence)
@@ -1168,6 +1265,7 @@ class TypeMatchMetric(Metric):
         tp = 0
         fp = 0
         fn = 0
+        tp_kind_only = 0
         for source_id, ground_truth_types in source_types.items():
             decompiled_id = matches.get(source_id)
             variable = decompiled_by_id.get(decompiled_id) if decompiled_id is not None else None
@@ -1182,6 +1280,9 @@ class TypeMatchMetric(Metric):
                 and bool(_SIZE_SCALARS.get(uncommitted_size, set()) & expected)
             ):
                 tp += 1
+            elif aggregate_forms.get(str(decompiled_id)) in expected:
+                tp += 1
+                tp_kind_only += 1
             else:
                 fp += 1
 
@@ -1222,6 +1323,7 @@ class TypeMatchMetric(Metric):
                 "matched_by_offset": stage_counts.get("stack", 0),
                 "matched_by_name": 0,
                 "gt_arg_vars": sum(1 for variable in ground_truth_vars if variable.get("is_arg")),
+                "tp_kind_only": tp_kind_only,
             },
         )
 
@@ -1269,6 +1371,7 @@ class TypeMatchMetric(Metric):
         """Score a producer with no address provenance through the legacy correspondence."""
 
         variables = list(getattr(decompiled, "variables", []) or [])
+        aggregate_forms = aggregate_pointer_forms(variables, decompiled.decompiled_code)
         key_inputs = [
             "legacy_name",
             [
@@ -1279,8 +1382,9 @@ class TypeMatchMetric(Metric):
                     "size": variable.size,
                     "kind": getattr(variable, "kind", None),
                     "arg_index": variable.arg_index,
+                    "aggregate_pointer": aggregate_form,
                 }
-                for variable in variables
+                for variable, aggregate_form in zip(variables, aggregate_forms, strict=True)
             ],
             decompiled.decompiled_code if not variables else "",
             ground_truth_vars,
@@ -1380,6 +1484,7 @@ class TypeMatchMetric(Metric):
 
         var_types: list[set[str]] = [normalize_type(v.type) for v in decompiled.variables]
         var_unc: list[int | None] = [_uncommitted_size(v) for v in decompiled.variables]
+        var_kind = aggregate_pointer_forms(decompiled.variables, decompiled.decompiled_code)
         by_arg_index: dict[int, int] = {}
         by_off: dict[int, list[int]] = {}
         by_name: dict[str, list[int]] = {}
@@ -1392,7 +1497,7 @@ class TypeMatchMetric(Metric):
             if v.name:
                 by_name.setdefault(v.name, []).append(i)
 
-        def _matches(gt_forms: set[str], i: int) -> bool:
+        def _name_matches(gt_forms: set[str], i: int) -> bool:
             """Does decompiled var ``i`` type-match a GT var with these forms?
 
             True on an exact normalized-name intersection OR when the decompiled
@@ -1405,14 +1510,22 @@ class TypeMatchMetric(Metric):
             sz = var_unc[i]
             return sz is not None and bool(_SIZE_SCALARS.get(sz, set()) & gt_forms)
 
+        def _kind_matches(gt_forms: set[str], i: int) -> bool:
+            return var_kind[i] in gt_forms
+
         used: set[int] = set()
+        kind_only = 0
 
         def claim(candidates: list[int], gt_types: set[str]) -> bool | None:
             """Claim the best unused candidate: True=tp, False=fp, None=miss."""
+            nonlocal kind_only
             avail = [i for i in candidates if i not in used]
             if not avail:
                 return None
-            hit = next((i for i in avail if _matches(gt_types, i)), None)
+            hit = next((i for i in avail if _name_matches(gt_types, i)), None)
+            if hit is None:
+                hit = next((i for i in avail if _kind_matches(gt_types, i)), None)
+                kind_only += hit is not None
             if hit is not None:
                 used.add(hit)
                 return True
@@ -1433,7 +1546,10 @@ class TypeMatchMetric(Metric):
                 continue
             used.add(di)
             decided[gi] = True
-            verdicts[gi] = _matches(set(gv.get("type", [])), di)
+            gt_forms = set(gv.get("type", []))
+            name_hit = _name_matches(gt_forms, di)
+            verdicts[gi] = name_hit or _kind_matches(gt_forms, di)
+            kind_only += bool(verdicts[gi]) and not name_hit
             pass_counts["arg"] += 1
 
         for gi, gv in enumerate(ground_truth_vars):
@@ -1481,6 +1597,7 @@ class TypeMatchMetric(Metric):
                 "matched_by_offset": pass_counts["offset"],
                 "matched_by_name": pass_counts["name"],
                 "gt_arg_vars": sum(1 for gv in ground_truth_vars if gv.get("is_arg")),
+                "tp_kind_only": kind_only,
             },
         )
 
