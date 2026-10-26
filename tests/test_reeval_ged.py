@@ -854,6 +854,13 @@ def test_eval_one_scores_survive_unparseable_unexpanded_audit_input(
     assert scores == {"f": {"value": 0.0, "perfect": True}}
 
 
+def test_checkpoint_signature_tracks_source_resolution_version() -> None:
+    from decbench.utils.cfg import SOURCE_RESOLUTION_VERSION
+
+    signature = reeval_ged.checkpoint_signature()
+    assert signature["source_resolution"] == SOURCE_RESOLUTION_VERSION
+
+
 def test_checkpoint_schema_tracks_dwarf_tu_ownership(tmp_path: Path) -> None:
     assert reeval_ged.checkpoint_signature()["schema_version"] == 8
 

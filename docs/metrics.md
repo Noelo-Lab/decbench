@@ -89,7 +89,9 @@ Source-side matching is per-TU: each target function's DWARF `low_pc` and
 binary-stem convention is retained when that provenance is unavailable, and
 cross-TU best-by-name is only the final fallback. This matters when a build
 names an output differently from the source that defines its `main`; using the
-largest same-named graph from another TU is not valid ground truth. Matching is
+largest same-named graph from another TU is not valid ground truth. A name DWARF
+assigns to several TUs of one binary resolves only among those TUs, and a known
+owner without a real CFG abstains. Matching is
 also per optimization level: an O0 source CFG is not valid ground truth for O2
 merely because both inputs came from the same project. The old
 JOERN_FAILURES.md failure analysis lives in git history; Joern parse-health

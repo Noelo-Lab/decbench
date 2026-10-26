@@ -17,6 +17,7 @@ import pytest
 
 from decbench.publish import cfg_export
 from decbench.utils.cfg import (
+    SOURCE_RESOLUTION_VERSION,
     best_source_by_name,
     is_degenerate_source_cfg,
     resolved_source_for_binary,
@@ -236,6 +237,40 @@ def test_known_dwarf_owner_does_not_fall_back_to_another_tu() -> None:
     assert "main" not in resolved
 
 
+def test_name_with_several_dwarf_owners_resolves_among_them_only() -> None:
+    """Same-named statics in one binary never borrow a third TU's larger body."""
+    tus = {
+        "omfwd": {"checkCnf": chain(3)},
+        "ompipe": {"checkCnf": chain(5)},
+        "omfile": {"checkCnf": chain(9)},
+    }
+    resolved = resolved_source_for_binary(
+        "rsyslogd",
+        tus,
+        best_source_by_name(tus),
+        function_owners={0x10: ("checkCnf", "omfwd"), 0x20: ("checkCnf", "ompipe")},
+    )
+
+    assert resolved["checkCnf"] is tus["ompipe"]["checkCnf"]
+
+
+def test_name_with_several_dwarf_owners_and_no_real_body_abstains() -> None:
+    """Owners with only prototypes abstain rather than fall back across TUs."""
+    tus = {
+        "omfwd": {"checkCnf": prototype()},
+        "ompipe": {},
+        "omfile": {"checkCnf": chain(9)},
+    }
+    resolved = resolved_source_for_binary(
+        "rsyslogd",
+        tus,
+        best_source_by_name(tus),
+        function_owners={0x10: ("checkCnf", "omfwd"), 0x20: ("checkCnf", "ompipe")},
+    )
+
+    assert "checkCnf" not in resolved
+
+
 def test_evaluate_project_accepts_precomputed_cfgs_with_dwarf_owners(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -366,14 +401,53 @@ def test_no_filter_keeps_the_whole_resolved_map(project_tree) -> None:
 
 
 def test_existing_json_is_not_rewritten_without_overwrite(project_tree) -> None:
-    """The export stays resumable: present JSONs are left alone."""
+    """The export stays resumable: current JSONs are left alone."""
     root, dest = project_tree({"cat": {"main": chain(3)}})
     cfg_export.export_project_cfgs(root, dest, "proj", {"O2": ["cat"]})
 
     target = cfg_export.cfg_json_path(dest, "O2", "proj", "cat")
-    target.write_text(json.dumps({"functions": {"sentinel": {}}}))
+    current = json.loads(target.read_text())
+    assert current["resolution"] == SOURCE_RESOLUTION_VERSION
+    target.write_text(json.dumps({**current, "functions": {"sentinel": {}}}))
     cfg_export.export_project_cfgs(root, dest, "proj", {"O2": ["cat"]})
     assert "sentinel" in json.loads(target.read_text())["functions"]
 
     cfg_export.export_project_cfgs(root, dest, "proj", {"O2": ["cat"]}, overwrite=True)
     assert "main" in json.loads(target.read_text())["functions"]
+
+
+@pytest.mark.parametrize(
+    "stale",
+    [
+        {"generator": "rust-joern"},
+        {"generator": "rust-joern", "resolution": SOURCE_RESOLUTION_VERSION - 1},
+        {"generator": "pyjoern", "resolution": SOURCE_RESOLUTION_VERSION},
+    ],
+)
+def test_stale_export_is_regenerated_without_overwrite(
+    project_tree, monkeypatch: pytest.MonkeyPatch, stale: dict[str, object]
+) -> None:
+    """An export from an older resolution must not survive a resumed publish.
+
+    ``psize.json`` written before DWARF ownership carried ``bash``'s 150-block
+    ``main``; re-running the export has to replace it with ``psize``'s own body.
+    """
+    root, dest = project_tree(
+        {"psize.aux-psize": {"main": chain(6)}, "shell": {"main": chain(150)}}
+    )
+    monkeypatch.setattr(cfg_export, "resolve_binary", lambda *_args: root / "psize.aux")
+    monkeypatch.setattr(
+        cfg_export.binfmt,
+        "source_function_owners",
+        lambda *_args, **_kwargs: {0x10C0: ("main", "psize.aux-psize")},
+    )
+    target = cfg_export.cfg_json_path(dest, "O2", "proj", "psize")
+    target.parent.mkdir(parents=True)
+    old_main = dict(zip(("nodes", "edges"), cfg_export.relabel_cfg(chain(150))[:2], strict=True))
+    target.write_text(json.dumps({**stale, "functions": {"main": old_main}}))
+
+    cfg_export.export_project_cfgs(root, dest, "proj", {"O2": ["psize"]})
+
+    exported = json.loads(target.read_text())
+    assert exported["resolution"] == SOURCE_RESOLUTION_VERSION
+    assert len(exported["functions"]["main"]["nodes"]) == 6

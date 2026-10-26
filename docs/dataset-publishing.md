@@ -111,8 +111,8 @@ For each group it writes:
    `.toml`) → `results/<d>/<opt>/<project>/<stem>.c` (+ `.toml`).
 3. **Source CFGs** — `pipeline_data/source_cfgs/<opt>/<project>/<stem>.json`
    (§5). This is the compute-heavy step, gated behind `--cfgs` and independently
-   resumable (existing outputs are skipped); the fast metadata/layout build
-   works WITHOUT `--cfgs`.
+   resumable (current outputs are skipped, stale ones rewritten); the fast
+   metadata/layout build works WITHOUT `--cfgs`.
 
 Per project (once): **Sources** — the project's `.i` files from all its
 `compiled/` dirs across opt levels are stripped with
@@ -239,6 +239,7 @@ nothing else. Store, per binary, the `function → CFG` map the pipeline used:
 {
   "opt": "O0", "project": "zlib", "binary": "example",
   "generator": "rust-joern",              // provenance (older exports: "pyjoern")
+  "resolution": 1,                         // SOURCE_RESOLUTION_VERSION that selected the bodies
   "functions": {
     "test_compress": {
       "nodes": [0, 1, 2],                  // ints 0..n-1
@@ -259,14 +260,22 @@ binary's map through the very same
 `pipeline/evaluate.py` scores with: DWARF `low_pc`/`DW_AT_decl_file` ownership
 wins for each function, the matching binary stem is the compatibility path when
 that ownership is unavailable, and cross-TU best-by-name is the final fallback.
-A known owner with no real source CFG abstains instead of borrowing a same-named
-function from another TU. Delegating to that pair is what keeps the export from
+A name DWARF assigns to several TUs (same-named `static` functions linked into
+one binary) resolves only among those TUs, and a known owner with no real source
+CFG abstains instead of borrowing a same-named function from another TU.
+Delegating to that pair is what keeps the export from
 drifting from the scoring path (`tests/test_cfg_export.py` asserts the two
 agree). Each
 DiGraph's nodes are relabeled to `0..n-1` (stable order); Joern parses are
 **deduplicated by stripped-content hash** so each unique translation unit is
 parsed once (parsing is the dominant cost; see the module docstring), and an
-existing `<stem>.json` is skipped unless `--overwrite`.
+existing `<stem>.json` is skipped only when its `generator` and `resolution`
+match the current export; anything else, including a file without
+`resolution`, is regenerated. Bump `decbench.utils.cfg.SOURCE_RESOLUTION_VERSION`
+whenever `resolved_source_for_binary` would pick a different body: the next
+`--cfgs` publish then rewrites every export, and `scripts/reeval_ged.py`
+replays every GED slice, because its checkpoint signature records the same
+value.
 
 Each JSON holds only the functions **that binary** is scored on
 (`publish_dataset.py::_cfg_functions` passes `group.all_functions` as the
