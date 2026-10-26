@@ -593,7 +593,12 @@ def _parse_type_die(die: Any, dwarfinfo: Any) -> tuple[list[str], int]:
         arr_names = [f"{n}[{length}]" for n in child_names]
         return child_names + arr_names, elem_size * length
 
-    elif tag in ("DW_TAG_const_type", "DW_TAG_volatile_type"):
+    elif tag in (
+        "DW_TAG_const_type",
+        "DW_TAG_volatile_type",
+        "DW_TAG_restrict_type",
+        "DW_TAG_atomic_type",
+    ):
         return _parse_type_die(type_die, dwarfinfo)
 
     elif tag == "DW_TAG_structure_type":

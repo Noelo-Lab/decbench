@@ -1081,6 +1081,38 @@ int main() {
         assert "DW_TAG_reference_type" not in tags
         assert "DW_TAG_rvalue_reference_type" not in tags
 
+    def test_restrict_and_atomic_qualifiers_keep_the_underlying_type(self, tmp_path) -> None:
+        """``restrict``/``_Atomic`` are qualifiers like ``const``, not a ``void`` type."""
+        import shutil
+        import subprocess
+
+        if shutil.which("gcc") is None:
+            pytest.skip("needs gcc")
+
+        from decbench.metrics.type_match import extract_ground_truth_types
+
+        src = tmp_path / "q.c"
+        src.write_text(
+            "int copy(char *restrict dst, const char *restrict src, _Atomic int *counter) {\n"
+            "    _Atomic long total = 0;\n"
+            "    while ((*dst++ = *src++)) total += 1;\n"
+            "    *counter += (int)total;\n"
+            "    return (int)total;\n"
+            "}\n"
+            'int main(void) { char b[4]; _Atomic int n = 0; return copy(b, "ab", &n); }\n'
+        )
+        binary = tmp_path / "q.bin"
+        subprocess.run(
+            ["gcc", "-g", "-O0", str(src), "-o", str(binary)], check=True, capture_output=True
+        )
+
+        by_name = {v["name"]: v for v in extract_ground_truth_types(binary)["copy"]}
+        assert "char*" in by_name["dst"]["type"]
+        assert "char*" in by_name["src"]["type"]
+        assert "int*" in by_name["counter"]["type"]
+        assert "long long" in by_name["total"]["type"]
+        assert all(v["type"] != ["void"] for v in by_name.values())
+
 
 class TestByteMatchMetric:
     """Tests for the byte match metric."""
