@@ -11,6 +11,8 @@ What's here:
     the original `-m*/-O*` flags (from the DWARF producer), so a recompile is
     "the same way as source"; :func:`tool_available` gates on it being installed.
   * :func:`capstone_arch_mode` — the right capstone arch for disassembly.
+  * :func:`strip_copy` / :func:`strip_leftovers` — a verified fully-stripped copy
+    of an ELF or PE, using the target's own binutils, the host's, or LLVM's.
   * :func:`dwarf_info` / :func:`pe_dwarf_info` — a pyelftools ``DWARFInfo`` for an
     ELF *or* a PE (PE: read the `.debug_*` sections via objdump file offsets and
     build the DWARFInfo by hand — LIEF's community build has no DWARF reader and
@@ -29,12 +31,15 @@ What's here:
 
 from __future__ import annotations
 
+import contextlib
 import io
+import os
 import platform
 import re
 import shutil
 import struct
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -138,6 +143,132 @@ def recompiler_for(info: BinInfo) -> str | None:
 
 def tool_available(name: str) -> bool:
     return shutil.which(name) is not None
+
+
+_BINUTILS_PREFIXES: dict[tuple[str, str], tuple[str, ...]] = {
+    ("elf", "x86-64"): ("x86_64-linux-gnu-",),
+    ("elf", "x86"): ("i686-linux-gnu-",),
+    ("elf", "arm"): ("arm-none-eabi-", "arm-linux-gnueabihf-", "arm-linux-gnueabi-"),
+    ("elf", "aarch64"): ("aarch64-linux-gnu-",),
+    ("pe", "x86"): ("i686-w64-mingw32-",),
+    ("pe", "x86-64"): ("x86_64-w64-mingw32-",),
+}
+
+
+def _versioned_tools(name: str) -> list[str]:
+    """``name`` plus any versioned installs on ``PATH`` (``llvm-strip-18``), newest first."""
+    found: set[str] = set()
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        with contextlib.suppress(OSError):
+            found.update(p.name for p in Path(directory or ".").glob(f"{name}-[0-9]*"))
+    versioned = sorted(
+        (tool for tool in found if tool.rsplit("-", 1)[1].isdigit()),
+        key=lambda tool: int(tool.rsplit("-", 1)[1]),
+        reverse=True,
+    )
+    return [name, *versioned]
+
+
+def strip_tools(info: BinInfo | None) -> list[str]:
+    """Installed tools that may ``--strip-all`` a binary of ``info``'s format, best first.
+
+    A host binutils built without multiarch support rejects foreign formats (ARM
+    ELF on an x86-64 host), so the target's prefixed binutils come first, then the
+    host's ``strip``, then LLVM's format-agnostic ``llvm-strip``/``llvm-objcopy``.
+    """
+    prefixes = _BINUTILS_PREFIXES.get((info.fmt, info.arch), ()) if info is not None else ()
+    names = [f"{prefix}strip" for prefix in prefixes] + ["strip"]
+    names += _versioned_tools("llvm-strip") + _versioned_tools("llvm-objcopy")
+    tools: list[str] = []
+    for name in names:
+        path = shutil.which(name)
+        if path is not None and path not in tools:
+            tools.append(path)
+    return tools
+
+
+def pe_debug_leftovers(path: Path) -> list[str]:
+    """Debug sections and symbol tables still present in a PE, by RESOLVED name.
+
+    PE section headers are 8 bytes, so long names live in the COFF string table
+    and the header holds a ``/<offset>`` reference — an unstripped PE therefore
+    shows LIEF names like ``/29``, never ``.debug_info``. Resolving them is the
+    only way to see leftover DWARF. Also flags a surviving COFF symbol table,
+    which ``strip --strip-all`` always removes. Raises ``ValueError`` when LIEF
+    cannot parse ``path``.
+    """
+    import lief
+
+    with contextlib.suppress(Exception):
+        lief.logging.disable()
+    binary = lief.parse(str(path))
+    if binary is None:
+        raise ValueError(f"LIEF cannot parse {path}")
+    leftovers: list[str] = []
+    if getattr(binary.header, "numberof_symbols", 0):
+        leftovers.append("COFF symbol table")
+    raw = path.read_bytes()
+    # The string table follows the symbol table and its first 4 bytes are its own
+    # size, so without a symbol table pointer there is nothing to resolve.
+    ptr = int(getattr(binary.header, "pointerto_symbol_table", 0) or 0)
+    nsyms = int(getattr(binary.header, "numberof_symbols", 0) or 0)
+    strtab_off = ptr + nsyms * 18 if ptr else 0
+    for sec in binary.sections:
+        name = sec.name.decode() if isinstance(sec.name, bytes) else sec.name
+        if not name.startswith("/"):
+            if name.startswith(".debug"):
+                leftovers.append(name)
+            continue
+        if not strtab_off or not name[1:].isdigit():
+            continue
+        start = strtab_off + int(name[1:])
+        end = raw.find(b"\x00", start)
+        if 0 <= start < len(raw) and end > start:
+            resolved = raw[start:end].decode("utf-8", "replace")
+            if resolved.startswith(".debug"):
+                leftovers.append(resolved)
+    return leftovers
+
+
+def strip_leftovers(path: Path) -> list[str]:
+    """Symbol tables and debug sections left in an ELF or PE; empty when fully stripped."""
+    info = detect(path)
+    if info is None:
+        return ["unrecognized binary format"]
+    if info.fmt == "pe":
+        return pe_debug_leftovers(path)
+    from elftools.elf.elffile import ELFFile
+
+    with path.open("rb") as stream:
+        return [
+            section.name
+            for section in ELFFile(stream).iter_sections()
+            if section["sh_type"] == "SHT_SYMTAB" or section.name.startswith((".debug", ".zdebug"))
+        ]
+
+
+def strip_copy(src: Path, dst: Path, extra_args: Sequence[str] = ()) -> str:
+    """Copy ``src`` to ``dst`` and strip all symbols and debug info from the copy.
+
+    Each of :func:`strip_tools` is tried in turn and the first result that
+    :func:`strip_leftovers` confirms clean is kept. Returns the tool used. Raises
+    ``RuntimeError`` (removing ``dst``) instead of ever leaving an unstripped copy.
+    """
+    tools = strip_tools(detect(src))
+    for tool in tools:
+        shutil.copy2(src, dst)
+        try:
+            proc = subprocess.run([tool, "--strip-all", *extra_args, str(dst)], capture_output=True)
+            if proc.returncode == 0 and not strip_leftovers(dst):
+                return tool
+        except (OSError, ValueError):
+            continue
+    dst.unlink(missing_ok=True)
+    tried = ", ".join(Path(tool).name for tool in tools) or "none installed"
+    raise RuntimeError(
+        f"no strip tool removed every symbol table and debug section from {src.name} "
+        f"(tried: {tried})"
+    )
 
 
 # Codegen-relevant flags carried over from the original build (never -g). Only

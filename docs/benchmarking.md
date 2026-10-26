@@ -517,6 +517,13 @@ DECBENCH_WORKERS=40 \
 
 Notes:
 
+- Step 4 hands every decompiler a stripped copy of each binary
+  (`<opt>/<project>/stripped/`). `binfmt.strip_copy` tries the target's prefixed
+  binutils (`arm-none-eabi-strip`, `i686-w64-mingw32-strip`, ...), then the
+  host `strip`, then `llvm-strip`/`llvm-objcopy` (versioned installs count). It
+  keeps the first copy with no symbol table or debug section left and raises if
+  none is clean. A host `strip` without binutils-multiarch cannot read ARM ELF,
+  so such a host needs one of the other tools.
 - dewolf is slow + BN-based; for it, prefer several concurrent instances on
   disjoint project groups + `DECBENCH_DEWOLF_SHARDS` to saturate cores — see
   the dewolf backend notes. r2dec runs via its Docker image. Resume is
