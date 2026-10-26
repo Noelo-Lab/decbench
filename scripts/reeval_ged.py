@@ -89,10 +89,12 @@ def promoted_decompilers(
 
 def checkpoint_signature() -> dict[str, int | str]:
     from decbench.metrics.ged import GED_MAX_NODES, GEDMetric
+    from decbench.utils.cfg import SOURCE_RESOLUTION_VERSION
 
     return {
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
         "source_cache_schema": SOURCE_CACHE_SCHEMA_VERSION,
+        "source_resolution": SOURCE_RESOLUTION_VERSION,
         "metric_cache_version": GEDMetric.cache_version,
         "ged_max_nodes": GED_MAX_NODES,
         "audit_threshold": PREVIOUS_GED_MAX_NODES,

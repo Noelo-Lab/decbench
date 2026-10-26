@@ -391,6 +391,9 @@ def best_source_by_name(
     return best
 
 
+SOURCE_RESOLUTION_VERSION = 1
+
+
 def resolved_source_for_binary(
     binary_stem: str,
     source_cfgs_by_binary: dict[str, dict[str, DiGraph]],
@@ -411,31 +414,34 @@ def resolved_source_for_binary(
     ``function_owners`` carries exact DWARF ``low_pc -> (name, decl-file TU)``
     provenance. It takes priority over the binary-stem convention, which is not
     reliable when a build names an output differently from its defining source.
-    A known owner with no real CFG abstains for that name instead of selecting a
-    same-named function from another translation unit.
+    A name owned by several TUs (same-named ``static`` functions linked into one
+    binary) resolves only among those TUs. A known owner with no real CFG abstains
+    for that name instead of selecting a same-named function from another
+    translation unit.
+
+    Bump :data:`SOURCE_RESOLUTION_VERSION` whenever this selects a different body:
+    exported source CFGs and ``reeval_ged.py`` checkpoints record it and are
+    regenerated when it changes.
     """
     resolved = dict(best_by_name)
     for name, cfg in (source_cfgs_by_binary.get(binary_stem) or {}).items():
         if not is_degenerate_source_cfg(cfg):
             resolved[name] = cfg
 
-    owned_by_name: dict[str, str] = {}
-    ambiguous: set[str] = set()
+    owners_by_name: dict[str, set[str]] = {}
     for name, tu_stem in (function_owners or {}).values():
-        previous = owned_by_name.get(name)
-        if previous is not None and previous != tu_stem:
-            ambiguous.add(name)
-        else:
-            owned_by_name[name] = tu_stem
-    for name in ambiguous:
-        owned_by_name.pop(name, None)
+        owners_by_name.setdefault(name, set()).add(tu_stem)
 
-    for name, tu_stem in owned_by_name.items():
-        cfg = (source_cfgs_by_binary.get(tu_stem) or {}).get(name)
-        if cfg is None or is_degenerate_source_cfg(cfg):
+    for name, tu_stems in owners_by_name.items():
+        owned = []
+        for tu_stem in sorted(tu_stems):
+            cfg = (source_cfgs_by_binary.get(tu_stem) or {}).get(name)
+            if cfg is not None and not is_degenerate_source_cfg(cfg):
+                owned.append(cfg)
+        if not owned:
             resolved.pop(name, None)
-        else:
-            resolved[name] = cfg
+        elif not any(cfg is resolved.get(name) for cfg in owned):
+            resolved[name] = max(owned, key=_source_rank)
     return resolved
 
 

@@ -8,7 +8,8 @@ per-config manifests / filtered scores / ``dataset.toml`` index, and (behind
 ``--cfgs``) the source-CFG JSONs the GED metric consumed.
 
 The build is idempotent and resumable: file copies skip when the destination
-already exists with a matching size, and CFG JSONs skip when already present.
+already exists with a matching size, and CFG JSONs skip when already present and
+written by the current generator and source-resolution version.
 Nothing is committed or pushed — ``git add/commit/push`` is left to the user.
 
 Examples::
