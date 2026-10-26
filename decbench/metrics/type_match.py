@@ -88,6 +88,11 @@ QUALIFIERS = ["unsigned", "signed", "const", "volatile", "register", "static", "
 # A trailing run of ``*``s, so a pointee spelling can be normalized.
 _PTR_SUFFIX = re.compile(r"^(.*?)((?:\s*\*)+)$")
 
+_LONG_SPELLING = re.compile(
+    r"^(?:(?:const|volatile)\s+)*(?:(?:un)?signed\s+)?"
+    r"(?:long(?:\s+(?:un)?signed)?(?:\s+int)?|ulong)$"
+)
+
 # Spellings that mean "N bytes of UNKNOWN type" rather than naming a C type:
 # Ghidra's and kuna's TYPE_UNKNOWN (``undefinedN``) and Hex-Rays' unknown-width
 # stack slots (``_QWORD`` …). Every decompiler that emits one of these also has a
@@ -182,7 +187,21 @@ def normalize_type(type_str: str) -> set[str]:
 
     forms |= {TYPE_MAP[f] for f in forms if f in TYPE_MAP}
 
+    if _LONG_SPELLING.match(type_str.strip()):
+        forms.add("long int")
+
     return {f for f in forms if f}
+
+
+def _scalar_width_forms(forms: set[str], size: int) -> set[str]:
+    """Drop LP64's ``long long`` alias from a 4-byte scalar, which is ``int`` width.
+
+    ``TYPE_MAP`` reads ``long``, ``size_t`` and ``ssize_t`` as 8 bytes. On ILP32
+    (ARM, i386) and LLP64 (PE) targets the DWARF says they are 4.
+    """
+    if size != 4 or "long long" not in forms or any("*" in f or "[" in f for f in forms):
+        return forms
+    return (forms - {"long long"}) | {"int"}
 
 
 # Uncommitted types recover a variable's SIZE but not a committed C type. Matching
@@ -477,6 +496,7 @@ def _parse_variable_die(
     all_forms: set[str] = set()
     for t in type_names:
         all_forms.update(normalize_type(t))
+    all_forms = _scalar_width_forms(all_forms, size)
 
     # SORTED, not list(set(...)): this payload goes into the type_match cache key
     # via stable_hash -> json.dumps, which orders dict keys but not list elements.
@@ -975,7 +995,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "17"
+    cache_version = "18"
 
     weight = 1.0
     lower_is_better = False
