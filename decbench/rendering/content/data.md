@@ -51,7 +51,8 @@ full-coverage rows above.</p>
 <h3 class="sub" id="compiles">compiles</h3>
 
 The share of each decompiler's byte_match-measured functions whose output
-actually *recompiled* after the uniform compilability-fixup pass — a
+actually *recompiled* after that decompiler's compilability fixup (each one
+written by the same time-boxed coding agent) — a
 fairness control, not a metric (type recovery is scored separately). The
 denominator is per-decompiler: functions where byte_match was measurable, so
 ARM / PE targets with no host recompiler never count against it. This rate moves

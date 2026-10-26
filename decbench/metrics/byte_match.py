@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 from decbench.metrics.base import Metric, MetricConfig
@@ -20,6 +21,7 @@ from decbench.models.metrics import AggregationType, MetricResult, MetricValue
 if TYPE_CHECKING:
     from networkx import DiGraph
 
+    from decbench.metrics.fixup import FixupResult
     from decbench.models.decompilation import DecompilationResult, FunctionDecompilation
 
 logger = logging.getLogger(__name__)
@@ -207,6 +209,142 @@ def _compute_jaccard_similarity(lines_a: list[str], lines_b: list[str]) -> tuple
         return len(intersection) / len(union), len(set_a ^ set_b)
 
 
+def recompile_inputs(
+    binary: Path, name: str, address: int
+) -> tuple[str, list[str], tuple | None, bytes] | MetricValue:
+    """``(recompiler, flags, capstone arch_mode, original bytes)`` for one function.
+
+    Recompiles the way the source was compiled (PE -> MinGW, ARM -> arm-none-eabi,
+    host-native -> gcc, otherwise the cross triplet; flags from the DWARF producer).
+    Returns a non-scoring MetricValue instead when the format is unknown, the
+    matching toolchain is missing, or the original bytes cannot be extracted.
+    """
+    from decbench.utils import binfmt
+
+    info = binfmt.detect(binary)
+    if info is None:
+        return MetricValue(value=0.0, metadata={"error": "Unrecognized binary format"})
+    recompiler = binfmt.recompiler_for(info)
+    if recompiler is None or not binfmt.tool_available(recompiler):
+        return MetricValue(
+            value=0.0,
+            metadata={
+                "skipped": True,
+                "reason": f"no matching toolchain ({recompiler}) for {info.fmt}/{info.arch}",
+            },
+        )
+    flags = binfmt.producer_flags(binary) + ["-c", "-fno-builtin", "-w"]
+    thumb = binfmt.elf_function_is_thumb(binary, name, address)
+    arch_mode = binfmt.capstone_arch_mode(info, thumb=thumb)
+    original_bytes = binfmt.function_bytes(binary, name, address)
+    if original_bytes is None:
+        return MetricValue(
+            value=0.0, metadata={"error": "Could not extract original function bytes"}
+        )
+    return recompiler, flags, arch_mode, original_bytes
+
+
+def score_function(
+    code: str,
+    name: str,
+    address: int,
+    original_bytes: bytes,
+    compiler: str,
+    flags: list[str],
+    arch_mode: tuple | None,
+    fixup: ModuleType | None = None,
+    siblings: dict[str, str] | None = None,
+    binary_key: str = "",
+) -> MetricValue:
+    """Recompile one function through ``fixup`` and score it against ``original_bytes``."""
+    from decbench.metrics.fixup import compile_with_fixup
+
+    fix = compile_with_fixup(
+        code, name, compiler, flags, fixup=fixup, siblings=siblings, binary_key=binary_key
+    )
+    return score_compiled(fix, name, address, original_bytes, arch_mode)
+
+
+def score_compiled(
+    fix: FixupResult, name: str, address: int, original_bytes: bytes, arch_mode: tuple | None
+) -> MetricValue:
+    """Score a compile attempt against ``original_bytes``; removes its object directory."""
+    import shutil
+
+    from decbench.utils import binfmt
+
+    obj_path = fix.obj_path
+
+    if obj_path is None:
+        return MetricValue(
+            value=0.0,
+            metadata={
+                "compilable": False,
+                "fixup_iterations": fix.iterations,
+                "error": fix.error or "Compilation failed",
+            },
+        )
+
+    obj_dir = obj_path.parent
+    fixup_meta = {"compilable": True, "fixup_iterations": fix.iterations}
+    try:
+        recompiled_bytes = binfmt.object_text_bytes(obj_path, name)
+
+        if recompiled_bytes is None:
+            return MetricValue(
+                value=0.0,
+                metadata={**fixup_meta, "error": "Could not extract recompiled bytes"},
+            )
+
+        if recompiled_bytes == original_bytes:
+            return MetricValue(
+                value=1.0,
+                raw_value=True,
+                metadata={
+                    **fixup_meta,
+                    "exact_match": True,
+                    "changed_lines": 0,
+                    "original_size": len(original_bytes),
+                    "recompiled_size": len(recompiled_bytes),
+                },
+            )
+
+        original_asm = _disassemble_bytes(original_bytes, address, arch_mode)
+        recompiled_asm = _disassemble_bytes(recompiled_bytes, 0, arch_mode)
+
+        if original_asm and recompiled_asm:
+            similarity, changed_lines = _compute_jaccard_similarity(original_asm, recompiled_asm)
+        else:
+            min_len = min(len(original_bytes), len(recompiled_bytes))
+            max_len = max(len(original_bytes), len(recompiled_bytes))
+            if max_len == 0:
+                similarity = 1.0
+            else:
+                matching = sum(
+                    1 for i in range(min_len) if original_bytes[i] == recompiled_bytes[i]
+                )
+                similarity = matching / max_len
+            changed_lines = abs(len(original_bytes) - len(recompiled_bytes))
+
+        return MetricValue(
+            value=1.0 if similarity == 1.0 else similarity,
+            raw_value=similarity,
+            metadata={
+                **fixup_meta,
+                "exact_match": False,
+                "jaccard_similarity": similarity,
+                "changed_lines": changed_lines,
+                "original_size": len(original_bytes),
+                "recompiled_size": len(recompiled_bytes),
+                "original_asm_lines": len(original_asm),
+                "recompiled_asm_lines": len(recompiled_asm),
+            },
+        )
+
+    finally:
+        shutil.rmtree(obj_dir, ignore_errors=True)
+
+
 @register_metric("byte_match")
 class ByteMatchMetric(Metric):
     """Recompilation byte-match metric.
@@ -230,7 +368,7 @@ class ByteMatchMetric(Metric):
     requires_source_cfg = False
     requires_decompiled_cfg = False
 
-    cache_version = "7"
+    cache_version = "9"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
@@ -253,8 +391,9 @@ class ByteMatchMetric(Metric):
     ) -> MetricValue:
         """Compute byte match for a single function.
 
-        Recompiles decompiled code, disassembles both, and computes
-        Jaccard similarity of assembly lines.
+        Recompiles decompiled code through the ``decompiler`` kwarg's fixup
+        module (with the binary's ``siblings`` as context), disassembles both,
+        and computes Jaccard similarity of assembly lines.
         """
         if original_binary_path is None:
             return MetricValue(
@@ -262,40 +401,16 @@ class ByteMatchMetric(Metric):
                 metadata={"error": "No original binary for comparison"},
             )
 
-        from decbench.utils import binfmt
+        inputs = recompile_inputs(original_binary_path, decompiled.name, decompiled.address)
+        if isinstance(inputs, MetricValue):
+            return inputs
+        recompiler, flags, arch_mode, original_bytes = inputs
 
-        # Recompile the way the source was compiled (PE -> MinGW, ARM -> arm-none-eabi,
-        # host-native -> gcc, otherwise the cross triplet; flags from the DWARF producer).
-        # Without that toolchain, return a non-scoring result rather than comparing
-        # against a wrong-arch recompile.
-        info = binfmt.detect(original_binary_path)
-        if info is None:
-            return MetricValue(value=0.0, metadata={"error": "Unrecognized binary format"})
-        recompiler = binfmt.recompiler_for(info)
-        if recompiler is None or not binfmt.tool_available(recompiler):
-            return MetricValue(
-                value=0.0,
-                metadata={
-                    "skipped": True,
-                    "reason": f"no matching toolchain ({recompiler}) for {info.fmt}/{info.arch}",
-                },
-            )
-        flags = binfmt.producer_flags(original_binary_path) + ["-c", "-fno-builtin", "-w"]
-        thumb = binfmt.elf_function_is_thumb(
-            original_binary_path, decompiled.name, decompiled.address
-        )
-        arch_mode = binfmt.capstone_arch_mode(info, thumb=thumb)
+        from decbench.metrics import fixups
 
-        original_bytes = binfmt.function_bytes(
-            original_binary_path, decompiled.name, decompiled.address
-        )
-        if original_bytes is None:
-            return MetricValue(
-                value=0.0,
-                metadata={"error": "Could not extract original function bytes"},
-            )
-
-        context_decls: dict[str, str] | None = kwargs.get("context_decls")
+        decompiler: str | None = kwargs.get("decompiler")
+        siblings: dict[str, str] | None = kwargs.get("siblings")
+        bkey: str = kwargs.get("binary_key") or (fixups.binary_key(siblings) if siblings else "")
         key_inputs = [
             decompiled.decompiled_code,
             decompiled.name,
@@ -303,12 +418,13 @@ class ByteMatchMetric(Metric):
             original_bytes.hex(),
             recompiler,
             list(flags),
-            sorted(context_decls.items()) if context_decls else None,
+            fixups.fingerprint(decompiler),
+            bkey,
         ]
         return self._cached_value(
             key_inputs,
             lambda: self._compute_uncached(
-                decompiled, original_bytes, recompiler, flags, arch_mode, context_decls
+                decompiled, original_bytes, recompiler, flags, arch_mode, decompiler, siblings, bkey
             ),
         )
 
@@ -319,96 +435,24 @@ class ByteMatchMetric(Metric):
         compiler: str,
         flags: list[str],
         arch_mode: tuple | None,
-        context_decls: dict[str, str] | None = None,
+        decompiler: str | None = None,
+        siblings: dict[str, str] | None = None,
+        binary_key: str = "",
     ) -> MetricValue:
-        import shutil
+        from decbench.metrics import fixups
 
-        from decbench.metrics.fixup import compile_with_fixup
-        from decbench.utils import binfmt
-
-        fix = compile_with_fixup(
+        return score_function(
             decompiled.decompiled_code,
             decompiled.name,
+            decompiled.address,
+            original_bytes,
             compiler,
             flags,
-            context_decls=context_decls,
+            arch_mode,
+            fixup=fixups.load(decompiler),
+            siblings=siblings,
+            binary_key=binary_key,
         )
-        obj_path = fix.obj_path
-
-        if obj_path is None:
-            return MetricValue(
-                value=0.0,
-                metadata={
-                    "compilable": False,
-                    "fixup_iterations": fix.iterations,
-                    "error": fix.error or "Compilation failed",
-                },
-            )
-
-        obj_dir = obj_path.parent
-        fixup_meta = {
-            "compilable": True,
-            "fixup_iterations": fix.iterations,
-            "fixup_injected": len(fix.injected),
-        }
-        try:
-            recompiled_bytes = binfmt.object_text_bytes(obj_path, decompiled.name)
-
-            if recompiled_bytes is None:
-                return MetricValue(
-                    value=0.0,
-                    metadata={**fixup_meta, "error": "Could not extract recompiled bytes"},
-                )
-
-            if recompiled_bytes == original_bytes:
-                return MetricValue(
-                    value=1.0,
-                    raw_value=True,
-                    metadata={
-                        **fixup_meta,
-                        "exact_match": True,
-                        "changed_lines": 0,
-                        "original_size": len(original_bytes),
-                        "recompiled_size": len(recompiled_bytes),
-                    },
-                )
-
-            original_asm = _disassemble_bytes(original_bytes, decompiled.address, arch_mode)
-            recompiled_asm = _disassemble_bytes(recompiled_bytes, 0, arch_mode)
-
-            if original_asm and recompiled_asm:
-                similarity, changed_lines = _compute_jaccard_similarity(
-                    original_asm, recompiled_asm
-                )
-            else:
-                min_len = min(len(original_bytes), len(recompiled_bytes))
-                max_len = max(len(original_bytes), len(recompiled_bytes))
-                if max_len == 0:
-                    similarity = 1.0
-                else:
-                    matching = sum(
-                        1 for i in range(min_len) if original_bytes[i] == recompiled_bytes[i]
-                    )
-                    similarity = matching / max_len
-                changed_lines = abs(len(original_bytes) - len(recompiled_bytes))
-
-            return MetricValue(
-                value=1.0 if similarity == 1.0 else similarity,
-                raw_value=similarity,
-                metadata={
-                    **fixup_meta,
-                    "exact_match": False,
-                    "jaccard_similarity": similarity,
-                    "changed_lines": changed_lines,
-                    "original_size": len(original_bytes),
-                    "recompiled_size": len(recompiled_bytes),
-                    "original_asm_lines": len(original_asm),
-                    "recompiled_asm_lines": len(recompiled_asm),
-                },
-            )
-
-        finally:
-            shutil.rmtree(obj_dir, ignore_errors=True)
 
     def compute_for_binary(
         self,
@@ -447,18 +491,19 @@ class ByteMatchMetric(Metric):
                         ],
                     )
 
-        from decbench.metrics.fixup import derive_context_decls
+        from decbench.metrics import fixups
 
-        context_decls = derive_context_decls(
-            {name: fd.decompiled_code or "" for name, fd in decompilation.functions.items()}
-        )
+        siblings = {name: fd.decompiled_code or "" for name, fd in decompilation.functions.items()}
+        bkey = fixups.binary_key(siblings)
 
         for func_name, func_decomp in decompilation.functions.items():
             try:
                 value = self.compute_for_function(
                     func_decomp,
                     original_binary_path=original_binary_path,
-                    context_decls=context_decls,
+                    decompiler=decompilation.decompiler.decompiler_name,
+                    siblings=siblings,
+                    binary_key=bkey,
                 )
                 function_results[func_name] = value
 

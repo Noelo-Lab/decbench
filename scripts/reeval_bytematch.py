@@ -3,7 +3,7 @@
 The decompilations (the slow part) are already on disk as ``decompiled/{dec}_
 {binary}.c`` (function blocks delimited by ``// Function: name @ 0xADDR``); the
 original binaries sit in ``compiled/{binary}``. This lets us re-score byte_match
-with the new fixup + operand-normalization metric WITHOUT re-decompiling.
+with each decompiler's fixup module + operand normalization WITHOUT re-decompiling.
 
 Resumable (per (opt,project,binary,dec) checkpoint JSON) and parallel via the
 'spawn' context (fork deadlocks once angr's threads are live). Output:
@@ -48,6 +48,14 @@ def preserve_unselected_scores(
     return retained
 
 
+def fixup_module_mtime(dec: str) -> int:
+    """mtime of ``dec``'s fixup module (0 without one), so a regenerated fixup re-scores."""
+    from decbench.metrics import fixups
+
+    path = fixups.module_path(dec)
+    return path.stat().st_mtime_ns if path is not None else 0
+
+
 def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
     """Worker: recompute byte_match for every function of one (binary, dec).
 
@@ -55,15 +63,16 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
     Returns (checkpoint_key, {func: {value, compilable}}).
     """
     opt, project, stem, dec, binary_path, c_path = task
+    from decbench.metrics import fixups
     from decbench.metrics.byte_match import ByteMatchMetric
-    from decbench.metrics.fixup import derive_context_decls
     from decbench.models.decompilation import FunctionDecompilation
 
     metric = ByteMatchMetric()
     binary = Path(binary_path)
     out: dict[str, dict] = {}
     funcs = split_functions(Path(c_path))
-    context = derive_context_decls({n: c for n, (_a, c) in funcs.items()})
+    siblings = {n: c for n, (_a, c) in funcs.items()}
+    bkey = fixups.binary_key(siblings)
     for name, (addr, code) in funcs.items():
         fd = FunctionDecompilation(
             name=name,
@@ -72,7 +81,9 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
             line_count=code.count("\n") + 1,
         )
         try:
-            mv = metric.compute_for_function(fd, original_binary_path=binary, context_decls=context)
+            mv = metric.compute_for_function(
+                fd, original_binary_path=binary, decompiler=dec, siblings=siblings, binary_key=bkey
+            )
         except Exception as e:  # noqa: BLE001
             out[name] = {"value": 0.0, "compilable": False, "error": str(e)[:120]}
             continue
@@ -122,12 +133,13 @@ def main() -> None:
     ckpt_dir.mkdir(exist_ok=True)
 
     tasks = build_tasks(root, only=only)
+    fixup_mtime = {dec: fixup_module_mtime(dec) for dec in DECOMPILERS}
     pending = []
     for t in tasks:
         key = f"{t[0]}::{t[1]}::{t[2]}::{t[3]}"
         checkpoint = ckpt_dir / (key.replace("::", "__") + ".json")
         if not checkpoint.exists() or checkpoint.stat().st_mtime_ns < max(
-            Path(t[4]).stat().st_mtime_ns, Path(t[5]).stat().st_mtime_ns
+            Path(t[4]).stat().st_mtime_ns, Path(t[5]).stat().st_mtime_ns, fixup_mtime[t[3]]
         ):
             pending.append(t)
     print(
