@@ -114,7 +114,7 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="17"`, bumped for agent-reported line-address support.
+Current `cache_version="18"`, bumped for 4-byte `long` width normalization.
 The per-function key covers source and
 decompiler address evidence, argument/stack anchors, recovered types, source
 selection diagnostics, and the matching thresholds.
@@ -222,6 +222,16 @@ scoring-policy changes and must bump `cache_version`.
   already walks the whole typedef chain and returns every name, so a ground-truth
   `size_t*` already carries `long unsigned int*` → `long long*`. The ground-truth
   payload hash is **identical with and without the rule on all 690 C binaries**.
+- **A 4-byte integer scalar is `int` width.** `TYPE_MAP` assumes LP64, so
+  `long`, `size_t` and `ssize_t` normalize to `long long`. On ILP32 (ARM, i386)
+  and LLP64 (PE) targets the DWARF byte size of such a scalar is 4, and
+  `_scalar_width_forms` swaps the ground truth's `long long` alias for `int`. A
+  4-byte `long` then takes the same width-only credit (`uint4`, `undefined4`)
+  as a 4-byte `int`, and an 8-byte type no longer matches it. Pointers and
+  arrays keep their forms, since a pointer's size says nothing about its
+  pointee. Every `long` spelling (`unsigned long`, `ulong`) also normalizes to
+  `long int`, so the source's own spelling still matches the narrowed ground
+  truth. Ground truth on LP64 targets is unchanged.
 - **C++ namespace qualifiers are stripped.** DWARF records a class or typedef
   under its UNQUALIFIED `DW_AT_name` (`TableBuilder`), so a decompiler printing
   `leveldb::TableBuilder *` needs the qualifier dropped to reach ground truth.

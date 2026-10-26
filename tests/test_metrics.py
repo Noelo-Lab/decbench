@@ -1081,6 +1081,89 @@ int main() {
         assert "DW_TAG_reference_type" not in tags
         assert "DW_TAG_rvalue_reference_type" not in tags
 
+    @staticmethod
+    def _score_long_param(binary, type_: str, size: int | None) -> float:
+        from decbench.metrics.type_match import TypeMatchMetric, extract_ground_truth_type_index
+
+        address, functions = next(
+            (address, functions)
+            for address, functions in extract_ground_truth_type_index(binary).items()
+            if "long_input" in functions
+        )
+        func = FunctionDecompilation(
+            name="long_input",
+            address=address,
+            decompiled_code=f"{type_} long_input({type_} x) {{ return x; }}",
+            variables=[VariableInfo(name="x", type=type_, size=size, kind="arg", arg_index=0)],
+            metadata={"line_mapping_source": "native"},
+        )
+        return (
+            TypeMatchMetric()
+            .compute_for_function(
+                func,
+                ground_truth_vars=functions["long_input"],
+                binary_path=binary,
+                backend="kuna",
+                address_provenance=True,
+            )
+            .value
+        )
+
+    def test_four_byte_long_is_int_width(self, tmp_path) -> None:
+        """An ILP32 ``long`` is 4 bytes: it takes ``int`` width credit, not LP64 ``long long``."""
+        import shutil
+        import subprocess
+
+        if shutil.which("clang") is None:
+            pytest.skip("needs clang")
+
+        from decbench.metrics.type_match import extract_ground_truth_types
+
+        src = tmp_path / "w.c"
+        src.write_text("long long_input(long x) { return x; }\n")
+        binary = tmp_path / "arm32.o"
+        subprocess.run(
+            ["clang", "--target=armv7-none-eabi", "-g", "-O0", "-c", str(src), "-o", str(binary)],
+            check=True,
+            capture_output=True,
+        )
+
+        (x,) = extract_ground_truth_types(binary)["long_input"]
+        assert x["size"] == 4
+        assert "int" in x["type"] and "long long" not in x["type"]
+        assert self._score_long_param(binary, "uint4", 4) == 1.0
+        assert self._score_long_param(binary, "int", 4) == 1.0
+        assert self._score_long_param(binary, "long", None) == 1.0
+        assert self._score_long_param(binary, "uint8", 8) == 0.0
+        assert self._score_long_param(binary, "long long", 8) == 0.0
+
+    def test_eight_byte_long_is_unchanged(self, tmp_path) -> None:
+        """LP64 ``long`` keeps its ``long long`` width and gets no ``int`` credit."""
+        import shutil
+        import subprocess
+
+        if shutil.which("gcc") is None:
+            pytest.skip("needs gcc")
+
+        from decbench.metrics.type_match import extract_ground_truth_types
+
+        src = tmp_path / "w.c"
+        src.write_text(
+            "long long_input(long x) { return x; }\n"
+            "int main(void) { return (int)long_input(1); }\n"
+        )
+        binary = tmp_path / "lp64"
+        subprocess.run(
+            ["gcc", "-g", "-O0", str(src), "-o", str(binary)], check=True, capture_output=True
+        )
+
+        (x,) = extract_ground_truth_types(binary)["long_input"]
+        assert x["size"] == 8
+        assert "long long" in x["type"] and "int" not in x["type"]
+        assert self._score_long_param(binary, "uint8", 8) == 1.0
+        assert self._score_long_param(binary, "long", None) == 1.0
+        assert self._score_long_param(binary, "uint4", 4) == 0.0
+
 
 class TestByteMatchMetric:
     """Tests for the byte match metric."""
