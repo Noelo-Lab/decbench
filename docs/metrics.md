@@ -114,7 +114,7 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
-Current `cache_version="17"`, bumped for agent-reported line-address support.
+Current `cache_version="18"`, bumped for the pointer-to-struct kind rule.
 The per-function key covers source and
 decompiler address evidence, argument/stack anchors, recovered types, source
 selection diagnostics, and the matching thresholds.
@@ -234,6 +234,49 @@ scoring-policy changes and must bump `cache_version`.
   decompiler renders it as one. Without it every reference-typed ground-truth
   variable was `void` and unmatchable for all decompilers (17.5% of leveldb's).
   C has no reference DIEs, so this rule cannot move a C result.
+
+### Pointers to structs match by kind
+
+A stripped binary does not record a program's own struct names, so no
+decompiler can print `WORD *` for `put_word(WORD *w)`. The most it can recover
+is "this points at a struct". When the ground-truth type is a pointer (any
+depth, references included) whose pointee is a struct, class, or union after
+typedefs and qualifiers, `_parse_variable_die` adds a kind form: `<struct>*`,
+`<struct>**`, `<union>*`. Any decompiled pointer with the same kind and the same
+depth matches it, whatever its name. By-value aggregates, arrays, and primitive
+pointees (`char *`, `void *`, `size_t *`, function pointers) get no kind form
+and keep the exact-name rule.
+
+The decompiled kind comes only from the decompiler's own C:
+
+- an explicit `struct`/`union`/`class` keyword in the variable's spelling
+  (`struct stat *`, `union pthread_mutex_t*`), or
+- a struct/union declaration of the pointee name in the function's
+  `decompiled_code`: a tagged definition or a typedef of a struct/union
+  specifier (`variable_features.declared_aggregate_kinds`). angr prints
+  `typedef struct struct_0 {...} struct_0;` above every function that uses it.
+
+A bare name is never evidence. `struct_0 *`, `astruct *`, and `FILE *` with no
+declaration in the output get no kind. The rule reads only stored output, so it
+applies equally to every producer (native, legacy, and text-only) and can be
+re-evaluated from run checkpoints without re-decompiling.
+
+It cannot be gamed by typing every pointer as a struct pointer, because that
+gives up every `char *`, `void *`, and primitive-pointer match, which still
+need an exact name. A struct pointer never matches a union pointer.
+
+Name recovery stays visible: `tp_kind_only` in each function's metadata counts
+the true positives credited only by kind. `tp - tp_kind_only` are name (or
+width) matches.
+
+Measured on coreutils O0+O2 (replayed from the 2026-09-11 checkpoints), almost
+all of the movement is angr's `struct_N *` recoveries: +2,355 TPs, perfect
+functions 389 -> 726. IDA and Binja gain only keyword spellings such as
+`struct stat *` (+93 and +56 TPs). Ghidra and kuna print no struct-pointer
+types and do not move. Also classifying keywordless names such as `FILE *` or
+Ghidra's `stat *` from the binary's own DWARF added 2 TPs in total, so reading
+backend type systems at decompile time would add almost nothing over reading
+the output.
 
 ### Argument positions must be ABI positions
 

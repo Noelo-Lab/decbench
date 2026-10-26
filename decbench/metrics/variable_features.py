@@ -1,4 +1,4 @@
-"""C declaration discovery and occurrence lines for local-variable correspondence."""
+"""C declaration discovery for local-variable correspondence and type matching."""
 
 from __future__ import annotations
 
@@ -228,3 +228,31 @@ def variable_occurrence_lines(
         occurrences[name].add(bisect_right(line_starts, node.start_byte))
 
     return {name: tuple(sorted(lines)) for name, lines in sorted(occurrences.items())}
+
+
+_AGGREGATE_SPECIFIERS = {"struct_specifier": "struct", "union_specifier": "union"}
+
+
+def declared_aggregate_kinds(code: str) -> dict[str, str]:
+    """Type names that ``code`` itself declares as a struct or union.
+
+    Covers tagged definitions (``struct T { ... }``) and typedefs of a struct or
+    union specifier (``typedef struct T { ... } N;``). A name declared as both
+    kinds is dropped.
+    """
+
+    source = code.encode("utf-8", "replace")
+    kinds: dict[str, set[str]] = defaultdict(set)
+    for node in _walk(_parser().parse(source).root_node):
+        if node.type in _AGGREGATE_SPECIFIERS:
+            name = node.child_by_field_name("name")
+            if name is not None and node.child_by_field_name("body") is not None:
+                kinds[_text(name, source)].add(_AGGREGATE_SPECIFIERS[node.type])
+        elif node.type == "type_definition":
+            specifier = node.child_by_field_name("type")
+            if specifier is None or specifier.type not in _AGGREGATE_SPECIFIERS:
+                continue
+            for declarator in node.children_by_field_name("declarator"):
+                if declarator.type == "type_identifier":
+                    kinds[_text(declarator, source)].add(_AGGREGATE_SPECIFIERS[specifier.type])
+    return {name: next(iter(found)) for name, found in kinds.items() if len(found) == 1}
