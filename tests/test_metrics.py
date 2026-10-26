@@ -1081,6 +1081,47 @@ int main() {
         assert "DW_TAG_reference_type" not in tags
         assert "DW_TAG_rvalue_reference_type" not in tags
 
+    def test_inlined_callee_variables_are_not_the_callers_ground_truth(self, tmp_path) -> None:
+        """An inlined callee's parameters and locals belong to the callee, not the caller."""
+        import shutil
+        import subprocess
+
+        if shutil.which("gcc") is None:
+            pytest.skip("needs gcc")
+
+        from decbench.metrics.type_match import extract_ground_truth_types
+        from decbench.utils import binfmt
+
+        src = tmp_path / "inl.c"
+        src.write_text(
+            "static inline int scale(int value) { int doubled = value * 2; return doubled + 1; }\n"
+            "__attribute__((noinline)) int caller(int x) {\n"
+            "    int total = scale(x);\n"
+            "    return total * scale(total);\n"
+            "}\n"
+            "int main(int argc, char **argv) { (void)argv; return caller(argc); }\n"
+        )
+        binary = tmp_path / "inl.bin"
+        subprocess.run(
+            ["gcc", "-g", "-O2", str(src), "-o", str(binary)], check=True, capture_output=True
+        )
+
+        dw = binfmt.dwarf_info(binary)
+        assert dw is not None
+        caller_die = next(
+            die
+            for cu in dw.iter_CUs()
+            for die in cu.iter_DIEs()
+            if die.tag == "DW_TAG_subprogram"
+            and binfmt.die_str_attr(die, "DW_AT_name") == "caller"
+            and "DW_AT_low_pc" in die.attributes
+        )
+        assert any(child.tag == "DW_TAG_inlined_subroutine" for child in caller_die.iter_children())
+
+        names = {v["name"] for v in extract_ground_truth_types(binary)["caller"]}
+        assert "x" in names
+        assert not names & {"value", "doubled"}
+
 
 class TestByteMatchMetric:
     """Tests for the byte match metric."""

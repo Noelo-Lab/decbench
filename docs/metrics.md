@@ -114,6 +114,10 @@ Compares decompiled variable types against DWARF ground truth (read via
 pyelftools). Works at **all opt levels**: ground truth keeps every variable
 with ANY DWARF location
 (register loclists included; only fully optimized-out vars are dropped).
+Ground truth is the function's OWN parameters and locals: the variables of an
+inlined callee (`DW_TAG_inlined_subroutine`, at `-O2` mostly the parameters of
+glibc's `_FORTIFY_SOURCE` wrappers such as `printf`'s `__fmt`) are not scored,
+since the compiled function usually has no storage for them.
 Current `cache_version="17"`, bumped for agent-reported line-address support.
 The per-function key covers source and
 decompiler address evidence, argument/stack anchors, recovered types, source
