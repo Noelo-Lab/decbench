@@ -289,7 +289,7 @@ otherwise; flags read from the DWARF producer), via `decbench/utils/binfmt.py`.
 Returns a non-scoring result (an **abstention**, not a 0) if that toolchain
 isn't installed — don't fake a wrong-arch recompile. Works on ELF and PE.
 
-### The two fairness passes (`cache_version="7"`)
+### The two fairness passes (`cache_version="8"`)
 
 Raw decompiler output rarely recompiles as-is (pseudo-types like
 `undefined4`, illegal tokens like `GLIBC_2.2.5::stderr`), so naive
@@ -330,6 +330,12 @@ type_match, so fixing types to compile is fair.
 
 Known accepted limit: a normalized bare `[rip]` does not compare symbol
 identity, so reads of *different* globals can both reach 1.0.
+
+The recompiled bytes are the function's own symbol extent, read from the
+section that symbol is defined in (`binfmt.object_text_bytes`), never the
+object's whole `.text`: GCC puts `main` in `.text.startup` at `-O2`, and a
+`.text` slice then scored a neighboring helper's bytes or nothing. Version 8
+of the cache is that fix.
 
 ## Shared binary-format helper — `decbench/utils/binfmt.py`
 
