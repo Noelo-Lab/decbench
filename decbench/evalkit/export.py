@@ -19,7 +19,6 @@ import json
 import logging
 import random
 import shutil
-import subprocess
 import tempfile
 import zipfile
 from dataclasses import dataclass, field
@@ -161,18 +160,14 @@ def _strip_into(src: Path, dst: Path) -> None:
     """
     from decbench.utils import binfmt
 
-    if shutil.which("strip") is None:
-        raise EvalKitError("GNU `strip` not found on PATH; cannot anonymize binaries")
     info = binfmt.detect(src)
     if info is None:
         raise EvalKitError(f"cannot detect binary format of {src}")
-    shutil.copy2(src, dst)
-    cmd = ["strip", "--strip-all"]
-    if info.fmt == "elf":
-        cmd += ["-R", ".comment", "-R", ".note.gnu.build-id"]
-    proc = subprocess.run([*cmd, str(dst)], capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise EvalKitError(f"strip failed for {src.name}: {proc.stderr.strip() or proc.stdout}")
+    extra = ["-R", ".comment", "-R", ".note.gnu.build-id"] if info.fmt == "elf" else []
+    try:
+        binfmt.strip_copy(src, dst, extra)
+    except RuntimeError as exc:
+        raise EvalKitError(str(exc)) from exc
     # Non-executable on purpose: some kit binaries are real malware.
     dst.chmod(0o644)
 
@@ -190,48 +185,6 @@ def _lief_sections(path: Path) -> dict[str, bytes]:
         sec.name.decode() if isinstance(sec.name, bytes) else sec.name: bytes(sec.content)
         for sec in binary.sections
     }
-
-
-def _pe_debug_leftovers(path: Path) -> list[str]:
-    """Debug sections still present in a PE, by RESOLVED name.
-
-    PE section headers are 8 bytes, so long names live in the COFF string table
-    and the header holds a ``/<offset>`` reference — an unstripped PE therefore
-    shows LIEF names like ``/29``, never ``.debug_info``. Resolving them is the
-    only way to see leftover DWARF. Also flags a surviving COFF symbol table,
-    which ``strip --strip-all`` always removes.
-    """
-    import lief
-
-    with contextlib.suppress(Exception):
-        lief.logging.disable()
-    binary = lief.parse(str(path))
-    if binary is None:
-        raise EvalKitError(f"LIEF cannot parse {path}")
-    leftovers: list[str] = []
-    if getattr(binary.header, "numberof_symbols", 0):
-        leftovers.append("COFF symbol table")
-    raw = path.read_bytes()
-    # The string table follows the symbol table and its first 4 bytes are its own
-    # size, so without a symbol table pointer there is nothing to resolve.
-    ptr = int(getattr(binary.header, "pointerto_symbol_table", 0) or 0)
-    nsyms = int(getattr(binary.header, "numberof_symbols", 0) or 0)
-    strtab_off = ptr + nsyms * 18 if ptr else 0
-    for sec in binary.sections:
-        name = sec.name.decode() if isinstance(sec.name, bytes) else sec.name
-        if not name.startswith("/"):
-            if name.startswith(".debug"):
-                leftovers.append(name)
-            continue
-        if not strtab_off or not name[1:].isdigit():
-            continue
-        start = strtab_off + int(name[1:])
-        end = raw.find(b"\x00", start)
-        if 0 <= start < len(raw) and end > start:
-            resolved = raw[start:end].decode("utf-8", "replace")
-            if resolved.startswith(".debug"):
-                leftovers.append(resolved)
-    return leftovers
 
 
 _SHF_EXECINSTR = 0x4
@@ -290,7 +243,10 @@ def _verify_strip(original: Path, stripped: Path) -> None:
             raise EvalKitError(f"{original.name}: {name} changed during strip — refusing to ship")
     info = binfmt.detect(stripped)
     if info is not None and info.fmt == "pe":
-        leftover = sorted(set(_pe_debug_leftovers(stripped)))
+        try:
+            leftover = sorted(set(binfmt.pe_debug_leftovers(stripped)))
+        except ValueError as exc:
+            raise EvalKitError(str(exc)) from exc
     else:
         leftover = sorted(n for n in new_secs if n.startswith(".debug"))
     if leftover:

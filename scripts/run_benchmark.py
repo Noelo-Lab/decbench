@@ -221,24 +221,18 @@ def _stripped_copy(binary: Path, strip_dir: Path) -> Path:
     (DWARF types/vars inflate type_match; symbols hand them function boundaries
     and names). We compile with ``-g`` for the evaluation ground truth, but the
     decompiler only ever gets this stripped copy (same filename, so the artifact
-    naming/stem is unchanged). Cached by mtime. ``strip --strip-all`` handles ELF
-    of any arch and PE (BFD); we fall back through objcopy variants.
+    naming/stem is unchanged). Cached by mtime, and a cached copy is re-verified.
+    :func:`binfmt.strip_copy` raises rather than return an unstripped binary.
     """
     strip_dir.mkdir(parents=True, exist_ok=True)
     out = strip_dir / binary.name
-    if out.exists() and out.stat().st_mtime >= binary.stat().st_mtime:
-        return out
-    shutil.copy2(binary, out)
-    for cmd in (
-        ["strip", "--strip-all", str(out)],
-        ["objcopy", "--strip-all", str(out), str(out)],
-        ["objcopy", "--strip-debug", str(out), str(out)],
+    if (
+        out.exists()
+        and out.stat().st_mtime >= binary.stat().st_mtime
+        and not binfmt.strip_leftovers(out)
     ):
-        try:
-            if subprocess.run(cmd, capture_output=True).returncode == 0:
-                break
-        except Exception:  # noqa: BLE001
-            continue
+        return out
+    binfmt.strip_copy(binary, out)
     return out
 
 
