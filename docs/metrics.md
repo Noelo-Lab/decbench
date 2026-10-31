@@ -289,35 +289,36 @@ otherwise; flags read from the DWARF producer), via `decbench/utils/binfmt.py`.
 Returns a non-scoring result (an **abstention**, not a 0) if that toolchain
 isn't installed — don't fake a wrong-arch recompile. Works on ELF and PE.
 
-### The two fairness passes (`cache_version="7"`)
+### Compilation and operand normalization (`cache_version="9"`)
 
 Raw decompiler output rarely recompiles as-is (pseudo-types like
 `undefined4`, illegal tokens like `GLIBC_2.2.5::stderr`), so naive
-recompilation scores almost everything 0. To measure *logic* recovery fairly,
-byte_match applies the same two passes to every decompiler. Investigate
-before changing them, and bump `cache_version` if you do:
+recompilation scores almost everything 0. byte_match therefore compiles each
+function through **that decompiler's fixup module**, and every module is
+produced the same way. Bump `cache_version` if you change the harness below;
+a regenerated module needs no bump, because its content hash is in the cache
+key.
 
-1. **Compilability fixup** (`decbench/metrics/fixup.py` — full details in its
-   docstrings) so decompiler output actually builds instead of auto-scoring 0:
-   token sanitization plus a **deterministic, gcc-diagnostic-driven
-   self-repair loop** that
-   injects ONLY what the compiler reports missing (pseudo-type typedefs,
-   IDA/Ghidra helper macros, libc + the decompiler's OWN sibling prototypes
-   via `derive_context_decls`, synthesized structs, width-typed globals,
-   positional edits) and never redefines what the decompiler declared. This
-   *maximizes compilation* uniformly (sailr O0 compile rate ~20-79% raw →
-   ~83-95% fixed, per decompiler). If the flags passed to
-   `compile_with_fixup` contain no explicit language mode, the fixup uses
-   `-std=gnu17`; explicit `-ansi`/`--ansi` and `-std`/`--std` modes remain
-   unchanged.
-   The loop keeps implicit-function-declaration diagnostics visible so it can
-   inject prototypes, while trailing
-   `-Wno-error=incompatible-pointer-types` and `-Wno-error=int-conversion`
-   flags prevent type-recovery mistakes from blocking this byte-level metric.
-   A terminal failure retains a deterministic summary of compiler error
-   messages and warning-class tags in the per-function metadata, bounded to
-   400 characters and stripped of paths, source excerpts, carets, and notes.
-2. **Operand normalization** in `_disassemble_bytes` (byte_match.py) blanks
+1. **Neutral compile harness** (`decbench/metrics/fixup.py`): compiles one
+   function as its own translation unit with the producer flags, the
+   decompiler-neutral flag policy (`-w` dropped so warnings reach the module,
+   `-std=gnu17` when the caller set no language mode, trailing
+   `-Wno-error=incompatible-pointer-types` / `-Wno-error=int-conversion`), and
+   then the module's `FLAGS`. The module's `prepare` builds the unit and its
+   optional `repair` may revise it from gcc's stderr, for at most 8 compiles.
+   A module that raises fails the function closed. A decompiler with no
+   module is compiled exactly as emitted. A terminal failure retains a
+   deterministic summary of compiler error messages and warning-class tags in
+   the per-function metadata, bounded to 400 characters and stripped of
+   paths, source excerpts, carets, and notes.
+2. **Per-decompiler fixups** (`decbench/metrics/fixups/generated/<name>.py`,
+   with the agent's `<name>.md` notes): the contract is in that package's docstring.
+   The module gets the function's code plus its siblings (every function the
+   same decompiler emitted for the binary), never the binary, source, or
+   DWARF. `FLAGS` are allowlisted to diagnostics and dialect flags, and
+   `-O`/`-m`/codegen `-f` flags are rejected. **Never hand-edit these
+   modules**; see [The fixup agent](#the-fixup-agent).
+3. **Operand normalization** in `_disassemble_bytes` (byte_match.py) blanks
    link-time-dependent operands (direct branch/call targets, rip/pc-relative
    memory INCLUDING the unlinked object's bare `[rip]` form) and drops x86-64
    varargs AL-zeroing from both listings.
@@ -327,6 +328,46 @@ producer — dropping them made whole projects unwinnable. The metric still
 records `compilable` per function (the report's per-decompiler **Compiles
 rate**, rendered on the data page). Type recovery is measured separately by
 type_match, so fixing types to compile is fair.
+
+### The fixup agent
+
+Every fixup module is written by the same coding agent, from the same prompt
+(`decbench/metrics/fixups/PROMPT.md`), with the same model, sandbox, and
+wall-clock budget (2 hours by default), on a development split of the corpus.
+That removes the maintainer's per-decompiler attention from the comparison:
+when the fixups need updating, regenerate them for **every** decompiler the
+same way rather than patching one.
+
+```bash
+# Export one decompiler's x86 functions (malware excluded), scored raw, split by
+# project into dev and held-out (sha256("decbench-fixup:"+project) % 4 == 0).
+python scripts/fixup_agent.py dataset results/<tree> -d ghidra -o <base>/data
+# Run Codex (gpt-5.6-sol, high effort) for at most --minutes under bwrap, resuming it
+# until the budget is spent; score the chosen module on held-out; install it.
+python scripts/fixup_agent.py run -d ghidra --data <base>/data --runs <base>/runs
+# List every command the agent ran, flagging paths outside its workspace.
+python scripts/fixup_agent.py audit <base>/runs/ghidra
+```
+
+The agent works only in its run directory: `bwrap` runs it in its own PID
+namespace, replaces `$HOME` and `/tmp` with empty tmpfs mounts, and binds back
+just the Python install, the virtualenv, the Node/Codex install, and the run
+directory (holding a read-only copy of `decbench/` without `generated/`), so
+the corpus sources, results trees, held-out split, other decompilers' fixups,
+and git history are all out of reach. It scores
+candidates with `python -m decbench.metrics.fixups.workbench eval`, which runs
+the exact byte_match harness and reports compile rate, byte-match mean,
+perfect-match rate, regressions against raw, the byte-match mean on functions
+that compile both ways (a drop there suggests logic was changed), and the
+largest remaining gcc error clusters; `show` adds an instruction diff against
+the original. The prompt asks for faithful declarations, not just a build,
+and the driver keeps the candidate with the best dev byte-match mean.
+Codex authenticates from a copy of `~/.codex/auth.json` in a per-run
+`CODEX_HOME`. Each run leaves `report.json` (dev and held-out rates, raw and
+fixed), the Codex JSONL transcript, and its snapshots in the run directory.
+Review the installed module and the audit before accepting it: the prompt
+forbids dataset-specific rules, deleting or stubbing code, renaming the
+target, and any I/O from the module.
 
 Known accepted limit: a normalized bare `[rip]` does not compare symbol
 identity, so reads of *different* globals can both reach 1.0.

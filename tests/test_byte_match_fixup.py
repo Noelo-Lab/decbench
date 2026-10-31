@@ -1,33 +1,27 @@
-"""Tests for the byte-match compilability fixup + operand normalization."""
+"""Tests for the byte-match compile harness, the fixup contract, and operand normalization."""
 
 from __future__ import annotations
 
 import shutil
+from types import ModuleType
 
 import pytest
 
+from decbench.metrics import fixups
 from decbench.metrics.byte_match import _normalize_operands
-from decbench.metrics.fixup import compile_with_fixup, sanitize_tokens
+from decbench.metrics.fixup import compile_with_fixup
 
 gcc_available = shutil.which("gcc") is not None
 needs_gcc = pytest.mark.skipif(not gcc_available, reason="gcc not installed")
 
+GHIDRA_STYLE = "uint compute(undefined4 x) {\n    uint r = (uint)x;\n    return r + 1;\n}\n"
 
-class TestSanitizeTokens:
-    def test_strips_symbol_version_qualifier(self) -> None:
-        out = sanitize_tokens("fprintf(GLIBC_2.2.5::stderr, msg);")
-        assert "::" not in out
-        assert "stderr" in out
 
-    def test_leaves_plain_code_untouched(self) -> None:
-        code = "int f(int a) { return a + 1; }"
-        assert sanitize_tokens(code) == code
-
-    def test_strips_decompiler_annotations(self) -> None:
-        assert "__noreturn" not in sanitize_tokens("int main() __noreturn {")
-        assert "__convention" not in sanitize_tokens('void f() __convention("regparm") {')
-        out = sanitize_tokens("int __cdecl g(int a)")
-        assert "__cdecl" not in out and "g(int a)" in out
+def _module(**attrs: object) -> ModuleType:
+    module = ModuleType("fake_fixup")
+    for name, value in attrs.items():
+        setattr(module, name, value)
+    return module
 
 
 class TestNormalizeOperands:
@@ -65,6 +59,32 @@ class TestNormalizeOperands:
         assert "0x2e04" not in a
 
 
+class TestFixupRegistry:
+    def test_module_name_strips_version_and_dashes(self) -> None:
+        assert fixups.module_name("ghidra@12.1") == "ghidra"
+        assert fixups.module_name("claude-code@claude-opus-4-8") == "claude_code"
+
+    def test_unknown_decompiler_has_no_module(self) -> None:
+        assert fixups.load("no-such-decompiler") is None
+        assert fixups.load(None) is None
+        assert fixups.fingerprint("no-such-decompiler") == ""
+
+    @pytest.mark.parametrize(
+        "flag", ["-Wno-implicit-function-declaration", "-DFOO=1", "-std=gnu99", "-fms-extensions"]
+    )
+    def test_allowed_flags(self, flag: str) -> None:
+        assert fixups.module_flags(_module(FLAGS=[flag])) == [flag]
+
+    @pytest.mark.parametrize("flag", ["-O0", "-m32", "-fno-inline", "-Wa,-mrelax", "-Wp,-include"])
+    def test_codegen_flags_rejected(self, flag: str) -> None:
+        with pytest.raises(fixups.FixupError):
+            fixups.module_flags(_module(FLAGS=[flag]))
+
+    def test_binary_key_is_order_independent(self) -> None:
+        assert fixups.binary_key({"a": "1", "b": "2"}) == fixups.binary_key({"b": "2", "a": "1"})
+        assert fixups.binary_key({"a": "1"}) != fixups.binary_key({"a": "2"})
+
+
 @needs_gcc
 class TestCompileWithFixup:
     def test_plain_function_compiles(self) -> None:
@@ -73,20 +93,65 @@ class TestCompileWithFixup:
         assert res.obj_path is not None and res.obj_path.exists()
         shutil.rmtree(res.obj_path.parent, ignore_errors=True)
 
-    def test_ghidra_pseudotypes_get_defined(self) -> None:
-        code = (
-            "uint compute(undefined4 x) {\n" "    uint r = (uint)x;\n" "    return r + 1;\n" "}\n"
+    def test_no_module_compiles_code_as_emitted(self) -> None:
+        res = compile_with_fixup(GHIDRA_STYLE, "compute")
+        assert not res.compilable
+        assert res.iterations == 1
+        assert res.source == GHIDRA_STYLE
+        assert "unknown type name" in res.stderr
+
+    def test_prepare_builds_the_translation_unit(self) -> None:
+        prelude = "typedef unsigned int uint; typedef unsigned int undefined4;\n"
+        seen = []
+
+        def prepare(code: str, ctx: fixups.FixupContext) -> str:
+            seen.append(ctx)
+            return prelude + code
+
+        res = compile_with_fixup(
+            GHIDRA_STYLE, "compute", fixup=_module(prepare=prepare), siblings={"compute": "x"}
         )
-        res = compile_with_fixup(code, "compute")
         assert res.compilable, res.error
-        assert res.iterations >= 2
+        assert res.source == prelude + GHIDRA_STYLE
+        assert seen[0].func_name == "compute" and dict(seen[0].siblings) == {"compute": "x"}
         shutil.rmtree(res.obj_path.parent, ignore_errors=True)
 
-    def test_undeclared_symbol_stubbed(self) -> None:
-        code = "int g(void) { return helper_fn(global_thing); }"
-        res = compile_with_fixup(code, "g")
-        assert res.compilable, res.error
-        shutil.rmtree(res.obj_path.parent, ignore_errors=True)
+    def test_repair_sees_stderr_and_is_bounded(self) -> None:
+        calls = []
+
+        def repair(source: str, stderr: str, ctx: fixups.FixupContext) -> str:
+            calls.append(stderr)
+            return source + f"\n/* attempt {len(calls)} */"
+
+        res = compile_with_fixup(
+            GHIDRA_STYLE, "compute", fixup=_module(prepare=lambda c, ctx: c, repair=repair)
+        )
+        assert not res.compilable
+        assert "unknown type name" in calls[0]
+        assert res.iterations == 8 and len(calls) == 7
+
+    def test_repair_returning_none_stops(self) -> None:
+        res = compile_with_fixup(
+            GHIDRA_STYLE,
+            "compute",
+            fixup=_module(prepare=lambda c, ctx: c, repair=lambda s, e, ctx: None),
+        )
+        assert not res.compilable and res.iterations == 1
+
+    def test_raising_module_fails_closed(self) -> None:
+        def prepare(code: str, ctx: fixups.FixupContext) -> str:
+            raise RuntimeError("bug")
+
+        res = compile_with_fixup("int f(void) { return 0; }", "f", fixup=_module(prepare=prepare))
+        assert not res.compilable
+        assert res.error == "fixup raised RuntimeError"
+        assert res.obj_path is None
+
+    def test_disallowed_flags_fail_closed(self) -> None:
+        module = _module(FLAGS=["-O0"], prepare=lambda c, ctx: c)
+        res = compile_with_fixup("int f(void) { return 0; }", "f", fixup=module)
+        assert not res.compilable
+        assert res.error == "fixup raised FixupError"
 
     def test_unrepairable_returns_no_object(self) -> None:
         res = compile_with_fixup("int bad(void) { return", "bad")
@@ -104,8 +169,6 @@ class TestCompileWithFixup:
         )
         from decbench.utils import binfmt
 
-        if not gcc_available:
-            pytest.skip("gcc not installed")
         binary = tmp_path / "b"
         src = tmp_path / "b.c"
         src.write_text("int add(int a,int b){return a+b;}\nint main(){return add(2,3);}\n")
