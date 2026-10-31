@@ -397,6 +397,9 @@ def _parse_function_die(die: Any, dwarfinfo: Any) -> tuple[str | None, list[dict
     the in-class declaration it references. C subprograms always name themselves
     on the defining DIE, so the chase never fires and C ground truth is byte-for-
     byte what it was.
+
+    Only the function's own parameters and locals are ground truth. Variables of
+    an inlined callee (``DW_TAG_inlined_subroutine``) are skipped at every depth.
     """
     from decbench.utils import binfmt
 
@@ -407,7 +410,7 @@ def _parse_function_die(die: Any, dwarfinfo: Any) -> tuple[str | None, list[dict
 
     arg_index = 0
     for child in die.iter_children():
-        if child.tag in ("DW_TAG_lexical_block", "DW_TAG_inlined_subroutine"):
+        if child.tag == "DW_TAG_lexical_block":
             variables.extend(_parse_lexical_block(child, dwarfinfo))
         elif child.tag == "DW_TAG_formal_parameter":
             var = _parse_variable_die(child, dwarfinfo, is_arg=True, arg_index=arg_index)
