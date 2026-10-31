@@ -18,8 +18,8 @@ What's here:
     build the DWARFInfo by hand — LIEF's community build has no DWARF reader and
     PE COFF long section names defeat name lookups).
   * :func:`function_bytes` / :func:`object_text_bytes` — original function bytes
-    from a final ELF/PE, and the `.text` of a single-function recompiled object
-    (ELF or COFF), for byte_match.
+    from a final ELF/PE, and the recompiled function's bytes from its own symbol
+    and section in an ELF or COFF object, for byte_match.
   * :func:`die_attr` / :func:`die_str_attr` / :func:`die_attr_owner` — read a DIE
     attribute through ``DW_AT_specification`` (and, in a C++ unit only,
     ``DW_AT_abstract_origin``), which is where C++ out-of-line definitions keep
@@ -822,28 +822,22 @@ def _elf_function_bytes(path: Path, func_name: str, address: int) -> bytes | Non
 
 
 def object_text_bytes(obj_path: Path, func_name: str) -> bytes | None:
-    """`.text` of a recompiled single-function object (ELF .o or COFF .o).
+    """``func_name``'s bytes from a recompiled object (ELF ``.o`` or COFF ``.o``).
 
-    byte_match compiles one function, so the object's ``.text`` is essentially
-    that function (alignment padding is dropped by the disassembler's nop skip).
+    The extent is read from the function's own symbol and the section that symbol
+    is defined in. GCC places some functions outside ``.text`` (``main`` lands in
+    ``.text.startup`` at ``-O2``), so slicing ``.text`` would score another
+    function's bytes, or none at all. Returns ``None`` when the symbol is missing
+    or its extent does not fit its section.
     """
-    info = detect(obj_path)
-    if info is not None and info.fmt == "elf":
-        b = _elf_object_function(obj_path, func_name)
-        if b is not None:
-            return b
     try:
-        import lief
-
-        binary = lief.parse(str(obj_path))
-        if binary is None:
-            return None
-        for sec in binary.sections:
-            if sec.name == ".text" or sec.name.startswith(".text"):
-                return bytes(sec.content)
-    except Exception:
-        pass
-    return None
+        with open(obj_path, "rb") as f:
+            is_elf = f.read(4) == b"\x7fELF"
+    except OSError:
+        return None
+    if is_elf:
+        return _elf_object_function(obj_path, func_name)
+    return _coff_object_function(obj_path, func_name)
 
 
 def _elf_object_function(obj_path: Path, func_name: str) -> bytes | None:
@@ -852,17 +846,52 @@ def _elf_object_function(obj_path: Path, func_name: str) -> bytes | None:
 
         with open(obj_path, "rb") as f:
             elf = ELFFile(f)
-            text = elf.get_section_by_name(".text")
             symtab = elf.get_section_by_name(".symtab")
-            if text is None or symtab is None:
+            if symtab is None:
                 return None
             is_arm = elf.header["e_machine"] == "EM_ARM"
             for sym in symtab.iter_symbols():
-                if sym.name == func_name and sym["st_size"] > 0:
-                    off = sym["st_value"]
-                    if is_arm:
-                        off &= ~1
-                    return text.data()[off : off + sym["st_size"]]
+                shndx = sym["st_shndx"]
+                if sym.name != func_name or sym["st_size"] <= 0 or not isinstance(shndx, int):
+                    continue
+                data = elf.get_section(shndx).data()
+                start = sym["st_value"] & ~1 if is_arm else sym["st_value"]
+                end = start + sym["st_size"]
+                return data[start:end] if end <= len(data) else None
     except Exception:
         pass
     return None
+
+
+def _coff_object_function(obj_path: Path, func_name: str) -> bytes | None:
+    """COFF symbols carry no size, so the extent runs to the next symbol in its section."""
+    try:
+        import lief
+
+        binary = lief.COFF.parse(str(obj_path))
+        if binary is None:
+            return None
+        defined = [sym for sym in binary.symbols if sym.section_idx > 0]
+        target = next(
+            (
+                sym
+                for sym in defined
+                if sym.is_function and sym.name in (func_name, "_" + func_name)
+            ),
+            None,
+        )
+        if target is None or target.section is None:
+            return None
+        data = bytes(target.section.content)
+        start = int(target.value)
+        end = min(
+            (
+                int(sym.value)
+                for sym in defined
+                if sym.section_idx == target.section_idx and int(sym.value) > start
+            ),
+            default=len(data),
+        )
+        return data[start:end] if start < end <= len(data) else None
+    except Exception:
+        return None
