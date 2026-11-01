@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,14 +21,7 @@ if TYPE_CHECKING:
 
 
 def keep_sources_of_retained_binaries(project: Project, opt: OptimizationLevel) -> None:
-    """Drop preprocessed sources whose binary was cut by ``--binary-limit``/``--binary-sample``.
-
-    The two key shapes differ between C and C++: a C unit's preprocessed stem is
-    ``foo`` (from ``foo.i``) but CMake makes a C++ one ``db_impl.cc`` (from
-    ``db_impl.cc.ii``), which can never equal a binary stem. Comparing raw stems
-    therefore emptied the dict for every C++ project, and the run scored zero
-    functions with no error at all.
-    """
+    """Keep sources for retained binaries, normalizing C++ stems such as ``db_impl.cc``."""
     if opt not in project.preprocessed_sources:
         return
     keep = {b.stem for b in project.compiled_binaries.get(opt, [])}
@@ -123,7 +117,7 @@ class PipelineExecutor:
         print(results.scoreboard.render_text())
     """
 
-    def __init__(self, config: PipelineConfig | None = None):
+    def __init__(self, config: PipelineConfig | None = None) -> None:
         """Initialize the executor.
 
         Args:
@@ -161,36 +155,7 @@ class PipelineExecutor:
             print("Skipping compilation, discovering existing binaries...")
             self._discover_existing_binaries(projects, output_dir)
 
-        if self.config.binary_limit is not None:
-            for project in projects:
-                for opt in self.config.optimization_levels:
-                    if opt in project.compiled_binaries:
-                        binaries = project.compiled_binaries[opt]
-                        if len(binaries) > self.config.binary_limit:
-                            project.compiled_binaries[opt] = binaries[: self.config.binary_limit]
-                            print(
-                                f"Limited to {self.config.binary_limit} binaries "
-                                f"for {project.name}/{opt.value}"
-                            )
-                    keep_sources_of_retained_binaries(project, opt)
-
-        if self.config.binary_sample is not None:
-            import random
-
-            for project in projects:
-                for opt in self.config.optimization_levels:
-                    if opt in project.compiled_binaries:
-                        binaries = project.compiled_binaries[opt]
-                        if len(binaries) > self.config.binary_sample:
-                            rng = random.Random(42)
-                            sampled = sorted(rng.sample(binaries, self.config.binary_sample))
-                            project.compiled_binaries[opt] = sampled
-                            names = [b.stem for b in sampled]
-                            print(
-                                f"Sampled {self.config.binary_sample} binaries "
-                                f"for {project.name}/{opt.value}: {names}"
-                            )
-                    keep_sources_of_retained_binaries(project, opt)
+        self._select_binaries(projects)
 
         if not self.config.skip_decompile:
             print(f"Decompiling with {self.config.decompilers or 'all'} decompilers...")
@@ -233,36 +198,7 @@ class PipelineExecutor:
                 source_cfgs_root=self.config.source_cfgs_root,
             )
 
-        # Built before the scoreboard: it carries the true function universe and each
-        # metric's measurability, which the scoreboard denominators derive from, so
-        # scoreboard.toml and the HTML report share one source of truth.
-        from decbench.scoring.function_data_builder import build_function_data
-
-        function_data = build_function_data(
-            results.evaluate_results,
-            projects,
-            results.decompile_results,
-        )
-
-        print("Building scoreboard...")
-        results.scoreboard = build_scoreboard_from_function_data(function_data)
-
-        try:
-            from decbench.scoring.report_extras import attach_extras
-
-            attach_extras(
-                function_data,
-                evaluation_results=results.evaluate_results,
-                decompile_results=results.decompile_results,
-                projects=projects,
-            )
-        except Exception as exc:  # noqa: BLE001
-            print(f"Report extras unavailable ({exc}); continuing.")
-
-        function_data_path = output_dir / "function_results.json"
-        function_data.to_json(function_data_path)
-        results.scoreboard.raw_data_path = function_data_path
-        print(f"Function data saved to {function_data_path}")
+        results.scoreboard = self._build_scoreboard(projects, results)
 
         results.total_time_seconds = time.time() - start_time
 
@@ -278,6 +214,62 @@ class PipelineExecutor:
         print(f"Scoreboard saved to {scoreboard_path}")
 
         return results
+
+    def _select_binaries(self, projects: list[Project]) -> None:
+        """Apply the limit before deterministic sampling, then retain matching sources."""
+        limit = self.config.binary_limit
+        sample_size = self.config.binary_sample
+        if limit is None and sample_size is None:
+            return
+
+        for project in projects:
+            for opt in self.config.optimization_levels:
+                binaries = project.compiled_binaries.get(opt)
+                if binaries is not None:
+                    if limit is not None and len(binaries) > limit:
+                        binaries = binaries[:limit]
+                        print(f"Limited to {limit} binaries for {project.name}/{opt.value}")
+                    if sample_size is not None and len(binaries) > sample_size:
+                        binaries = sorted(random.Random(42).sample(binaries, sample_size))
+                        names = [binary.stem for binary in binaries]
+                        print(
+                            f"Sampled {sample_size} binaries "
+                            f"for {project.name}/{opt.value}: {names}"
+                        )
+                    project.compiled_binaries[opt] = binaries
+                keep_sources_of_retained_binaries(project, opt)
+
+    def _build_scoreboard(self, projects: list[Project], results: PipelineResults) -> Scoreboard:
+        """Build the scoreboard and report data from the same function universe."""
+        from decbench.scoring.function_data_builder import build_function_data
+
+        function_data = build_function_data(
+            results.evaluate_results,
+            projects,
+            results.decompile_results,
+        )
+
+        print("Building scoreboard...")
+        scoreboard = build_scoreboard_from_function_data(function_data)
+
+        try:
+            from decbench.scoring.report_extras import attach_extras
+
+            attach_extras(
+                function_data,
+                evaluation_results=results.evaluate_results,
+                decompile_results=results.decompile_results,
+                projects=projects,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"Report extras unavailable ({exc}); continuing.")
+
+        function_data_path = self.config.output_dir / "function_results.json"
+        function_data.to_json(function_data_path)
+        scoreboard.raw_data_path = function_data_path
+        print(f"Function data saved to {function_data_path}")
+
+        return scoreboard
 
     @staticmethod
     def _is_elf_executable(path: Path) -> bool:

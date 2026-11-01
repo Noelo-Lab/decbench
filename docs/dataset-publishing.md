@@ -365,7 +365,7 @@ decbench-data list
 decbench-data download sample-set --dest ./decbench-sample-set
 ```
 
-## 8. `decbench download` alias (`decbench/cli.py`)
+## 8. `decbench download` alias (`decbench/commands/datasets.py`)
 
 The main decbench CLI carries a thin top-level `download` command, so existing
 users get `decbench download sample-set`. It duplicates no logic: it lazily
