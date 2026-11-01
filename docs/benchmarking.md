@@ -6,6 +6,29 @@ overlay → finalize flow that produces the published numbers. Metric internals
 live in [metrics.md](metrics.md); backend internals and how to add a
 decompiler in [decompilers.md](decompilers.md).
 
+## Code entry points
+
+`decbench/cli.py` registers the Click command tree. Command implementations live
+in `decbench/commands/`, grouped by responsibility:
+
+- `benchmark.py`: run, evaluate, evaluate-tree, and project initialization.
+- `registry.py`: list metrics/decompilers and build backend images.
+- `reporting.py`: show scoreboards, render reports, build sites, and capture snapshots.
+- `datasets.py`: save, list, materialize, and download datasets.
+- `evalkit.py`: export evaluation kits and ingest submissions.
+- `analysis.py`: select subsets and find improvement cases.
+
+Keep backend imports inside command callbacks so help and dataset downloads do
+not initialize native tools. Register new top-level commands explicitly in
+`cli.py`; group subcommands stay with their group's implementation.
+
+`pipeline/executor.py` coordinates compile → select binaries → decompile →
+evaluate → build the scoreboard. Binary selection applies the limit before a
+sample drawn with seed 42, then retains matching C/C++ preprocessed sources.
+The scoreboard and report data share the function universe assembled by
+`scoring/function_data_builder.py`. The large-run drivers and canonical overlay
+finalization path below remain separate from this in-process coordinator.
+
 ## Machine environment
 
 - Use the `decbench` virtualenv at `/home/mahaloz/.virtualenvs/decbench`

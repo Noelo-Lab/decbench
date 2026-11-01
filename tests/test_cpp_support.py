@@ -225,10 +225,13 @@ def test_every_source_collection_site_globs_both_extensions() -> None:
     }
     pattern = re.compile(r"""glob\(\s*["']\*\.i["']""")
     offenders = set()
-    for path in sorted(repo.rglob("*.py")):
+    source_paths = (
+        path
+        for directory in ("decbench", "scripts", "docker")
+        for path in (repo / directory).rglob("*.py")
+    )
+    for path in sorted(source_paths):
         rel = path.relative_to(repo).as_posix()
-        if rel.startswith(("tests/", ".venv/", "build/")):
-            continue
         if pattern.search(path.read_text(errors="replace")):
             offenders.add(rel)
     extra = sorted(offenders - allowed)

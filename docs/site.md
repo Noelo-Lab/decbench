@@ -137,7 +137,7 @@ A third subcommand, `decbench site snapshot`, is deliberately absent from the
 table above: it renders no page at all. It copies an already-built tree's small
 payloads into the dated store so a past scoreboard keeps a stable link.
 
-`decbench site build` (CLI in `cli.py`) takes a RESULTS TREE, not a
+`decbench site build` (CLI in `commands/reporting.py`) takes a RESULTS TREE, not a
 scoreboard — `scoreboard.toml` is also accepted and resolved to its parent —
 and REQUIRES `function_results.json`, since the site is entirely data-driven
 (`decbench report` can still fall back to scoreboard-only tables). `data/`
@@ -203,7 +203,7 @@ published numbers move — a metric fix, a new decompiler column, a re-finalized
 tree — and a plain link that silently re-renders under the new numbers
 misrepresents whatever it was cited for. Implementation:
 `decbench/rendering/snapshots.py` (the store + capture), `site.py`
-(materialization), the `site` command group in `cli.py`.
+(materialization), the `site` command group in `commands/reporting.py`.
 
 **Only the two SMALL payloads are frozen** — `aggregates.json` (~48 KB) and
 `dataset.json` (~6 KB), i.e. `SNAPSHOT_PAYLOADS`. Every view therefore keeps
@@ -672,7 +672,7 @@ Entry semantics:
 
 ### No presets (`__all__`)
 
-Dataset preset tagging is best-effort (`cli.py`'s `report` swallows any
+Dataset preset tagging is best-effort (`commands/reporting.py`'s `report` swallows any
 `scoring.datasets.assign_datasets` failure). When a `FunctionData` carries no presets,
 the builder emits `"presets": []` and one synthetic combo pair under the reserved
 preset name `__all__`, which every function is active under. Empty `presets` means no
