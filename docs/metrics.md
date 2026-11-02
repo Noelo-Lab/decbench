@@ -169,7 +169,9 @@ rows with an asterisk.
 Code-only argument and local types share tree-sitter declaration discovery with
 occurrence-line extraction. Discovery selects the requested function (or the sole
 definition when its rendered name differs), excluding globals and sibling-function
-locals. If no function definition parses, discovery recovers locals only from a
+locals. When dialect syntax that is not C keeps tree-sitter from assembling the definition, discovery
+falls back to the uniquely named top-level declarator and the declarations after it.
+If no function definition parses at all, discovery recovers locals only from a
 single outermost compound statement and does not scan file-scope declarations as
 locals.
 

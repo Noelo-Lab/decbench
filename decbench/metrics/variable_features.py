@@ -28,9 +28,11 @@ def _parser() -> Parser:
 
 
 def _walk(node: Node) -> Iterator[Node]:
-    yield node
-    for child in node.named_children:
-        yield from _walk(child)
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        yield current
+        stack.extend(reversed(current.named_children))
 
 
 def _text(node: Node, source: bytes) -> str:
@@ -155,17 +157,40 @@ def _declaration_type(declaration: Node, identifier: Node, source: bytes) -> str
 
 
 def _outermost_bodies(node: Node) -> Iterator[Node]:
-    if node.type == "compound_statement":
-        yield node
-    else:
-        for child in node.named_children:
-            yield from _outermost_bodies(child)
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == "compound_statement":
+            yield current
+        else:
+            stack.extend(reversed(current.named_children))
+
+
+def _recover_definition(root: Node, source: bytes, function_name: str) -> Node | None:
+    candidates = []
+    for node in _walk(root):
+        if node.type != "function_declarator":
+            continue
+        identifier = _declarator_identifier(node)
+        if identifier is None or _text(identifier, source) != function_name:
+            continue
+        top = node
+        while top.parent is not None and top.parent.type.endswith("_declarator"):
+            top = top.parent
+        # non-C dialect tokens will break tree-sitter and put the declaration body under an `ERROR`
+        if top.parent is not None and top.parent.type in {"ERROR", "translation_unit"}:
+            candidates.append(top)
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def discover_variables(code: str, function_name: str) -> list[DiscoveredVariable]:
     source = code.encode("utf-8", "replace")
     tree = _parser().parse(source)
     function = _select_function(tree.root_node, source, function_name)
+    if function is None or _function_name(function, source) != function_name:
+        declarator = _recover_definition(tree.root_node, source, function_name)
+        if declarator is not None and declarator.parent is not None:
+            return _discover_variables(declarator.parent, source, declarator)[0]
     if function is None:
         if any(node.type == "function_definition" for node in _walk(tree.root_node)):
             return []
@@ -179,12 +204,14 @@ def discover_variables(code: str, function_name: str) -> list[DiscoveredVariable
 def _discover_variables(
     function: Node,
     source: bytes,
+    declarator: Node | None = None,
 ) -> tuple[list[DiscoveredVariable], set[Node], dict[str, list[tuple[int, int]]]]:
     declarations: list[DiscoveredVariable] = []
     declaration_nodes: set[Node] = set()
     binding_ranges: dict[str, list[tuple[int, int]]] = defaultdict(list)
     body = function.child_by_field_name("body") or function
-    declarator = function.child_by_field_name("declarator")
+    declarator = declarator or function.child_by_field_name("declarator")
+    locals_start = declarator.end_byte if declarator is not None else body.start_byte
     parameter_list = None
     for node in _walk(declarator) if declarator is not None else ():
         if node.type == "parameter_list":
@@ -210,7 +237,12 @@ def _discover_variables(
             position += 1
 
     for node in _walk(body):
-        if node.type != "declaration" or node.has_error or node.is_missing:
+        if (
+            node.type != "declaration"
+            or node.has_error
+            or node.is_missing
+            or node.start_byte < locals_start
+        ):
             continue
         if _storage_classes(node, source) & {"typedef", "extern"}:
             continue

@@ -195,6 +195,53 @@ def test_body_recovery_abstains_without_a_unique_body(code: str) -> None:
     assert parse_c_variables(code, "target") == []
 
 
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        (
+            "int64_t target (int64_t arg1, char ** arg2) {\n"
+            "    int64_t var_8h;\n"
+            "    do {\n"
+            "        uint32_t var_ch;\n"
+            "label_2:\n"
+            "    } while (arg1 != 0);\n"
+            "label_3:\n"
+            "}\n",
+            [
+                ("arg1", "int64_t", "arg", 0),
+                ("arg2", "char **", "arg", 1),
+                ("var_8h", "int64_t", "stack", None),
+                ("var_ch", "uint32_t", "stack", None),
+            ],
+        ),
+        (
+            "void target(struct Eq_2 * fs)\n"
+            "{\n"
+            "\tword64 rax_37;\n"
+            "\t{\n"
+            "\t\t{\n"
+            "\t\t\tif (*(<anonymous> **) 0x0009FDC8 != null)\n"
+            "\t\t\t\t(*(<anonymous> **) 0x0009FDC8)();\n"
+            "\t\t}\n"
+            "\t}\n"
+            "}\n",
+            [("fs", "struct Eq_2 *", "arg", 0), ("rax_37", "word64", "stack", None)],
+        ),
+    ],
+)
+def test_dialect_syntax_that_breaks_the_definition_keeps_its_variables(
+    code: str, expected: list[tuple[str, str, str, int | None]]
+) -> None:
+    variables = parse_c_variables(code, "target")
+    assert [(v.name, v.type, v.kind, v.arg_index) for v in variables] == expected
+
+
+def test_deeply_nested_bodies_are_parsed() -> None:
+    depth = 1500
+    code = "void target(int n) { int x; " + "if (n) { " * depth + "}" * depth + " }"
+    assert [v.name for v in parse_c_variables(code, "target")] == ["n", "x"]
+
+
 def test_attributed_declarators_retain_function_selection_and_occurrences() -> None:
     code = (
         "void helper(void) { int x; }\n"

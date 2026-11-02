@@ -157,7 +157,7 @@ def normalize_type(type_str: str) -> set[str]:
     normalized = t
     for q in QUALIFIERS:
         normalized = re.sub(rf"\b{q}\b", "", normalized)
-    normalized = normalized.strip()
+    normalized = " ".join(normalized.split())
     if normalized:
         forms.add(normalized)
 

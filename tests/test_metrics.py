@@ -745,6 +745,23 @@ int main() {
                 decompiler_spelling
             ), f"'short int' does not match {decompiler_spelling!r}"
 
+    @pytest.mark.parametrize(
+        ("dwarf", "spellings"),
+        [
+            ("long unsigned int", ("unsigned long", "ulong", "uint64_t", "_QWORD")),
+            ("short unsigned int", ("unsigned short", "ushort", "_WORD")),
+            ("long long unsigned int", ("unsigned long long", "uint64_t")),
+        ],
+    )
+    def test_unsigned_dwarf_names_match_decompiler_spellings(
+        self, dwarf: str, spellings: tuple[str, ...]
+    ) -> None:
+        """GCC puts ``unsigned`` mid-name; stripping it must still map the rest."""
+        from decbench.metrics.type_match import normalize_type
+
+        for spelling in spellings:
+            assert normalize_type(dwarf) & normalize_type(spelling), spelling
+
     def test_binary_calibration_ignores_single_slot_coincidences(self) -> None:
         """All-single-var functions must not elect a spurious nonzero shift."""
         from decbench.metrics.type_match import _calibrate_shift_multi
