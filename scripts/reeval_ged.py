@@ -68,6 +68,7 @@ CANONICAL_DECOMPILERS = (
     "glaurung",
     "fission",
     "ventris",
+    "psalms",
     "reko",
     "retdec",
 )

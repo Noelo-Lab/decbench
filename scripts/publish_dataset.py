@@ -84,8 +84,8 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         default=None,
         metavar="DEC",
-        help="decompiler id to strip from the published dataset (repeatable; "
-        f"default: {', '.join(layout.EXCLUDED_DECOMPILERS)})",
+        help="extra decompiler id to strip from the published dataset (repeatable; "
+        f"always added to the defaults: {', '.join(layout.EXCLUDED_DECOMPILERS)})",
     )
     parser.add_argument(
         "--no-exclusions",
@@ -113,12 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     created = datetime.datetime.now().isoformat(timespec="seconds")
     log = lambda msg: print(msg, flush=True)  # noqa: E731
 
-    if args.no_exclusions:
-        excluded: tuple[str, ...] = ()
-    elif args.exclude_decompiler:
-        excluded = tuple(dict.fromkeys(args.exclude_decompiler))
-    else:
-        excluded = layout.EXCLUDED_DECOMPILERS
+    excluded = layout.resolve_exclusions(args.exclude_decompiler, disable=args.no_exclusions)
 
     log(f"[load] {root}/function_results.json")
     fd = layout.load_dataset(root, exclude=excluded)

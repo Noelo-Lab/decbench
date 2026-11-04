@@ -24,6 +24,7 @@ from decbench.publish.layout import (
     LayoutResult,
     _preset_description,
     load_dataset,
+    resolve_exclusions,
     strip_decompilers,
     write_master_scores,
 )
@@ -146,13 +147,22 @@ def results_tree(tmp_path: Path) -> Path:
 def test_default_exclusions_cover_the_private_submitters(results_tree: Path):
     """Every id here must be a deliberate edit of the tuple, not a stray addition.
 
-    ``ventris`` is excluded because RevEng.AI submitted their eval kit on the
-    condition that the decompiled artifacts stay private, and this publisher
-    cannot ship a column's scores without also copying its ``.c`` files.
+    ``ventris`` (RevEng.AI) and ``psalms`` (Nemesis) are excluded because they
+    submitted their eval kits on the condition that the decompiled artifacts stay
+    private, and this publisher cannot ship a column's scores without also
+    copying its ``.c`` files.
     """
-    assert EXCLUDED_DECOMPILERS == ("ventris",)
+    assert EXCLUDED_DECOMPILERS == ("ventris", "psalms")
     fd = load_dataset(results_tree)
     assert fd.decompilers == [KEPT, STRIPPED], "a fixture id is not accidentally excluded"
+
+
+def test_extra_exclusions_never_drop_the_private_defaults():
+    """Naming one more id (e.g. the hidden ``retdec``) must not re-publish a private column."""
+    assert resolve_exclusions() == EXCLUDED_DECOMPILERS
+    assert resolve_exclusions(["retdec"]) == (*EXCLUDED_DECOMPILERS, "retdec")
+    assert resolve_exclusions(["ventris", "retdec"]) == (*EXCLUDED_DECOMPILERS, "retdec")
+    assert resolve_exclusions(["retdec"], disable=True) == ()
 
 
 def test_load_dataset_strips_explicit_exclusions(results_tree: Path):

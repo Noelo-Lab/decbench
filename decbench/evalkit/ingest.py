@@ -71,6 +71,7 @@ _REEVAL_DEFAULTS = (
     "glaurung",
     "fission",
     "ventris",
+    "psalms",
 )
 
 

@@ -44,7 +44,7 @@ hidden = ["phoenix", "retdec"]
 # Decompilers evaluated only on the frozen sample-set slice.
 sample_set_only = [
     "codex", "claude-code", "kimi-code", "manifold", "glaurung", "fission", "ventris",
-    "reko",
+    "psalms", "reko",
 ]
 
 # Exact version overrides take precedence over sample_set_only base names.

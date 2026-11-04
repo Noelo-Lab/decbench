@@ -50,14 +50,14 @@ DATASET_REPO_ID = "noelo-lab/decbench-dataset"
 DEFAULT_CONFIGS = ["sample-set", "large", "unoptimized", "optimized", "inlined", "full"]
 _FULL = "full"
 _FULL_DESCRIPTION = "everything — all projects and opt levels (O0 + O2 + O2-noinline)"
-# The dataset mirror of the site's `[decompilers] hidden`. `ventris` is here for
-# the other reason a column can be unpublishable: RevEng.AI submitted their eval
-# kit on the condition that the decompiled artifacts stay private, and this
-# publisher has no way to ship a column's scores without also copying its `.c`
-# files. The site keeps their scores (only the code bodies are withheld there —
-# `private_artifacts` in rendering/content/decompilers.toml); the dataset drops
-# the column outright.
-EXCLUDED_DECOMPILERS: tuple[str, ...] = ("ventris",)
+# The dataset mirror of the site's `[decompilers] hidden`. `ventris` (RevEng.AI)
+# and `psalms` (Nemesis) are here for the other reason a column can be
+# unpublishable: they submitted their eval kits on the condition that the
+# decompiled artifacts stay private, and this publisher has no way to ship a
+# column's scores without also copying its `.c` files. The site keeps their
+# scores (only the code bodies are withheld there — `private_artifacts` in
+# rendering/content/decompilers.toml); the dataset drops the columns outright.
+EXCLUDED_DECOMPILERS: tuple[str, ...] = ("ventris", "psalms")
 
 Logger = Callable[[str], None]
 
@@ -159,6 +159,19 @@ def _copy_file(src: Path, dst: Path) -> int:
 def _relpath(path: Path, dest: Path) -> str:
     """Repo-relative POSIX path of ``path`` under ``dest``."""
     return path.relative_to(dest).as_posix()
+
+
+def resolve_exclusions(
+    extra: Iterable[str] | None = None, *, disable: bool = False
+) -> tuple[str, ...]:
+    """The ids to strip: :data:`EXCLUDED_DECOMPILERS` plus ``extra``, or none when ``disable``.
+
+    ``extra`` only ever adds — a caller naming one more id must not silently
+    re-publish a private submitter's column.
+    """
+    if disable:
+        return ()
+    return tuple(dict.fromkeys((*EXCLUDED_DECOMPILERS, *(extra or ()))))
 
 
 def strip_decompilers(fd: FunctionData, exclude: Iterable[str]) -> list[str]:

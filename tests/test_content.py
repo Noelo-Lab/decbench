@@ -303,7 +303,8 @@ def test_private_artifacts_defaults_off_and_is_parsed(content: Content) -> None:
     """Only submitters who asked for it are flagged; everyone else publishes code."""
     assert content.decompiler("angr").private_artifacts is False
     assert content.decompiler("ventris").private_artifacts is True
-    assert content.private_artifact_decompilers == frozenset({"ventris"})
+    assert content.decompiler("psalms").private_artifacts is True
+    assert content.private_artifact_decompilers == frozenset({"ventris", "psalms"})
 
 
 def test_glaurung_is_sample_set_only(content: Content) -> None:
