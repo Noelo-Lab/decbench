@@ -46,10 +46,10 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
   `decbench decompiler-build <name>`; Dockerfiles live in `docker/`.
 - **LLM / coding-agent** (`llm_dec.py`: `codex`, `claude-code`, `kimi-code`):
   Part II below.
-- **External / not runnable here** (`external.py`: `fission`, `ventris`): ids we
-  publish but can never execute — their numbers arrive as sample-set submissions
-  (Part III) and there is no tool to drive. Each is one row in
-  `EXTERNAL_DECOMPILERS`; the generated class has `runnable = False`,
+- **External / not runnable here** (`external.py`: `fission`, `ventris`,
+  `psalms`): ids we publish but can never execute — their numbers arrive as
+  sample-set submissions (Part III) and there is no tool to drive. Each is one
+  row in `EXTERNAL_DECOMPILERS`; the generated class has `runnable = False`,
   `is_available()` permanently False, and a `decompile_binary` that raises with a
   pointer to `decbench evalkit ingest`. That makes them *known* —
   `decbench list-decompilers` shows them with `Kind = external` — while every
@@ -635,7 +635,7 @@ drops the C output into the kit's `results/` folder, runs the bundled
 as a new **sample-set-only** decompiler column (like `codex`/`claude-code`),
 scored by GED / type_match / byte_match exactly like Ghidra or IDA, and it
 appears on the [leaderboard](https://decbench.com/). The published columns
-ingested this way are `manifold`, `glaurung`, `fission`, and `ventris`.
+ingested this way are `manifold`, `glaurung`, `fission`, `ventris`, and `psalms`.
 
 ```
 MAINTAINER                     CONTRIBUTOR                    MAINTAINER

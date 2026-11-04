@@ -468,8 +468,10 @@ and sanitized candidate text and uses published candidate coverage, the old
 the parse mode for each slice. Conflicting evidence aborts the refresh;
 indistinguishable modes remain explicit and are replayed both ways by the
 historical-isomorphism audit.
-The promotion projection always includes the built-in decompilers plus any
-external IDs explicitly named by `DECBENCH_REEVAL_DECOMPILERS`; its exact slice
+The promotion projection always includes `CANONICAL_DECOMPILERS` (every
+published column, external and versioned ones like `codex@gpt-6-astra` included —
+an id missing there loses its GED on a scoped run) plus any IDs explicitly named
+by `DECBENCH_REEVAL_DECOMPILERS`; its exact slice
 set is written to `ged_new.slices.json` and hash-bound into the audit.
 After a complete refresh, `scripts/audit_historical_ged_iso.py <tree>
 [workers]` classifies historical isomorphism for every pair reconstructed as

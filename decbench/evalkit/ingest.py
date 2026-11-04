@@ -66,11 +66,13 @@ _REEVAL_DEFAULTS = (
     "r2dec",
     "dewolf",
     "codex",
+    "codex@gpt-6-astra",
     "claude-code",
     "manifold",
     "glaurung",
     "fission",
     "ventris",
+    "psalms",
 )
 
 

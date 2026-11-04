@@ -74,8 +74,8 @@ and writes into a dataset-repo root (default `~/github/decbench-dataset`). It is
 content/size check).
 
 **Decompiler exclusions.** `layout.load_dataset` strips every trace of the
-decompilers in `layout.EXCLUDED_DECOMPILERS` (currently `("ventris",)` — see
-below) from the loaded `FunctionData` before anything is copied or written —
+decompilers in `layout.EXCLUDED_DECOMPILERS` (currently `("ventris", "psalms")` —
+see below) from the loaded `FunctionData` before anything is copied or written —
 `fd.decompilers`/`decompiler_versions`, per-function
 `values`/`perfects`/`distances`/`decompiled`/`compiles`, `compile_rates`,
 `samples`, `hardest`, and `history` (see `layout.strip_decompilers`). The
@@ -83,13 +83,16 @@ master `results/function_results.json` is therefore written from the stripped
 in-memory object (never a verbatim file copy) and `results/scoreboard.toml` is
 regenerated from it, so an excluded decompiler appears **nowhere** in the
 published repo: no `results/<dec>/` folder, no manifest entry, no score column.
-`scripts/publish_dataset.py --exclude-decompiler NAME` (repeatable) overrides
-the set; `--no-exclusions` disables stripping entirely.
+`scripts/publish_dataset.py --exclude-decompiler NAME` (repeatable) strips
+more ids *on top of* that set (the live dataset also drops the hidden `retdec`:
+`--exclude-decompiler retdec`); `--no-exclusions` is the only way to disable
+stripping, defaults included.
 
-`ventris` is excluded for a different reason than a hidden backend: RevEng.AI
-submitted their eval kit on the condition that the decompiled artifacts stay
-private. The *site* keeps their scores and withholds only the code bodies
-(`private_artifacts` in `rendering/content/decompilers.toml` — see
+`ventris` and `psalms` are excluded for a different reason than a hidden
+backend: RevEng.AI (Ventris) and Nemesis (Psalms) submitted their eval kits on
+the condition that the decompiled artifacts stay private. The *site* keeps
+their scores and withholds only the code bodies (`private_artifacts` in
+`rendering/content/decompilers.toml` — see
 [site.md](site.md#decompiler-registry)), but this publisher has no way to ship a
 column's scores without also copying its `results/<dec>/**.c` tree, so the whole
 column is dropped here. Do NOT run `--no-exclusions` against the live dataset

@@ -41,7 +41,9 @@ class ExternalSpec:
     """One externally-submitted decompiler: its id, name, homepage and version.
 
     ``version`` is the string the submitter shipped in their ``results.json``, and
-    is what ``decbench evalkit ingest --version`` recorded for the column.
+    is what ``decbench evalkit ingest --version`` recorded for the column. ``url``
+    is ``""`` when the tool has no public homepage, matching an unlinked
+    ``decompilers.toml`` entry.
     """
 
     id: str
@@ -94,6 +96,12 @@ EXTERNAL_DECOMPILERS: tuple[ExternalSpec, ...] = (
         url="https://reveng.ai/",
         version="v8.0.0",
     ),
+    ExternalSpec(
+        id="psalms",
+        display_name="Psalms",
+        url="",
+        version="refine6t",
+    ),
 )
 
 
@@ -107,7 +115,8 @@ def _register(spec: ExternalSpec) -> type[ExternalDecompiler]:
             "display_name": spec.display_name,
             "url": spec.url,
             "version": spec.version,
-            "__doc__": f"{spec.display_name} — external sample-set submission ({spec.url}).",
+            "__doc__": f"{spec.display_name} — external sample-set submission"
+            + (f" ({spec.url})." if spec.url else "."),
         },
     )
     register_decompiler(spec.id)(cls)

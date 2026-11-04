@@ -118,6 +118,12 @@ logo = true
 private_artifacts = true
 
 [[decompiler]]
+id = "psalms"
+display_name = "Psalms"
+license = "closed-source"
+private_artifacts = true
+
+[[decompiler]]
 id = "claude-code"
 display_name = "Claude Code"
 url = "https://claude.com/claude-code"

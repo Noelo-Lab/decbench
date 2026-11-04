@@ -74,6 +74,14 @@ def test_promoted_decompilers_keep_builtins_and_selected_external_ids() -> None:
     assert promoted[-2:] == ("mydec", "ghidra@12.1")
 
 
+def test_every_ingest_default_column_is_promoted_by_default() -> None:
+    """A published column missing from CANONICAL_DECOMPILERS loses its GED on a scoped run."""
+    from decbench.evalkit.ingest import _REEVAL_DEFAULTS
+
+    assert "codex@gpt-6-astra" in reeval_ged.CANONICAL_DECOMPILERS
+    assert set(_REEVAL_DEFAULTS) <= set(reeval_ged.promoted_decompilers(("psalms",)))
+
+
 @pytest.mark.parametrize(
     ("baseline", "historical_slices"),
     [
