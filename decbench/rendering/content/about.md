@@ -278,9 +278,9 @@ Did the decompiler recover the right variable and argument types? We match decom
 ## [3] Recompilation correctness
 metric: Recompilation Bytematch
 
-Does the decompiled code recompile to the same machine code? We run a uniform compilability fixup (define decompiler pseudo-types, strip illegal symbol-version tokens, declare missing symbols) so every decompiler gets a fair shot at building, recompile each function with the original toolchain, and compare the resulting assembly — normalizing link-time-dependent operands (call/jump targets, PC-relative offsets) so only real differences count.
+Does the decompiled code recompile to the same machine code? Each decompiler's C goes through that decompiler's compilability fixup (defining its pseudo-types, rewriting its non-C syntax, declaring missing symbols), recompiles function by function with the original toolchain, and has its assembly compared to the original — normalizing link-time-dependent operands (call/jump targets, PC-relative offsets) so only real differences count. Every fixup was written by the same coding agent from the same prompt with the same two-hour budget, so no decompiler gets more hand-tuning than another; a decompiler without one is compiled exactly as emitted.
 
-The leaderboard's **Compiles** column reports the first half of this on its own — the share of a decompiler's output that the fixup got to build at all (before any assembly comparison). It is measured only where a matching recompiler exists (x86); ARM/PE firmware and malware abstain rather than count as failures.
+The leaderboard's **Compiles** column reports the first half of this on its own — the share of a decompiler's output that its fixup got to build at all (before any assembly comparison). It is measured only where a matching recompiler exists (x86); ARM/PE firmware and malware abstain rather than count as failures.
 
 <details class="metric-viz" open>
 <summary>how bytematch works: fixup &rarr; recompile &rarr; normalized asm diff</summary>
@@ -305,7 +305,7 @@ The leaderboard's **Compiles** column reports the first half of this on its own 
     log_val(x);
     return x + limit;
 }</code></pre>
-<div class="viz-cap">The fixup adds only <code style="color:var(--green)">typedef</code>s for <span class="tok-type">undefined4</span>/<span class="tok-type">uint</span> &mdash; never rewrites logic</div>
+<div class="viz-cap">Here the fixup only needs <code style="color:var(--green)">typedef</code>s for <span class="tok-type">undefined4</span>/<span class="tok-type">uint</span> &mdash; it may never change logic</div>
 </div>
 
 <div class="viz-panel">
@@ -351,7 +351,7 @@ The leaderboard's **Compiles** column reports the first half of this on its own 
 
 </div>
 
-<p class="viz-note">Recompilation Bytematch rebuilds the decompiler's own C the SAME way the original was built &mdash; toolchain and <code>-O*/-m*</code> flags read from the DWARF producer &mdash; then compares assembly line by line. A compilability fixup injects <em>only</em> what gcc reports missing (typedefs for pseudo-types like <code>undefined4</code>/<code>uint</code>, decls for implicit functions) and never rewrites logic. Link-time-dependent operands &mdash; <code>call</code>/branch targets and <code>[rip&plusmn;disp]</code> displacements &mdash; are normalized away, so an unlinked address difference is not a penalty. Type recovery is scored separately (type_match), so fixing types just to compile is fair.</p>
+<p class="viz-note">Recompilation Bytematch rebuilds the decompiler's own C the SAME way the original was built &mdash; toolchain and <code>-O*/-m*</code> flags read from the DWARF producer &mdash; then compares assembly line by line. Each decompiler's compilability fixup (agent-written, one shared prompt and time budget) supplies what its dialect leaves out &mdash; typedefs for pseudo-types like <code>undefined4</code>/<code>uint</code>, declarations for callees and globals &mdash; and may never change logic. Link-time-dependent operands &mdash; <code>call</code>/branch targets and <code>[rip&plusmn;disp]</code> displacements &mdash; are normalized away, so an unlinked address difference is not a penalty. Type recovery is scored separately (type_match), so fixing types just to compile is fair.</p>
 
 </div>
 </details>
