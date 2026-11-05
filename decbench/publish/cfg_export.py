@@ -26,7 +26,9 @@ the bug behind decbench#50 — it silently capped offline GED coverage at ~39%.
 Cost model: parsing dominates, so we **deduplicate parses by stripped-content
 hash** — each unique translation unit (shared across opt levels and binaries) is
 parsed once and cached. Output is resumable: an existing ``<stem>.json`` is left
-untouched unless ``overwrite``.
+untouched unless ``overwrite``, or unless its recorded ``generator`` or
+``resolution`` (:data:`decbench.utils.cfg.SOURCE_RESOLUTION_VERSION`) differs
+from the current one.
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ from typing import TYPE_CHECKING
 
 from decbench.utils import binfmt
 from decbench.utils.cfg import (
+    SOURCE_RESOLUTION_VERSION,
     best_source_by_name,
     extract_cfgs_from_source,
     is_degenerate_source_cfg,
@@ -232,6 +235,19 @@ def cfg_json_path(dest: Path, opt: str, project: str, stem: str) -> Path:
     return dest / "pipeline_data" / "source_cfgs" / opt / project / f"{stem}.json"
 
 
+def _is_current_cfg_json(path: Path, generator: str) -> bool:
+    """True when ``path`` was written by this ``generator`` and resolution version."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    return (
+        isinstance(data, dict)
+        and data.get("generator") == generator
+        and data.get("resolution") == SOURCE_RESOLUTION_VERSION
+    )
+
+
 def _write_cfg_json(
     path: Path,
     opt: str,
@@ -257,6 +273,7 @@ def _write_cfg_json(
         "project": project,
         "binary": stem,
         "generator": generator,
+        "resolution": SOURCE_RESOLUTION_VERSION,
         "functions": functions,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -277,10 +294,10 @@ def export_project_cfgs(
 
     Each binary gets the CFGs *its own* TU resolution produces, so the JSONs of a
     ``(project, opt)`` differ wherever the binaries do. The whole opt level is
-    resolved in one pass (only when some target JSON is missing) because the
-    cross-TU fallback needs every TU of the project. Parses are deduplicated
+    resolved in one pass (only when some target JSON is missing or stale) because
+    the cross-TU fallback needs every TU of the project. Parses are deduplicated
     across opts via a project-local cache. Existing JSONs are skipped unless
-    ``overwrite``.
+    ``overwrite`` or they were written by another generator or resolution version.
 
     ``functions`` maps ``(opt, stem)`` to the function names to keep, applied
     AFTER resolution so it never changes which body a name resolves to. Omit it
@@ -293,7 +310,11 @@ def export_project_cfgs(
         if not stems:
             continue
         targets = {stem: cfg_json_path(dest, opt, project, stem) for stem in stems}
-        pending = [stem for stem, p in targets.items() if overwrite or not p.exists()]
+        pending = [
+            stem
+            for stem, p in targets.items()
+            if overwrite or not _is_current_cfg_json(p, generator)
+        ]
         resolved = _resolved_cfgs_for_opt(root, project, opt, pending, cache) if pending else {}
         for stem, target in targets.items():
             if stem in resolved:
