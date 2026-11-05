@@ -230,7 +230,7 @@ class ByteMatchMetric(Metric):
     requires_source_cfg = False
     requires_decompiled_cfg = False
 
-    cache_version = "7"
+    cache_version = "8"
 
     def __init__(self, config: MetricConfig | None = None):
         super().__init__(config)
