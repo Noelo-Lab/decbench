@@ -572,7 +572,8 @@ denominator.
 
 `[decompilers.presets]` in `content/site.toml` restricts exact decompiler ids to
 listed presets and overrides the base-name `sample_set_only` rule. For example,
-`"codex@gpt-6-astra" = ["optimized"]` shows the full O2-noinline run on that preset;
+`"codex@gpt-6-astra" = ["optimized", "large"]` shows the full O2-noinline run on
+the optimized preset and its large-function subset;
 the unversioned `codex` entry carries the current sample-set run (GPT-6 Astra/max).
 The optimized entry retains its independent full-run results. These overrides ship as
 `decompiler_presets` in `aggregates.json`. They govern leaderboard/data rows,

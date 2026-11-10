@@ -389,12 +389,17 @@ def test_versioned_codex_only_gates_its_configured_preset(
     aggregates = _build(data)
 
     assert aggregates["sample_set_only"] == ["codex"]
-    assert aggregates["decompiler_presets"] == {astra: ["optimized"]}
-    expected = astra_ok if preset == "optimized" else legacy_ok if preset == "sample-set" else True
+    assert aggregates["decompiler_presets"] == {astra: ["optimized", "large"]}
+    if preset in {"optimized", "large"}:
+        expected = astra_ok
+    elif preset == "sample-set":
+        expected = legacy_ok
+    else:
+        expected = True
     assert aggregates["combos"][combo_key(preset, True)]["functions"] == int(expected)
     assert aggregates["combos"][combo_key(preset, False)]["functions"] == 1
     leaders = union_leaders(aggregates, preset, exclude_sample_set_only=preset != "sample-set")
-    assert (astra in [dec for _, _, dec in leaders]) == (preset == "optimized")
+    assert (astra in [dec for _, _, dec in leaders]) == (preset in {"optimized", "large"})
 
 
 def test_presets_are_non_exclusive_membership_tags() -> None:
