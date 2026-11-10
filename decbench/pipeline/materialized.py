@@ -25,7 +25,7 @@ while type_match (which needs recovered variables) reports errors per function.
 from __future__ import annotations
 
 import logging
-import re
+from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -34,15 +34,12 @@ from decbench.models.decompilation import (
     DecompilerMetadata,
     FunctionDecompilation,
 )
-from decbench.utils.results_tree import OPT_LEVELS, compiled_dir, resolve_binary
+from decbench.utils.results_tree import FUNCTION_MARKER, OPT_LEVELS, compiled_dir, resolve_binary
 
 if TYPE_CHECKING:
     from networkx import DiGraph
 
 logger = logging.getLogger(__name__)
-
-# Same marker the decompile stage writes and rebuild_function_data.py parses.
-MARKER = re.compile(r"^// Function: (\S+) @ (0x[0-9a-fA-F]+)\s*$", re.M)
 
 
 def load_decompilation(
@@ -54,18 +51,30 @@ def load_decompilation(
 
     Function bodies come from the marker-delimited ``.c``; version/timing/failed
     functions come from the sibling ``.toml`` when present (leniently parsed).
+    Names shared by multiple addresses use ``name@0xADDRESS`` dictionary keys.
+    Each function record keeps the name written in its marker.
     """
     text = c_path.read_text(errors="replace")
     functions: dict[str, FunctionDecompilation] = {}
-    marks = list(MARKER.finditer(text))
+    marks = list(FUNCTION_MARKER.finditer(text))
+    addresses_by_name: dict[str, set[int]] = defaultdict(set)
+    for mark in marks:
+        addresses_by_name[mark.group(1)].add(int(mark.group(2), 16))
+
     for i, m in enumerate(marks):
         start = m.end()
         end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
         code = text[start:end].strip()
         name = m.group(1)
-        functions[name] = FunctionDecompilation(
+        address = int(m.group(2), 16)
+        key = name
+        if len(addresses_by_name[name]) > 1:
+            key = f"{name}@0x{address:x}"
+            if key in addresses_by_name:
+                raise ValueError(f"Ambiguous function key {key!r} in {c_path}")
+        functions[key] = FunctionDecompilation(
             name=name,
-            address=int(m.group(2), 16),
+            address=address,
             decompiled_code=code,
             line_count=len(code.splitlines()),
         )
