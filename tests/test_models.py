@@ -138,6 +138,26 @@ class TestDecompilationModels:
         assert result.function_count == 1
         assert result.successful_count == 1
 
+    @pytest.mark.parametrize(
+        "failed", [["missing1", "missing2", "failed"], ["all", "missing1", "missing2", "failed"]]
+    )
+    def test_success_count_only_counts_returned_usable_results(self, failed: list[str]) -> None:
+        result = DecompilationResult(
+            binary_path=Path("binary"),
+            binary_name="binary",
+            decompiler=DecompilerMetadata(decompiler_name="test_dec", failed_functions=failed),
+            functions={
+                "good": FunctionDecompilation(
+                    name="good", address=0x1000, decompiled_code="int good() { return 1; }"
+                ),
+                "failed": FunctionDecompilation(
+                    name="failed", address=0x2000, decompiled_code="incomplete"
+                ),
+                "empty": FunctionDecompilation(name="empty", address=0x3000, decompiled_code=" \n"),
+            },
+        )
+        assert result.successful_count == 1
+
     def test_legacy_function_toml_without_cost_fields(self, tmp_path: Path) -> None:
         function = FunctionDecompilation(
             name="main", address=0x1000, decompiled_code="int main() {}"
