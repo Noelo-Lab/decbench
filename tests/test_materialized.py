@@ -6,6 +6,11 @@ import json
 import struct
 from pathlib import Path
 
+from decbench.models.decompilation import (
+    DecompilationResult,
+    DecompilerMetadata,
+    FunctionDecompilation,
+)
 from decbench.models.project import OptimizationLevel
 from decbench.pipeline.materialized import (
     discover_decompilations,
@@ -79,6 +84,31 @@ def test_load_decompilation_parses_markers_and_toml(tmp_path: Path) -> None:
     assert dr.decompiler.decompiler_name == "ghidra"
     assert dr.decompiler.decompiler_version == "12.1"
     assert dr.decompiler.failed_functions == ["broken_fn"]
+
+
+def test_same_named_functions_survive_artifact_round_trip(tmp_path: Path) -> None:
+    binary = tmp_path / "demo"
+    functions = {
+        f"same@0x{address:x}": FunctionDecompilation(
+            name="same",
+            address=address,
+            decompiled_code=f"int same(void) {{ return {index}; }}",
+            line_count=1,
+        )
+        for index, address in enumerate((0x1000, 0x2000), start=1)
+    }
+    original = DecompilationResult(
+        binary_path=binary,
+        binary_name=binary.name,
+        decompiler=DecompilerMetadata(decompiler_name="ghidra"),
+        functions=functions,
+    )
+    artifact = tmp_path / "ghidra_demo.c"
+    original.to_c_file(artifact)
+
+    loaded = load_decompilation(artifact, "ghidra", binary)
+
+    assert loaded.functions == original.functions
 
 
 def test_discover_decompilations_shape_and_filter(tmp_path: Path) -> None:
