@@ -528,8 +528,9 @@ def _get_location(die: Any, dwarfinfo: Any) -> tuple[list[int], bool]:
                 if op.op_name == "DW_OP_fbreg":
                     offsets.append(op.args[0] + 16)
 
-        elif loc_attr.form == "DW_FORM_sec_offset":
+        elif loc_attr.form in ("DW_FORM_sec_offset", "DW_FORM_loclistx"):
             loclists = dwarfinfo.location_lists()
+            # pyelftools has resolved a loclistx index to a section offset in value.
             loclist = loclists.get_location_list_at_offset(loc_attr.value, die=die)
 
             for entry in loclist:
@@ -841,7 +842,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "18"
+    cache_version = "20"
 
     weight = 1.0
     lower_is_better = False

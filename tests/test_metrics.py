@@ -432,6 +432,34 @@ class TestGEDMetric:
 class TestTypeMatchMetric:
     """Tests for the type match metric."""
 
+    @pytest.mark.parametrize("form", ["DW_FORM_sec_offset", "DW_FORM_loclistx"])
+    @pytest.mark.parametrize(
+        ("expression", "expected"),
+        [([0x50], ([], True)), ([0x91, 0x78], ([8], True)), ([], ([], False))],
+    )
+    def test_location_lists_use_decoded_offset(
+        self, form: str, expression: list[int], expected: tuple[list[int], bool]
+    ) -> None:
+        from types import SimpleNamespace
+
+        from elftools.dwarf.structs import DWARFStructs
+
+        from decbench.metrics.type_match import _get_location
+
+        attribute = SimpleNamespace(form=form, value=0x38, raw_value=2)
+        die = SimpleNamespace(attributes={"DW_AT_location": attribute})
+
+        def read_list(offset: int, *, die: SimpleNamespace) -> list[SimpleNamespace]:
+            assert offset == 0x38
+            assert die.attributes["DW_AT_location"] is attribute
+            return [SimpleNamespace(loc_expr=expression)]
+
+        dwarf = SimpleNamespace(
+            structs=DWARFStructs(little_endian=True, dwarf_format=32, address_size=8),
+            location_lists=lambda: SimpleNamespace(get_location_list_at_offset=read_list),
+        )
+        assert _get_location(die, dwarf) == expected
+
     def test_type_match_registration(self) -> None:
         MetricRegistry.clear()
         from decbench.metrics.type_match import TypeMatchMetric

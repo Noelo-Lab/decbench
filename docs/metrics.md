@@ -118,8 +118,8 @@ Ground truth is the function's OWN parameters and locals: the variables of an
 inlined callee (`DW_TAG_inlined_subroutine`, at `-O2` mostly the parameters of
 glibc's `_FORTIFY_SOURCE` wrappers such as `printf`'s `__fmt`) are not scored,
 since the compiled function usually has no storage for them.
-Current `cache_version="18"`, bumped for scoped syntax-aware declaration parsing,
-aggregate/qualifier normalization, and DWARF restrict-type passthrough.
+Current `cache_version="20"`, bumped to include DWARF 5 indexed location lists
+(`DW_FORM_loclistx`) when extracting ground-truth variables.
 The per-function key covers source and
 decompiler address evidence, argument/stack anchors, recovered types, source
 selection diagnostics, and the matching thresholds.
