@@ -474,8 +474,17 @@ class TestTypeMatchMetric:
             assert normalize_type(name) == {name}
         assert normalize_type("struct") == {"struct"}
 
-    def test_restrict_die_preserves_typedef_pointer_and_size(self) -> None:
+    @pytest.mark.parametrize(
+        ("form", "reference"),
+        [("DW_FORM_ref4", 4), ("DW_FORM_ref_addr", 104), ("DW_FORM_ref_sig8", 0xA1B2)],
+    )
+    def test_restrict_die_preserves_typedef_pointer_and_size(
+        self, form: str, reference: int
+    ) -> None:
+        from functools import partial
         from types import SimpleNamespace
+
+        from elftools.dwarf.die import DIE
 
         from decbench.metrics.type_match import _parse_type_die
 
@@ -493,12 +502,26 @@ class TestTypeMatchMetric:
             + index: SimpleNamespace(
                 tag=tag,
                 cu=cu,
-                attributes={key: SimpleNamespace(value=value) for key, value in attrs.items()},
+                attributes={
+                    key: SimpleNamespace(value=value, raw_value=value, form="DW_FORM_ref4")
+                    for key, value in attrs.items()
+                },
             )
             for index, (tag, attrs) in enumerate(rows)
         }
-        dwarf = SimpleNamespace(get_DIE_from_refaddr=dies.__getitem__)
-        assert _parse_type_die(dies[105], dwarf) == (["IntPointer", "int*"], 8)
+        dwarf = SimpleNamespace(
+            get_DIE_from_refaddr=dies.__getitem__,
+            get_DIE_by_sig8={0xA1B2: dies[104]}.__getitem__,
+        )
+        cu.dwarfinfo = dwarf
+        cu.get_DIE_from_refaddr = dies.__getitem__
+        for die in dies.values():
+            die.get_DIE_from_attribute = partial(DIE.get_DIE_from_attribute, die)
+        variable = dies[105]
+        variable.attributes["DW_AT_type"] = SimpleNamespace(
+            value=reference, raw_value=reference, form=form
+        )
+        assert _parse_type_die(variable) == (["IntPointer", "int*"], 8)
 
     def test_type_match_with_matching_types(self) -> None:
         from decbench.metrics.type_match import TypeMatchMetric

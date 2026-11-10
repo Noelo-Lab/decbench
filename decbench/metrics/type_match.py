@@ -461,11 +461,8 @@ def _parse_variable_die(
         return None
 
     if "DW_AT_abstract_origin" in die.attributes:
-        try:
-            attr = die.attributes["DW_AT_abstract_origin"]
-            die = dwarfinfo.get_DIE_from_refaddr(attr.value + die.cu.cu_offset)
-        except Exception:
-            pass
+        with contextlib.suppress(Exception):
+            die = die.get_DIE_from_attribute("DW_AT_abstract_origin")
 
     name = ""
     if "DW_AT_name" in die.attributes:
@@ -475,7 +472,7 @@ def _parse_variable_die(
     size = 0
 
     with contextlib.suppress(Exception):
-        type_names, size = _parse_type_die(die, dwarfinfo)
+        type_names, size = _parse_type_die(die)
 
     if not type_names:
         return None
@@ -550,14 +547,12 @@ def _get_location(die: Any, dwarfinfo: Any) -> tuple[list[int], bool]:
     return offsets, has_location
 
 
-def _parse_type_die(die: Any, dwarfinfo: Any) -> tuple[list[str], int]:
+def _parse_type_die(die: Any) -> tuple[list[str], int]:
     """Recursively parse type DIEs to extract type name(s) and size."""
     if "DW_AT_type" not in die.attributes:
         return ["void"], 0
 
-    attr = die.attributes["DW_AT_type"]
-    type_offset = attr.value + die.cu.cu_offset
-    type_die = dwarfinfo.get_DIE_from_refaddr(type_offset)
+    type_die = die.get_DIE_from_attribute("DW_AT_type")
     tag = type_die.tag
 
     if tag == "DW_TAG_base_type":
@@ -572,7 +567,7 @@ def _parse_type_die(die: Any, dwarfinfo: Any) -> tuple[list[str], int]:
         names = []
         if "DW_AT_name" in type_die.attributes:
             names.append(type_die.attributes["DW_AT_name"].value.decode("utf-8", "replace"))
-        child_names, size = _parse_type_die(type_die, dwarfinfo)
+        child_names, size = _parse_type_die(type_die)
         names.extend(child_names)
         return names, size
 
@@ -583,7 +578,7 @@ def _parse_type_die(die: Any, dwarfinfo: Any) -> tuple[list[str], int]:
     ):
         # A reference is a pointer in the ABI and every decompiler renders it as
         # one; without this arm every reference-typed GT variable became "void".
-        child_names, _ = _parse_type_die(type_die, dwarfinfo)
+        child_names, _ = _parse_type_die(type_die)
         if not child_names:
             child_names = ["void"]
         ptr_names = [n + "*" for n in child_names]
@@ -593,14 +588,14 @@ def _parse_type_die(die: Any, dwarfinfo: Any) -> tuple[list[str], int]:
         return ptr_names, size
 
     elif tag == "DW_TAG_array_type":
-        child_names, elem_size = _parse_type_die(type_die, dwarfinfo)
+        child_names, elem_size = _parse_type_die(type_die)
         dims = _get_array_dims(type_die)
         length = dims[0] if dims and dims[0] else 1
         arr_names = [f"{n}[{length}]" for n in child_names]
         return child_names + arr_names, elem_size * length
 
     elif tag in ("DW_TAG_const_type", "DW_TAG_volatile_type", "DW_TAG_restrict_type"):
-        return _parse_type_die(type_die, dwarfinfo)
+        return _parse_type_die(type_die)
 
     elif tag == "DW_TAG_structure_type":
         names = []
@@ -841,7 +836,7 @@ class TypeMatchMetric(Metric):
     display_name = "Type Correctness"
     description = "Accuracy of variable type recovery vs DWARF ground truth"
 
-    cache_version = "18"
+    cache_version = "19"
 
     weight = 1.0
     lower_is_better = False
