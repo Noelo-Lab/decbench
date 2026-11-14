@@ -160,10 +160,13 @@ def test_compiler_pair_matches_llvm(tmp_path: Path, target: str) -> None:
         capture_output=True,
     )
     output = subprocess.check_output([inspector, "--coff-debug-directory", str(image)], text=True)
-    guid = re.search(r"PDBGUID:\s*\{([0-9A-Fa-f-]+)\}", output)
+    guid = re.search(r"PDBGUID:[ \t]*(?:\{([0-9A-Fa-f-]+)\}|\(([0-9A-Fa-f ]+)\))", output)
     age = re.search(r"PDBAge:\s*(\d+)", output)
     assert guid and age
-    expected = PeCodeViewIdentity(uuid.UUID(guid.group(1)), int(age.group(1)))
+    # Older llvm-readobj prints the RSDS GUID as its 16 on-disk bytes.
+    formatted, raw = guid.groups()
+    expected_guid = uuid.UUID(formatted) if formatted else uuid.UUID(bytes_le=bytes.fromhex(raw))
+    expected = PeCodeViewIdentity(expected_guid, int(age.group(1)))
     assert read_pe_codeview_identity(image) == expected
     identity = open_matching_pdb(image, pdb).identity()
     assert (identity.guid, identity.age) == (expected.guid, expected.age)
