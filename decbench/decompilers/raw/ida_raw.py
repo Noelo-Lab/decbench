@@ -20,7 +20,9 @@ IDA 9+ ``idalib`` is present. The module never imports IDA at import time.
 from __future__ import annotations
 
 import logging
+import os
 import time
+from functools import cached_property
 from pathlib import Path
 from typing import Any
 
@@ -36,30 +38,6 @@ from decbench.models.decompilation import (
 )
 
 _l = logging.getLogger(__name__)
-
-# Order matters (__int64 before __int).
-# so byte_match can recompile the output.
-_CODE_REPLACEMENTS = (
-    ("unsigned __int64", "unsigned long long"),
-    ("__int64", "long long"),
-    ("__int32", "int"),
-    ("__int16", "short"),
-    ("__int8", "char"),
-    ("_QWORD", "long long"),
-    ("_DWORD", "int"),
-    ("_WORD", "short"),
-    ("_BYTE", "char"),
-    ("_BOOL8", "long long"),
-    ("_BOOL4", "int"),
-    ("_BOOL", "_Bool"),
-    ("__cdecl ", ""),
-    ("__fastcall ", ""),
-    ("__stdcall ", ""),
-    ("__thiscall ", ""),
-    ("__usercall ", ""),
-    ("__golang ", ""),
-    ("__noreturn ", ""),
-)
 
 
 @register_decompiler("ida")
@@ -264,7 +242,7 @@ class RawIDADecompiler(Decompiler):
         cfunc = ida_hexrays.decompile(ida_ea)
         if cfunc is None:
             return None
-        code = self._normalize_code(str(cfunc))
+        code = str(cfunc)
         if not code:
             return None
 
@@ -288,6 +266,20 @@ class RawIDADecompiler(Decompiler):
                 {address for line in lines for address in line_addresses.get(line, set())}
             )
         metadata = common.extract_metrics(code)
+        try:
+            declarations = self._type_declarations(cfunc)
+        except Exception as exc:  # noqa: BLE001
+            _l.warning("ida-raw: type export failed for %s: %s", func_name, exc)
+            declarations = ""
+        preamble = [part for part in (self._helper_header, declarations) if part]
+        if preamble:
+            prefix = "\n\n".join(preamble) + "\n\n"
+            line_offset = prefix.count("\n")
+            code = prefix + code
+            for mapping in line_mappings:
+                mapping.line_number += line_offset
+            for variable in variables:
+                variable.line_numbers = [line + line_offset for line in variable.line_numbers]
 
         return FunctionDecompilation(
             name=func_name,
@@ -299,12 +291,173 @@ class RawIDADecompiler(Decompiler):
             metadata=metadata,
         )
 
+    @cached_property
+    def _helper_header(self) -> str:
+        """Inline the runner's real Hex-Rays helper header, not a type-recovery source."""
+        try:
+            configured = os.environ.get("DECBENCH_IDA_DEFS_H")
+            if configured:
+                path = Path(configured).expanduser()
+            else:
+                import ida_diskio
+
+                path = Path(ida_diskio.idadir("plugins")) / "hexrays_sdk" / "include" / "defs.h"
+            return path.read_bytes().decode("utf-8")
+        except Exception as exc:  # noqa: BLE001
+            _l.warning(
+                "ida-raw: Hex-Rays helper header unavailable (set DECBENCH_IDA_DEFS_H): %s", exc
+            )
+            return ""
+
     @staticmethod
-    def _normalize_code(code: str) -> str:
-        """Normalize IDA-specific types/annotations to standard C."""
-        for old, new in _CODE_REPLACEMENTS:
-            code = code.replace(old, new)
-        return code
+    def _type_declarations(cfunc: Any) -> str:
+        """Export saved type roots and their dependencies with IDA's C printer."""
+        import ida_hexrays
+        import ida_nalt
+        import ida_name
+        import ida_typeinf
+
+        libraries: list[tuple[Any, set[str]]] = []
+        unresolved: set[str] = set()
+
+        def named_library(til: Any, name: str, visited: list[Any]) -> Any | None:
+            if til is None or any(til.this == previous.this for previous in visited):
+                return None
+            visited.append(til)
+            flags = ida_typeinf.NTF_TYPE | ida_typeinf.NTF_NOBASE
+            if ida_typeinf.get_named_type(til, name, flags):
+                return til
+            for index in range(til.nbases):
+                found = named_library(til.base(index), name, visited)
+                if found is not None:
+                    return found
+            return None
+
+        class NamedTypes(ida_typeinf.tinfo_visitor_t):
+            def __init__(self) -> None:
+                super().__init__(0)
+
+            def visit_type(self, out: Any, tif: Any, name: Any, cmt: Any) -> int:
+                ordinal = int(tif.get_ordinal())
+                type_name = tif.get_type_name()
+                if ordinal <= 0 and not type_name:
+                    return 0
+                if not type_name or ida_typeinf.is_ordinal_name(type_name):
+                    unresolved.add(f"ordinal {ordinal}: anonymous numbered type cannot be copied")
+                    self.prune_now()
+                    return 0
+                til = tif.get_til()
+                if til is None:
+                    til = ida_typeinf.get_idati()
+                til = named_library(til, type_name, [])
+                if til is None:
+                    unresolved.add(f"{type_name}: named definition unavailable")
+                else:
+                    for library, names in libraries:
+                        if library.this == til.this:
+                            names.add(type_name)
+                            break
+                    else:
+                        libraries.append((til, {type_name}))
+                self.prune_now()
+                return 0
+
+        class DeclarationSink(ida_typeinf.text_sink_t):
+            def __init__(self) -> None:
+                super().__init__()
+                self.parts: list[str] = []
+
+            def _print(self, text: str) -> int:
+                self.parts.append(text)
+                return 0
+
+        def collect(tif: Any) -> None:
+            try:
+                NamedTypes().apply_to(tif)
+            except Exception as exc:  # noqa: BLE001
+                _l.warning("ida-raw: could not collect saved type references: %s", exc)
+
+        function_type = ida_typeinf.tinfo_t()
+        if cfunc.get_func_type(function_type):
+            collect(function_type)
+        for lvar in cfunc.get_lvars():
+            collect(lvar.type())
+
+        referenced_eas: set[int] = set()
+        for item in cfunc.treeitems:
+            if not item.is_expr():
+                continue
+            expression = item.cexpr
+            collect(expression.type)
+            if expression.op == ida_hexrays.cot_obj:
+                referenced_eas.add(int(expression.obj_ea))
+
+        declarations: list[str] = []
+        for ea in sorted(referenced_eas - {int(cfunc.entry_ea)}):
+            try:
+                tif = ida_typeinf.tinfo_t()
+                if not ida_nalt.get_tinfo(tif, ea):
+                    _l.debug("ida-raw: no saved symbol type at %#x", ea)
+                    continue
+                collect(tif)
+                name = ida_name.get_ea_name(ea)
+                if not name:
+                    continue
+                declaration = ida_typeinf.print_tinfo(
+                    "extern ",
+                    0,
+                    0,
+                    ida_typeinf.PRTYPE_1LINE | ida_typeinf.PRTYPE_SEMI,
+                    tif,
+                    name,
+                    "",
+                )
+                if declaration:
+                    declarations.append(declaration)
+            except Exception as exc:  # noqa: BLE001
+                _l.warning("ida-raw: symbol declaration export failed at %#x: %s", ea, exc)
+
+        if unresolved:
+            _l.warning("ida-raw: unresolved type references: %s", "; ".join(sorted(unresolved)))
+        if not libraries:
+            return "\n".join(declarations)
+
+        export_til = ida_typeinf.new_til("decbench_export", "Referenced saved types")
+        if export_til is None:
+            raise RuntimeError("could not create the temporary type export library")
+        try:
+            export_til.cc = ida_typeinf.get_idati().cc
+            if not ida_typeinf.enable_numbered_types(export_til, True):
+                raise RuntimeError("could not enable numbered types in the export library")
+            ordinals: set[int] = set()
+            for til, names in libraries:
+                for name in sorted(names):
+                    existing = ida_typeinf.tinfo_t()
+                    try:
+                        if existing.get_named_type(export_til, name):
+                            source = ida_typeinf.tinfo_t()
+                            if (
+                                not source.get_named_type(til, name)
+                                or existing.get_type_name() != name
+                                or not existing.compare_with(source, ida_typeinf.TCMP_DEEP_UDT)
+                            ):
+                                raise RuntimeError(f"conflicting saved type definitions for {name}")
+                            ordinal = int(existing.get_ordinal())
+                        else:
+                            ordinal = int(ida_typeinf.copy_named_type(export_til, til, name))
+                        if ordinal <= 0:
+                            raise RuntimeError(f"could not copy saved type {name}")
+                        ordinals.add(ordinal)
+                    finally:
+                        existing.clear()
+            sink = DeclarationSink()
+            flags = ida_typeinf.PDF_INCL_DEPS | ida_typeinf.PDF_DEF_FWD | ida_typeinf.PDF_DEF_BASE
+            count = ida_typeinf.print_decls(sink, export_til, sorted(ordinals), flags)
+            if count <= 0:
+                raise RuntimeError(f"saved type export returned {count} (incomplete/error)")
+            return "\n".join(["".join(sink.parts), *declarations])
+        finally:
+            ida_typeinf.free_til(export_til)
 
     @staticmethod
     def _arg_positions(cfunc: Any, lvars: Any) -> dict[int, int]:

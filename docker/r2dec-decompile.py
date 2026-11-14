@@ -23,6 +23,7 @@ The host validates and rebases all addresses with
 from __future__ import annotations
 
 import json
+import re
 import sys
 from typing import Any
 
@@ -30,6 +31,7 @@ import r2pipe
 
 _R2_FLAGS = ["-2", "-e", "bin.relocs.apply=true", "-e", "scr.color=0"]
 _SCHEMA_VERSION = 1
+_TYPE_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 _ENTRY_NAMES = frozenset({"entry0", "entry1", "entry.init0", "entry.fini0", "entry.preinit0"})
 
@@ -72,6 +74,164 @@ def _cmdj(r: r2pipe.open, command: str, default: object) -> object:
     except Exception:  # noqa: BLE001
         return default
     return default if payload is None else payload
+
+
+class _TypeDeclarations:
+    """Select stored types from SDK expressions; leave declaration rendering to tc."""
+
+    def __init__(self, r: r2pipe.open) -> None:
+        self.r = r
+        self.records: dict[str, str] = {}
+        for line in self._cmd("tk").splitlines():
+            key, separator, value = line.partition("=")
+            if separator:
+                self.records[key] = value
+        self.kinds = {
+            name: kind
+            for name, kind in self.records.items()
+            if kind in {"struct", "union", "enum", "typedef", "type", "func"}
+            and _TYPE_IDENTIFIER.fullmatch(name)
+        }
+        self.rendered: dict[str, str] = {}
+        self.signatures: dict[int, dict[str, object]] = {}
+
+    def _cmd(self, command: str) -> str:
+        try:
+            return str(self.r.cmd(command) or "")
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _references(self, expression: str) -> set[str]:
+        return set(_TYPE_IDENTIFIER.findall(expression)) & self.kinds.keys()
+
+    def _signature(self, addr: int) -> dict[str, object]:
+        if addr not in self.signatures:
+            records = _cmdj(self.r, f"afcfj @ {addr}", [])
+            self.signatures[addr] = (
+                records[0]
+                if isinstance(records, list) and records and isinstance(records[0], dict)
+                else {}
+            )
+        return self.signatures[addr]
+
+    def _stored_signature(self, name: str) -> bool:
+        prefix = f"func.{name}"
+        count = _as_int(self.records.get(f"{prefix}.args"))
+        return (
+            self.kinds.get(name) == "func"
+            and bool(self.records.get(f"{prefix}.ret"))
+            and count is not None
+            and count >= 0
+            and all(self.records.get(f"{prefix}.arg.{index}") for index in range(count))
+        )
+
+    def _expressions(self, name: str) -> list[str]:
+        kind = self.kinds[name]
+        prefix = f"{kind}.{name}"
+        if kind in {"struct", "union"}:
+            return [
+                self.records.get(f"{prefix}.{member}", "").rsplit(",", 2)[0]
+                for member in self.records.get(prefix, "").split(",")
+                if member
+            ]
+        if kind == "typedef":
+            return [self.records.get(prefix, "")]
+        if kind == "func":
+            count = _as_int(self.records.get(f"{prefix}.args"), 0) or 0
+            return [self.records.get(f"{prefix}.ret", "")] + [
+                self.records.get(f"{prefix}.arg.{index}", "").rsplit(",", 1)[0]
+                for index in range(count)
+            ]
+        return []
+
+    def for_function(self, addr: int, variables: list[dict[str, object]]) -> str:
+        expressions = [str(variable.get("type") or "") for variable in variables]
+        signature = self._signature(addr)
+        expressions.append(str(signature.get("return") or ""))
+        expressions.extend(
+            str(arg.get("type") or "")
+            for arg in signature.get("args") or []
+            if isinstance(arg, dict)
+        )
+        roots: set[str] = set()
+        for expression in expressions:
+            roots.update(self._references(expression))
+
+        references = _cmdj(self.r, f"axffj @ {addr}", [])
+        for reference in references if isinstance(references, list) else []:
+            if not isinstance(reference, dict) or reference.get("type") != "CALL":
+                continue
+            target = _as_int(reference.get("ref"))
+            if target is None or target == addr:
+                continue
+            callee = self._signature(target)
+            name = str(callee.get("name") or "")
+            # afcfj's variable-derived fallback has no return type or stored signature.
+            if callee.get("return") and self._stored_signature(name):
+                roots.add(name)
+
+        dependencies: dict[str, set[str]] = {}
+        pending = sorted(roots)
+        while pending:
+            name = pending.pop()
+            if name in dependencies:
+                continue
+            children: set[str] = set()
+            for expression in self._expressions(name):
+                children.update(self._references(expression))
+            dependencies[name] = children
+            pending.extend(sorted(children - dependencies.keys()))
+
+        ordered: list[str] = []
+        seen: set[str] = set()
+
+        def visit(name: str) -> None:
+            if name in seen:
+                return
+            seen.add(name)
+            for child in sorted(dependencies[name]):
+                visit(child)
+            ordered.append(name)
+
+        # Tag forwards cover recursive pointers; cyclic value/alias dependencies may
+        # still be unprintable without interpreting declarators, which we don't do.
+        tags = sorted(name for name in dependencies if self.kinds[name] in {"struct", "union"})
+        for name in tags + sorted(dependencies):
+            visit(name)
+        declarations = [f"{self.kinds[name]} {name};\n" for name in tags]
+        for name in ordered:
+            kind = self.kinds[name]
+            if kind in {"type", "func"}:
+                continue
+            if name not in self.rendered:
+                self.rendered[name] = self._cmd(f"tc {kind}.{name}")
+            declarations.append(self.rendered[name])
+        for name in ordered:
+            if self.kinds[name] != "func" or not self._stored_signature(name):
+                continue
+            if name not in self.rendered:
+                self.rendered[name] = self._cmd(f"tc func.{name}")
+            declarations.append(self.rendered[name])
+        return "".join(declarations)
+
+
+def _insert_declarations(code: str, declarations: str) -> tuple[str, int, int]:
+    """Keep native includes before the declarations, without rewriting native C."""
+    if not declarations:
+        return code, 0, 0
+    insertion = 0
+    offset = 0
+    for line in code.splitlines(keepends=True):
+        offset += len(line)
+        if line.lstrip().startswith("#include "):
+            insertion = offset
+    prefix = code[:insertion]
+    before = prefix.count("\n")
+    addition = ("\n" if prefix and not prefix.endswith("\n") else "") + declarations
+    if not addition.endswith("\n"):
+        addition += "\n"
+    addition += "\n"
+    return prefix + addition + code[insertion:], before, addition.count("\n")
 
 
 def _json_code(payload: object) -> tuple[str, list[dict[str, object]]] | None:
@@ -196,7 +356,9 @@ def _variables(
     return variables
 
 
-def _decompile(r: r2pipe.open, addr: int, architecture: str) -> dict[str, object] | None:
+def _decompile(
+    r: r2pipe.open, addr: int, architecture: str, types: _TypeDeclarations
+) -> dict[str, object] | None:
     code = ""
     line_mappings: list[dict[str, object]] = []
     payload = _cmdj(r, f"pddj @ {addr}", None)
@@ -220,12 +382,23 @@ def _decompile(r: r2pipe.open, addr: int, architecture: str) -> dict[str, object
     is_thumb = architecture.startswith("arm") and (
         (_as_int(info.get("bits"), 0) or 0) == 16 or bool(addr & 1)
     )
+    variables = _variables(r, addr, line_mappings)
+    code, before, added = _insert_declarations(code, types.for_function(addr, variables))
+    if added:
+        for mapping in line_mappings:
+            line = _as_int(mapping.get("line_number"))
+            if line is not None and line > before:
+                mapping["line_number"] = line + added
+        for variable in variables:
+            variable["line_numbers"] = [
+                line + added if line > before else line for line in variable["line_numbers"]
+            ]
     return {
         "code": code,
         "size": _as_int(info.get("size"), 0) or 0,
         "is_thumb": is_thumb,
         "line_mappings": line_mappings,
-        "variables": _variables(r, addr, line_mappings),
+        "variables": variables,
     }
 
 
@@ -252,6 +425,7 @@ def main() -> int:
     architecture = str((info.get("bin") or {}).get("arch") or "").lower()
 
     funcs = r.cmdj("aflj") or []
+    types = _TypeDeclarations(r)
     out: list[dict[str, object]] = []
     for fn in funcs:
         name = fn.get("name") or ""
@@ -265,7 +439,7 @@ def main() -> int:
         addr = int(addr)
         if targets is not None and not _addr_matches(addr, targets):
             continue
-        record = _decompile(r, addr, architecture)
+        record = _decompile(r, addr, architecture, types)
         if record is None:
             continue
         out.append({"addr": addr, "baddr": baddr, "name": name, **record})

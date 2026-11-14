@@ -7,27 +7,10 @@ import shutil
 import pytest
 
 from decbench.metrics.byte_match import _normalize_operands
-from decbench.metrics.fixup import compile_with_fixup, sanitize_tokens
+from decbench.metrics.fixup import compile_with_fixup
 
 gcc_available = shutil.which("gcc") is not None
 needs_gcc = pytest.mark.skipif(not gcc_available, reason="gcc not installed")
-
-
-class TestSanitizeTokens:
-    def test_strips_symbol_version_qualifier(self) -> None:
-        out = sanitize_tokens("fprintf(GLIBC_2.2.5::stderr, msg);")
-        assert "::" not in out
-        assert "stderr" in out
-
-    def test_leaves_plain_code_untouched(self) -> None:
-        code = "int f(int a) { return a + 1; }"
-        assert sanitize_tokens(code) == code
-
-    def test_strips_decompiler_annotations(self) -> None:
-        assert "__noreturn" not in sanitize_tokens("int main() __noreturn {")
-        assert "__convention" not in sanitize_tokens('void f() __convention("regparm") {')
-        out = sanitize_tokens("int __cdecl g(int a)")
-        assert "__cdecl" not in out and "g(int a)" in out
 
 
 class TestNormalizeOperands:
@@ -73,20 +56,25 @@ class TestCompileWithFixup:
         assert res.obj_path is not None and res.obj_path.exists()
         shutil.rmtree(res.obj_path.parent, ignore_errors=True)
 
-    def test_ghidra_pseudotypes_get_defined(self) -> None:
+    def test_ghidra_pseudotypes_are_not_guessed(self) -> None:
         code = (
             "uint compute(undefined4 x) {\n" "    uint r = (uint)x;\n" "    return r + 1;\n" "}\n"
         )
         res = compile_with_fixup(code, "compute")
-        assert res.compilable, res.error
-        assert res.iterations >= 2
-        shutil.rmtree(res.obj_path.parent, ignore_errors=True)
+        assert not res.compilable
+        assert res.iterations == 1
+        assert res.source == code
+        assert res.injected == []
+        assert res.obj_path is None
 
-    def test_undeclared_symbol_stubbed(self) -> None:
+    def test_undeclared_symbol_is_not_stubbed(self) -> None:
         code = "int g(void) { return helper_fn(global_thing); }"
         res = compile_with_fixup(code, "g")
-        assert res.compilable, res.error
-        shutil.rmtree(res.obj_path.parent, ignore_errors=True)
+        assert not res.compilable
+        assert res.iterations == 1
+        assert res.source == code
+        assert res.injected == []
+        assert res.obj_path is None
 
     def test_unrepairable_returns_no_object(self) -> None:
         res = compile_with_fixup("int bad(void) { return", "bad")

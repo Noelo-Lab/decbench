@@ -6,8 +6,8 @@
 #
 # Reko writes its output next to a working directory; it emits one or more
 # *.c files (typically "<stem>_text.c" plus globals/types). We run Reko, then
-# concatenate every generated .c into the requested output path so decbench can
-# read whole-program C from one file.
+# retain the native .c/.h tree beside the requested combined C file. DecBench
+# isolates program functions before inlining headers, preserving header helpers.
 set -euo pipefail
 
 IN="${1:?input binary required}"
@@ -44,6 +44,12 @@ fi
 # (Different Reko versions accept slightly different flags; run permissively.)
 $REKO_EXE "$STEM" >/dev/null 2>&1 || \
     $REKO_EXE --c "$STEM" >/dev/null 2>&1 || true
+
+# Keep native relative include paths in this invocation's temporary output tree.
+mkdir -p "${OUT}.sources"
+while IFS= read -r -d '' f; do
+    cp --parents "$f" "${OUT}.sources/"
+done < <(find . -type f \( -name '*.c' -o -name '*.h' \) -print0)
 
 # Reko writes outputs under <stem>/ or alongside the input. Gather every .c.
 : > "$OUT"

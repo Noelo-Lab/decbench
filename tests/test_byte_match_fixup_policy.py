@@ -16,7 +16,7 @@ def _failed_compile(stderr: str) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess([], 1, stderr=stderr)
 
 
-def test_default_mode_demotions_and_implicit_repair(monkeypatch) -> None:
+def test_default_mode_demotions_without_implicit_repair(monkeypatch) -> None:
     calls: list[tuple[str, list[str]]] = []
 
     def fake_compile(
@@ -50,8 +50,10 @@ def test_default_mode_demotions_and_implicit_repair(monkeypatch) -> None:
         "-Wno-error=incompatible-pointer-types",
         "-Wno-error=int-conversion",
     ]
-    assert [flags for _, flags in calls] == [expected_flags, expected_flags]
-    assert "long missing_helper();" in calls[1][0]
+    assert calls == [("int f(void) { return missing_helper(); }", expected_flags)]
+    assert result.source == calls[0][0]
+    assert result.iterations == 1
+    assert result.injected == []
     assert caller_flags == original_flags
     assert not result.compilable
 

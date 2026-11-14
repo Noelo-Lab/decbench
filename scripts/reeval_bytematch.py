@@ -3,7 +3,7 @@
 The decompilations (the slow part) are already on disk as ``decompiled/{dec}_
 {binary}.c`` (function blocks delimited by ``// Function: name @ 0xADDR``); the
 original binaries sit in ``compiled/{binary}``. This lets us re-score byte_match
-with the new fixup + operand-normalization metric WITHOUT re-decompiling.
+with unchanged-C compilation + operand normalization WITHOUT re-decompiling.
 
 Resumable (per (opt,project,binary,dec) checkpoint JSON) and parallel via the
 'spawn' context (fork deadlocks once angr's threads are live). Output:
@@ -56,14 +56,12 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
     """
     opt, project, stem, dec, binary_path, c_path = task
     from decbench.metrics.byte_match import ByteMatchMetric
-    from decbench.metrics.fixup import derive_context_decls
     from decbench.models.decompilation import FunctionDecompilation
 
     metric = ByteMatchMetric()
     binary = Path(binary_path)
     out: dict[str, dict] = {}
     funcs = split_functions(Path(c_path))
-    context = derive_context_decls({n: c for n, (_a, c) in funcs.items()})
     for name, (addr, code) in funcs.items():
         fd = FunctionDecompilation(
             name=name,
@@ -72,7 +70,7 @@ def eval_one(task: tuple[str, str, str, str, str, str]) -> tuple[str, dict]:
             line_count=code.count("\n") + 1,
         )
         try:
-            mv = metric.compute_for_function(fd, original_binary_path=binary, context_decls=context)
+            mv = metric.compute_for_function(fd, original_binary_path=binary)
         except Exception as e:  # noqa: BLE001
             out[name] = {"value": 0.0, "compilable": False, "error": str(e)[:120]}
             continue

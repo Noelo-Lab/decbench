@@ -278,20 +278,20 @@ Did the decompiler recover the right variable and argument types? We match decom
 ## [3] Recompilation correctness
 metric: Recompilation Bytematch
 
-Does the decompiled code recompile to the same machine code? We run a uniform compilability fixup (define decompiler pseudo-types, strip illegal symbol-version tokens, declare missing symbols) so every decompiler gets a fair shot at building, recompile each function with the original toolchain, and compare the resulting assembly — normalizing link-time-dependent operands (call/jump targets, PC-relative offsets) so only real differences count.
+Does the decompiled code recompile to the same machine code? We compile the returned C with its SDK-provided declarations, without guessing missing definitions or repairing the source, using the original toolchain, and compare the resulting assembly — normalizing link-time-dependent operands (call/jump targets, PC-relative offsets) so only real differences count.
 
-The leaderboard's **Compiles** column reports the first half of this on its own — the share of a decompiler's output that the fixup got to build at all (before any assembly comparison). It is measured only where a matching recompiler exists (x86); ARM/PE firmware and malware abstain rather than count as failures.
+The leaderboard's **Compiles** column reports the first half of this on its own — the share of a decompiler's complete returned C that builds (before any assembly comparison). It is measured only where a matching recompiler exists (x86); ARM/PE firmware and malware abstain rather than count as failures.
 
 <details class="metric-viz" open>
-<summary>how bytematch works: fixup &rarr; recompile &rarr; normalized asm diff</summary>
+<summary>how bytematch works: returned C &rarr; recompile &rarr; normalized asm diff</summary>
 <div class="viz-wrap">
 
 <div class="viz-row">
 <div class="viz-rowlabel">A &middot; rebuild the decompiler's own C, the same way the original was built</div>
 <div class="viz-pipe">
 <span class="viz-chip is-in">decompiled .c</span>
-<span class="viz-parrow">&mdash;<b>&nbsp;compilability fixup&nbsp;</b>&rarr;</span>
-<span class="viz-chip">buildable .c</span>
+<span class="viz-parrow">&mdash;<b>&nbsp;SDK declarations&nbsp;</b>&rarr;</span>
+<span class="viz-chip">complete returned C</span>
 <span class="viz-parrow">&mdash;<b>&nbsp;recompile&nbsp;</b>&rarr;</span>
 <span class="viz-chip is-out">assembly</span>
 <span class="viz-dim">&nbsp;(same toolchain &amp; -O flags as the source: x86&rarr;gcc, ARM&rarr;arm-eabi, PE&rarr;MinGW)</span>
@@ -299,13 +299,13 @@ The leaderboard's **Compiles** column reports the first half of this on its own 
 <div class="viz-grid">
 
 <div class="viz-panel">
-<div class="viz-panel-h is-dec">decompiled .c &mdash; pseudo-types injected by the fixup</div>
+<div class="viz-panel-h is-dec">decompiled .c &mdash; SDK declarations included in the output</div>
 <pre class="viz-code" data-lang="c"><code>undefined4 scale(int a) {
     uint x = a * 3;
     log_val(x);
     return x + limit;
 }</code></pre>
-<div class="viz-cap">The fixup adds only <code style="color:var(--green)">typedef</code>s for <span class="tok-type">undefined4</span>/<span class="tok-type">uint</span> &mdash; never rewrites logic</div>
+<div class="viz-cap">The SDK's declaration header is omitted here &mdash; missing types or symbols are not invented</div>
 </div>
 
 <div class="viz-panel">
@@ -351,7 +351,7 @@ The leaderboard's **Compiles** column reports the first half of this on its own 
 
 </div>
 
-<p class="viz-note">Recompilation Bytematch rebuilds the decompiler's own C the SAME way the original was built &mdash; toolchain and <code>-O*/-m*</code> flags read from the DWARF producer &mdash; then compares assembly line by line. A compilability fixup injects <em>only</em> what gcc reports missing (typedefs for pseudo-types like <code>undefined4</code>/<code>uint</code>, decls for implicit functions) and never rewrites logic. Link-time-dependent operands &mdash; <code>call</code>/branch targets and <code>[rip&plusmn;disp]</code> displacements &mdash; are normalized away, so an unlinked address difference is not a penalty. Type recovery is scored separately (type_match), so fixing types just to compile is fair.</p>
+<p class="viz-note">Recompilation Bytematch rebuilds the decompiler's own C the SAME way the original was built &mdash; toolchain and <code>-O*/-m*</code> flags read from the DWARF producer &mdash; then compares assembly line by line. SDK-provided declarations are part of the returned C; compilation failures do not trigger guessed definitions or source repairs. Link-time-dependent operands &mdash; <code>call</code>/branch targets and <code>[rip&plusmn;disp]</code> displacements &mdash; are normalized away, so an unlinked address difference is not a penalty. Type recovery is scored separately (type_match); types are not guessed to make C compile.</p>
 
 </div>
 </details>

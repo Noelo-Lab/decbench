@@ -423,6 +423,23 @@ class RawGhidraDecompiler(Decompiler):
             )
         metadata = common.extract_metrics(code)
 
+        preamble = ""
+        try:
+            preamble = _supporting_declarations(g_func, res, monitor)
+        except Exception as exc:  # noqa: BLE001
+            _l.warning(
+                "ghidra-raw: supporting declarations unavailable for %s: %s; retaining native C",
+                func_name,
+                exc,
+            )
+        if preamble:
+            offset = preamble.count("\n")
+            code = preamble + code
+            for mapping in line_mappings:
+                mapping.line_number += offset
+            for variable in variables:
+                variable.line_numbers = [line + offset for line in variable.line_numbers]
+
         return FunctionDecompilation(
             name=func_name,
             address=file_addr,
@@ -602,3 +619,144 @@ class RawGhidraDecompiler(Decompiler):
             return [], {}
 
         return common.merge_line_addresses(line_to_addrs), variable_lines
+
+
+def _decompiled_type_roots(high: Any, markup: Any) -> Any:
+    """Collect SDK datatype objects, including transient expression and cast types."""
+    from ghidra.app.decompiler import ClangToken
+    from java.util import LinkedHashSet
+
+    roots = LinkedHashSet()
+
+    def add_type(data_type: Any) -> None:
+        if data_type is not None:
+            roots.add(data_type)
+
+    if high is not None:
+        prototype = high.getFunctionPrototype()
+        add_type(prototype.getReturnType())
+        for index in range(prototype.getNumParams()):
+            add_type(prototype.getParam(index).getDataType())
+        for symbol_map in (high.getLocalSymbolMap(), high.getGlobalSymbolMap()):
+            symbols = symbol_map.getSymbols()
+            while symbols.hasNext():
+                add_type(symbols.next().getDataType())
+
+        operations = high.getPcodeOps()
+        while operations.hasNext():
+            operation = operations.next()
+            varnodes = [operation.getInput(index) for index in range(operation.getNumInputs())]
+            varnodes.append(operation.getOutput())
+            for varnode in varnodes:
+                if varnode is not None:
+                    variable = varnode.getHigh()
+                    if variable is not None:
+                        add_type(variable.getDataType())
+
+    pending = [markup] if markup is not None else []
+    while pending:
+        node = pending.pop()
+        # Type/field tokens and declaration groups expose getDataType; other nodes do not.
+        get_type = getattr(node, "getDataType", None)
+        if callable(get_type):
+            add_type(get_type())
+        if isinstance(node, ClangToken):
+            variable = node.getHighVariable()
+            if variable is not None:
+                add_type(variable.getDataType())
+            if high is not None:
+                symbol = node.getHighSymbol(high)
+                if symbol is not None:
+                    add_type(symbol.getDataType())
+        pending.extend(node.Child(index) for index in reversed(range(node.numChildren())))
+    return roots
+
+
+def _supporting_declarations(function: Any, result: Any, monitor: Any) -> str:
+    """Print the decompilation's types/dependencies and native global/callee declarations.
+
+    Only available SDK types are supplied; unknown types are not invented. The caller
+    preserves native C and warns on capture/export errors. SDK writer omissions and
+    native C dialect/layout limitations are not repaired here.
+    """
+    from ghidra.app.util.exporter import CppExporter
+    from ghidra.program.database.data import DataTypeUtilities
+    from ghidra.program.model.address import AddressSet
+    from ghidra.program.model.data import (
+        DataTypeWriter,
+        FunctionDefinition,
+        StandAloneDataTypeManager,
+    )
+    from ghidra.program.model.pcode import PcodeOp
+    from java.io import File, StringWriter
+    from java.util import ArrayList, HashSet, LinkedHashSet
+
+    from decbench.decompilers.raw.manifold_raw import parse_translation_unit
+
+    program = function.getProgram()
+    high = result.getHighFunction()
+    markup = result.getCCodeMarkup()
+    if high is None or markup is None:
+        _l.warning(
+            "ghidra-raw: incomplete supporting types for %s: HighFunction or C markup unavailable",
+            function.getName(),
+        )
+    roots = _decompiled_type_roots(high, markup)
+    signature = result.getDecompiledFunction().getSignature()
+    declarations = [str(signature)] if signature else []
+    seen: set[str] = {str(function.getEntryPoint())}
+    operations = high.getPcodeOps() if high is not None else None
+    while operations is not None and operations.hasNext():
+        operation = operations.next()
+        if operation.getOpcode() != PcodeOp.CALL:
+            continue
+        callee = program.getFunctionManager().getFunctionAt(operation.getInput(0).getAddress())
+        if callee is None or str(callee.getEntryPoint()) in seen:
+            continue
+        seen.add(str(callee.getEntryPoint()))
+        if str(callee.getSignatureSource()) == "DEFAULT":
+            continue
+        declarations.append(str(callee.getPrototypeString(False, True)) + ";")
+        roots.add(callee.getReturnType())
+        for parameter in callee.getParameters():
+            roots.add(parameter.getDataType())
+
+    # DataTypeWriter skips bare FunctionDefinition roots, including callback fields.
+    # Let the SDK find those signatures too; do not implement a second type walker.
+    signature_roots = LinkedHashSet()
+    visited = HashSet()
+    for root in roots:
+        if root is None or visited.contains(root):
+            continue
+        contained = DataTypeUtilities.getContainedDataTypes(root)
+        visited.addAll(contained)
+        for data_type in contained:
+            if isinstance(data_type, FunctionDefinition):
+                signature_roots.add(data_type.getReturnType())
+                for parameter in data_type.getArguments():
+                    signature_roots.add(parameter.getDataType())
+
+    output = StringWriter()
+    # A program DTM makes the writer constructor emit unrelated builtin-archive types.
+    organization = program.getDataTypeManager().getDataOrganization()
+    with contextlib.closing(StandAloneDataTypeManager("decbench_header", organization)) as types:
+        writer = DataTypeWriter(types, output, True)
+        writer.write(ArrayList(signature_roots), monitor, False)
+        writer.write(ArrayList(roots), monitor, False)
+    parts = [str(output.toString()), *declarations]
+
+    if high is not None and high.getGlobalSymbolMap().getSymbols().hasNext():
+        with tempfile.TemporaryDirectory(prefix="decbench_ghidra_export_") as directory:
+            destination = Path(directory) / "native.c"
+            # Retain only native globals: no bulk types or second self prototype/body.
+            exporter = CppExporter(None, False, True, False, True, True, None)
+            entry = function.getEntryPoint()
+            if not exporter.export(
+                File(str(destination)), program, AddressSet(entry, entry), monitor
+            ):
+                raise RuntimeError("Ghidra referenced-global export failed")
+            entities = parse_translation_unit(destination.read_text())
+            parts.extend(entity.text for entity in entities if not entity.is_function)
+
+    preamble = "\n\n".join(part.strip() for part in parts if part.strip())
+    return preamble + "\n\n" if preamble else ""

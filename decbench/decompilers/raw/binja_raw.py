@@ -247,10 +247,12 @@ class RawBinjaDecompiler(Decompiler):
     ) -> FunctionDecompilation | None:
         """Decompile one binja function via HLIL -> FunctionDecompilation."""
         variables, variable_indices = self._extract_variables_with_identifiers(func)
+        declaration_tokens: list[Any] = []
         code, line_mappings, variable_lines = self._render_c_with_evidence(
             func,
             file_addr,
             variable_indices,
+            declaration_tokens,
         )
         if not code:
             return None
@@ -261,6 +263,15 @@ class RawBinjaDecompiler(Decompiler):
                 {address for line in lines for address in line_addresses.get(line, set())}
             )
         metadata = common.extract_metrics(code)
+        preamble = recover_c_preamble(func, declaration_tokens)
+        if preamble:
+            prefix = preamble + "\n"
+            shift = prefix.count("\n")
+            code = prefix + code
+            for mapping in line_mappings:
+                mapping.line_number += shift
+            for variable in variables:
+                variable.line_numbers = [line + shift for line in variable.line_numbers]
 
         return FunctionDecompilation(
             name=func_name,
@@ -277,28 +288,13 @@ class RawBinjaDecompiler(Decompiler):
         func: Any,
         file_addr: int,
         variable_indices: dict[int, int],
+        declaration_tokens: list[Any] | None = None,
     ) -> tuple[str, list[LineMapping], dict[int, set[int]]]:
-        """Render a function as Binary Ninja **pseudo-C** text.
-
-        Uses the linear-view *language representation* (the "Pseudo C" view),
-        which emits real C-like source — proper signature, braces, ``int32_t``,
-        ``return f(...)`` — so it parses (GED) and compiles (byte_match) like the
-        other decompilers. The raw HLIL form (``func.hlil.lines``: ``rax = ...``,
-        ``u>``, no braces) does NOT, which previously made GED/byte_match score
-        binja near-zero. Falls back to HLIL only if the linear view is
-        unavailable. Text and provenance are collected from the same cursor
-        traversal so their 1-based line numbers cannot drift apart.
-        """
+        """Render SDK-default Pseudo C and collect evidence from the same cursor."""
         try:
             import binaryninja as bn
-            from binaryninja.enums import InstructionTextTokenType, LinearDisassemblyLineType
+            from binaryninja.enums import InstructionTextTokenType
 
-            skipped_types = {
-                LinearDisassemblyLineType.FunctionHeaderStartLineType,
-                LinearDisassemblyLineType.FunctionHeaderEndLineType,
-                LinearDisassemblyLineType.FunctionEndLineType,
-                LinearDisassemblyLineType.AnalysisWarningLineType,
-            }
             variable_types = {
                 InstructionTextTokenType.LocalVariableToken,
                 InstructionTextTokenType.StackVariableToken,
@@ -325,13 +321,9 @@ class RawBinjaDecompiler(Decompiler):
                 return (tool_addr - int(func.start)) + file_addr
 
             def _walk() -> tuple[str, list[LineMapping], dict[int, set[int]]]:
+                if declaration_tokens is not None:
+                    declaration_tokens.clear()
                 settings = bn.DisassemblySettings()
-                for option in (
-                    bn.DisassemblyOption.ShowVariableTypesWhenAssigned,
-                    bn.DisassemblyOption.GroupLinearDisassemblyFunctions,
-                    bn.DisassemblyOption.WaitForIL,
-                ):
-                    settings.set_option(option)
                 lvo = bn.LinearViewObject.single_function_language_representation(
                     func,
                     settings,
@@ -345,19 +337,11 @@ class RawBinjaDecompiler(Decompiler):
                 output_line = 1
                 for _ in range(100000):
                     for row in cursor.lines:
-                        if getattr(row, "type", None) in skipped_types:
-                            continue
+                        row_text = str(row)
                         contents = getattr(row, "contents", row)
-                        tokens = [
-                            token
-                            for token in getattr(contents, "tokens", ())
-                            if getattr(token, "type", None) != InstructionTextTokenType.TagToken
-                        ]
-                        row_text = (
-                            "".join(str(token) for token in tokens)
-                            if hasattr(contents, "tokens")
-                            else str(contents)
-                        )
+                        tokens = list(getattr(contents, "tokens", ()))
+                        if declaration_tokens is not None:
+                            declaration_tokens.extend(tokens)
                         rendered_rows.append(row_text)
                         row_addr = _to_file(getattr(contents, "address", None))
                         if row_addr is not None:
@@ -413,10 +397,9 @@ class RawBinjaDecompiler(Decompiler):
         except Exception:  # noqa: BLE001
             pass
 
-        try:
-            return "\n".join(str(line) for line in func.hlil.lines), [], {}
-        except Exception:  # noqa: BLE001
-            return "", [], {}
+        if declaration_tokens is not None:
+            declaration_tokens.clear()
+        return "", [], {}
 
     @staticmethod
     def _extract_variables_with_identifiers(
@@ -503,3 +486,187 @@ class RawBinjaDecompiler(Decompiler):
         except Exception:  # noqa: BLE001
             pass
         return None
+
+
+def recover_c_preamble(func: Any, tokens: list[Any]) -> str:
+    """Print recovered declarations and type dependencies with the native SDK."""
+    try:
+        from binaryninja import QualifiedName, TypePrinter
+        from binaryninja.enums import TokenEscapingType
+
+        bv = func.view
+        printer = TypePrinter.default
+        escaping = TokenEscapingType.ReplaceInvalidCharsEscapingType
+        roots = [func.type] + [var.type for var in func.vars]
+        selected: dict[str, Any] = {}
+        identities: dict[str, str] = {}
+        seen: set[Any] = set()
+
+        def resolve(name: Any, type_id: str | None = None) -> Any:
+            key = str(name)
+            actual_id = bv.get_type_id(name)
+            if type_id and actual_id and actual_id != type_id:
+                raise ValueError(f"named type identity mismatch: {key}")
+            if not actual_id:
+                return None
+            if key in identities and identities[key] != actual_id:
+                raise ValueError(f"conflicting named type identities: {key}")
+            typ = bv.get_type_by_id(type_id or actual_id)
+            if typ is None:
+                return None
+            identities[key] = actual_id
+            if key not in selected:
+                selected[key] = typ
+                visit(typ)
+                for dependency in bv.get_outgoing_direct_type_references(name):
+                    resolve(dependency)
+            return typ
+
+        def visit(typ: Any) -> None:
+            if typ is None:
+                raise ValueError("missing SDK type")
+            if typ in seen:
+                return
+            seen.add(typ)
+            registered = getattr(typ, "registered_name", None)
+            if registered is not None:
+                resolve(registered.name, registered.type_id)
+            kind = typ.type_class.name
+            if kind == "NamedTypeReferenceClass":
+                resolve(typ.name, typ.type_id)
+            elif kind == "PointerTypeClass":
+                visit(typ.target)
+            elif kind == "ArrayTypeClass":
+                visit(typ.element_type)
+            elif kind == "FunctionTypeClass":
+                visit(typ.return_value)
+                for param in typ.parameters:
+                    visit(param.type)
+            elif kind == "StructureTypeClass":
+                for member in typ.members:
+                    visit(member.type)
+                for base in typ.base_structures:
+                    visit(base.type)
+
+        def expression_root(expr: Any) -> Any:
+            return expr.expr_type
+
+        with contextlib.suppress(Exception):
+            roots.extend(func.hlil.root.traverse(expression_root, shallow=False))
+        for address_range in func.address_ranges:
+            for ref in bv.get_code_refs_for_type_from(
+                int(address_range.start),
+                func=func,
+                length=int(address_range.end) - int(address_range.start),
+            ):
+                resolve(ref.name)
+
+        declarations: list[str] = []
+        emitted: set[tuple[str, int]] = set()
+        alias_identities: dict[str, tuple[int, bool]] = {}
+        for token in tokens:
+            kind = getattr(getattr(token, "type", None), "name", "")
+            if kind not in {
+                "DataSymbolToken",
+                "CodeSymbolToken",
+                "ImportToken",
+                "IndirectImportToken",
+            }:
+                continue
+            alias = token.text
+            address = int(token.value)
+            if address == 0 and alias in {"nullptr", "NULL"}:
+                continue
+            if address == int(func.start) or (alias, address) in emitted:
+                continue
+            emitted.add((alias, address))
+            symbol = bv.get_symbol_at(address)
+            symbol_kind = getattr(getattr(symbol, "type", None), "name", "")
+            data = bv.get_data_var_at(address)
+            callee = (
+                bv.get_function_at(address)
+                if kind != "DataSymbolToken"
+                and (symbol_kind != "ImportedDataSymbol" or kind == "IndirectImportToken")
+                else None
+            )
+            typ = callee.type if callee is not None else (data.type if data is not None else None)
+            is_function = callee is not None
+            if kind == "IndirectImportToken":
+                if (
+                    symbol_kind not in {"ImportAddressSymbol", "ImportedDataSymbol"}
+                    or symbol.short_name != alias
+                ):
+                    continue
+                if callee is not None:
+                    if symbol_kind != "ImportAddressSymbol":
+                        continue
+                else:
+                    if data is None or int(data.address) != address:
+                        continue
+                    slot_type = data.type
+                    if slot_type.type_class.name == "NamedTypeReferenceClass":
+                        slot_type = resolve(slot_type.name, slot_type.type_id)
+                    if slot_type is None or slot_type.type_class.name != "PointerTypeClass":
+                        continue
+                    typ = slot_type.target
+                    target = (
+                        resolve(typ.name, typ.type_id)
+                        if typ.type_class.name == "NamedTypeReferenceClass"
+                        else typ
+                    )
+                    is_function = (
+                        target is not None and target.type_class.name == "FunctionTypeClass"
+                    )
+            elif data is not None and not is_function:
+                base = int(data.address)
+                if base != address:
+                    base_symbol = bv.get_symbol_at(base)
+                    if base_symbol is None or base_symbol.short_name != alias:
+                        continue
+                    address = base
+            if typ is None:
+                continue
+            rendered_alias = QualifiedName.escape(alias, escaping)
+            if rendered_alias != alias:
+                continue
+            identity = (address, is_function)
+            if alias in alias_identities and alias_identities[alias] != identity:
+                raise ValueError(f"conflicting symbol alias identities: {alias}")
+            alias_identities[alias] = identity
+            roots.append(typ)
+            before = "".join(
+                token.text
+                for token in printer.get_type_tokens_before_name(
+                    typ, func.platform, escaping=escaping
+                )
+            )
+            after = "".join(
+                token.text
+                for token in printer.get_type_tokens_after_name(
+                    typ, func.platform, escaping=escaping
+                )
+            )
+            spacer = " " if before and alias and before[-1] != " " and alias[0] != " " else ""
+            declaration = before + spacer + alias + after
+            if not declaration.strip():
+                raise ValueError("native printer produced no declaration")
+            declarations.append("extern " + declaration.rstrip("; \n") + ";")
+
+        for root in roots:
+            if root is not None:
+                visit(root)
+        ordered = [
+            (name, typ) for name, typ in bv.dependency_sorted_types.items() if str(name) in selected
+        ]
+        if selected.keys() - {str(name) for name, _ in ordered}:
+            raise ValueError("named types absent from SDK dependency order")
+        for name, typ in ordered:
+            if typ != selected[str(name)]:
+                raise ValueError(f"SDK dependency order identity mismatch: {name}")
+        header = printer.print_all_types(ordered, bv, 64, escaping)
+        if not isinstance(header, str):
+            raise TypeError("PrintAllTypes did not return a string")
+        return header + ("\n" if declarations else "") + "\n".join(declarations)
+    except Exception as exc:  # noqa: BLE001
+        _l.debug("binja-raw: SDK preamble unavailable: %s", exc)
+        return ""

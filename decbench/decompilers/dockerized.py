@@ -250,12 +250,14 @@ class DockerizedDecompiler(Decompiler):
             return None
         return self.image.rsplit(":", 1)[-1] if ":" in self.image else "latest"
 
-    def _container_decompile(self, binary_path: Path, work_dir: Path) -> str:
-        """Run the container and return whole-program C as a string.
+    def _container_decompile(
+        self, binary_path: Path, work_dir: Path
+    ) -> str | tuple[str, dict[str, str], str]:
+        """Return whole-program C, optionally with program bodies and declarations.
 
-        ``work_dir`` is a host temp dir bind-mounted into the container so the
-        tool can write outputs there. Subclasses implement the tool-specific
-        ``docker run`` invocation. Must raise on hard failure.
+        Local headers are expanded only after isolating the program bodies, so
+        their inline helpers remain in the declarations. ``work_dir`` is a host
+        temp dir bind-mounted into the container. Must raise on hard failure.
         """
         raise NotImplementedError
 
@@ -337,12 +339,18 @@ class DockerizedDecompiler(Decompiler):
         start = time.time()
         timed_out = False
         combined_c = ""
+        snippets: dict[str, str] | None = None
+        preamble: str | None = None
         error: str | None = None
 
         with tempfile.TemporaryDirectory(prefix=f"decbench_{self.name}_") as td:
             work_dir = Path(td)
             try:
-                combined_c = self._container_decompile(binary_path, work_dir)
+                source = self._container_decompile(binary_path, work_dir)
+                if isinstance(source, str):
+                    combined_c = source
+                else:
+                    combined_c, snippets, preamble = source
             except subprocess.TimeoutExpired as e:
                 timed_out = True
                 error = f"timeout after {self.container_timeout}s"
@@ -360,6 +368,8 @@ class DockerizedDecompiler(Decompiler):
             timed_out=timed_out,
             error=error,
             output_dir=output_dir,
+            snippets=snippets,
+            preamble=preamble,
         )
 
         if output_dir is not None:
@@ -380,9 +390,14 @@ class DockerizedDecompiler(Decompiler):
         timed_out: bool,
         error: str | None,
         output_dir: Path | None,
+        snippets: dict[str, str] | None = None,
+        preamble: str | None = None,
     ) -> DecompilationResult:
         """Assemble a :class:`DecompilationResult` from whole-program C."""
-        snippets = split_c_functions(combined_c) if combined_c else {}
+        if snippets is None:
+            snippets = split_c_functions(combined_c) if combined_c else {}
+        if preamble is None:
+            preamble = _c_preamble(combined_c, snippets)
         if functions is not None:
             name_to_addr = {n: a for n, a in functions}
         elif function_names and all(isinstance(a, int) for a in function_names):
@@ -420,6 +435,9 @@ class DockerizedDecompiler(Decompiler):
                 failed.append(name)
                 continue
             code = self._normalize_code(code)
+            body = code
+            if preamble.strip():
+                code = preamble + "\n\n" + code
             decompiled[name] = FunctionDecompilation(
                 name=name,
                 address=addr,
@@ -428,8 +446,8 @@ class DockerizedDecompiler(Decompiler):
                 line_mappings=[],
                 variables=[],
                 metadata={
-                    "gotos": code.count("goto "),
-                    "bools": code.count(" && ") + code.count(" || "),
+                    "gotos": body.count("goto "),
+                    "bools": body.count(" && ") + body.count(" || "),
                 },
             )
 
@@ -464,6 +482,86 @@ class DockerizedDecompiler(Decompiler):
         return code
 
 
+def _c_preamble(source: str, snippets: dict[str, str]) -> str:
+    """Remove program definitions before expanding any local headers."""
+    from decbench.decompilers.raw.manifold_raw import _strip_comments_and_strings
+
+    scan = _strip_comments_and_strings(source)
+    spans: list[tuple[int, int]] = []
+    matched_snippets: set[str] = set()
+    for snippet in snippets.values():
+        pattern = r"(?m)^" + re.escape(snippet.rstrip()) + r"[ \t]*(?=\n|\Z)"
+        for definition_match in re.finditer(pattern, source):
+            start, end = definition_match.span()
+            if _FUNC_DEF_RE.match(scan, start) or _REKO_DEFINE_RE.match(scan, start):
+                spans.append((start, end))
+                matched_snippets.add(snippet)
+    if len(matched_snippets) != len(snippets):
+        _l.warning("Could not isolate all program bodies; native C declarations unavailable")
+        return ""
+    parts: list[str] = []
+    previous = 0
+    for start, end in sorted(set(spans)):
+        if start < previous:
+            continue
+        parts.append(source[previous:start])
+        previous = end
+    parts.append(source[previous:])
+    return "".join(parts)
+
+
+def _native_source(
+    path: Path, root: Path, text: str | None = None, included: set[Path] | None = None
+) -> str:
+    """Inline export-local headers once per unit, without reading outside the export tree."""
+    root = root.resolve()
+    if not path.resolve().is_relative_to(root):
+        raise ValueError(f"Native source is outside the export tree: {path}")
+    if text is None:
+        text = path.read_text(errors="replace")
+    seen = included if included is not None else set()
+    seen.add(path.resolve())
+
+    def inline(match: re.Match[str]) -> str:
+        header = (path.parent / match.group(2)).resolve()
+        if header.is_relative_to(root) and header.is_file():
+            if header in seen:
+                return ""
+            return _native_source(header, root, included=seen) + "\n"
+        if match.group(1) == '"':
+            _l.warning("Local include %s in %s could not be expanded", match.group(2), path)
+        return match.group(0)
+
+    return re.sub(
+        r'^[ \t]*#[ \t]*include[ \t]+(["<])([^">\n]+)[">][^\n]*$',
+        inline,
+        text,
+        flags=re.MULTILINE,
+    )
+
+
+def _native_c_sources(paths: list[Path], root: Path) -> tuple[str, dict[str, str], str]:
+    """Slice native program C first, then retain each local header in full."""
+    root = root.resolve()
+    combined: list[str] = []
+    declarations: list[str] = []
+    snippets: dict[str, str] = {}
+    combined_headers: set[Path] = set()
+    declaration_headers: set[Path] = set()
+    for path in paths:
+        if not path.resolve().is_relative_to(root):
+            raise ValueError(f"Native source is outside the export tree: {path}")
+        source = path.read_text(errors="replace")
+        functions = split_c_functions(source)
+        for name, body in functions.items():
+            snippets.setdefault(name, body)
+        combined.append(_native_source(path, root, source, combined_headers))
+        declarations.append(
+            _native_source(path, root, _c_preamble(source, functions), declaration_headers)
+        )
+    return "\n".join(combined), snippets, "\n".join(declarations)
+
+
 @register_decompiler("retdec")
 class RetDecDecompiler(DockerizedDecompiler):
     """RetDec via a Docker image (``retdec-decompiler <binary> -o out.c``).
@@ -476,7 +574,9 @@ class RetDecDecompiler(DockerizedDecompiler):
     image = "decbench/retdec:latest"
     dockerfile = "retdec.Dockerfile"
 
-    def _container_decompile(self, binary_path: Path, work_dir: Path) -> str:
+    def _container_decompile(
+        self, binary_path: Path, work_dir: Path
+    ) -> tuple[str, dict[str, str], str]:
         proc = self._run_docker(
             args=[f"/in/{binary_path.name}", "-o", "/work/out.c"],
             binary_path=binary_path,
@@ -484,7 +584,7 @@ class RetDecDecompiler(DockerizedDecompiler):
         )
         out_c = work_dir / "out.c"
         if out_c.is_file():
-            return out_c.read_text(errors="replace")
+            return _native_c_sources([out_c], work_dir)
         raise RuntimeError(
             f"retdec produced no out.c (rc={proc.returncode}): "
             f"{proc.stderr[-500:] if proc.stderr else ''}"
@@ -496,8 +596,8 @@ class RekoDecompiler(DockerizedDecompiler):
     """Reko via a Docker image (.NET CLI ``reko --c <binary>``).
 
     Build: ``decbench decompiler-build reko`` (slow — builds Reko via dotnet).
-    The image's helper script runs Reko headless and copies the generated
-    ``*.c`` to ``/work/out.c``.
+    The helper script runs Reko headless and keeps its generated C and headers
+    in the temporary work directory until their declarations are inlined.
     """
 
     name = "reko"
@@ -505,17 +605,21 @@ class RekoDecompiler(DockerizedDecompiler):
     image = "decbench/reko:latest"
     dockerfile = "reko.Dockerfile"
 
-    def _container_decompile(self, binary_path: Path, work_dir: Path) -> str:
+    def _container_decompile(
+        self, binary_path: Path, work_dir: Path
+    ) -> tuple[str, dict[str, str], str]:
         proc = self._run_docker(
             args=[f"/in/{binary_path.name}", "/work/out.c"],
             binary_path=binary_path,
             work_dir=work_dir,
+            readonly_mounts=[(_DOCKER_DIR / "reko-decompile.sh", "/opt/reko/decompile.sh")],
         )
-        out_c = work_dir / "out.c"
-        if out_c.is_file():
-            return out_c.read_text(errors="replace")
+        source_root = work_dir / "out.c.sources"
+        sources = list(source_root.rglob("*.c"))
+        if sources:
+            return _native_c_sources(sources, source_root)
         raise RuntimeError(
-            f"reko produced no out.c (rc={proc.returncode}): "
+            f"reko produced no native C files (rc={proc.returncode}): "
             f"{proc.stderr[-500:] if proc.stderr else ''}"
         )
 

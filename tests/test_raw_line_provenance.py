@@ -52,68 +52,38 @@ class _Cursor:
 
 
 def test_binja_render_and_evidence_share_one_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
-    line_types = SimpleNamespace(
-        FunctionHeaderStartLineType=1,
-        FunctionHeaderEndLineType=2,
-        FunctionEndLineType=3,
-        AnalysisWarningLineType=4,
-        FunctionHeaderLineType=5,
-        CodeDisassemblyLineType=6,
-    )
-    token_types = SimpleNamespace(TagToken=10, LocalVariableToken=11, StackVariableToken=12)
+    token_types = SimpleNamespace(LocalVariableToken=11, StackVariableToken=12)
     enums = ModuleType("binaryninja.enums")
-    enums.LinearDisassemblyLineType = line_types
     enums.InstructionTextTokenType = token_types
 
-    def row(row_type: int, address: int, *tokens: _Token) -> SimpleNamespace:
-        return SimpleNamespace(
-            type=row_type,
-            contents=SimpleNamespace(address=address, tokens=list(tokens)),
-        )
+    class Row(SimpleNamespace):
+        def __str__(self) -> str:
+            return "".join(map(str, self.contents.tokens))
+
+    def row(address: int, *tokens: _Token) -> Row:
+        return Row(contents=SimpleNamespace(address=address, tokens=list(tokens)))
 
     chunks = [
         [
-            row(line_types.FunctionHeaderStartLineType, 0x401000),
-            row(line_types.FunctionHeaderLineType, 0x401000, _Token(0, "int f(int x)")),
-            row(line_types.FunctionHeaderEndLineType, 0x401000),
+            row(0x401000, _Token(0, "int f(int x)")),
+            row(0x401000, _Token(0, "{")),
         ],
         [
-            row(line_types.CodeDisassemblyLineType, 0x401000, _Token(0, "{")),
             row(
-                line_types.AnalysisWarningLineType,
-                0x401002,
-                _Token(0, "warning"),
-            ),
-            row(
-                line_types.CodeDisassemblyLineType,
                 0x401004,
                 _Token(0, "    return "),
-                _Token(token_types.TagToken, "TAG"),
-                _Token(
-                    token_types.LocalVariableToken,
-                    "x",
-                    value=7,
-                    expression=2,
-                ),
+                _Token(token_types.LocalVariableToken, "x", value=7, expression=2),
                 _Token(0, ";"),
             ),
-            row(line_types.CodeDisassemblyLineType, 0x401008, _Token(0, "}")),
-            row(line_types.FunctionEndLineType, 0x401008),
+            row(0x401008, _Token(0, "}")),
         ],
     ]
 
     class Settings:
-        def set_option(self, _option: int) -> None:
-            pass
+        pass
 
-    options = SimpleNamespace(
-        ShowVariableTypesWhenAssigned=1,
-        GroupLinearDisassemblyFunctions=2,
-        WaitForIL=3,
-    )
     bn = ModuleType("binaryninja")
     bn.DisassemblySettings = Settings
-    bn.DisassemblyOption = options
     bn.LinearViewObject = SimpleNamespace(
         single_function_language_representation=lambda *_args: SimpleNamespace(chunks=chunks)
     )
