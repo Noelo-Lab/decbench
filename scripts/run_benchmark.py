@@ -236,6 +236,58 @@ def _stripped_copy(binary: Path, strip_dir: Path) -> Path:
     return out
 
 
+_COMMENT_RE = re.compile(r"/\*.*?\*/|//[^\n]*", re.DOTALL)
+_C_IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*")
+_DEFINITION_NAME_RE = re.compile(r"(~?[A-Za-z_$][\w$]*(?:\s*::\s*~?[A-Za-z_$][\w$]*)*)\s*$")
+_DEFINITION_SUFFIX_RE = re.compile(
+    r"\s*(?:(?:const|volatile|noexcept|override|final|throw\s*\(\s*\))\s*)*\{"
+)
+
+
+def _definition_name(code: str) -> str | None:
+    """Return the declarator name of the first top-level function definition.
+
+    C++ backends spell a method differently from the name they report: angr reports
+    the mangled symbol but prints ``ns::Class::method``, and Fission prints an escaped
+    identifier. Only a parenthesized declarator followed by the body counts, so
+    prototypes, typedefs and comments before the definition are skipped.
+    """
+    text = _COMMENT_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group()), code)
+    depth = 0
+    i = 0
+    while i < len(text):
+        char = text[i]
+        if char in "\"'":
+            end = text.find(char, i + 1)
+            while end != -1 and text[end - 1] == "\\":
+                end = text.find(char, end + 1)
+            i = len(text) if end == -1 else end + 1
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth = max(depth - 1, 0)
+        elif char == "(" and depth == 0:
+            nest, close = 0, i
+            while close < len(text):
+                nest += {"(": 1, ")": -1}.get(text[close], 0)
+                if nest == 0:
+                    break
+                close += 1
+            if close < len(text) and _DEFINITION_SUFFIX_RE.match(text, close + 1):
+                name = _DEFINITION_NAME_RE.search(text, 0, i)
+                return re.sub(r"\s+", "", name.group(1)) if name else None
+            i = close + 1
+            continue
+        i += 1
+    return None
+
+
+def _rename_function(code: str, old: str, new: str) -> str:
+    """Replace ``old`` as a whole (possibly ``::``-qualified) name in ``code``."""
+    return re.sub(r"(?<![\w$:~])" + re.escape(old) + r"(?![\w$])", new, code)
+
+
 def _relabel_to_dwarf(
     result: DecompilationResult, addr2name: dict[int, str], unstripped: Path
 ) -> None:
@@ -246,7 +298,9 @@ def _relabel_to_dwarf(
     address — renaming in BOTH the code (so GED's Joern parse keys by the right
     name) and the function key — and point eval at the UNSTRIPPED (DWARF) binary.
     This is pure bookkeeping so name-based eval/GED line up; the decompiler got no
-    help (its analysis ran on the stripped binary).
+    help (its analysis ran on the stripped binary). A C++ definition can be printed
+    under a spelling the backend did not report; it is renamed too, unless the DWARF
+    name is not a C identifier (``~Sink``, ``operator==``).
     """
     from decbench.decompilers.raw import common
 
@@ -311,6 +365,9 @@ def _relabel_to_dwarf(
                 r"\b" + re.escape(fd.name) + r"\b", dwarf_name, fd.decompiled_code
             )
             fd.name = dwarf_name
+        spelled = _definition_name(fd.decompiled_code or "")
+        if spelled and spelled != dwarf_name and _C_IDENTIFIER_RE.fullmatch(dwarf_name):
+            fd.decompiled_code = _rename_function(fd.decompiled_code, spelled, dwarf_name)
         prev = new_funcs.get(fd.name)
         if prev is None or len(fd.decompiled_code or "") >= len(
             getattr(prev, "decompiled_code", "") or ""
