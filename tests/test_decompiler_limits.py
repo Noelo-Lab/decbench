@@ -31,6 +31,7 @@ from decbench.decompilers.limits import (
     resource_scopes_available,
     timeout_env_var,
 )
+from decbench.decompilers.raw.fission_raw import RawFissionDecompiler
 from decbench.decompilers.raw.glaurung_raw import RawGlaurungDecompiler
 from decbench.decompilers.raw.kuna_raw import RawKunaDecompiler
 from decbench.decompilers.registry import DecompilerRegistry
@@ -163,6 +164,12 @@ def test_backend_function_watchdogs_share_600_seconds(
     monkeypatch.setattr(glaurung, "_select_path", lambda: ("native", Path("/usr/bin/glaurung")))
     command = glaurung._build_command(Path("sample"), {0x1000})
     assert command[-2:] == ["--timeout-ms", "600000"]
+
+    monkeypatch.delenv("DECBENCH_FISSION_TIMEOUT_MS", raising=False)
+    fission = RawFissionDecompiler()
+    monkeypatch.setattr(fission, "_select_path", lambda: ("native", Path("/usr/bin/fission_cli")))
+    fission_command = fission._build_command(Path("sample"), {0x1000})
+    assert fission_command[-2:] == ["--timeout-ms", "600000"]
 
     assert DecompilerRegistry.get("codex")._timeout() == 600
 
@@ -433,6 +440,7 @@ def test_decompile_worker_receives_resolved_binary_timeout(
         ("r2dec", "docker", "docker"),
         ("r2dec", "native", "native"),
         ("glaurung", "raw", None),
+        ("fission", "raw", None),
     ],
 )
 def test_native_producers_seed_progress_metadata_before_decompilation(

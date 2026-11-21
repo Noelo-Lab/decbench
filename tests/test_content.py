@@ -311,6 +311,10 @@ def test_glaurung_is_sample_set_only(content: Content) -> None:
     assert "glaurung" in content.site.sample_set_only_decompilers
 
 
+def test_fission_is_sample_set_only(content: Content) -> None:
+    assert "fission" in content.site.sample_set_only_decompilers
+
+
 def test_retdec_is_hidden_not_sample_set_only(content: Content) -> None:
     assert "retdec" in content.site.hidden_decompilers
     assert "retdec" not in content.site.sample_set_only_decompilers

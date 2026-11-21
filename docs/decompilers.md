@@ -40,22 +40,28 @@ Backends subclass the `Decompiler` ABC (`base.py`) and register via
   `glaurung` results came from an external sample-set submission (Part III) at
   `git-fb4ee6b`, flagged `external_submission` in its metadata; the new
   sample-set pass uses this runnable backend.
+- **Native or containerized Fission** (`raw/fission_raw.py`: `fission`):
+  invokes `fission_cli`'s address-scoped/whole-binary JSON CLI natively when
+  `FISSION_BIN`, the decompiler config, or `$PATH` resolves it. Otherwise it runs
+  the immutable revision recorded in `decbench/fission:latest`, built from
+  source with `decbench decompiler-build fission`.
 - **Dockerized** (`dockerized.py`: `reko`/`retdec`/`r2dec`): Reko and RetDec
   split container-produced C into functions. r2dec uses `pdd` through its
   versioned image and returns address-keyed functions. Build images with
   `decbench decompiler-build <name>`; Dockerfiles live in `docker/`.
 - **LLM / coding-agent** (`llm_dec.py`: `codex`, `claude-code`, `kimi-code`):
   Part II below.
-- **External / not runnable here** (`external.py`: `fission`, `ventris`,
-  `psalms`): ids we publish but can never execute — their numbers arrive as
-  sample-set submissions (Part III) and there is no tool to drive. Each is one
-  row in `EXTERNAL_DECOMPILERS`; the generated class has `runnable = False`,
+- **External / not runnable here** (`external.py`: `ventris`, `psalms`): ids
+  we publish but can never execute — their numbers arrive as sample-set
+  submissions (Part III) and there is no tool to drive. Each is one row in
+  `EXTERNAL_DECOMPILERS`; the generated class has `runnable = False`,
   `is_available()` permanently False, and a `decompile_binary` that raises with a
   pointer to `decbench evalkit ingest`. That makes them *known* —
   `decbench list-decompilers` shows them with `Kind = external` — while every
   consumer that already gates on `is_available()` skips them untouched. A tool
   that *does* have an in-tree backend does not belong here even when its published
-  numbers came from a submission (`glaurung` and `manifold` both have backends).
+  numbers came from a submission (`glaurung`, `manifold`, and `fission` all have
+  backends).
 
 Key conventions (all families):
 
@@ -391,9 +397,24 @@ select the source revision at build time. `decompiler-build` resolves a branch
 or tag to a commit SHA before invoking Docker, and the image records that SHA
 at `/opt/glaurung.rev`, so results report the code actually executed. An
 invalid explicit `GLAURUNG_BIN` is treated as a configuration error and never
-silently falls through to another executable. The default ref is the exact
-Glaurung revision used for the submitted sample-set evaluation; set
-`GLAURUNG_REF` explicitly to benchmark a different revision.
+silently falls through to another executable. The default ref is the exact Glaurung revision used for the submitted
+sample-set evaluation; set `GLAURUNG_REF` explicitly to benchmark a different
+revision.
+
+Fission follows the same explicit-build contract:
+
+```bash
+decbench decompiler-build fission
+decbench list-decompilers
+```
+
+The backend prefers a native executable (`FISSION_BIN`, the decompiler config,
+or `fission_cli` / `fission` on `$PATH`), then falls back to `decbench/fission:latest`.
+`FISSION_RESOURCE_ROOT` (or `--resource-root` auto-detected next to the CLI)
+supplies the SLEIGH specs and signature packs, while the Docker image bundles
+them at `/opt/fission/share/fission` and records the built commit SHA at
+`/opt/fission.rev`. An invalid explicit `FISSION_BIN` is treated as a
+configuration error and never silently falls through to `$PATH`.
 
 ## 6. Testing your backend
 
