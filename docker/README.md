@@ -105,9 +105,9 @@ the native CLI emits. The image contains no credentials.
 The image also carries Fission's compiled SLEIGH frontends
 (`/opt/fission/cache/fission-sleigh`, built at image build time from one
 checked-in fixture per x86-64/x86/ARM/AArch64 family). A container otherwise
-starts with an empty cache: every run would recompile them (about 1 s more
-per run for x86-64 or ARM in our measurement; a first ARM binary builds all eight ARM variants, ~80 MiB, more than
-the run's 64 MiB `/tmp`).
+starts with an empty cache and recompiles the frontends it needs on every
+run: about 1 s more per run for x86-64 or ARM fixtures in our measurement,
+with identical output.
 
 ## Other images (not decompiler backends)
 
