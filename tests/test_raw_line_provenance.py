@@ -7,10 +7,11 @@ import pytest
 
 from decbench.decompilers.raw.angr_raw import RawAngrDecompiler
 from decbench.decompilers.raw.binja_raw import RawBinjaDecompiler
+from decbench.decompilers.raw.fission_raw import RawFissionDecompiler
 from decbench.decompilers.raw.ghidra_raw import RawGhidraDecompiler
+from decbench.decompilers.raw.glaurung_raw import RawGlaurungDecompiler
 from decbench.decompilers.raw.ida_raw import RawIDADecompiler
 from decbench.decompilers.raw.kuna_raw import RawKunaDecompiler
-from decbench.decompilers.raw.glaurung_raw import RawGlaurungDecompiler
 from decbench.models.decompilation import LineMapping, VariableInfo
 
 
@@ -468,6 +469,84 @@ def test_glaurung_unknown_size_keeps_evidence_instead_of_voiding_it() -> None:
 def test_glaurung_absent_evidence_is_empty_not_none() -> None:
     function = RawGlaurungDecompiler()._build_function(
         {"entry_va": 0x1000, "size": 4, "pseudocode": "void f(void) {}"},
+        "f",
+        file_addr=0x1000,
+    )
+    assert function is not None
+    assert function.line_mappings == []
+    assert function.variables == []
+
+
+def test_fission_additive_provenance_is_validated_and_rebased() -> None:
+    record = {
+        "address": "0x5000",
+        "size": 0x20,
+        "code": "int f(int param_1) {\n    int x;\n    foo(param_1);\n    return x;\n}",
+        "fell_back": False,
+        "line_mappings": [
+            {
+                "line_number": 2,
+                "addresses": [0x5008, 0x5004],
+                "defined_variables": ["x"],
+            },
+            {
+                "line_number": 3,
+                "addresses": [0x5010],
+                "defined_variables": [],
+                "call_site": {"instruction_address": 0x5010, "pcode_sequence": 12},
+            },
+            {"line_number": 99, "addresses": [0x5004], "defined_variables": ["x"]},
+            {"line_number": 4, "addresses": [0x6000], "defined_variables": ["x"]},
+        ],
+        "variables": [
+            {
+                "name": "x",
+                "type": "int",
+                "kind": "stack",
+                "stack_offset": -8,
+                "size": 4,
+                "addresses": [0x5008, 0x6000],
+            },
+            {"name": "param_1", "type": "int", "kind": "arg", "arg_index": 0},
+        ],
+    }
+    function = RawFissionDecompiler()._build_function(record, "f", file_addr=0x1000)
+    assert function is not None
+    assert function.line_mappings == [LineMapping(line_number=2, addresses=[0x1004, 0x1008])]
+    assert function.metadata["call_mappings"] == [
+        {
+            "line_number": 3,
+            "addresses": [0x1010],
+            "defined_variables": [],
+            "call_site": {"instruction_address": 0x1010, "pcode_sequence": 12},
+        }
+    ]
+    x, param_1 = function.variables
+    assert x.addresses == [0x1008]
+    assert x.line_numbers == [2]
+    assert x.stack_offset == -8
+    assert param_1.kind == "arg" and param_1.arg_index == 0
+    assert param_1.addresses == []
+
+
+def test_fission_unknown_size_keeps_evidence_instead_of_voiding_it() -> None:
+    record = {
+        "address": "0x5000",
+        "size": None,
+        "code": "int f(void) {\n    return x;\n}",
+        "fell_back": False,
+        "line_mappings": [{"line_number": 2, "addresses": [0x5010], "defined_variables": ["x"]}],
+        "variables": [{"name": "x", "type": "int", "kind": "stack", "addresses": [0x5010]}],
+    }
+    function = RawFissionDecompiler()._build_function(record, "f", file_addr=0x5000)
+    assert function is not None
+    assert function.line_mappings == [LineMapping(line_number=2, addresses=[0x5010])]
+    assert function.variables[0].addresses == [0x5010]
+
+
+def test_fission_absent_evidence_is_empty_not_none() -> None:
+    function = RawFissionDecompiler()._build_function(
+        {"address": "0x1000", "size": 4, "code": "void f(void) {}", "fell_back": False},
         "f",
         file_addr=0x1000,
     )

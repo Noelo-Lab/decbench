@@ -18,7 +18,8 @@ reading ``decbench list-decompilers``.
 
 Adding one is a single row in :data:`EXTERNAL_DECOMPILERS`. A tool that *does*
 have an in-tree backend does not belong here even when its published numbers came
-from a submission (``glaurung`` and ``manifold`` both have real backends).
+from a submission (``glaurung``, ``manifold``, and ``fission`` all have real
+backends).
 """
 
 from __future__ import annotations
@@ -84,12 +85,6 @@ class ExternalDecompiler(Decompiler):
 
 
 EXTERNAL_DECOMPILERS: tuple[ExternalSpec, ...] = (
-    ExternalSpec(
-        id="fission",
-        display_name="Fission",
-        url="https://github.com/fission-systems/Fission",
-        version="0.2.3",
-    ),
     ExternalSpec(
         id="ventris",
         display_name="Ventris",

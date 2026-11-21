@@ -1,6 +1,6 @@
 # DecBench docker images
 
-This directory is decbench's single Docker home. Four images package
+This directory is decbench's single Docker home. Five images package
 **external-CLI** decompiler backends:
 
 | backend  | spec id  | image tag                | Dockerfile           | native?              |
@@ -9,6 +9,7 @@ This directory is decbench's single Docker home. Four images package
 | Reko     | `reko`   | `decbench/reko:latest`   | `reko.Dockerfile`    | no (Docker only)     |
 | r2dec    | `r2dec`  | `decbench/r2dec:6.2.0`   | `r2dec.Dockerfile`   | no (Docker only)     |
 | Glaurung | `glaurung` | `decbench/glaurung:latest` | `glaurung.Dockerfile` | **yes** |
+| Fission  | `fission`  | `decbench/fission:latest`  | `fission.Dockerfile`  | **yes** |
 
 Unlike the canonical native API backends (angr/ghidra/ida/binja — in-process drivers
 of each tool's own API, `decbench/decompilers/raw/`), these ship as standalone
@@ -39,6 +40,7 @@ decbench decompiler-build retdec
 decbench decompiler-build reko
 decbench decompiler-build r2dec
 decbench decompiler-build glaurung
+decbench decompiler-build fission
 ```
 
 `build_image()` runs `docker build -f docker/<dockerfile> -t <image> docker/`
@@ -90,6 +92,23 @@ same JSON the native CLI emits. The checked-in default ref is the revision used
 for the submitted sample-set evaluation; `GLAURUNG_REF` can select another
 revision explicitly. The image contains no credentials.
 
+### Fission
+
+The raw Fission backend prefers `FISSION_BIN`, DecBench configuration, or
+`fission_cli` / `fission` on `$PATH`, then falls back to the image built from
+`fission.Dockerfile`. `decompiler-build` resolves `FISSION_REF` to an immutable
+source commit, and the image records it at `/opt/fission.rev`. At runtime the
+backend mounts only the input binary (and an optional read-only addresses file
+for multi-target scoped runs), disables networking, and captures the same JSON
+the native CLI emits. The image contains no credentials.
+
+The image also carries Fission's compiled SLEIGH frontends
+(`/opt/fission/cache/fission-sleigh`, built at image build time from one
+checked-in fixture per x86-64/x86/ARM/AArch64 family). A container otherwise
+starts with an empty cache and recompiles the frontends it needs on every
+run: about 1 s more per run for x86-64 or ARM fixtures in our measurement,
+with identical output.
+
 ## Other images (not decompiler backends)
 
 ### decbench-compile (`compile.Dockerfile`)
@@ -117,7 +136,7 @@ manually (no `decompiler-build` hook); see `docs/decompilers.md`.
 ## Files in this directory
 
 - `retdec.Dockerfile`, `reko.Dockerfile`, `r2dec.Dockerfile`,
-  `glaurung.Dockerfile` — the decompiler
+  `glaurung.Dockerfile`, `fission.Dockerfile` — the decompiler
   backend images.
 - `compile.Dockerfile` — the `decbench-compile` cross-compile image (see above).
 - `llm-agents.Dockerfile` — the claude-code/kimi-code container mode (see above).

@@ -79,6 +79,10 @@ structurer was fully retired 2026-07-23; see CHANGELOG.md.)
   `decbench decompiler-build glaurung`. The image is a reproducible raw-only
   install and requires no API credentials. Its published results remain
   sample-set-only for now.
+- **Fission** — native CLI (`fission_cli`) or the `decbench/fission:latest`
+  image built by `decbench decompiler-build fission`. The image bundles the
+  upstream SLEIGH/signature resource tree and requires no API credentials. Its
+  published results remain sample-set-only for now.
 - **codex / claude-code / kimi-code** — LLM coding-agent backends,
   sample-set-only; see [decompilers.md](decompilers.md). Codex requires the
   `OPENAI_API_KEY` from the launch shell and an isolated API-key login; retain
@@ -404,11 +408,12 @@ cgroup memory kill is recorded separately from a timeout and partial
 per-function checkpoints are still recovered.
 
 The shared function-analysis budget is **600 seconds** where a backend exposes a
-per-function watchdog: Ghidra, Kuna, Glaurung, and the coding-agent backends.
+per-function watchdog: Ghidra, Kuna, Glaurung, Fission, and the coding-agent backends.
 angr, IDA, Binary Ninja, dewolf, and whole-binary tools have no safely killable
 per-function API, so their 3600-second outer binary scope remains the hard bound.
-`DECBENCH_KUNA_MAX_FN_SECONDS`, `DECBENCH_GLAURUNG_TIMEOUT_MS`, and
-`DECBENCH_LLM_TIMEOUT` remain explicit experimental overrides.
+`DECBENCH_KUNA_MAX_FN_SECONDS`, `DECBENCH_GLAURUNG_TIMEOUT_MS`,
+`DECBENCH_FISSION_TIMEOUT_MS`, and `DECBENCH_LLM_TIMEOUT` remain explicit
+experimental overrides.
 
 The ceiling is per concurrent binary, not machine-wide: `DECBENCH_WORKERS=40`
 can still admit up to 40 limited workers, so size the worker pool for host RAM.

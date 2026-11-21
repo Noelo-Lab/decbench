@@ -19,6 +19,7 @@ from decbench.decompilers.raw import (
     angr_raw,  # noqa: F401
     binja_raw,  # noqa: F401
     dewolf_raw,  # noqa: F401
+    fission_raw,  # noqa: F401
     ghidra_raw,  # noqa: F401
     glaurung_raw,  # noqa: F401
     ida_raw,  # noqa: F401
@@ -35,4 +36,5 @@ __all__ = [
     "dewolf_raw",
     "manifold_raw",
     "glaurung_raw",
+    "fission_raw",
 ]
