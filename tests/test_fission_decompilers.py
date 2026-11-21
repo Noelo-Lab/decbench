@@ -97,6 +97,82 @@ class TestRegistry:
         assert dec.get_version() is None
 
 
+class TestVersionProvenance:
+    """A result names a Fission commit only when the binary provably came from it."""
+
+    @staticmethod
+    def _checkout_with_binary(tmp_path: Path, version_line: str = "fission_cli 0.3.0") -> Path:
+        git = shutil.which("git")
+        if git is None:
+            pytest.skip("git is not available")
+        repo = tmp_path / "fission"
+        repo.mkdir()
+        env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@example.invalid",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@example.invalid",
+        }
+        subprocess.run([git, "init", "-q", str(repo)], check=True, env=env)
+        (repo / "src.rs").write_text("fn main() {}\n")
+        subprocess.run([git, "-C", str(repo), "add", "src.rs"], check=True, env=env)
+        subprocess.run([git, "-C", str(repo), "commit", "-q", "-m", "init"], check=True, env=env)
+        binary = repo / "target" / "release" / "fission_cli"
+        binary.parent.mkdir(parents=True)
+        binary.write_text(f"#!/bin/sh\necho '{version_line}'\n")
+        binary.chmod(0o755)
+        # Built after the commit and after HEAD last moved.
+        future = max((repo / ".git" / "HEAD").stat().st_mtime, binary.stat().st_mtime) + 60
+        os.utime(binary, (future, future))
+        return binary
+
+    @staticmethod
+    def _version(binary: Path, monkeypatch: pytest.MonkeyPatch) -> str | None:
+        monkeypatch.setenv("FISSION_BIN", str(binary))
+        monkeypatch.delenv("FISSION_VERSION", raising=False)
+        return RawFissionDecompiler().get_version()
+
+    @staticmethod
+    def _head(binary: Path) -> str:
+        return subprocess.run(
+            ["git", "-C", str(binary.parent), "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    def test_a_clean_checkout_built_after_head_names_its_commit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary = self._checkout_with_binary(tmp_path)
+        assert self._version(binary, monkeypatch) == f"git-{self._head(binary)} (fission 0.3.0)"
+
+    def test_uncommitted_changes_leave_the_build_unverified(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary = self._checkout_with_binary(tmp_path)
+        (binary.parents[2] / "src.rs").write_text("fn main() { edited(); }\n")
+        version = self._version(binary, monkeypatch)
+        assert version is not None and version.startswith("0.3.0 (unverified build")
+        assert not version.startswith("git-")
+
+    def test_a_binary_older_than_head_is_not_credited_to_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary = self._checkout_with_binary(tmp_path)
+        os.utime(binary, (1_000_000, 1_000_000))
+        version = self._version(binary, monkeypatch)
+        assert version is not None and "unverified build" in version
+
+    def test_a_commit_the_binary_reports_wins(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary = self._checkout_with_binary(tmp_path, "fission_cli 0.3.0 (abc1234)")
+        (binary.parents[2] / "src.rs").write_text("fn main() { edited(); }\n")
+        assert self._version(binary, monkeypatch) == "git-abc1234 (fission 0.3.0)"
+
+
 def _func_address(binary: Path, name: str) -> int:
     """Return one symbol's entry address from ELF or Mach-O."""
     if binary.read_bytes()[:4] == b"\x7fELF":

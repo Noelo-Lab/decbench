@@ -141,6 +141,59 @@ def _resolve_resource_root(executable: Path | None, version: str | None = None) 
     return None
 
 
+def _git(cwd: Path, *args: str) -> str | None:
+    """Run ``git -C cwd args`` and return its stripped stdout, or ``None``."""
+    git = shutil.which("git")
+    if git is None:
+        return None
+    try:
+        process = subprocess.run(
+            [git, "-C", str(cwd), *args],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    if process.returncode != 0:
+        return None
+    return process.stdout.strip()
+
+
+def _checkout_revision(executable: Path) -> tuple[str, bool] | None:
+    """The git checkout ``executable`` sits in, and whether it provably built it.
+
+    A ``target/release/fission_cli`` inside a Fission checkout is usually the
+    checkout's own build, but not always: the tree may have been switched to
+    another branch, pulled or edited after the build, and a result recorded
+    under the new ``HEAD`` would name code that never ran. The revision is
+    claimed only when the tree has no uncommitted changes to tracked files and
+    the binary is newer than both the ``HEAD`` commit and the last time
+    ``HEAD`` moved (a checkout or switch rewrites ``.git/HEAD``).
+
+    Returns ``(short_sha, matches)``, or ``None`` outside a git checkout.
+    """
+    where = executable.resolve().parent
+    revision = _git(where, "rev-parse", "--short", "HEAD")
+    if not revision:
+        return None
+    dirty = _git(where, "status", "--porcelain", "--untracked-files=no")
+    commit_time = _git(where, "log", "-1", "--format=%ct", "HEAD")
+    head_file = _git(where, "rev-parse", "--git-path", "HEAD")
+    if dirty is None or commit_time is None or head_file is None:
+        return revision, False
+    head_path = Path(head_file)
+    if not head_path.is_absolute():
+        head_path = where / head_path
+    try:
+        built = executable.resolve().stat().st_mtime
+        moved = head_path.stat().st_mtime
+    except OSError:
+        return revision, False
+    matches = not dirty and built >= max(float(commit_time), moved)
+    return revision, matches
+
+
 def _docker_bin() -> str | None:
     return shutil.which("docker")
 
@@ -265,6 +318,7 @@ class RawFissionDecompiler(Decompiler):
             return None
 
         version = ""
+        built_from: str | None = None
         try:
             p = subprocess.run(
                 [str(executable), "--version"],
@@ -278,22 +332,27 @@ class RawFissionDecompiler(Decompiler):
                 version = m.group(1)
             elif out:
                 version = out.splitlines()[0]
+            # A build that names its own commit (`fission_cli 0.3.0 (abc1234)`)
+            # is the only source that cannot drift from the binary.
+            built = re.search(r"\(([0-9a-fA-F]{7,40})\)", out)
+            if built:
+                built_from = built.group(1)
         except Exception:  # noqa: BLE001
             pass
+        if built_from:
+            suffix = f" (fission {version})" if version else ""
+            return f"git-{built_from}{suffix}"
 
-        try:
-            revision = subprocess.run(
-                ["git", "-C", str(executable.resolve().parent), "rev-parse", "--short", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            if revision.returncode == 0 and revision.stdout.strip():
-                suffix = f" (fission {version})" if version else ""
-                return f"git-{revision.stdout.strip()}{suffix}"
-        except Exception:  # noqa: BLE001
-            pass
-        return version or self.requested_version or "unknown"
+        checkout = _checkout_revision(executable)
+        if checkout is None:
+            return version or self.requested_version or "unknown"
+        revision, matches = checkout
+        suffix = f" (fission {version})" if version else ""
+        if matches:
+            return f"git-{revision}{suffix}"
+        # The checkout around the binary is not proven to be what built it:
+        # say which checkout it sits in without claiming it as the revision.
+        return f"{version or 'unknown'} (unverified build in checkout git-{revision})"
 
     def _docker_version(self) -> str:
         docker = _docker_bin()

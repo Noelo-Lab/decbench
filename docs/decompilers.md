@@ -416,6 +416,14 @@ them at `/opt/fission/share/fission` and records the built commit SHA at
 `/opt/fission.rev`. An invalid explicit `FISSION_BIN` is treated as a
 configuration error and never silently falls through to `$PATH`.
 
+A native binary is credited to a commit only when that is provable: the
+binary reports one in `--version`, or it sits in a git checkout with no
+uncommitted changes to tracked files and is newer than both the `HEAD` commit
+and the last time `HEAD` moved. Otherwise the version reads
+`<version> (unverified build in checkout git-<sha>)`, so a binary left over
+from another branch is never recorded as the checkout's revision. Set
+`FISSION_VERSION` to name it explicitly.
+
 ## 6. Testing your backend
 
 1. **Smoke test** — decompile one small function of one small binary and assert
